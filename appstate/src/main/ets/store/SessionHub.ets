@@ -31,12 +31,14 @@
 
 import { Connection } from 'connection';
 import type { DiagnosticReport, EventSink, HostFacts, RpcResult, StreamSink } from 'connection';
-import { EVENTS_RESULT_ENDPOINT, getArray, getBoolean, getNumber, getRecord, getString } from 'connection';
+import { EVENTS_RESULT_ENDPOINT, getArray, getBoolean, getNumber, getRecord, getString, readPath } from 'connection';
 import {
   APPROVAL_ALLOWED_ONCE,
   APPROVAL_REJECTED,
   argsFor,
   classifyEventType,
+  ContentSlot,
+  eventShapeOf,
   EventFamily,
   GATEWAY_ARGUMENTS_INVALID,
   GATEWAY_INPUT_INVALID,
@@ -58,17 +60,21 @@ import {
   SESSION_FOLLOW_ENDPOINT,
   SESSION_LIST_ENDPOINT,
   SESSION_PROMPT_ENDPOINT,
+  slotBinding,
   SURFACE,
   WATERFALL_APPROVAL,
   WATERFALL_QUESTION
 } from 'dshcompat';
+import type { SessionEventShape, SlotBinding } from 'dshcompat';
 import { projectSessionList } from '../model/SessionList';
 import type { SessionListItem } from '../model/SessionList';
 import {
   APPROVAL_CHOICE_ALLOW,
   APPROVAL_CHOICE_ALLOW_ALWAYS,
   APPROVAL_CHOICE_DENY,
+  indexOfItem,
   makeItem,
+  mergeTrajectoryItem,
   PendingKind,
   RiskLevel,
   Speaker,
@@ -901,7 +907,7 @@ export class SessionHub {
         for (let i = 0; i < records.length; i++) {
           const projected: TrajectoryItem | undefined = projectWireRecord(records[i]);
           if (projected !== undefined) {
-            items.push(projected);
+            appendOrMerge(items, projected);
           }
         }
       }
@@ -915,7 +921,7 @@ export class SessionHub {
       const projected: TrajectoryItem | undefined = projectWireRecord(value);
       if (projected !== undefined) {
         const next: TrajectoryItem[] = this.trajectoryList.slice();
-        next.push(projected);
+        appendOrMerge(next, projected);
         this.trajectoryList = next;
       }
       const event: Object | undefined = getRecord(value, 'event');
@@ -1227,20 +1233,20 @@ export class SessionHub {
 /**
  * 把一条 `session/follow` 记录投影成轨迹条目。
  *
- * 【重要说明 · 为什么不在这里猜字段名】
- *   上游事件形状是 `{type: string, seq, time, data: JsonValue}`，其中 `type` 的取值域
- *   来自 `dsh-session` 的 `SessionEventMap`（各插件通过 declaration merging 扩展），
- *   实测已确认存在的类型包括 `permission/preset`、`sandbox/mode`、`approval/policy`。
- *   这些是**审计类**事件，不构成会话内容。
+ * 【取值路径从哪来（这一版的关键变化）】
+ *   字段名与取值路径**全部**来自 `dshcompat` 的实测形状表
+ *   （`SESSION_EVENT_SHAPES`，见 D2 §8.7.8：逐帧解码 Host 落盘日志取得）。
+ *   本文件不再持有任何字段名——这不是纪律上的洁癖：**写错字段名不会报错，
+ *   只会让正文永远是空的**，这种失效必须在编译期与门禁上被拦住。
  *
- *   会话内容类事件（用户消息 / 助手消息 / 思考 / 工具调用 / 子代理 / 目标 / 任务）
- *   的**具体字段名**尚未取得实测证据（见 `docs/11-请求载荷契约.md` 与 D4 POC-1）。
- *   在拿到证据前，本函数只做两件**可确定**的事：
- *     1. 按事件名的**命名空间前缀**（`family/name` 是上游的稳定结构约定）归类；
- *     2. 把整段 `data` 作为原始 JSON 放进条目正文，并标记为「待解析」。
- *   这样做不会在真机上显示错误内容，也不会静默丢事件；
- *   而且 `SessionHub.noteUnknown()` 会把未识别类型汇总出来，
- *   真机跑一次即可得到权威清单，随后按清单补 `data` 字段映射即可——改动只在本函数内。
+ *   上一版这里把整段 `data` 用 `JSON.stringify` 塞进正文，理由是
+ *   「字段名还没有实测证据」。证据现已取得，那条妥协随之失效：
+ *   用户该看到的是消息正文，不是一段 JSON。
+ *
+ * 【未识别事件怎么办】
+ *   形状表里没有的类型（升级后新出现的）**不静默丢弃**：仍按消息呈现原始
+ *   `data` 并标记展开，同时由 `noteUnknown()` 汇总到诊断页，
+ *   让下次升级时能回填形状表。宁可多一行「未识别」，也不要让对话少一截。
  */
 export function projectWireRecord(record: Object): TrajectoryItem | undefined {
   const type: string = getString(record, 'type') ?? '';
@@ -1255,26 +1261,293 @@ export function projectWireRecord(record: Object): TrajectoryItem | undefined {
   const seq: number = getNumber(event, 'seq') ?? 0;
   const time: number = getNumber(event, 'time') ?? 0;
   const data: Object | undefined = getRecord(event, 'data');
+  const shape: SessionEventShape | undefined = eventShapeOf(eventType);
 
   // 审计类事件不进轨迹：它们没有用户可读内容，放进去只会淹没对话
   if (isAuditEventType(eventType)) {
     return undefined;
   }
+  // 边界事件（轮次/步/标题…）驱动状态但不占行——一次对话会被它们刷屏
+  if (shape !== undefined && !shape.standalone) {
+    return undefined;
+  }
 
-  const kind: TrajectoryKind = kindOfFamily(classifyEventType(eventType));
+  const family: EventFamily = classifyEventType(eventType);
+  const kind: TrajectoryKind = familyKind(family);
   const item: TrajectoryItem = makeItem(`ev-${seq}`, kind, time);
-  item.body = data === undefined ? '' : JSON.stringify(data);
   item.speaker = isUserAuthoredEvent(eventType) ? Speaker.USER : Speaker.ASSISTANT;
-  // 工具类事件在数据尚未解析时不显示状态徽标，避免把未知误显示成「运行中」
-  item.toolState = ToolState.PENDING;
-  if (kind === TrajectoryKind.ERROR) {
+
+  if (shape === undefined) {
+    // 未识别类型：如实呈现原始载荷（不是猜测，也不丢弃）
+    item.body = data === undefined ? '' : (JSON.stringify(data) ?? '');
     item.expanded = true;
+    return item;
+  }
+
+  const text: ResolvedSlot = resolveSlot(data, shape, ContentSlot.CONTENT_BLOCKS);
+  if (text.found) {
+    item.body = textFromBlocks(text.value);
+  }
+  const model: ResolvedSlot = resolveSlot(data, shape, ContentSlot.MODEL);
+  if (model.found) {
+    item.model = asText(model.value);
+  }
+
+  if (kind === TrajectoryKind.TOOL) {
+    applyToolSlots(item, data, shape);
+    // 用调用 id 作条目 id：`tool/call` 与 `tool/result` 因此落到同一张工具卡
+    const callId: ResolvedSlot = resolveSlot(data, shape, ContentSlot.CALL_ID);
+    if (callId.found) {
+      item.callId = asText(callId.value);
+      item.id = `ev-call-${item.callId}`;
+    }
+  } else if (kind === TrajectoryKind.SUBAGENT) {
+    const label: ResolvedSlot = resolveSlot(data, shape, ContentSlot.SUBAGENT_LABEL);
+    if (label.found) {
+      item.title = asText(label.value);
+    }
+    item.subagentName = item.title;
+  } else if (kind === TrajectoryKind.GOAL) {
+    const objective: ResolvedSlot = resolveSlot(data, shape, ContentSlot.GOAL_TITLE);
+    if (objective.found) {
+      item.title = asText(objective.value);
+    }
+    const phase: ResolvedSlot = resolveSlot(data, shape, ContentSlot.GOAL_PHASE);
+    if (phase.found) {
+      item.progress = asText(phase.value);
+    }
+  } else if (kind === TrajectoryKind.JOB) {
+    applyTodoSlots(item, data, shape);
+  } else if (kind === TrajectoryKind.DELIVERABLE) {
+    applyDeliverableSlots(item, data, shape);
+  } else if (!text.found) {
+    // 压缩摘要等「有正文但无 role」的事件：摘要就是正文
+    const summary: ResolvedSlot = resolveSlot(data, shape, ContentSlot.SUMMARY);
+    if (summary.found) {
+      item.body = asText(summary.value);
+    }
+  }
+
+  if (kind === TrajectoryKind.ERROR) {
+    // 失败信号默认展开：D3 §4 要求失败必须可见，而不是等用户点开
+    item.expanded = true;
+    const retry: ResolvedSlot = resolveSlot(data, shape, ContentSlot.RETRY);
+    if (retry.found) {
+      item.title = `重试 ${asText(retry.value)}`;
+    }
   }
   return item;
 }
 
+/**
+ * 把投影结果并入列表：同 id 则合并，否则追加。
+ *
+ * 为什么不是简单 `push`：`tool/call` 与 `tool/result` 共享同一个条目 id
+ * （由 `callId` 派生），而**只有 call 携带工具名**。若各占一行，
+ * 用户看到的是「没有名字的工具卡 + 不知出处的输出」。
+ * 合并策略与到达顺序无关（见 `mergeTrajectoryItem`）。
+ */
+function appendOrMerge(items: TrajectoryItem[], incoming: TrajectoryItem): void {
+  const at: number = indexOfItem(items, incoming.id);
+  if (at < 0) {
+    items.push(incoming);
+    return;
+  }
+  items[at] = mergeTrajectoryItem(items[at], incoming);
+}
+
+/** 形状表里一个槽位的解析结果 */
+interface ResolvedSlot {
+  /** 是否命中了某条路径（命中但值为空串也算命中——空串是有效内容） */
+  found: boolean;
+  value: Object | undefined;
+}
+
+/**
+ * 按形状表取一个槽位的值。
+ *
+ * 只走形状表给出的那**一条**路径。**不做任何类型转换、不做候选回退**：
+ * 取到的可能是字符串、数组、对象，由调用方按槽位语义解释。
+ * 路径取不到就如实「没取到」——静默回退到别的字段名比取不到更危险。
+ */
+function resolveSlot(data: Object | undefined, shape: SessionEventShape,
+  slot: ContentSlot): ResolvedSlot {
+  const binding: SlotBinding | undefined = slotBinding(shape, slot);
+  if (binding === undefined || data === undefined) {
+    return { found: false, value: undefined };
+  }
+  const value: Object | undefined = readPath(data, binding.path);
+  if (value === undefined) {
+    return { found: false, value: undefined };
+  }
+  return { found: true, value: value };
+}
+
+/**
+ * `content` 块数组 → 文本。
+ *
+ * 实测形状（D2 §8.7.8）：`array<{type:'text', text}>`。
+ * 需要处理两种真实的嵌套：
+ *   1. `tool/result` 的块是 `{type:'tool-result', content:[…]}`——正文在**内层** `content`；
+ *   2. 非文本块的内部形状**仍未实测**，因此按块类型名占位，
+ *      而不是猜它的字段名去渲染（猜错只会显示空白，且不报错）。
+ * 若整段根本不是数组（旧版或异常），按字符串处理。
+ */
+function textFromBlocks(value: Object | undefined): string {
+  if (typeof value === 'string') {
+    return value as string;
+  }
+  if (!Array.isArray(value)) {
+    return asText(value);
+  }
+  const blocks: Object[] = value as Object[];
+  const parts: string[] = [];
+  for (let i = 0; i < blocks.length; i++) {
+    const block: Object = blocks[i];
+    // 工具结果块：正文在内层 content 里（实测）
+    const nested: Object[] | undefined = getArray(block, 'content');
+    if (nested !== undefined && getString(block, 'type') === 'tool-result') {
+      const inner: string = textFromBlocks(nested);
+      if (inner.length > 0) {
+        parts.push(inner);
+      }
+      continue;
+    }
+    const text: string | undefined = getString(block, 'text');
+    if (text !== undefined) {
+      parts.push(text);
+      continue;
+    }
+    const blockType: string = getString(block, 'type') ?? '';
+    if (blockType.length > 0 && blockType !== 'text') {
+      // 非文本块：显示类型占位，不猜内部结构
+      parts.push(`[${blockType}]`);
+    }
+  }
+  return parts.join('\n');
+}
+
+/** 把任意 JSON 值渲染成一行可读文本（用于标题类槽位） */
+function asText(value: Object | undefined): string {
+  if (value === undefined) {
+    return '';
+  }
+  if (typeof value === 'string') {
+    return value as string;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return `${value}`;
+  }
+  return JSON.stringify(value) ?? '';
+}
+
+/** 工具类事件的槽位填充（名称 / 参数 / 输出 / 配对 id） */
+function applyToolSlots(item: TrajectoryItem, data: Object | undefined,
+  shape: SessionEventShape): void {
+  const name: ResolvedSlot = resolveSlot(data, shape, ContentSlot.TOOL_NAME);
+  if (name.found) {
+    item.toolName = asText(name.value);
+  }
+  const args: ResolvedSlot = resolveSlot(data, shape, ContentSlot.TOOL_ARGS);
+  if (args.found) {
+    // 实测：`arguments` 已是 JSON 编码后的**字符串**；直接显示，不要二次编码
+    item.toolArgs = asText(args.value);
+  }
+  const output: ResolvedSlot = resolveSlot(data, shape, ContentSlot.TOOL_OUTPUT);
+  if (output.found) {
+    item.toolOutput = asText(output.value);
+  } else {
+    const blocks: ResolvedSlot = resolveSlot(data, shape, ContentSlot.CONTENT_BLOCKS);
+    if (blocks.found) {
+      item.toolOutput = textFromBlocks(blocks.value);
+    }
+  }
+  const callId: ResolvedSlot = resolveSlot(data, shape, ContentSlot.CALL_ID);
+  if (callId.found) {
+    item.callId = asText(callId.value);
+  }
+
+  if (item.toolState === ToolState.PENDING) {
+    // 形状里有没有「工具名」绑定，决定这是调用帧还是结果帧——
+    // 不去看工具名**字符串**是否为空：结果帧本来就不携带工具名（实测），
+    // 用字符串判空会把每个结果都当成「还没开始的调用」。
+    item.toolState = slotBinding(shape, ContentSlot.TOOL_NAME) === undefined
+      ? ToolState.SUCCESS
+      : ToolState.RUNNING;
+  }
+
+  // 实测：失败的结果帧同时带内层 `isError:true` 与顶层 `error{name,code}`。
+  // 只看 `message.content` 会把失败显示成成功——最典型的静默错误。
+  const isError: boolean | undefined = boolSlot(data, shape, ContentSlot.TOOL_IS_ERROR);
+  const errorCode: ResolvedSlot = resolveSlot(data, shape, ContentSlot.TOOL_ERROR_CODE);
+  const errorName: ResolvedSlot = resolveSlot(data, shape, ContentSlot.TOOL_ERROR_NAME);
+  if (isError === true || errorCode.found || errorName.found) {
+    item.toolState = ToolState.FAILED;
+    const label: string = errorName.found ? asText(errorName.value) : asText(errorCode.value);
+    if (label.length > 0 && item.toolOutput.indexOf(label) < 0) {
+      item.toolOutput = item.toolOutput.length === 0 ? label : `${item.toolOutput}\n[${label}]`;
+    }
+    // D3 §4：失败默认展开
+    item.expanded = true;
+  }
+}
+
+/** 读一个布尔槽位（值不是布尔时视为未取到） */
+function boolSlot(data: Object | undefined, shape: SessionEventShape,
+  slot: ContentSlot): boolean | undefined {
+  const resolved: ResolvedSlot = resolveSlot(data, shape, slot);
+  if (!resolved.found) {
+    return undefined;
+  }
+  return typeof resolved.value === 'boolean' ? resolved.value as boolean : undefined;
+}
+
+/** 交付物类事件的槽位填充（实测：`files` 是数组，取第一项） */
+function applyDeliverableSlots(item: TrajectoryItem, data: Object | undefined,
+  shape: SessionEventShape): void {
+  const path: ResolvedSlot = resolveSlot(data, shape, ContentSlot.DELIVERABLE_FILE);
+  const desc: ResolvedSlot = resolveSlot(data, shape, ContentSlot.DELIVERABLE_DESC);
+  if (path.found) {
+    const full: string = asText(path.value);
+    item.fileName = full;
+    item.title = full;
+  }
+  if (desc.found) {
+    item.progress = asText(desc.value);
+    item.body = item.progress;
+  }
+  if (item.title.length === 0) {
+    item.title = '交付物';
+  }
+}
+
+/** 任务清单类事件的槽位填充（`array<{content,status}>`） */
+function applyTodoSlots(item: TrajectoryItem, data: Object | undefined,
+  shape: SessionEventShape): void {
+  const list: ResolvedSlot = resolveSlot(data, shape, ContentSlot.TODO_LIST);
+  if (!list.found || !Array.isArray(list.value)) {
+    return;
+  }
+  const todos: Object[] = list.value as Object[];
+  const lines: string[] = [];
+  let done: number = 0;
+  for (let i = 0; i < todos.length; i++) {
+    const content: string = getString(todos[i], 'content') ?? '';
+    const status: string = getString(todos[i], 'status') ?? '';
+    if (status === 'completed') {
+      done++;
+    }
+    const mark: string = status === 'completed' ? '✓' : (status === 'in_progress' ? '▸' : '·');
+    lines.push(`${mark} ${content}`);
+  }
+  item.body = lines.join('\n');
+  item.title = `任务清单（${done}/${todos.length}）`;
+  item.progress = item.title;
+  item.percent = todos.length === 0 ? -1 : Math.round(done * 100 / todos.length);
+}
+
 /** 上游呈现家族（`dshcompat.EventFamily`）→ 本层轨迹枚举 */
-function kindOfFamily(family: EventFamily): TrajectoryKind {
+function familyKind(family: EventFamily): TrajectoryKind {
   if (family === EventFamily.REASONING) {
     return TrajectoryKind.REASONING;
   }
@@ -1292,6 +1565,9 @@ function kindOfFamily(family: EventFamily): TrajectoryKind {
   }
   if (family === EventFamily.ERROR) {
     return TrajectoryKind.ERROR;
+  }
+  if (family === EventFamily.DELIVERABLE) {
+    return TrajectoryKind.DELIVERABLE;
   }
   return TrajectoryKind.MESSAGE;
 }

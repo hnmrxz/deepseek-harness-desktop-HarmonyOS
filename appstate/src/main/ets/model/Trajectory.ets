@@ -51,6 +51,14 @@ export interface TrajectoryItem {
   elapsedMs: number;
   /** 工具名（仅 TOOL） */
   toolName: string;
+  /**
+   * 工具调用 id（仅 TOOL；`tool/call` 与 `tool/result` 靠它配对）。
+   *
+   * 实测：`tool/result` 用 `message.source.callId` 指回调用，
+   * 但**结果帧本身不携带工具名**——工具名只在 `tool/call` 上。
+   * 因此两帧必须合成同一条目，否则工具卡会显示成「没有名字的结果」。
+   */
+  callId: string;
   /** 工具参数摘要（仅 TOOL，单行） */
   toolArgs: string;
   /** 工具状态（仅 TOOL） */
@@ -86,6 +94,7 @@ export function makeItem(id: string, kind: TrajectoryKind, at: number): Trajecto
     model: '',
     elapsedMs: 0,
     toolName: '',
+    callId: '',
     toolArgs: '',
     toolState: ToolState.PENDING,
     toolOutput: '',
@@ -98,6 +107,55 @@ export function makeItem(id: string, kind: TrajectoryKind, at: number): Trajecto
     streaming: false,
     expanded: false
   };
+}
+
+/**
+ * 合并两条**同一工具调用**的条目（`tool/call` 与 `tool/result`）。
+ *
+ * 【为什么必须合并，而不是各占一行】
+ *   实测（D2 §8.7.8）：`tool/call` 携带 `name` + `arguments`，
+ *   `tool/result` 只携带 `message.content` + `message.source.callId`——
+ *   **结果帧里没有工具名**。若各占一行，用户会看到一张没有名字的工具卡，
+ *   后面跟着一段不知从哪来的输出。两帧必须落在同一张卡上。
+ *
+ * 【保留策略】把 `next`（后到的那条）当作真相：
+ *   - 工具名与参数**只在 call 上有**，所以从 `previous` 补；
+ *   - 输出与状态**只在 result 上有**，所以以 `next` 为准；
+ *   - `at` 取两者较晚者（排序键要跟着最新活动走）。
+ *   这是纯函数，刻意与事件到达顺序解耦：无论 snapshot 里哪条先出现，
+ *   合并结果都一样——顺序依赖正是这类缺陷最难查的形态。
+ */
+export function mergeTrajectoryItem(previous: TrajectoryItem, next: TrajectoryItem): TrajectoryItem {
+  const merged: TrajectoryItem = makeItem(previous.id, next.kind, Math.max(previous.at, next.at));
+  merged.body = next.body.length > 0 ? next.body : previous.body;
+  merged.speaker = next.speaker;
+  merged.model = next.model.length > 0 ? next.model : previous.model;
+  merged.elapsedMs = next.elapsedMs > 0 ? next.elapsedMs : previous.elapsedMs;
+  merged.toolName = next.toolName.length > 0 ? next.toolName : previous.toolName;
+  merged.callId = next.callId.length > 0 ? next.callId : previous.callId;
+  merged.toolArgs = next.toolArgs.length > 0 ? next.toolArgs : previous.toolArgs;
+  merged.toolOutput = next.toolOutput.length > 0 ? next.toolOutput : previous.toolOutput;
+  // PENDING 是「这帧没解析出状态」的占位，此时保留另一侧的真实状态
+  merged.toolState = next.toolState === ToolState.PENDING ? previous.toolState : next.toolState;
+  merged.subagentName = next.subagentName.length > 0 ? next.subagentName : previous.subagentName;
+  merged.fileName = next.fileName.length > 0 ? next.fileName : previous.fileName;
+  merged.fileSize = next.fileSize > 0 ? next.fileSize : previous.fileSize;
+  merged.title = next.title.length > 0 ? next.title : previous.title;
+  merged.progress = next.progress.length > 0 ? next.progress : previous.progress;
+  merged.percent = next.percent >= 0 ? next.percent : previous.percent;
+  merged.streaming = next.streaming;
+  merged.expanded = next.expanded || previous.expanded;
+  return merged;
+}
+
+/** 在列表中按 id 定位条目；不存在返回 -1 */
+export function indexOfItem(items: TrajectoryItem[], id: string): number {
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].id === id) {
+      return i;
+    }
+  }
+  return -1;
 }
 
 /** 审批风险等级（D3 §3.4：危险动作视觉权重反转） */

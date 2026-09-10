@@ -3,7 +3,9 @@
  */
 
 import connectionTest from './Connection.test';
+import trajectoryProjectionTest from './Trajectory.test';
 
 export default function testsuite() {
   connectionTest();
+  trajectoryProjectionTest();
 }

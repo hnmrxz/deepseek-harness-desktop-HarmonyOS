@@ -83,6 +83,59 @@ export function toStringArray(value: Object[]): string[] {
   return out;
 }
 
+/**
+ * 按点分路径取值：`readPath(data, 'message.source.model')`。
+ *
+ * `$` 表示根对象自身（`readPath(data, '$')` 就是 `data`）。
+ * 中间段为**整数**时按数组下标解释（`readPath(d, 'files.0.path')`），
+ * 这在上游里是必要的：交付物事件把文件列表放在 `files` 数组里。
+ * 任何一段不存在、或类型不符（对象段遇到标量、数组段遇到非数组、下标越界），
+ * 都返回 `undefined`——**不抛异常、不做类型转换、不返回 placeholder**。
+ *
+ * 返回 placeholder 是一个刻意避开的陷阱：若「键不存在」也返回对象，
+ * 调用方就再也分不清「字段缺失」与「字段为空」，而这两种情况需要不同的处置。
+ */
+export function readPath(source: Object | null | undefined, path: string): Object | undefined {
+  if (path === '$') {
+    return source === null ? undefined : source;
+  }
+  if (path.length === 0) {
+    return undefined;
+  }
+  let cursor: Object | undefined = source === null ? undefined : source;
+  let start: number = 0;
+  while (start <= path.length) {
+    const dot: number = path.indexOf('.', start);
+    const end: number = dot < 0 ? path.length : dot;
+    const segment: string = path.substring(start, end);
+    if (segment.length === 0) {
+      return undefined;
+    }
+    cursor = readSegment(cursor, segment);
+    if (cursor === undefined || dot < 0) {
+      return cursor;
+    }
+    start = dot + 1;
+  }
+  return cursor;
+}
+
+/** 读一段：整数按数组下标，其余按对象键 */
+function readSegment(cursor: Object | undefined, segment: string): Object | undefined {
+  if (cursor === undefined) {
+    return undefined;
+  }
+  if (/^\d+$/.test(segment)) {
+    if (!Array.isArray(cursor)) {
+      return undefined;
+    }
+    const list: Object[] = cursor as Object[];
+    const at: number = Number.parseInt(segment, 10);
+    return at < list.length ? list[at] : undefined;
+  }
+  return getField(cursor, segment);
+}
+
 /** JSON 解析：失败返回 undefined，绝不抛异常 */
 export function parseJson(text: string): Object | undefined {
   try {

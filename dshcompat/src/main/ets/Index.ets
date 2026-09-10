@@ -129,3 +129,15 @@ export {
   WATERFALL_QUESTION
 } from './RemoteEvents';
 export type { ForwardedEvent } from './RemoteEvents';
+
+// 会话事件的**形状表**（字段取值路径 + 内容槽位；实测事实的唯一来源）
+export {
+  ContentSlot,
+  eventShapeOf,
+  familyIsStandalone,
+  isMeasuredEventType,
+  MEASURED_EVENT_TYPE_COUNT,
+  SESSION_EVENT_SHAPES,
+  slotBinding
+} from './EventShape';
+export type { SessionEventShape, SlotBinding } from './EventShape';

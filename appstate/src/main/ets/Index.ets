@@ -18,8 +18,11 @@ export {
   Speaker,
   ToolState,
   TrajectoryKind,
-  makeItem
-} from './model/Trajectory';export type {
+  indexOfItem,
+  makeItem,
+  mergeTrajectoryItem
+} from './model/Trajectory';
+export type {
   PendingChoice,
   PendingItem,
   TrajectoryItem

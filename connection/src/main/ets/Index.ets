@@ -63,6 +63,7 @@ export {
   isRecord,
   isStringArray,
   parseJson,
+  readPath,
   stringifyJson,
   toStringArray
 } from './protocol/JsonValue';
