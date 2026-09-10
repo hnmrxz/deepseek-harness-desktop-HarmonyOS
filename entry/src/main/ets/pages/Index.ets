@@ -68,13 +68,13 @@ struct Index {
   // ─────────────────────────── 日志 ───────────────────────────
 
   private log(level: LogLevel, text: string): void {
-    const now: Date = new Date();
-    const time: string = `${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
+    const time: string = formatClock(Date.now());
     // 单行日志：ArkTS 不允许数组内直接修改，必须整体替换以触发刷新
     const next: LogLine[] = this.lines.slice();
     next.push({ level: level, time: time, text: text });
     this.lines = next;
-    hilog.info(DOMAIN, TAG, '%{public}s %{public}s', level, text);
+    const head: string = text.length > 400 ? text.substring(0, 400) : text;
+    hilog.info(DOMAIN, TAG, '%{public}s %{public}s', level, head);
   }
 
   private clearLog(): void {
@@ -136,10 +136,17 @@ struct Index {
 
   // ─────────────────────────── 步骤 ② 一元调用 ───────────────────────────
 
-  /** 依次尝试候选端点，找到可用的那个（D2 §7 A-6 是未决问题，此处用于探测） */
+  /**
+   * 依次尝试候选端点，找到可用的那个。
+   *
+   * 端点与参数形态来自**生成调用描述符**（见 D2 §8.4，由 tools/protocol-contract.mjs 提取）：
+   *   session/list      params: _request（注意带下划线）
+   *   session/modelCatalog / pluginInventory/list / settings/describe / agentPresets/list：无参数
+   * 因此这里用「无参数」的只读端点做连通性判定，避免参数形状错误干扰结论。
+   */
   private async runUnary(): Promise<void> {
-    this.log(LogLevel.STEP, '步骤②：一元 RPC（探测可用端点）');
-    const candidates: string[] = ['session/list', 'workspace/list'];
+    this.log(LogLevel.STEP, '步骤②：一元 RPC（只读端点连通性判定）');
+    const candidates: string[] = ['session/modelCatalog', 'pluginInventory/list', 'settings/describe'];
     const noArgs: Record<string, Object> = {};
     for (let i = 0; i < candidates.length; i++) {
       const endpoint: string = candidates[i];
@@ -148,14 +155,14 @@ struct Index {
         this.endpointUsed = endpoint;
         const value: Object | undefined = result.value;
         this.log(LogLevel.OK, `② 一元调用成功：${endpoint}`);
-        this.log(LogLevel.INFO, `value 类型=${typeof value} 摘要=${summarize(value)}`);
+        this.log(LogLevel.INFO, `value 摘要=${summarize(value)}`);
         await this.runEventStream();
         return;
       }
       const failure: RemoteFailure | undefined = result.error;
       this.log(LogLevel.FAIL, `端点半失败：${endpoint} → ${failure?.toString() ?? 'unknown'}`);
     }
-    this.log(LogLevel.FAIL, '② 一元调用全部候选失败：请核对 D2 §7 A-6（端点清单）');
+    this.log(LogLevel.FAIL, '② 一元调用全部候选失败：请核对 D2 §8.4 的调用契约表');
   }
 
   // ─────────────────────────── 步骤 ③④⑤ 事件流 ───────────────────────────
@@ -338,6 +345,15 @@ struct Index {
 
 function pad2(value: number): string {
   return value < 10 ? `0${value}` : `${value}`;
+}
+
+/** 本地时钟字符串 HH:MM:SS（用单个 Date 实例派生，避免重复构造） */
+function formatClock(epochMs: number): string {
+  const d: Date = new Date(epochMs);
+  const hh: string = pad2(d.getHours());
+  const mm: string = pad2(d.getMinutes());
+  const ss: string = pad2(d.getSeconds());
+  return `${hh}:${mm}:${ss}`;
 }
 
 function levelColor(level: LogLevel): Color {
