@@ -31,6 +31,14 @@ export struct SessionListPane {
   @Prop selectedId: string = '';
   onSelect: (id: string) => void = () => {
   };
+  /**
+   * 新建会话（D1 §7.2 的「新建」入口）。
+   *
+   * 放在会话列表顶部而不是全局标题栏：新建会话是**列表级**动作，
+   * 三种形态下会话区都由本组件承载，因此一处改动即可覆盖单栏/双栏/三栏。
+   */
+  onCreate: () => void = () => {
+  };
 
   /**
    * 状态徽标文字（D3 §3.1：运行中 / 待审核 / 空闲 / 失败）。
@@ -78,6 +86,19 @@ export struct SessionListPane {
 
   build() {
     Column() {
+      Row() {
+        Blank()
+        Text('＋ 新建会话')
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.brand'))
+          .padding({ left: Sp.S, right: Sp.S, top: Sp.XS, bottom: Sp.XS })
+          .onClick(() => {
+            this.onCreate();
+          })
+      }
+      .width('100%')
+      .padding({ left: Sp.S, right: Sp.S, top: Sp.S })
+
       if (this.sessions.length === 0) {
         Column({ space: Sp.M }) {
           SymbolGlyph($r('sys.symbol.message'))

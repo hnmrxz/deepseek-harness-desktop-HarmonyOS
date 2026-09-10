@@ -161,6 +161,15 @@ struct Index {
   @State hubControlReady: boolean = false;
   /** 当前 mux 活动逻辑流数（正常为 2 或 3） */
   @State hubStreams: number = 0;
+  /**
+   * 是否已连上 Host（一元可用）。
+   *
+   * **与 `hubPhase === LIVE` 不是一回事**：`phase` 会因 `$events` 流终止而降级为
+   * `DEGRADED`，而那一刻一元调用（会话列表、新建会话、发送…）仍然是真实可用的。
+   * 视图判断「用真实数据还是桩数据」必须用本字段——用 `phase` 会让
+   * 「连上了但事件流恰好断了」的时刻又退回桩数据，等于给用户看假会话。
+   */
+  @State hubConnected: boolean = false;
   /** 未识别的上游事件类型数量（真机跑一次即可据此回填事件表） */
   @State hubUnknownEvents: number = 0;
   /** 协议旁路日志（取尾部若干行展示，用于区分「列表为空」与「调用失败」） */
@@ -183,7 +192,7 @@ struct Index {
   /**
    * 把中枢快照落到页面状态。
    *
-   * 设计取舍：**只在 LIVE 时覆盖桩数据**。
+   * 设计取舍：**只在「已连上」时覆盖桩数据**（判据是 `s.connected`，不是 `s.phase`）。
    * 未连接时保留桩数据，是为了让「没有 Host」的新用户也能看到完整的界面结构
    * （D3 §4 要求空态有说明）；一旦连上，列表与待决就以 Host 为准——
    * 此时若 Host 上确实没有会话，界面就应当显示空列表，而不是继续显示桩数据
@@ -198,12 +207,14 @@ struct Index {
     this.hubStreams = s.activeStreams;
     this.hubUnknownEvents = s.unknownEventTypes.length;
     this.hubTrace = s.trace;
+    this.hubConnected = s.connected;
     this.queuedCount = s.outbox;
-    if (s.phase !== HubPhase.LIVE) {
-      this.offline = s.phase !== HubPhase.CONNECTING && s.phase !== HubPhase.IDLE;
+    if (!s.connected) {
+      this.offline = s.phase === HubPhase.DEGRADED;
       return;
     }
-    this.offline = false;
+    // 已连上但事件流断了：数据是真的，只是实时性降级，如实标注为离线提示
+    this.offline = s.phase === HubPhase.DEGRADED;
     this.sessions = s.sessions;
     this.pending = s.pending;
     this.selectedSessionTitle = s.selectedTitle;
@@ -321,7 +332,7 @@ struct Index {
   private openSession(id: string): void {
     this.selectedSessionId = id;
     this.selectedSessionTitle = this.titleOf(id);
-    const live: boolean = this.hubPhase === HubPhase.LIVE;
+    const live: boolean = this.hubConnected;
     // 未连接时用桩轨迹让界面可读；连上后清空并由中枢的 session/follow 推真实轨迹
     // （若不清空，真实轨迹会追加在桩数据后面，看起来像「会话里混进了别人的内容」）
     this.trajectoryItems = live ? [] : stubTrajectory();
@@ -789,7 +800,7 @@ struct Index {
         },
         onStop: () => {
           // 连上后停止 = 真的取消当前轮次；未连接时只熄灭本地指示
-          if (this.hubPhase === HubPhase.LIVE) {
+          if (this.hubConnected) {
             SessionHub.shared().cancelTurn();
           }
           this.running = false;
@@ -829,7 +840,7 @@ struct Index {
    * 未连接时不发任何请求、也不把卡片移除：卡片消失会让用户以为已经答复成功。
    */
   private decidePending(item: PendingItem, choiceId: string, reason: string): void {
-    if (this.hubPhase !== HubPhase.LIVE) {
+    if (!this.hubConnected) {
       return;
     }
     // 【已知缺口】拒绝理由目前**无法随审批应答上传**：上游的审批 outcome 只是一个
@@ -846,7 +857,7 @@ struct Index {
 
   /** 答复提问（`selected` 是选项 label 原文，符合上游 `AskUserQuestionAnswerItem`）。 */
   private answerPending(item: PendingItem, selected: string[], custom: string): void {
-    if (this.hubPhase !== HubPhase.LIVE) {
+    if (!this.hubConnected) {
       return;
     }
     SessionHub.shared().answerQuestion(item.id, selected, custom);
@@ -866,7 +877,7 @@ struct Index {
     }
     this.draft = '';
     this.attachments = [];
-    if (this.hubPhase === HubPhase.LIVE) {
+    if (this.hubConnected) {
       SessionHub.shared().sendPrompt(text);
     }
   }
@@ -950,6 +961,11 @@ struct Index {
           selectedId: this.selectedSessionId,
           onSelect: (id: string) => {
             this.openSession(id);
+          },
+          onCreate: () => {
+            // 不在这里判连接状态：中枢会给出「尚未连接 Host，无法新建会话」
+            // 并广播到状态条——单一判定点比在两处各写一遍更不容易走偏
+            SessionHub.shared().createSession();
           }
         })
           .layoutWeight(1)

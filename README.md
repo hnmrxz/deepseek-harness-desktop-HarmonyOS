@@ -251,6 +251,18 @@ devecocli ui layout --device DshApi26Phone --format json
 
 日志不打印 token 与 cookie 值（见 D1 §11.5 S4）。
 
+### 在本仓库里做脚本化改动的两条硬约束
+
+1. **绝不要用 `Get-Content -Raw` + `Set-Content` 往返改写这些源文件。**
+   Windows PowerShell 5.1 的 `Get-Content` 默认按 ANSI/GBK 读取，再按 UTF-8 写回，
+   会把文件里的**中文注释全部变成乱码**，并且可能吃掉换行导致语法错误。
+   已验证过这一惨案（`entry/pages/Index.ets` 被写坏，只能 `git checkout` 重做）。
+   要改文件就用带字面量替换的工具（`edit` 类），或者用明确指定 `-Encoding UTF8`
+   读取、再 `[System.IO.File]::WriteAllText` 以无 BOM UTF-8 写回。
+2. **不要用进程名匹配去 kill**。本仓库的开发代理运行在 DSH 自身进程内，
+   `Get-Process node | Where-Object {...} | Stop-Process` 这类写法会杀掉代理自己。
+   停后台任务用任务 id，停模拟器用 `devecocli emulator stop`。
+
 ## 关键待决（见 D1 §12.2）
 
 - v1 是否必须同时覆盖手机形态？（建议：是）

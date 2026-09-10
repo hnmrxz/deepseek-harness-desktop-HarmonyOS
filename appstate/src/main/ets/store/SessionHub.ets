@@ -47,6 +47,7 @@ import {
   RemoteEventFrameType,
   SESSION_CANCEL_ENDPOINT,
   SESSION_CONTROL_ENDPOINT,
+  SESSION_CREATE_ENDPOINT,
   SESSION_FOLLOW_ENDPOINT,
   SESSION_LIST_ENDPOINT,
   SESSION_PROMPT_ENDPOINT,
@@ -105,6 +106,14 @@ export interface HubSnapshot {
   eventsReady: boolean;
   /** `session/control` 是否已收到 baseline 帧 */
   controlReady: boolean;
+  /**
+   * 是否已连上 Host（认证 + 载体验证通过），一元能力可用。
+   *
+   * **与 `phase === LIVE` 不是一回事**：`phase` 会因事件流终止而降级为 `DEGRADED`，
+   * 那时一元调用仍然可用。视图判断「该用真实数据还是桩数据」必须用本字段——
+   * 用 `phase` 会让「连上了但事件流恰好断了」的时刻又退回桩数据，等于给用户看假会话。
+   */
+  connected: boolean;
   /** 当前 mux 上的活动逻辑流数（诊断用；正常为 2 或 3） */
   activeStreams: number;
   /** 离线待发条数 */
@@ -157,6 +166,20 @@ export class SessionHub {
   private running: boolean = false;
   private eventsReady: boolean = false;
   private controlReady: boolean = false;
+  /**
+   * **一元能力是否可用**——与「事件流是否存活」解耦。
+   *
+   * 存在理由（真机验证发现的设计缺陷）：原先 `createSession` / `sendPrompt` 用
+   * `phase === LIVE` 作为前置条件，而 `phase` 会在 `$events` 流终止时降级为 `DEGRADED`。
+   * 于是「事件流死了」连带把**仍然可用**的一元调用也一起禁掉了——
+   * 真机上表现为「连上了、列表能拉（`list ok 4 条`）、但点新建会话毫无反应」。
+   *
+   * 事实是：一元 RPC 走 HTTP，`$events` 走 WebSocket，**两者是独立的载体**，
+   * 一条断了不代表另一条不能用。因此这里用一个独立的标志表示
+   * 「认证与载体已就绪，一元调用可以尝试」，只在 `disconnect()` 时清除。
+   * 至于调用到底成不成，交给调用本身去回答——**预判可用性比尝试更不可靠**。
+   */
+  private unaryReady: boolean = false;
   private lastError: string = '';
   private traceLines: string[] = [];
   /**
@@ -260,6 +283,8 @@ export class SessionHub {
 
     this.openControlStream();
     this.phase = HubPhase.LIVE;
+    // 认证与载体已就绪：一元能力从此可用，且**不随事件流的生死变化**
+    this.unaryReady = true;
     this.notify();
     await this.refreshSessions();
     this.flushOutbox();
@@ -274,6 +299,7 @@ export class SessionHub {
     this.phase = HubPhase.IDLE;
     this.eventsReady = false;
     this.controlReady = false;
+    this.unaryReady = false;
     this.record('connection stopped');
     this.notify();
   }
@@ -324,6 +350,7 @@ export class SessionHub {
       running: this.running,
       eventsReady: this.eventsReady,
       controlReady: this.controlReady,
+      connected: this.unaryReady,
       activeStreams: this.activeStreamCount(),
       outbox: this.outboxList.length,
       lastError: this.lastError,
@@ -605,7 +632,56 @@ export class SessionHub {
 
   // ───────────────────────── 会话与轨迹 ─────────────────────────
 
-  /** 拉取会话列表 */
+  /**
+   * 新建会话。
+   *
+   * 上游 `session/create` 的 `request` 字段**全部可选**，传 `{}` 即
+   * 「用默认工作区建一个新会话」——已实测（D2 §8.7.2）：返回 `{sessionId, agentPreset}`。
+   * 不传 `cwd` 是刻意的：`cwd` 由 Host 的默认工作区决定，客户端不该猜一个路径塞过去。
+   *
+   * 建好后立刻拉一次列表并选中它：新会话在 Host 上 `blank: true`、`title: null`，
+   * 界面上会显示为「新会话 + cwd 末段」，用户马上就能往里发消息。
+   *
+   * @returns 新会话 id；失败或未连接时返回 undefined（错误已写入 lastError 并广播）
+   */
+  async createSession(): Promise<string | undefined> {
+    if (!this.unaryReady) {
+      this.lastError = '尚未连接 Host，无法新建会话。请先在「添加 Host」里完成连接。';
+      this.notify();
+      return undefined;
+    }
+    // 空对象也要有声明类型：ArkTS 禁止无类型对象字面量
+    const inner: Record<string, Object> = {};
+    const body: Record<string, Object> = {};
+    body['request'] = inner as Object;
+    const args: Object | undefined = argsFor(SESSION_CREATE_ENDPOINT, body as Object);
+    if (args === undefined) {
+      this.lastError = '兼容面缺少会话创建端点的参数契约（上表未生成？）';
+      this.notify();
+      return undefined;
+    }
+    const result: RpcResult = await this.conn.call(SESSION_CREATE_ENDPOINT, args);
+    if (!result.ok) {
+      const failure = result.error;
+      const code: string = failure === undefined ? 'unknown' : failure.code;
+      this.lastError = `新建会话失败：${friendlyFailure(code, failure === undefined ? '' : failure.message)}`;
+      this.record(`create fail ${code}`);
+      this.notify();
+      return undefined;
+    }
+    const value: Object | undefined = result.value;
+    const sessionId: string | undefined = value === undefined ? undefined : getString(value, 'sessionId');
+    this.record(`create ok ${sessionId === undefined ? '(无 sessionId)' : sessionId.substring(0, 12)}`);
+    await this.refreshSessions();
+    if (sessionId !== undefined && sessionId.length > 0) {
+      await this.selectSession(sessionId);
+    }
+    return sessionId;
+  }
+
+  /**
+   * 拉取会话列表
+   */
   async refreshSessions(): Promise<void> {
     const body: Record<string, Object> = {};
     const args: Object | undefined = argsFor(SESSION_LIST_ENDPOINT, body as Object);
@@ -865,7 +941,7 @@ export class SessionHub {
       return false;
     }
     const requestId: string = mintRequestId();
-    if (this.phase !== HubPhase.LIVE) {
+    if (!this.unaryReady) {
       this.outboxList.push({ requestId: requestId, sessionId: sessionId, text: trimmed, at: Date.now() });
       this.lastError = '当前离线：已加入待发队列，连接恢复后自动发送';
       this.notify();
@@ -908,7 +984,7 @@ export class SessionHub {
 
   /** 网络恢复后按序补发待发队列 */
   private async flushOutbox(): Promise<void> {
-    if (this.phase !== HubPhase.LIVE || this.outboxList.length === 0) {
+    if (!this.unaryReady || this.outboxList.length === 0) {
       return;
     }
     const queue: OutboxEntry[] = this.outboxList;
