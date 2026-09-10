@@ -109,7 +109,7 @@ export function stubTrajectory(): TrajectoryItem[] {
     + '2. `ok:true` 但没有 `value` 字段同样判为解析失败，但允许 `value` 显式为 `null`；\n'
     + '3. `details` 缺省时收窄为空串，**不因为 details 形状而丢弃整个业务错误**；\n'
     + '4. `gateway/*` 前缀是调用方契约错误，不应重试；域内错误码原样呈现给用户。\n\n'
-    + '```ts\n// 断言依据：D2 §1.1 信封校验规则\nconst result = parseConnectionResponse(body, r1, "session/list");\n```';
+    + '```ts\n// 断言依据：D2 §1.1 信封校验规则\nconst result = parseConnectionResponse(body, rpcId, endpoint);\n```';
   out.push(assistantMsg);
 
   const goal = makeItem('t-8', TrajectoryKind.GOAL, at(16));
