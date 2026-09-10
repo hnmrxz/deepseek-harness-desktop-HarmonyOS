@@ -1258,109 +1258,16 @@ export function projectWireRecord(record: Object): TrajectoryItem | undefined {
     return undefined;
   }
 
-  // 结构性事件（轮次/步边界、请求头、队列 splice、命令、压缩边界…）不是对话内容。
-  // 实测清单见 D2 §8.7.8；它们仍会推动状态（如 turn/* 触发列表刷新），但不该出现在轨迹里。
-  if (isStructuralEventType(eventType)) {
-    return undefined;
-  }
-
   const kind: TrajectoryKind = kindOfFamily(classifyEventType(eventType));
   const item: TrajectoryItem = makeItem(`ev-${seq}`, kind, time);
+  item.body = data === undefined ? '' : JSON.stringify(data);
   item.speaker = isUserAuthoredEvent(eventType) ? Speaker.USER : Speaker.ASSISTANT;
-  // 各家族的取值路径全部来自对 Host 落盘日志的实测（D2 §8.7.8「data 的内部结构」）
-  if (eventType === 'user/message') {
-    item.body = textsOf(getArray(data, 'content'));
-  } else if (eventType === 'assistant/message') {
-    const message: Object | undefined = getRecord(data, 'message');
-    item.body = textsOf(getArray(message, 'content'));
-    // 模型名在 message.source.model（消息内部），**不在 data 顶层**
-    const source: Object | undefined = getRecord(message, 'source');
-    item.model = getString(source, 'model') ?? '';
-    item.streaming = false;
-  } else if (eventType === 'system/message') {
-    // 实测该事件的 message 是字符串；但仍兼容块数组形态，避免上游改成数组后静默丢内容
-    const asText: string | undefined = getString(data, 'message');
-    item.body = asText !== undefined ? asText : textsOf(getArray(data, 'message'));
-  } else if (eventType === 'tool/call') {
-    item.toolName = getString(data, 'name') ?? '';
-    // **arguments 是字符串**（JSON 编码后的文本，不是对象）——当成对象取字段会全空
-    item.toolArgs = getString(data, 'arguments') ?? '';
-    item.toolState = ToolState.RUNNING;
-  } else if (eventType === 'tool/result') {
-    const message: Object | undefined = getRecord(data, 'message');
-    item.toolOutput = textsOf(getArray(message, 'content'));
-    item.toolState = ToolState.SUCCESS;
-  } else if (eventType === 'subagent/catalog') {
-    item.subagentName = getString(data, 'label') ?? '';
-  } else if (eventType === 'goal/change') {
-    const goal: Object | undefined = getRecord(data, 'goal');
-    item.title = getString(goal, 'objective') ?? '';
-    item.progress = getString(goal, 'phase') ?? '';
-  } else if (eventType === 'todo/write') {
-    const todos: Object[] | undefined = getArray(data, 'todos');
-    if (todos !== undefined && todos.length > 0) {
-      item.title = getString(todos[0], 'content') ?? '';
-      item.progress = getString(todos[0], 'status') ?? '';
-    }
-  } else if (kind === TrajectoryKind.ERROR) {
-    item.body = data === undefined ? '' : JSON.stringify(data);
-  } else {
-    // 未识别类型：把原始 JSON 展示出来，而不是丢掉——用户至少能看到这里发生了什么
-    item.body = data === undefined ? '' : JSON.stringify(data);
-  }
+  // 工具类事件在数据尚未解析时不显示状态徽标，避免把未知误显示成「运行中」
+  item.toolState = ToolState.PENDING;
   if (kind === TrajectoryKind.ERROR) {
     item.expanded = true;
   }
   return item;
-}
-
-/**
- * 从内容块数组里取出可读文本。
- *
- * 实测块形状：`{type:'text', text}`（`user/message` 的 `content[]` 已确认，
- * 与上游 `ContentBlockMap` 的 `TextBlock` 一致）。
- * **非文本块按类型名占位显示**（如 `[image]`）——本层还不知道它们的内部形状
- * （D2 §8.7.8 的「仍未确认」），占位比假装能渲染更诚实，也比丢弃更能说明问题。
- */
-function textsOf(content: Object[] | undefined): string {
-  if (content === undefined) {
-    return '';
-  }
-  const parts: string[] = [];
-  for (let i = 0; i < content.length; i++) {
-    const block: Object = content[i];
-    const blockType: string = getString(block, 'type') ?? '';
-    if (blockType === 'text') {
-      const text: string = getString(block, 'text') ?? '';
-      if (text.length > 0) {
-        parts.push(text);
-      }
-    } else if (blockType.length > 0) {
-      parts.push(`[${blockType}]`);
-    }
-  }
-  return parts.join('\n');
-}
-
-/**
- * 结构性事件：推动状态但不是对话内容（实测清单见 D2 §8.7.8）。
- *
- * 与「审计事件」分开命名，因为二者语义不同：
- * 审计事件是**有记录价值但无对话内容**（权限/沙箱/审批策略），
- * 结构性事件是**边界与元数据**（轮次/步/请求头/队列 splice/命令）。
- * 两者都不进轨迹，但将来若要做「运行详情」视图，结构性事件是主要素材。
- */
-function isStructuralEventType(name: string): boolean {
-  return name === 'turn/start' || name === 'turn/end'
-    || name === 'step/start' || name === 'step/end'
-    || name === 'request/context' || name === 'request/header'
-    || name === 'agent/inbox/spliced'
-    || name === 'command/run' || name === 'command/done'
-    || name === 'compaction/start' || name === 'compaction/end'
-    || name === 'session' || name === 'session/end-seed'
-    || name === 'session/title' || name === 'session/title-llm-request'
-    || name === 'web/deepseek-search-llm-request'
-    || name === 'assistant/attempt';
 }
 
 /** 上游呈现家族（`dshcompat.EventFamily`）→ 本层轨迹枚举 */
