@@ -1,0 +1,18 @@
+# 调研副本（上游文档/参考工程副本，不纳入版本库）
+.research/
+
+# DevEco / Hvigor 构建产物
+build/
+.hvigor/
+.idea/
+oh_modules/
+*.har
+*.hap
+*.app
+*.hqf
+local.properties
+
+# 日志与临时文件
+*.log
+.DS_Store
+Thumbs.db
