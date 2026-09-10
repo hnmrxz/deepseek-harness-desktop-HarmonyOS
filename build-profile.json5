@@ -37,6 +37,15 @@
           ]
         }
       ]
+    },
+    {
+      "name": "connection",
+      "srcPath": "./connection",
+      "targets": [
+        {
+          "name": "default"
+        }
+      ]
     }
   ]
 }

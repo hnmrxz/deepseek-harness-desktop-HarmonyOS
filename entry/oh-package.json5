@@ -1,10 +1,11 @@
 {
   "name": "entry",
   "version": "1.0.0",
-  "description": "Please describe the basic information.",
+  "description": "DeepSeek Harness 鸿蒙客户端入口模块",
   "main": "",
   "author": "",
-  "license": "",
-  "dependencies": {}
+  "license": "MIT",
+  "dependencies": {
+    "connection": "file:../connection"
+  }
 }
-
