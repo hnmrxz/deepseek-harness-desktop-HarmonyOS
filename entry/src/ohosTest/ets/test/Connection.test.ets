@@ -17,6 +17,7 @@ import {
   backoffDelayMs,
   BACKOFF_STEPS_MS,
   checkTarget,
+  CLIENT_FAILURE_CODE,
   CookieJar,
   buildClientRequest,
   endpointOf,
@@ -27,11 +28,13 @@ import {
   parseCookieString,
   parseHostAddress,
   parseTarget,
+  RemoteFailure,
   getString,
   getArray,
   isRecord,
   parseJson
 } from 'connection';
+import { projectSessionList } from 'appstate';
 
 function sampleArgs(): Record<string, Object> {
   const inner: Record<string, Object> = {};
@@ -130,9 +133,23 @@ export default function connectionTest() {
       expect(checkTarget(API_CHANNEL, 'dynamicCordisRunner/getClientCode').ok).assertTrue();
     });
 
-    it('rejects the reserved /api channel', 0, () => {
-      const r = checkTarget('/api', 'session/list');
-      expect(r.ok).assertFalse();
+    /**
+     * 【回归测试 · 曾经的真实生产 bug】
+     *   原实现把 `/api` 当成「被 Gateway 保留、调用方不得使用」的 channel 而拒绝它。
+     *   但 `Connection.call()` 恰恰是用 `surface.apiChannel`（= `/api`）来调 `checkTarget`——
+     *   于是**每一次一元 RPC 都被这道守卫拦下**，返回 `carrier/parse`（看起来像网络问题）。
+     *   认证走 `AuthSession` 直连 HTTP、流走 `RemoteMux`，都不经过本函数，
+     *   所以「能认证、能开流」造成了「连接正常」的错觉，而会话列表 / 发送提示词 /
+     *   取消轮次 / **审批答复**全都是死的。
+     *
+     *   本用例与上一条 `accepts a valid namespace/method endpoint` 一起锁住正确语义；
+     *   原先这里是一条自相矛盾的 `it('rejects the reserved /api channel')`——
+     *   `API_CHANNEL` 就是 `/api`，两条测试不可能同时通过，等于把 bug 写成了预期行为。
+     */
+    it('accepts the Gateway channel and rejects malformed channels', 0, () => {
+      expect(checkTarget(API_CHANNEL, 'session/list').ok).assertTrue();
+      expect(checkTarget('/ap i', 'session/list').ok).assertFalse();
+      expect(checkTarget('', 'session/list').ok).assertFalse();
     });
 
     it('rejects invalid endpoint shapes', 0, () => {
@@ -154,6 +171,19 @@ export default function connectionTest() {
     it('builds endpoints from namespace and method', 0, () => {
       expect(endpointOf('session', 'list')).assertEqual('session/list');
       expect(endpointOf('directoryPicker', 'createDirectory')).assertEqual('directoryPicker/createDirectory');
+    });
+
+    /**
+     * 【回归测试 · 诊断可读性】
+     *   调用方错误（endpoint 拼错）**绝不能**被归类为载体失败。
+     *   此前它用 `carrier/parse`，文案层于是把「我们自己的 endpoint 写错了」
+     *   说成「中间转发通道截断了连接」——一个把排查引向错误方向的假结论（真实发生过）。
+     */
+    it('classifies caller mistakes separately from carrier failures', 0, () => {
+      const callerBug = new RemoteFailure(CLIENT_FAILURE_CODE, '非法 endpoint', '');
+      expect(callerBug.isCarrierFailure()).assertFalse();
+      expect(new RemoteFailure('carrier/parse', 'x', '').isCarrierFailure()).assertTrue();
+      expect(new RemoteFailure('carrier/closed', 'x', '').isCarrierFailure()).assertTrue();
     });
   });
 
@@ -218,11 +248,28 @@ export default function connectionTest() {
         '{"type":"server-response","rpcId":"r1","result":{}}', 'r1', 'x/y').ok).assertFalse();
     });
 
-    it('requires a value field when ok is true', 0, () => {
-      const body = '{"type":"server-response","rpcId":"r1","result":{"ok":true}}';
-      const result = parseConnectionResponse(body, 'r1', 'x/y');
-      expect(result.ok).assertFalse();
-      expect(result.error!.code).assertEqual('carrier/parse');
+    /**
+     * 【回归测试 · 曾经的真实缺陷】
+     *   旧实现要求 `ok:true` 响应必须带 `value` 字段，于是上游 4 个 `void` 端点的成功响应
+     *   （`{ok:true}`，`JSON.stringify` 丢弃 undefined 后**没有 value 键**）被判为畸形响应。
+     *   其中包含**审批与提问的答复通道 `$events/result`**——症状是
+     *   「用户点了允许、客户端认为调用失败」，属最致命的一类误判。
+     *
+     *   上游代码实证：网关对 `$events/result` 的成功分支直接写
+     *   `return { ok: true, value: undefined };`（`dsh-api-gateway/lib/types/index.js`）。
+     *
+     *   同时锁住「不能为了兼容 void 而把正常响应里的 value 丢掉」。
+     */
+    it('accepts a void success without a value field', 0, () => {
+      const voidBody = '{"type":"server-response","rpcId":"r1","result":{"ok":true}}';
+      const voidResult = parseConnectionResponse(voidBody, 'r1', '$events/result');
+      expect(voidResult.ok).assertTrue();
+      expect(voidResult.value).assertUndefined();
+
+      const valued = '{"type":"server-response","rpcId":"r1","result":{"ok":true,"value":{"items":[]}}}';
+      const valuedResult = parseConnectionResponse(valued, 'r1', 'session/list');
+      expect(valuedResult.ok).assertTrue();
+      expect(valuedResult.value !== undefined).assertTrue();
     });
 
     it('accepts an explicit null value', 0, () => {
@@ -355,6 +402,92 @@ export default function connectionTest() {
       expect(getArray(obj, 's')).assertUndefined();
       expect(isRecord(parseJson('[1,2]'))).assertFalse();
       expect(parseJson('{bad')).assertUndefined();
+    });
+
+    /**
+     * 【回归测试 · 曾经的真实生产缺陷】
+     *   `isRecord` **明确排除数组**（`return !Array.isArray(value)`），
+     *   而 `getRecord` 内部走 `isRecord`。曾经用 `getRecord(value, 'items')`
+     *   去取 `{items:[…]}` 的容器 → 永远 undefined → **真实 Host 上永远解析出 0 条会话**。
+     *   桩数据路径不经过该函数，所以本地完全看不出异常；
+     *   首次真机端到端验证即命中：宿主有 4 个会话，界面 0 个。
+     *
+     *   本用例把「取数组容器必须用数组语义」这件事锁死。
+     */
+    it('cannot read an array container through record semantics', 0, () => {
+      const value = parseJson('{"items":[{"a":1}]}');
+      expect(getArray(value, 'items')!.length).assertEqual(1);
+      // 这两条正是当初踩坑的地方：数组不是 record
+      expect(isRecord(value)).assertTrue();
+      expect(isRecord(getArray(value, 'items'))).assertFalse();
+    });
+  });
+
+  describe('SessionListProjection', () => {
+    /**
+     * 用**真实实测样本**驱动投影（0.1.5-rc.1 Host 实际返回，见 D2 §8.7.2）。
+     *
+     * 关键事实（三条都曾经被实现写错）：
+     *   1. 容器是 `items` 且值为**数组**——必须用数组语义取；
+     *   2. **顶层没有 `title` 字段**，标题在 `projections.values.title`，且新建会话为 `null`；
+     *   3. `updatedAt` 是毫秒时间戳数字，`running` / `blank` 是布尔。
+     */
+    const REAL_LIST_JSON = '{"items":['
+      + '{"sessionId":"session-07917d40-28da-46f4-9af7-da839bfaccf7","updatedAt":1789051283087,'
+      + '"running":false,"blank":true,"cwd":"D:\\\\dev\\\\deepseek-harness-desktop-HarmonyOS",'
+      + '"projections":{"asOfSeq":2,"values":{"title":null,"agentPreset":"standard"}}},'
+      + '{"sessionId":"session-2","updatedAt":1789051283088,"running":true,"blank":false,'
+      + '"cwd":"/home/u/other-project",'
+      + '"projections":{"asOfSeq":9,"values":{"title":"给 DSH 鸿蒙端写协议兼容层"}}}'
+      + ']}';
+
+    it('projects the real wire shape into list items', 0, () => {
+      const page = projectSessionList(parseJson(REAL_LIST_JSON));
+      expect(page.items.length).assertEqual(2);
+      // 投影按最近活动倒序 → session-2（updatedAt 更大）在前
+      expect(page.items[0].id).assertEqual('session-2');
+      expect(page.items[1].id).assertEqual('session-07917d40-28da-46f4-9af7-da839bfaccf7');
+      // 字段类型必须与实测一致：毫秒数字、布尔
+      expect(page.items[1].running).assertFalse();
+      expect(page.items[1].blank).assertTrue();
+      expect(page.items[1].updatedAt).assertEqual(1789051283087);
+      expect(page.items[0].running).assertTrue();
+      expect(page.items[0].blank).assertFalse();
+    });
+
+    it('reads the title from the projection, not from a top-level field', 0, () => {
+      const page = projectSessionList(parseJson(REAL_LIST_JSON));
+      let titled = '';
+      for (let i = 0; i < page.items.length; i++) {
+        if (page.items[i].id === 'session-2') {
+          titled = page.items[i].title;
+        }
+      }
+      expect(titled).assertEqual('给 DSH 鸿蒙端写协议兼容层');
+    });
+
+    /**
+     * 标题为 `null` 的会话必须仍有可辨识的显示名。
+     * Host 上刚建好、还没说话的会话就是这个形态（实测确认），
+     * 不兜底会让列表出现空白条目——用户既点不动也认不出。
+     */
+    it('falls back to the cwd basename when the projection title is null', 0, () => {
+      const page = projectSessionList(parseJson(REAL_LIST_JSON));
+      let fallback = '';
+      for (let i = 0; i < page.items.length; i++) {
+        if (page.items[i].id === 'session-07917d40-28da-46f4-9af7-da839bfaccf7') {
+          fallback = page.items[i].title;
+        }
+      }
+      // Windows 路径用反斜杠：末段必须被正确取出（不能整串返回，也不能取成空串）
+      expect(fallback).assertEqual('deepseek-harness-desktop-HarmonyOS');
+      expect(fallback.length > 0).assertTrue();
+    });
+
+    it('treats a bare array reply as a list too', 0, () => {
+      const page = projectSessionList(parseJson('[{"sessionId":"a","updatedAt":1,"cwd":"/x"}]'));
+      expect(page.items.length).assertEqual(1);
+      expect(page.items[0].id).assertEqual('a');
     });
   });
 }

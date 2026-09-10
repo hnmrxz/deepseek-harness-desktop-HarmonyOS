@@ -946,6 +946,7 @@ struct Index {
         }
         SessionListPane({
           sessions: this.sessions,
+          pending: this.pending,
           selectedId: this.selectedSessionId,
           onSelect: (id: string) => {
             this.openSession(id);

@@ -16,6 +16,7 @@ export type { ProtocolSurface } from './protocol/Surface';
 
 export {
   API_CHANNEL,
+  CLIENT_FAILURE_CODE,
   EVENTS_ENDPOINT,
   EVENTS_RESULT_ENDPOINT,
   REMOTE_MUX_PATH,

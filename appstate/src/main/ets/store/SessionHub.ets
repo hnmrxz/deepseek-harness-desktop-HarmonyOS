@@ -1192,6 +1192,10 @@ function authAdvice(status: number, message: string): string {
  * 同样的调用从宿主直连全部成功。文案要能把用户引向这个判断。
  */
 function friendlyFailure(code: string, message: string): string {
+  if (code === 'client/endpoint-invalid') {
+    return `客户端拼装了一个 Host 不认识的 endpoint（${message}）。这是本客户端的兼容面缺陷，`
+      + '请提交诊断报告以便修正上表——重试与换网络都不会有用。';
+  }
   if (code === 'carrier/parse') {
     return '响应无法解析——通常是中间转发通道截断了连接（开发期的端口转发常见）。'
       + '请改用直连本机回环，或使用 hostkit 的加密隧道。';

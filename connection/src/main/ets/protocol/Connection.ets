@@ -23,6 +23,7 @@ import { stringifyJson } from './JsonValue';
 import {
   API_CHANNEL,
   checkTarget,
+  CLIENT_FAILURE_CODE,
   RemoteFailure,
   rpcFail,
   RpcResult
@@ -369,7 +370,10 @@ export class Connection {
     }
     const target = checkTarget(this.surface.apiChannel, endpoint);
     if (!target.ok) {
-      return rpcFail(RemoteFailure.parse(`非法 endpoint：${target.reason ?? endpoint}`));
+      // 用调用方错误码而不是 carrier/parse：这是我们自己的 endpoint 拼错了，
+      // 与「链路断了」是两回事，文案层必须能区分（见 RpcTypes.CLIENT_FAILURE_CODE）。
+      return rpcFail(new RemoteFailure(CLIENT_FAILURE_CODE,
+        `非法 endpoint：${target.reason ?? endpoint}`, ''));
     }
 
     const timeoutMs: number = options?.timeoutMs ?? this.options.defaultTimeoutMs;

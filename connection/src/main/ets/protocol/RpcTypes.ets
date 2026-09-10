@@ -36,14 +36,29 @@ export interface TargetCheck {
 
 /**
  * 校验 channel + endpoint 组合是否合法。
- * 与上游 `assertTarget` 语义一致：任一不合法即视为调用方错误（装配错误，非业务错误）。
+ *
+ * 【语义修正（有实测驱动）】
+ *   原实现把 `/api` 当成「被 Gateway 保留、调用方不得使用」的 channel 而拒绝它。
+ *   含义搞反了：`/api` 正是 **Gateway 自己服务的** channel，也是本客户端**唯一**使用的
+ *   channel（`dshcompat.SURFACE.apiChannel`）。而 `Connection.call()` 恰恰是用
+ *   `surface.apiChannel` 来调本函数的——于是**每一次一元 RPC 都被这道守卫拦下**，
+ *   返回 `carrier/parse`。
+ *
+ *   为什么长期没被发现：认证走 `AuthSession` 直连 `HttpClient`，流走 `RemoteMux`，
+ *   两者都不经过本函数。因此「能认证、能开流」造成了「连接正常」的错觉，
+ *   而所有一元调用（会话列表、发送提示词、取消轮次、**审批答复**）都是死的。
+ *   单元测试里那条 `checkTarget(API_CHANNEL, 'session/list').ok === true` 一直在指着它，
+ *   但旁边一条自相矛盾的 `it('rejects the reserved /api channel')`（`API_CHANNEL` 就是 `/api`）
+ *   把错误行为写成了预期，两条测试同时存在时必然有一条失败——直到把测试真正跑起来才暴露。
+ *
+ *   现在的语义：**校验的是「以 Gateway 的 channel 发起该 endpoint 调用」是否合法**，
+ *   因此 `/api` 必须被接受；被拒绝的只有形状非法的 channel 与 endpoint。
+ *   上游对调用方错误用 `gateway/*` 前缀，本层对应地改用 `client/endpoint-invalid`，
+ *   不再伪装成载体解析失败（否则文案会把人引向「网络问题」这一错误方向）。
  */
 export function checkTarget(channel: string, endpoint: string): TargetCheck {
   if (!CHANNEL_PATTERN.test(channel)) {
     return { ok: false, reason: `invalid channel ${JSON.stringify(channel)}` };
-  }
-  if (channel === API_CHANNEL) {
-    return { ok: false, reason: `channel ${API_CHANNEL} is reserved for the Gateway` };
   }
   if (endpoint.length === 0) {
     return { ok: false, reason: 'empty endpoint' };
@@ -60,6 +75,15 @@ export function checkTarget(channel: string, endpoint: string): TargetCheck {
   }
   return { ok: true };
 }
+
+/**
+ * 调用方错误（装配错误，非业务错误、非载体错误）的失败码。
+ *
+ * 与上游 `gateway/*` 同一层次：**绝不重试、绝不归因于网络**。
+ * 单列一个码是为了让文案层能把「我们自己的 endpoint 拼错了」与
+ * 「链路断了」区分开——两者此前都是 `carrier/parse`，会把排查引向错误方向。
+ */
+export const CLIENT_FAILURE_CODE: string = 'client/endpoint-invalid';
 
 /** 把 namespace + method 拼成 endpoint */
 export function endpointOf(namespace: string, method: string): string {
