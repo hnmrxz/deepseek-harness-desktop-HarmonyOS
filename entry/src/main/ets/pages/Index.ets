@@ -29,6 +29,7 @@ import {
   FilePreview,
   Fs,
   HostRecord,
+  HubPhase,
   LayoutMode,
   layoutModeOf,
   ModelOption,
@@ -60,10 +61,18 @@ import {
   stubWorkspaces,
   stubSessions,
   stubPending,
+  SessionHub,
   Sz,
   TrajectoryItem,
   WorkspaceItem
 } from 'appstate';
+/**
+ * 类型单独用 `import type` 引入。
+ *
+ * 原因：`HubSnapshot` / `HubSubscriber` 在 appstate 里是 `export type` 导出的类型，
+ * 与值导入分开写更贴近 ArkTS 的类型/值导入区分。
+ */
+import type { HubSnapshot, HubSubscriber } from 'appstate';
 import { ConnectPane } from '../view/ConnectPane';
 import { ConversationPane } from '../view/ConversationPane';
 import { DetailPane } from '../view/DetailPane';
@@ -137,7 +146,68 @@ struct Index {
   /** 派生值：避免在循环体内读取 @State（ArkTS 性能规则） */
   @State pendingBadge: string = '';
 
+  // ── 真实连接状态（来自 SessionHub；未连接时保持桩数据） ──
+  /** 中枢阶段；只有 LIVE 时才用中枢的数据覆盖桩数据 */
+  @State hubPhase: HubPhase = HubPhase.IDLE;
+  /** 已连接 Host 的 authority（供诊断与状态条显示） */
+  @State hubAuthority: string = '';
+  /** 中枢最近一次错误（用户可见文案，已含「可以做什么」） */
+  @State hubError: string = '';
+  /** `$events` 是否已就绪（D1 §7.7.5b 的验收点之一） */
+  @State hubEventsReady: boolean = false;
+  /** 控制流是否已收到 baseline */
+  @State hubControlReady: boolean = false;
+  /** 当前 mux 活动逻辑流数（正常为 2 或 3） */
+  @State hubStreams: number = 0;
+  /** 未识别的上游事件类型数量（真机跑一次即可据此回填事件表） */
+  @State hubUnknownEvents: number = 0;
+
   private widthListener?: (size: window.Size) => void;
+  /**
+   * 中枢订阅者（在 `aboutToAppear` 里构造）。
+   *
+   * 为什么不在字段上直接写字面量：ArkTS 禁止「无类型对象字面量」
+   * （`arkts-no-untyped-obj-literals`），即使是带类型标注的类字段也不接受。
+   * 用「局部变量 + 具名接口标注」再赋值即可满足约束。
+   *
+   * 注意语义：**每个窗口各自订阅、但共享同一个中枢**——
+   * 中枢（`SessionHub.shared()` 模块级单例）持有唯一连接，窗口只是视图。
+   * 这正是 D1 §7.7.5b 要求的归属关系：视图可以有很多份，连接与会话状态只有一份。
+   */
+  private hubListener?: HubSubscriber;
+
+  /**
+   * 把中枢快照落到页面状态。
+   *
+   * 设计取舍：**只在 LIVE 时覆盖桩数据**。
+   * 未连接时保留桩数据，是为了让「没有 Host」的新用户也能看到完整的界面结构
+   * （D3 §4 要求空态有说明）；一旦连上，列表与待决就以 Host 为准——
+   * 此时若 Host 上确实没有会话，界面就应当显示空列表，而不是继续显示桩数据
+   * （否则用户会以为连上了却看到不存在的会话，是更糟的误导）。
+   */
+  private applyHubSnapshot(s: HubSnapshot): void {
+    this.hubPhase = s.phase;
+    this.hubAuthority = s.authority;
+    this.hubError = s.lastError;
+    this.hubEventsReady = s.eventsReady;
+    this.hubControlReady = s.controlReady;
+    this.hubStreams = s.activeStreams;
+    this.hubUnknownEvents = s.unknownEventTypes.length;
+    this.queuedCount = s.outbox;
+    if (s.phase !== HubPhase.LIVE) {
+      this.offline = s.phase !== HubPhase.CONNECTING && s.phase !== HubPhase.IDLE;
+      return;
+    }
+    this.offline = false;
+    this.sessions = s.sessions;
+    this.pending = s.pending;
+    this.selectedSessionTitle = s.selectedTitle;
+    if (s.selectedSessionId === this.selectedSessionId) {
+      this.trajectoryItems = s.trajectory;
+      this.running = s.running;
+    }
+    this.recomputeDerived();
+  }
 
   aboutToAppear(): void {
     this.sessions = stubSessions();
@@ -157,10 +227,23 @@ struct Index {
     this.recomputeDerived();
     this.applyWidth(initialWidthVp());
     this.watchWindowSize();
+    // 订阅中枢：多窗口下每个窗口各自订阅，但共用同一个连接与会话状态
+    const listener: HubSubscriber = (s: HubSnapshot) => {
+      this.applyHubSnapshot(s);
+    };
+    this.hubListener = listener;
+    SessionHub.shared().subscribe(listener);
   }
 
   aboutToDisappear(): void {
     this.unwatchWindowSize();
+    // 只退订本窗口；**不得**在此断开连接——关掉一个窗口不能让其他窗口掉线
+    // （D1 §7.7.5b：「关任一窗口不影响其他窗口与连接」）
+    const listener: HubSubscriber | undefined = this.hubListener;
+    if (listener !== undefined) {
+      SessionHub.shared().unsubscribe(listener);
+      this.hubListener = undefined;
+    }
   }
 
   private recomputeDerived(): void {
@@ -233,8 +316,14 @@ struct Index {
   private openSession(id: string): void {
     this.selectedSessionId = id;
     this.selectedSessionTitle = this.titleOf(id);
-    this.trajectoryItems = stubTrajectory();
-    this.running = true;
+    const live: boolean = this.hubPhase === HubPhase.LIVE;
+    // 未连接时用桩轨迹让界面可读；连上后清空并由中枢的 session/follow 推真实轨迹
+    // （若不清空，真实轨迹会追加在桩数据后面，看起来像「会话里混进了别人的内容」）
+    this.trajectoryItems = live ? [] : stubTrajectory();
+    this.running = live ? false : true;
+    if (live) {
+      SessionHub.shared().selectSession(id);
+    }
     if (this.mode === LayoutMode.SINGLE) {
       this.stackPage = StackPage.CONVERSATION;
     } else if (this.mode === LayoutMode.TRIPLE) {
@@ -632,10 +721,28 @@ struct Index {
         },
         onSubmit: () => {
           this.connectBusy = true;
-          this.connectResult = '演示模式：尚未接入真实连接层。设备到位后这里会执行 token 交换并保存会话。';
-          this.connectOk = false;
-          this.connectAdvice = '可在「连接诊断」页查看五项判定；POC 页可做协议往返验证。';
-          this.connectBusy = false;
+          this.connectResult = '';
+          this.connectAdvice = '';
+          const hub: SessionHub = SessionHub.shared();
+          const url: string = composeHostUrl(this.connectAddress, this.connectToken);
+          if (!hub.configure(url, undefined)) {
+            this.connectOk = false;
+            this.connectBusy = false;
+            this.connectResult = '地址无法解析';
+            this.connectAdvice = '请填形如 http://主机:端口 的地址；token 可单独填，也可直接粘贴完整启动链接（含 ?token=…）。';
+            return;
+          }
+          hub.connect().then((ok: boolean) => {
+            this.connectBusy = false;
+            this.connectOk = ok;
+            const snap: HubSnapshot = hub.snapshot();
+            this.connectResult = ok
+              ? `已连接 ${snap.authority}，收到 ${snap.sessions.length} 个会话`
+              : (snap.lastError.length > 0 ? snap.lastError : '连接未建立');
+            this.connectAdvice = ok
+              ? '真实数据已接管会话列表与待决；可在「连接诊断」页查看五项判定。'
+              : '请确认 Host 已启动且令牌有效；模拟器/真机访问宿主回环需先做端口转发（hdc fport）。';
+          });
         },
         onSelectHost: (id: string) => {
         },
@@ -676,6 +783,10 @@ struct Index {
           this.sendDraft();
         },
         onStop: () => {
+          // 连上后停止 = 真的取消当前轮次；未连接时只熄灭本地指示
+          if (this.hubPhase === HubPhase.LIVE) {
+            SessionHub.shared().cancelTurn();
+          }
           this.running = false;
         },
         onAddAttachment: () => {
@@ -702,7 +813,13 @@ struct Index {
     }
   }
 
-  /** 发送：桩模式下不产生真实请求（接入真实连接后改为兼容面的 prompt 端点调用） */
+  /**
+   * 发送当前草稿。
+   *
+   * 连上 Host 时交给中枢（它负责构造兼容面要求的 prompt 载荷、
+   * 维护乐观回显对账用的 requestId，以及离线时进待发队列）。
+   * 未连接时只清空输入框——**不伪造成功**，否则用户会以为消息发出去了。
+   */
   private sendDraft(): void {
     const text: string = this.draft.trim();
     if (text.length === 0) {
@@ -710,6 +827,9 @@ struct Index {
     }
     this.draft = '';
     this.attachments = [];
+    if (this.hubPhase === HubPhase.LIVE) {
+      SessionHub.shared().sendPrompt(text);
+    }
   }
 
   @Builder
@@ -805,4 +925,32 @@ function initialWidthVp(): number {
   } catch (error) {
     return 400;
   }
+}
+
+/**
+ * 把「地址」与「令牌」两个输入合成一个启动链接。
+ *
+ * 为什么需要它：`ConnectPane` 给用户两个输入框（地址 / 令牌），而连接层的
+ * `configure()` 只接受**一个**启动链接（token 由它从链接里解析）。
+ * 在 UI 与连接层之间做这个合成，比让连接层同时容忍两种输入形态更简单：
+ * 连接层的职责是解析一种确定的形态，而不是猜测用户的意图。
+ *
+ * 三种输入都被正确处理：
+ *   1. 只有地址            → 补 `http://` 前缀
+ *   2. 地址 + 令牌         → 合成 `http://地址/?token=令牌`
+ *   3. 粘贴的完整启动链接   → 原样返回（已含 token，不重复拼接）
+ */
+function composeHostUrl(address: string, token: string): string {
+  let url: string = address.trim();
+  if (url.length === 0) {
+    return '';
+  }
+  if (url.indexOf('://') < 0) {
+    url = `http://${url}`;
+  }
+  const trimmedToken: string = token.trim();
+  if (trimmedToken.length === 0 || url.indexOf('token=') >= 0) {
+    return url;
+  }
+  return url.indexOf('?') >= 0 ? `${url}&token=${trimmedToken}` : `${url}/?token=${trimmedToken}`;
 }

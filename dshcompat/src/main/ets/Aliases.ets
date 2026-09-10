@@ -71,6 +71,10 @@ export const SESSION_PROMPT_ENDPOINT: string = 'session/prompt';
 export const SESSION_CANCEL_ENDPOINT: string = 'session/cancel';
 /** 会话改名 */
 export const SESSION_RENAME_ENDPOINT: string = 'session/rename';
+/** 会话分叉（从某个事件序号起复制出一个新会话） */
+export const SESSION_FORK_ENDPOINT: string = 'session/fork';
+/** 修改待发队列中的某一项（编辑 / 移除 / 转为插话） */
+export const SESSION_UPDATE_QUEUE_ENDPOINT: string = 'session/updateQueue';
 /** 会话轨迹流（**流式**，必须走 mux 载体） */
 export const SESSION_FOLLOW_ENDPOINT: string = 'session/follow';
 /** 审批/提问控制流（**流式**） */

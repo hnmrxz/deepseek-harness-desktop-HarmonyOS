@@ -106,10 +106,16 @@ export interface HubSnapshot {
   unknownEventTypes: string[];
 }
 
-/** 订阅者（每个窗口一个；窗口只是视图） */
-export interface HubListener {
-  onHubSnapshot(snapshot: HubSnapshot): void;
-}
+/**
+ * 订阅者：**每窗口一个**（窗口只是视图）。
+ *
+ * 为什么是函数类型而不是 `{ onHubSnapshot(s): void }` 这样的单方法接口：
+ * ArkTS 的 `arkts-no-untyped-obj-literals` 会拒绝在页面里写
+ * `const l: HubListener = { onHubSnapshot: … }`（即使标注完全正确，
+ * 编译器仍认为目标不是「已声明的类或接口」）。
+ * 函数类型没有这个问题，而且对只有一个方法的订阅者来说更直接。
+ */
+export type HubSubscriber = (snapshot: HubSnapshot) => void;
 
 /** trace 上限，避免长时间运行吃内存 */
 const TRACE_LIMIT: number = 300;
@@ -128,7 +134,7 @@ export class SessionHub {
   }
 
   private conn: Connection;
-  private listeners: HubListener[] = [];
+  private listeners: HubSubscriber[] = [];
 
   // ── 状态 ──
   private phase: HubPhase = HubPhase.IDLE;
@@ -271,13 +277,13 @@ export class SessionHub {
 
   // ───────────────────────── 订阅 ─────────────────────────
 
-  subscribe(listener: HubListener): void {
+  subscribe(listener: HubSubscriber): void {
     this.listeners.push(listener);
-    listener.onHubSnapshot(this.snapshot());
+    listener(this.snapshot());
   }
 
-  unsubscribe(listener: HubListener): void {
-    const next: HubListener[] = [];
+  unsubscribe(listener: HubSubscriber): void {
+    const next: HubSubscriber[] = [];
     for (let i = 0; i < this.listeners.length; i++) {
       if (this.listeners[i] !== listener) {
         next.push(this.listeners[i]);
@@ -310,7 +316,7 @@ export class SessionHub {
   private notify(): void {
     const snap: HubSnapshot = this.snapshot();
     for (let i = 0; i < this.listeners.length; i++) {
-      this.listeners[i].onHubSnapshot(snap);
+      this.listeners[i](snap);
     }
   }
 

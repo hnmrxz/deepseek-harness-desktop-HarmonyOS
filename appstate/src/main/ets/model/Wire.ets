@@ -615,20 +615,30 @@ export interface QueueActionBody {
   /**
    * 替换内容（仅 `kind='edit'`）。
    *
-   * ⚠ `未确认`：上游声明其类型为 `readonly ContentBlock[]`（来自 `@deepseek-ai/dsh-llm`），
-   * 并注明「非空的**纯文本**替换内容」。`ContentBlock` 的内部形状没有出现在本次采集的
-   * session-controller 声明文件里（它是 llm 包的导出），**因此本文件不为它建模**，
-   * 只把调用方给的数组原样透传。在补齐 `ContentBlock` 事实前，
-   * UI 侧只应传纯文本块，并且不要尝试读回它的字段。
+   * 上游声明为 `readonly ContentBlock[]`，并注明「**非空的纯文本**替换内容」。
+   * 已确认 `ContentBlock` = `ContentBlockMap[ContentBlockType]` 的联合，其中
+   * `TextBlock = {type:'text', text:string}`（`@deepseek-ai/dsh-llm/lib/types/types.d.ts`）。
+   * 上游把编辑限制为纯文本，因此本文件**只**允许 `QueueTextBlock`：
+   * 用「任意 ContentBlock」放开等于允许 UI 传图片块/工具块，而那些会被 Host 拒绝。
    */
-  content?: Object[];
+  content?: QueueTextBlock[];
+}
+
+/** 队列编辑用的文本块（`ContentBlock` 里唯一被「编辑」动作接受的分支）。 */
+export interface QueueTextBlock {
+  type: string;
+  text: string;
 }
 
 /**
  * `session/updateQueue` 业务参数体。
  *
- * ⚠ `未确认`：上游把 `itemId` 类型声明为 `MessageId`（llm 包的品牌字符串），
- * 本文件按 `string` 透传（品牌只是类型层标记，线形上就是字符串）。
+ * `itemId` 的上游类型是 `MessageId`。**已确认线形就是字符串**：
+ * `MessageId = Branded<'MessageId'>`，而
+ * `Branded<B> = string & {readonly [BRAND]: B}`（`@deepseek-ai/dsh-brand`）——
+ * 品牌是**编译期独有**的标记（源码注释原话：brand is compile-time-only），
+ * 运行时与原字符串完全同构（`string & {...}` 在 TS 里退化为 `string`）。
+ * 因此本文件用 `string` 承载，不引入品牌类型。
  */
 export interface SessionUpdateQueueRequest {
   sessionId: string;
@@ -636,9 +646,19 @@ export interface SessionUpdateQueueRequest {
   action: QueueActionBody;
 }
 
-/** 构造队列「编辑」动作。 */
-export function queueEditAction(content: Object[]): QueueActionBody {
-  return { kind: 'edit', content: content };
+/**
+ * 构造队列「编辑」动作。
+ *
+ * 入参是**文本数组**而不是块数组：上游要求 `content` 非空且为纯文本，
+ * 让调用方自己拼 `{type:'text'}` 只会给「拼错/传图片块」留机会。
+ * 返回的 `content` 在 `texts` 为空时为空数组——Host 会拒绝，调用方须保证非空。
+ */
+export function queueEditAction(texts: string[]): QueueActionBody {
+  const blocks: QueueTextBlock[] = [];
+  for (let i = 0; i < texts.length; i++) {
+    blocks.push({ type: 'text', text: texts[i] });
+  }
+  return { kind: 'edit', content: blocks };
 }
 
 /** 构造队列「移除」动作。 */
@@ -932,8 +952,9 @@ export interface SessionQueuedItem {
 /**
  * 一条后台任务（`SessionJob`）。
  *
- * ⚠ `未确认`：上游把 `id` 类型声明为 `JobId`（品牌字符串）——
- * 与 `SessionId` 一样，线形上是字符串，本文件按 `string` 透传。
+ * `id` 的上游类型是 `JobId`，与 `MessageId` / `SessionId` 同属
+ * `Branded<string>`——**编译期独有的标记，线形上就是字符串**（见 `SessionUpdateQueueRequest` 的说明），
+ * 因此本文件用 `string` 承载。
  */
 export interface SessionJob {
   id: string;
@@ -1426,18 +1447,91 @@ export function eventResultEndpoint(): string {
   return EVENTS_RESULT_ENDPOINT;
 }
 
-// ═════════════════════════ 9. 附件上传（引用端点已存在） ═════════════════════════
+// ═════════════════════════ 9. 附件上传（本机文件 → filePart 所需回执） ═════════════════════════
 
 /**
  * `fileUploads/upload` 的端点（用于把本机文件换成 `filePart()` 所需的不透明回执）。
  *
- * 该端点的业务参数体**本文件不建模**：
- * 实测其参数形态是 `ArgsShape.NAMED`，具名参数为 `agent` 与 `request`，
- * 而 `request`（上传请求）的类型在 `@deepseek-ai/dsh-client-file-upload` 里，
- * 本次采集未包含该包 ⇒ **标 `未确认`，不写构造器**（写出来就是猜）。
+ * 参数形态是 `ArgsShape.NAMED`（具名参数 `agent` + `request`），
+ * 因此下面的构造器返回的 body **不含任何包装层**，由 `argsFor()` 原样透传。
  */
 export function fileUploadEndpoint(): string {
   return FILE_UPLOAD_ENDPOINT;
+}
+
+/**
+ * 一次上传请求（上游 `EncodedFileUploadRequest`）。
+ *
+ * 已确认（`@deepseek-ai/dsh-client-file-upload/lib/types/types.d.ts`）：
+ *   `{data: string, name?: string}`，其中 `data` 是文件字节的规范 base64。
+ * `data` 内联在 RPC 里；另有一条原始字节 HTTP 路由
+ * `/api/session/uploadFileBinary`，本文件不使用（我们走 RPC 面）。
+ */
+export interface FileUploadRequest {
+  /** 文件字节的规范 base64 编码（不含 `data:` 前缀） */
+  data: string;
+  /** 展示名；Host 会把它消毒成存储用的叶子名（**永远不会**当路径解释） */
+  name?: string;
+}
+
+/** 文件附件引用（上游 `FileAttachmentRef`）。 */
+export interface FileAttachmentRefValue {
+  /** 内容寻址 id：**就是这些字节的 sha256**，不是路径也不是带授权的 URL */
+  attachmentId: string;
+  /** 消毒后的展示文件名 */
+  name: string;
+  /** 精确字节数 */
+  bytes: number;
+}
+
+/** 上传成功后的回执（上游 `FileUploadValue`）。 */
+export interface FileUploadValue {
+  /**
+   * 不透明回执 id。
+   * 上游注释：**只在接收它的 Agent 作用域内有效**——
+   * 因此它既不能跨会话复用，也不能缓存起来给下次用（见 `filePart()` 的说明）。
+   */
+  receiptId: string;
+  file: FileAttachmentRefValue;
+}
+
+/**
+ * 构造 `fileUploads/upload` 的 args 载荷。
+ *
+ * 返回 `Object | undefined`（endpoint 不在上表时为 undefined，调用方降级）。
+ * 该端点具名参数是 `agent` + `request`，因此 body 直接给出这两个键，
+ * 由 `argsFor()` 按上表判定形态（NAMED ⇒ 原样透传）。
+ */
+export function fileUploadPayload(agent: Object, data: string, name: string): Object | undefined {
+  const request: FileUploadRequest = { data: data };
+  if (name.length > 0) {
+    request.name = name;
+  }
+  const body: Record<string, Object> = { 'agent': agent, 'request': request };
+  return argsFor(FILE_UPLOAD_ENDPOINT, body as Object);
+}
+
+/**
+ * 投影上传回执。
+ *
+ * 收窄策略：`receiptId` 缺失即视为失败（返回 undefined）——
+ * 没有回执就没法构造 `filePart()`，静默返回半成品只会让 prompt 在更远处失败。
+ */
+export function projectFileUpload(value: Object | undefined): FileUploadValue | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const receiptId: string | undefined = getString(value, 'receiptId');
+  if (receiptId === undefined || receiptId.length === 0) {
+    return undefined;
+  }
+  const file: Object | undefined = getRecord(value, 'file');
+  const ref: FileAttachmentRefValue = {
+    attachmentId: file !== undefined ? readString(file, 'attachmentId') : '',
+    name: file !== undefined ? readString(file, 'name') : '',
+    bytes: file !== undefined ? readNumber(file, 'bytes') : 0
+  };
+  return { receiptId: receiptId, file: ref };
 }
 
 // ═════════════════════════ 10. 取值助手 ═════════════════════════

@@ -115,7 +115,7 @@ export { Breakpoint, Dur, Fs, Lh, Radius, SemanticColor, Sp, Sz } from './ui/Tok
 
 // ── 会话中枢（D1 §7.7.5b：全应用单一连接池 + 单一会话状态机 + 单一待发队列） ──
 export { HubPhase, projectWireRecord, SessionHub } from './store/SessionHub';
-export type { HubListener, HubSnapshot, OutboxEntry } from './store/SessionHub';
+export type { HubSnapshot, HubSubscriber, OutboxEntry } from './store/SessionHub';
 
 // ── 通知策略（D3 §6：六类通知的标题/正文/优先级/点击目标 + 内容纪律 + 去重键） ──
 export {
@@ -170,6 +170,7 @@ export {
   eventResultEndpoint,
   filePart,
   fileUploadEndpoint,
+  fileUploadPayload,
   FollowFrameType,
   followSessionAddress,
   followSubagentAddress,
@@ -181,6 +182,7 @@ export {
   outcomeResult,
   projectApprovalRequest,
   projectAskUserQuestionRequest,
+  projectFileUpload,
   projectSessionCreate,
   projectSessionFork,
   projectSessionListWire,
@@ -228,11 +230,15 @@ export type {
   FollowSessionAddress,
   FollowSnapshotFrame,
   FollowSubagentAddress,
+  FileAttachmentRefValue,
+  FileUploadRequest,
+  FileUploadValue,
   OutcomeRejected,
   OutcomeResult,
   ProjectionHints,
   PromptContentPart,
   QueueActionBody,
+  QueueTextBlock,
   SessionCancelRequest,
   SessionCancelValue,
   SessionCreateRequest,
