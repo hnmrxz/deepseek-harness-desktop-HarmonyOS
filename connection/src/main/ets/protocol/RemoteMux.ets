@@ -1,9 +1,18 @@
 /**
  * 逻辑流复用载体（`/api/remote.mux`，D2 §1.2）。
  *
- * 帧事实：
- *   客户端 → `{ type:"open", streamId, endpoint, payload }` / `{ type:"cancel", streamId }`
- *   服务端 → `item`（逐项）/ `error`（终止并报错）；正常终止即流结束（无终止帧）
+ * 帧事实（服务端 → 客户端，共三类，见上游 `dsh-api-gateway/lib/types/stream-protocol.d.ts`
+ * 的 `RemoteStreamServerMessage`）：
+ *   1. `{ type:"item", streamId, value? }` —— 逐项推送业务值；
+ *   2. `{ type:"error", streamId, error:{code,message,details} }` —— 终止并报错；
+ *   3. `{ type:"end", streamId }` —— **正常终止**。
+ *
+ * 【事实修正】D2 §8.3 原先记录「正常结束即流结束（无终止帧）」，该记录**已被上游类型声明推翻**：
+ *   `end` 帧确实存在。漏处理它不会立刻出错（因为上游随后也会关闭逻辑流），
+ *   但会让上层无法区分「Host 主动正常结束」与「连接意外断开」——
+ *   前者不该触发重连，后者必须触发。因此这里必须显式处理。
+ *
+ * 客户端 → `{ type:"open", streamId, endpoint, payload }` / `{ type:"cancel", streamId }`
  *
  * 心跳事实：Host 每 2 s 发 Ping 控制帧，若在下一周期前未收到 Pong 会**主动断开**。
  * ArkTS 侧对策（本项目决策，写入 D2）：显式开启客户端心跳
@@ -214,6 +223,13 @@ export class RemoteMux {
       const code: string = error === undefined ? 'gateway/internal' : (getString(error, 'code') ?? 'gateway/internal');
       const message: string = error === undefined ? 'stream error' : (getString(error, 'message') ?? 'stream error');
       stream.sink.onError(code, message);
+      return;
+    }
+    if (type === 'end') {
+      // 正常终止：与 error 区分开，上层据此**不**触发重连（见文件头「事实修正」）
+      this.streams.delete(streamId);
+      stream.settled = true;
+      stream.sink.onEnd();
       return;
     }
     // 未知帧类型：忽略（前向兼容）

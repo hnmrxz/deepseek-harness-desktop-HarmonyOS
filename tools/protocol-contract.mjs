@@ -27,6 +27,24 @@ const DSH_NM = process.env.DSH_NODE_MODULES
 const jsonIdx = process.argv.indexOf('--json');
 const jsonOut = jsonIdx >= 0 ? process.argv[jsonIdx + 1] : undefined;
 
+/**
+ * 采集对象的核心包版本。
+ *
+ * **只读核心包 `@deepseek-ai/dsh` 的 version**，不读外层打包包——外层版本号与协议面无关
+ * （D2 §0 已记载这个判定规则）。`DSH_VERSION` 允许显式覆盖，用于脱离安装目录做版本标注。
+ */
+function coreVersion() {
+  if (process.env.DSH_VERSION) {
+    return process.env.DSH_VERSION;
+  }
+  try {
+    const pkg = JSON.parse(readFileSync(join(DSH_NM, '@deepseek-ai', 'dsh', 'package.json'), 'utf8'));
+    return pkg.version ?? 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
 function walk(dir, acc) {
   let entries;
   try {
@@ -236,4 +254,22 @@ for (const ns of [...byNs.keys()].sort()) {
 if (jsonOut) {
   writeFileSync(jsonOut, JSON.stringify(descriptors, null, 2), 'utf8');
   console.log(`已写入 ${jsonOut}`);
+
+  /**
+   * 同时写一份「自描述」元数据。
+   *
+   * 存在理由（D5 升级手册）：契约文件本身是个纯数组，不带版本号，于是下游工具只能去
+   * 「当前环境里装的那个 dsh」猜版本。一旦我们为了评估新版本而把契约指向别的安装目录
+   * （`DSH_NODE_MODULES`），猜出来的版本就是错的——漂移报告会显示错误的「当前环境核心包」，
+   * 而错误的版本号会让人做出错误的兼容性判断。
+   * 让采集者自己记下版本，下游就永远不需要猜。
+   */
+  const meta = {
+    corePackage: coreVersion(),
+    capturedAt: new Date().toISOString(),
+    endpointCount: descriptors.length,
+    nodeModules: DSH_NM
+  };
+  writeFileSync(`${jsonOut}.meta.json`, JSON.stringify(meta, null, 2), 'utf8');
+  console.log(`已写入 ${jsonOut}.meta.json（核心包 ${meta.corePackage}）`);
 }

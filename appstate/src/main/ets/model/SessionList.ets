@@ -15,7 +15,7 @@
  */
 
 import { getNumber, getRecord, getString, isRecord } from 'connection';
-import { FIELD_ALIASES, SESSION_LIST_ENDPOINT, sessionListArgs } from 'dshcompat';
+import { FIELD_ALIASES, SESSION_LIST_ENDPOINT, sessionListArgs, titleFromProjections } from 'dshcompat';
 
 /** 列表项（宽松投影；未知字段保留在 raw 中） */
 export interface SessionListItem {
@@ -31,6 +31,8 @@ export interface SessionListItem {
   createdAt: number;
   /** 是否正在运行（Host 若未提供则为 false） */
   running: boolean;
+  /** 是否「空会话」（尚无任何轮次）。列表默认不过滤，但 UI 可用它区分「刚建好还没说话」 */
+  blank: boolean;
   /** 原始对象（供尚未建模的字段使用） */
   raw: Object;
 }
@@ -84,11 +86,12 @@ export function projectSessionList(value: Object | undefined): SessionListPage {
     }
     const item: SessionListItem = {
       id: pickString(raw, FIELD_ALIASES.id),
-      title: pickString(raw, FIELD_ALIASES.title),
+      title: pickTitle(raw),
       cwd: pickString(raw, FIELD_ALIASES.cwd),
       updatedAt: pickNumber(raw, FIELD_ALIASES.updatedAt),
       createdAt: pickNumber(raw, FIELD_ALIASES.createdAt),
       running: pickBoolean(raw, FIELD_ALIASES.running),
+      blank: pickBoolean(raw, ['blank']),
       raw: raw
     };
     if (item.id.length === 0) {
@@ -122,6 +125,34 @@ function pickString(source: Object, keys: string[]): string {
     }
   }
   return '';
+}
+
+/**
+ * 取会话标题。
+ *
+ * 【重要修正 · 整合 0.1.5-rc.1 时发现】
+ *   上游 `SessionSummary` **没有顶层标题字段**。真实的标题在
+ *   `summary.projections.values.title`（类型 `string | null`，
+ *   见 `@deepseek-ai/dsh-session-title/lib/types/types.d.ts` 的 `SessionProjectionMap.title`）。
+ *   仅按顶层别名读会让**每一个会话都显示为「无标题」**——而且不会报错，
+ *   是最难发现的那类缺陷（静默降级成空值）。
+ *
+ *   因此这里按「先投影、后顶层别名」的顺序取：
+ *   投影是当前上游的权威来源；顶层别名只作为历史形态的容忍，不承担主路径。
+ */
+function pickTitle(source: Object): string {
+  const projections: Object | undefined = getRecord(source, 'projections');
+  if (projections !== undefined) {
+    const values: Object | undefined = getRecord(projections, 'values');
+    if (values !== undefined) {
+      const fromProjection: string | undefined =
+        titleFromProjections(values as Record<string, Object>);
+      if (fromProjection !== undefined && fromProjection.length > 0) {
+        return fromProjection;
+      }
+    }
+  }
+  return pickString(source, FIELD_ALIASES.title);
 }
 
 /** 按候选键名取第一个数字 */

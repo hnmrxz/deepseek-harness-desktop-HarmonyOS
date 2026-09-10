@@ -8,6 +8,7 @@
   "dependencies": {
     "connection": "file:../connection",
     "appstate": "file:../appstate",
-    "dshcompat": "file:../dshcompat"
+    "dshcompat": "file:../dshcompat",
+    "platform": "file:../platform"
   }
 }

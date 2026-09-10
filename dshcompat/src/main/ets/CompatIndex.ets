@@ -42,8 +42,15 @@ export interface VersionCheck {
  *
  * 升级流程：改这里 + 重跑基线工具 + 重跑漂移门禁。
  * 值语义：supported = 已验证；unverified = 允许连接但提示；其余视为不兼容。
+ *
+ * 记录（D5 升级手册第 3 步）：
+ *   0.1.2-rc.1 —— 首个基线（74 端点，2026-09-10 实测）
+ *   0.1.5-rc.1 —— 跨 0.1.3 / 0.1.5 两条线后的新基线（84 端点）。
+ *                 差异：新增 workspaceFiles/*（7）、fileUploads/upload、goals/get、
+ *                 sessionFeedback/record；commands/execute 的 images → submittedAttachments。
+ *                 同时保留 0.1.2-rc.1：老 Host 仍可用，缺的端点由能力探测降级为入口置灰。
  */
-const SUPPORTED_VERSIONS: string[] = ['0.1.2-rc.1'];
+const SUPPORTED_VERSIONS: string[] = ['0.1.5-rc.1', '0.1.2-rc.1'];
 
 /** 协议骨架端点：缺任一个即视为不兼容（连基本会话都做不了） */
 const PROTOCOL_SKELETON: string[] = ['session/list', 'session/create', 'session/prompt'];

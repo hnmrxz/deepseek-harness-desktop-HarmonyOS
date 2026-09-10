@@ -15,19 +15,56 @@ import { readFileSync, writeFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 const ROOT = process.cwd();
-const CONTRACTS = join(ROOT, '.research', 'protocol', 'contracts.json');
+/**
+ * 契约数据来源。
+ *
+ * 默认取当前环境提取结果；升级评估时用 `DSH_CONTRACTS` 指向**目标版本**的提取结果，
+ * 配合 `DSH_VERSION` 声明版本号，即可在不动本机 dsh 安装的前提下生成新版本上表。
+ */
+const CONTRACTS = process.env.DSH_CONTRACTS
+  ?? join(ROOT, '.research', 'protocol', 'contracts.json');
 const OUT = join(ROOT, 'dshcompat', 'src', 'main', 'ets', 'Endpoints.ets');
 const DSH_NM = process.env.DSH_NODE_MODULES
   ?? 'C:\\Users\\aotian\\AppData\\Roaming\\io.github.hairyf.deepseek-harness-desktop\\dependencies\\dsh\\node_modules';
 
-/** 读取核心包版本（版本矩阵的判定依据只读它，不读外层打包包） */
+/**
+ * 生成物所标注的核心包版本与采集时间。
+ *
+ * 优先读契约的**自描述元数据**（`<contracts>.meta.json`）：生成物要如实地说明
+ * 「我是从哪个版本采集来的」。靠环境探测在跨版本生成时必然标错版本号，
+ * 而版本号是受支持矩阵与漂移判定的依据，标错会直接误导升级决策。
+ */
 function coreVersion() {
+  if (process.env.DSH_VERSION) {
+    return process.env.DSH_VERSION;
+  }
+  try {
+    const meta = JSON.parse(readFileSync(`${CONTRACTS}.meta.json`, 'utf8'));
+    if (meta.corePackage) {
+      return meta.corePackage;
+    }
+  } catch {
+    // 无元数据时回落到环境探测
+  }
   try {
     const pkg = JSON.parse(readFileSync(join(DSH_NM, '@deepseek-ai', 'dsh', 'package.json'), 'utf8'));
     return pkg.version ?? 'unknown';
   } catch {
     return 'unknown';
   }
+}
+
+/** 采集时间：优先用契约记录的采集时刻，保证生成物与契约同源可溯。 */
+function capturedAt() {
+  try {
+    const meta = JSON.parse(readFileSync(`${CONTRACTS}.meta.json`, 'utf8'));
+    if (meta.capturedAt) {
+      return meta.capturedAt;
+    }
+  } catch {
+    // 无元数据则用当前时间
+  }
+  return new Date().toISOString();
 }
 
 /** 能力映射：产品功能 → 必需/可选端点（缺省端点归入未引用集合） */
@@ -40,10 +77,16 @@ const CAPABILITIES = [
     missingHint: '该 Host 未提供会话读写端点，无法收发对话'
   },
   {
+    // 【映射说明】审批与提问**不走** `session/control`：
+    //   该流只承载 baseline / queue / jobs / projection 四态（见 D2 §8.7.4）。
+    //   审批与提问通过网关 `$events` 的 waterfall 帧到达，应答走 `$events/result`——
+    //   这两个都是网关内部端点，**不在业务端点上表里**，因此无法用 endpoints 表达依赖。
+    //   结论：本能力的可用性无法由「端点上表探测」判定，只能由事件流是否就绪判定
+    //   （`SessionHub.eventsReady`）。把 `session/control` 列为必需曾是错的。
     id: 'approvals', label: '审批与提问',
-    requires: ['session/control'],
-    optional: ['session/prompt'],
-    missingHint: '该 Host 未提供审批控制流，无法答复审批与提问'
+    requires: [],
+    optional: ['session/control', 'session/prompt'],
+    missingHint: '审批与提问依赖网关转发事件流（$events / $events/result），需确认事件流已就绪'
   },
   {
     id: 'workspaces', label: '工作区与文件',
@@ -51,6 +94,28 @@ const CAPABILITIES = [
     optional: ['workspace/create', 'workspace/rename', 'workspace/delete', 'workspace/follow',
       'directoryPicker/list', 'directoryPicker/pick', 'directoryPicker/createDirectory'],
     missingHint: '该 Host 未提供工作区端点，无法管理目录'
+  },
+  {
+    // 0.1.5-rc.1 新增命名空间：真正的工作区文件读写。
+    // 在此之前我们的文件树只能靠桩数据——D2 §8.6 记的「workspace/list 不存在」就是这条缺口。
+    id: 'workspaceFiles', label: '工作区文件',
+    requires: [],
+    optional: ['workspaceFiles/list', 'workspaceFiles/stat', 'workspaceFiles/read',
+      'workspaceFiles/readAll', 'workspaceFiles/readBytes', 'workspaceFiles/readRelated',
+      'workspaceFiles/changes'],
+    missingHint: '该 Host 未提供工作区文件端点，文件树与预览将不可用（不影响会话与审批）'
+  },
+  {
+    id: 'fileUploads', label: '附件上传',
+    requires: [],
+    optional: ['fileUploads/upload'],
+    missingHint: '该 Host 未提供附件上传端点，无法投喂本机文件'
+  },
+  {
+    id: 'sessionFeedback', label: '会话反馈',
+    requires: [],
+    optional: ['sessionFeedback/record'],
+    missingHint: '该 Host 未提供会话反馈端点，反馈入口将隐藏'
   },
   {
     id: 'agentPresets', label: 'Agent 预设',
@@ -79,7 +144,8 @@ const CAPABILITIES = [
   {
     id: 'goals', label: '目标',
     requires: [],
-    optional: ['goals/create', 'goals/edit', 'goals/pause', 'goals/resume', 'goals/complete', 'goals/clear'],
+    optional: ['goals/create', 'goals/edit', 'goals/pause', 'goals/resume', 'goals/complete', 'goals/clear',
+      'goals/get'],
     missingHint: '该 Host 未提供目标端点'
   },
   {
@@ -110,10 +176,18 @@ const CAPABILITIES = [
 
 const contracts = JSON.parse(readFileSync(CONTRACTS, 'utf8'));
 
-/** 推断参数形态 */
+/**
+ * 推断参数形态。
+ *
+ * **必须用 `wire` 名而不是 `name`**：`protocol-contract.mjs` 提取的是成对的
+ * `{name, wire}`，其中 `name` 是上游 TypeScript 形参名，`wire` 才是**线上字段名**。
+ * 二者在 30 个端点上不同（最典型的是 Agent 作用域端点：形参叫 `agent`，线上叫 `agentId`）。
+ * 用 `name` 生成的上表会让客户端按错名字构造 `args`，直接得到 `gateway/arguments-invalid`。
+ * 这个缺陷在仓库里潜伏了很久没被发现，因为当时没有任何代码去读上表的 `params` 字段。
+ */
 function shapeOf(params) {
   if (params.length === 0) return 'ArgsShape.NONE';
-  const names = params.map((p) => p.name);
+  const names = params.map((p) => p.wire);
   if (names.length === 1 && names[0] === 'request') return 'ArgsShape.REQUEST';
   if (names.length === 1 && names[0] === '_request') return 'ArgsShape.UNDERSCORE_REQUEST';
   return 'ArgsShape.NAMED';
@@ -145,7 +219,8 @@ const entries = contracts
       ns: d.namespace,
       method: d.method,
       shape: shapeOf(d.params),
-      params: d.params.map((p) => p.name),
+      // 线上名（wire），不是上游 TS 形参名（name）——见 shapeOf 的说明
+      params: d.params.map((p) => p.wire),
       stream: d.kind === 'stream',
       cancellable: d.cancellable === true,
       source: d.source ?? '',
@@ -179,7 +254,7 @@ lines.push("import { ArgsShape, DshCapability, DshEndpoint, UpstreamIdentity } f
 lines.push('');
 lines.push(`export const UPSTREAM_IDENTITY: UpstreamIdentity = {`);
 lines.push(`  corePackage: '${coreVersion()}',`);
-lines.push(`  capturedAt: '${new Date().toISOString()}',`);
+lines.push(`  capturedAt: '${capturedAt()}',`);
 lines.push(`  endpointCount: ${entries.length}`);
 lines.push('};');
 lines.push('');

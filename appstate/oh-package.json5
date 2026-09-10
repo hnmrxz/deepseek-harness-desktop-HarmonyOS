@@ -7,6 +7,7 @@
   "license": "MIT",
   "dependencies": {
     "connection": "file:../connection",
-    "dshcompat": "file:../dshcompat"
+    "dshcompat": "file:../dshcompat",
+    "platform": "file:../platform"
   }
 }

@@ -38,19 +38,19 @@ export function stubSessions(): SessionListItem[] {
   const out: SessionListItem[] = [];
   out.push({
     id: 's-1', title: '给 DSH 鸿蒙端写协议兼容层', cwd: 'deepseek-harness-desktop-HarmonyOS',
-    updatedAt: at(2), createdAt: at(180), running: true, raw: raw as Object
+    updatedAt: at(2), createdAt: at(180), running: true, blank: false, raw: raw as Object
   });
   out.push({
     id: 's-2', title: '优化会话列表的滑动性能', cwd: 'deepseek-harness-desktop-HarmonyOS',
-    updatedAt: at(35), createdAt: at(300), running: false, raw: raw as Object
+    updatedAt: at(35), createdAt: at(300), running: false, blank: false, raw: raw as Object
   });
   out.push({
     id: 's-3', title: '排查 API 网关 401 问题', cwd: 'gateway',
-    updatedAt: at(140), createdAt: at(400), running: false, raw: raw as Object
+    updatedAt: at(140), createdAt: at(400), running: false, blank: false, raw: raw as Object
   });
   out.push({
     id: 's-4', title: '整理鸿蒙一多适配要点', cwd: 'docs',
-    updatedAt: at(60 * 25), createdAt: at(60 * 40), running: false, raw: raw as Object
+    updatedAt: at(60 * 25), createdAt: at(60 * 40), running: false, blank: false, raw: raw as Object
   });
   return out;
 }

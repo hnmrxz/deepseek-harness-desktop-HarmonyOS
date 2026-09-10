@@ -119,6 +119,22 @@ export function rpcOk(value: Object): RpcResult {
   return { ok: true, value: value };
 }
 
+/**
+ * 成功但**无返回值**的调用。
+ *
+ * 存在理由（D2 §1.1 修正）：上游有若干端点的返回类型是 `void`，
+ * 其成功响应是 `{ok:true}`——**没有 `value` 键**（`JSON.stringify` 会丢弃 `undefined`）。
+ * 这不是畸形响应，而是「成功且无值」的合法形态。
+ *
+ * 上游源码实证：网关对 `$events/result` 的成功分支直接写
+ * `return { ok: true, value: undefined };`（`dsh-api-gateway/lib/types/index.js`）。
+ * 而 `$events/result` 正是**审批与提问的答复通道**——若把「无 value」当成解析失败，
+ * 用户点了「允许」而客户端认为调用失败，这是最致命的一类误判。
+ */
+export function rpcOkVoid(): RpcResult {
+  return { ok: true };
+}
+
 export function rpcFail(error: RemoteFailure): RpcResult {
   return { ok: false, error: error };
 }

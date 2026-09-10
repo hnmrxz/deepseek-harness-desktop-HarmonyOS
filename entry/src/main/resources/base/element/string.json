@@ -19,6 +19,10 @@
     {
       "name": "perm_network_info_reason",
       "value": "检测网络状态切换，用于断线后自动重连与局域网 Host 发现"
+    },
+    {
+      "name": "perm_keep_background_reason",
+      "value": "在后台维持与 Host 的长连接并接收审批/提问事件，避免待决事项被错过"
     }
   ]
 }

@@ -21,7 +21,15 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 const ROOT = process.cwd();
-const CONTRACTS = join(ROOT, '.research', 'protocol', 'contracts.json');
+/**
+ * 契约数据来源。
+ *
+ * 默认用当前环境提取的 `contracts.json`；可用 `DSH_CONTRACTS` 指向**任意版本**的提取结果，
+ * 这样同一个门禁既能做「本机是否漂移」，也能做「0.1.2 → 0.1.5 差了什么」的版本间比对——
+ * 升级评估阶段需要的正是后者。
+ */
+const CONTRACTS = process.env.DSH_CONTRACTS
+  ?? join(ROOT, '.research', 'protocol', 'contracts.json');
 const COMMITTED = join(ROOT, 'dshcompat', 'src', 'main', 'ets', 'Endpoints.ets');
 const DSH_NM = process.env.DSH_NODE_MODULES
   ?? 'C:\\Users\\aotian\\AppData\\Roaming\\io.github.hairyf.deepseek-harness-desktop\\dependencies\\dsh\\node_modules';
@@ -111,7 +119,12 @@ function expectedFromContracts() {
   const contracts = JSON.parse(readFileSync(CONTRACTS, 'utf8'));
   const shapeOf = (params) => {
     if (params.length === 0) return 'NONE';
-    const names = params.map((p) => p.name);
+    // 线上名（wire）而非上游 TS 形参名（name）：见 gen-compat-endpoints.mjs 的 shapeOf 说明。
+    // 影响面：84 个端点里有 30 个的 `name` 与 `wire` **不同**（最典型的是 Agent 作用域端点：
+    // 形参 `agent` / 线上 `agentId`）。在这 30 个端点上，按 `name` 比对会让门禁
+    // **看不见真正的线上改名**——而线上改名正是会让客户端收到 `gateway/arguments-invalid`
+    // 的那一类变更。用 `wire` 比对后，门禁检出的才是客户端真正会撞上的差异。
+    const names = params.map((p) => p.wire);
     if (names.length === 1 && names[0] === 'request') return 'REQUEST';
     if (names.length === 1 && names[0] === '_request') return 'UNDERSCORE_REQUEST';
     return 'NAMED';
@@ -122,14 +135,32 @@ function expectedFromContracts() {
       ns: d.namespace,
       method: d.method,
       shape: shapeOf(d.params),
-      params: d.params.map((p) => p.name),
+      params: d.params.map((p) => p.wire),
       stream: d.kind === 'stream',
       cancellable: d.cancellable === true
     }))
     .sort((a, b) => `${a.ns}/${a.method}`.localeCompare(`${b.ns}/${b.method}`));
 }
 
+/**
+ * 被比对的那份契约所对应的核心包版本。
+ *
+ * 优先级：显式声明 > 契约自描述元数据 > 当前环境安装的 dsh。
+ * 顺序很重要：为了评估新版本，我们会把契约指向别的安装目录；
+ * 此时若回落到「当前环境」，报告的版本号就会张冠李戴。
+ */
 function coreVersion() {
+  if (process.env.DSH_VERSION) {
+    return process.env.DSH_VERSION;
+  }
+  try {
+    const meta = JSON.parse(readFileSync(`${CONTRACTS}.meta.json`, 'utf8'));
+    if (meta.corePackage) {
+      return meta.corePackage;
+    }
+  } catch {
+    // 无元数据（旧格式契约）时回落到环境探测
+  }
   try {
     const pkg = JSON.parse(readFileSync(join(DSH_NM, '@deepseek-ai', 'dsh', 'package.json'), 'utf8'));
     return pkg.version ?? 'unknown';

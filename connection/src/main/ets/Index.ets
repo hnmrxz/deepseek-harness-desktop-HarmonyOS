@@ -23,6 +23,7 @@ export {
   RemoteFailure,
   rpcFail,
   rpcOk,
+  rpcOkVoid,
   checkTarget,
   endpointOf
 } from './protocol/RpcTypes';

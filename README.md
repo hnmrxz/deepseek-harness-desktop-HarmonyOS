@@ -2,16 +2,28 @@
 
 面向 HarmonyOS（手机 / 折叠屏 / 平板 / 2in1 PC）的 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）一等客户端，**ArkTS + ArkUI 原生实现**。
 
-> **当前进度**：**UI 开发已全部完成**（M1/M2/M3 界面部分）—— 工程骨架、协议机制层、
-> **DSH 上游兼容面**、状态层与全部界面（三形态导航与让步链、待决聚合、会话列表、
-> 会话轨迹与输入区、详情栏、工作区与文件预览、设置五页签、连接诊断、添加 Host）均已建成；
-> 主构建与 `entry@ohosTest` 测试目标编译通过；架构回归检查与漂移门禁均为绿。
-> 已对**真实 dsh Host** 完成协议实测（只读端点 10/10 通过，认证与信任栅栏逐条命中）。
+> **当前进度**：**全部界面开发完成**（M1/M2/M3 界面部分）+ **设备能力层** + **真实数据接线核心** + **上游基线已升级到 `0.1.5-rc.1`**。
 >
-> **界面当前由桩数据驱动**（方案 2），接入真实数据仅需替换数据来源，视图组件零改动。
-> **阻塞**：缺少可用设备（无真机连接；模拟器受宿主内存限制无法启动），
-> 因此 POC-1 的设备侧步骤（mux / ready / 心跳 / cancel）与真机界面验收尚未执行，详见
-> [`docs/30-技术验证清单.md`](docs/30-技术验证清单.md) 的「POC-1 当前进展」。
+> - **界面**：三形态导航与让步链、待决聚合、会话列表、会话轨迹与输入区、详情栏、
+>   工作区与文件预览、设置五页签、连接诊断、添加 Host —— 共 9 个视图组件，全部建成。
+> - **设备能力层**（`platform` HAR）：通知与三类渠道、长时任务保活、剪贴板、系统分享、
+>   设备形态事实、窗口几何记忆、进程级运行时身份与窗口台账。
+> - **真实数据接线**（`appstate/store/SessionHub.ets`）：全应用**单一** mux 连接 +
+>   单一 `$events` + 单一 `session/control` + 单一 `session/follow`（D1 §7.7.5b），
+>   含待发队列、离线降级、未识别上游事件的自证汇总。
+> - **上游兼容面**：基线由 `0.1.2-rc.1`（74 端点）升级到 **`0.1.5-rc.1`（84 端点）**，
+>   新增 `workspaceFiles/*`、`fileUploads/upload`、`goals/get`、`sessionFeedback/record` 四个能力域；
+>   漂移门禁绿、负测试通过。
+>
+> **验证状态**：主构建与 `entry@ohosTest` 目标编译通过；架构回归检查与漂移门禁为绿；
+> 已对**真实 `0.1.5-rc.1` Host** 完成两轮只读实测（含 mux 帧、`$events` ready、
+> `session/control` baseline、`session/follow` snapshot、`session/page`、会话列表真实字段全集），
+> 结论逐条落在 [`docs/10-协议兼容事实基线.md`](docs/10-协议兼容事实基线.md) §8.7。
+>
+> **仍待真机/设备的项**：轨迹内容事件（消息/思考/工具调用）的 `data` 内部字段名、
+> `workspaceFileScopeId` 的来源、`agentId` 与会话 id 的关系、2in1 快捷键与多窗口的实机行为、
+> 通知送达与点击直达。逐项列在
+> [`docs/30-技术验证清单.md`](docs/30-技术验证清单.md) 的「界面完成度对照」与 POC 跟踪表。
 
 ## 核心主张
 
@@ -32,13 +44,21 @@
 ```
 .
 ├── AppScope/                 # 应用级配置与资源（bundleName、图标、应用名）
-├── entry/                    # HAP 入口：Ability、页面、视图、形态适配
+├── entry/                    # HAP 入口：Ability、AbilityStage、页面、视图、形态适配
 │   └── src/
 │       ├── main/ets/
+│       │   ├── abilitystage/     # specified 启动模式的实例 key（多窗口归属）
+│       │   ├── entryability/     # UIAbility：窗口登记、几何记忆、启动参数下发
 │       │   ├── pages/Index.ets   # 应用首屏：三形态导航 + 让步链 + 全部页面装配
 │       │   ├── pages/Poc1.ets    # POC-1 协议往返验证页（验收工具）
-│       │   └── view/             # 全部界面组件（清单见下）
+│       │   └── view/             # 全部界面组件（9 个，见下）
 │       └── ohosTest/             # 单元测试（Hypium，约 60 条断言）
+├── platform/                 # HAR：**设备能力层**（机制，零 UI、零上游知识）
+│   └── src/main/ets/
+│       ├── notify/           # 通知发布/撤回/去重键 + 三类渠道 + 长时任务保活
+│       ├── system/           # 剪贴板、系统分享、设备与形态事实
+│       ├── window/           # 多窗口开启与路由参数、窗口几何/布局记忆
+│       └── runtime/          # 进程级 runtimeId + 窗口台账（§7.7.5b 的可核查证据面）
 ├── connection/               # HAR：协议**机制层**（零 UI 依赖，不含具体端点/字段名）
 │   └── src/main/ets/protocol/
 │       ├── Surface.ets       # 注入式「上游接口面」定义（路径等事实由 dshcompat 提供）
@@ -48,25 +68,29 @@
 │       ├── Cookies.ets       # Set-Cookie 多形态解析 + 按 authority 隔离的 CookieJar
 │       ├── HttpClient.ets    # @ohos.net.http 载体
 │       ├── AuthSession.ets   # token → 签名 cookie、401 重绑、403 信任栅栏诊断
-│       ├── RemoteMux.ets     # 逻辑流复用 + 心跳
+│       ├── RemoteMux.ets     # 逻辑流复用 + 心跳 + `item`/`error`/`end` 三态帧
 │       ├── EventStream.ets   # 事件流、ready 首项、generation 失效
 │       ├── Backoff.ets       # 500ms→10s 退避 + 抖动
 │       └── Connection.ets    # 门面 + 五项连接诊断
 ├── dshcompat/                # HAR：**DSH 上游兼容面（唯一的上游事实落点）**
 │   └── src/main/ets/
-│       ├── Endpoints.ets     # 端点上表（自动生成，74 条，含参数形态与流式标记）
+│       ├── Endpoints.ets     # 端点上表（自动生成，84 条，含参数形态与流式标记）
 │       ├── Surface.ets       # 载体路径 / 事件流端点 / 开流 payload
-│       ├── Aliases.ets       # 字段别名表 + 常用 endpoint 常量
+│       ├── Aliases.ets       # 字段别名表 + endpoint 常量 + **参数改名别名（PARAM_ALIASES）**
+│       ├── RemoteEvents.ets  # **转发事件白名单 + 审批/提问词汇 + 投影键**
 │       ├── CompatIndex.ets   # 能力映射 + 版本矩阵 + 参数构造 + 能力判定
 │       └── CompatTypes.ets   # 兼容面类型
 ├── appstate/                 # HAR：状态层（投影 / 派生 / 呈现契约；零 UI 依赖）
-│   ├── model/SessionList.ets # 会话列表投影（字段名走 dshcompat 别名表）
+│   ├── store/SessionHub.ets  # **单一连接与会话状态中枢**（D1 §7.7.5b）
+│   ├── model/SessionList.ets # 会话列表投影（标题走 `projections.values.title`）
 │   ├── model/Trajectory.ets  # 轨迹与待决的**呈现层契约**
 │   ├── model/Workspace.ets   # 工作区/文件树/预览的呈现契约（含预览类型推导）
 │   ├── model/Settings.ets    # 设置/凭据/插件/Host/诊断/模型 的呈现契约
 │   ├── model/Present.ets     # 呈现层纯函数（相对时间 / 截断 / 排序 / 朗读文本）
-│   ├── model/StubData*.ets   # 桩数据源（设备到位前驱动全部界面）
-│   └── ui/                   # 断点与导航模型、设计令牌
+│   ├── model/Notify.ets      # 通知策略（D3 §6 六类 + 内容纪律 + 去重/撤回键）
+│   ├── model/Wire.ets        # 请求构造器 + 回复投影（端点名一律取自 dshcompat）
+│   ├── model/StubData*.ets   # 桩数据源（无 Host 时驱动界面）
+│   └── ui/                   # 断点与导航模型、设计令牌、2in1 快捷键表
 ├── entry/src/main/ets/view/  # 全部界面组件（9 个）
 │   ├── ConversationPane.ets  # 会话轨迹（7 类条目）+ 输入区
 │   ├── Composer.ets          # 输入区：@引用 / 斜杠命令 / 附件 / 模型 chip / 离线排队
@@ -77,12 +101,16 @@
 │   ├── SettingsPane.ets      # 设置五页签：通用 / 模型 / 凭据 / 插件 / 设备
 │   ├── DiagnosticsPane.ets   # 连接诊断：五项判定 + 兼容面自检 + 旁路日志
 │   └── ConnectPane.ets       # 添加 Host：URL / 手输 / 发现 / 授权 / 安全说明
+├── hostkit/                  # PC 侧搭桥服务（Node，独立可发布，**可选组件**）
+│   ├── src/core/             # 配对、设备白名单、E2E 加密帧、隧道、审计、Host 守护
+│   ├── src/platform/         # 平台相关隔离（Windows / macOS / Linux）
+│   └── test/                 # `node --test`，含隧道端到端测试
 ├── tools/                    # 协议与兼容面工具（Node，独立于应用）
-│   ├── protocol-enum.mjs        # 从已安装 dsh 包枚举 endpoint
-│   ├── protocol-enum2.mjs       # 精确版：修正命名空间跨文件声明 / 属性名≠线上名
-│   ├── protocol-contract.mjs    # 从生成描述符提取 74 个 endpoint 的权威调用契约
-│   ├── gen-compat-endpoints.mjs # 由契约生成 dshcompat 端点上表
-│   ├── compat-drift.mjs         # **上游漂移门禁**（CI 用，有漂移则非零退出）
+│   ├── protocol-contract.mjs    # 从生成描述符提取调用契约（并写自描述元数据）
+│   ├── gen-compat-endpoints.mjs # 由契约生成 dshcompat 端点上表（支持跨版本生成）
+│   ├── compat-drift.mjs         # **上游漂移门禁**（支持版本间比对，有漂移则非零退出）
+│   ├── arch-check.mjs           # **架构回归门禁**（注释感知 + 内置注入式自检）
+│   ├── protocol-enum*.mjs       # endpoint 枚举（历史工具）
 │   └── protocol-probe.mjs       # 对真实 Host 做只读探测 → 可用性与错误码矩阵
 └── docs/                     # 文档基线（D1~D5）
 ```
@@ -94,7 +122,8 @@
 | 文档 | 作用 |
 |---|---|
 | [`docs/00-开发任务书.md`](docs/00-开发任务书.md) | **开发任务书 D1**：背景与对标、目标、架构（含安全分级 L0/L1/L2）、功能需求、POC 门、里程碑、验收体系、风险与待决事项 |
-| [`docs/10-协议兼容事实基线.md`](docs/10-协议兼容事实基线.md) | 协议事实基线 D2：载体与端点、认证与信任、连接生命周期、**§8 实测矩阵与调用契约表** |
+| [`docs/10-协议兼容事实基线.md`](docs/10-协议兼容事实基线.md) | 协议事实基线 D2：载体与端点、认证与信任、连接生命周期、**§8 实测矩阵**（§8.7 = 0.1.5-rc.1 实测 + 本仓库缺陷修正 + 门禁升级） |
+| [`docs/11-请求载荷契约.md`](docs/11-请求载荷契约.md) | **载荷契约 D2b**：84 个端点的请求内层字段与回复结构、6 条事件流的逐项结构、审批/提问应答编码、未确认清单（每行带上游源码出处） |
 | [`docs/20-产品需求与体验规范.md`](docs/20-产品需求与体验规范.md) | 体验规范 D3：信息架构、三形态导航、界面规格、通知、无障碍、视觉 |
 | [`docs/30-技术验证清单.md`](docs/30-技术验证清单.md) | 技术验证清单 D4：POC-1~11 的判定与止损 |
 | [`docs/40-上游升级手册.md`](docs/40-上游升级手册.md) | **上游升级手册 D5**：分层前提与评审检查表、五步升级流程、漂移门禁、降级策略、版本矩阵 |
@@ -106,6 +135,7 @@
 
 ```sh
 # 1) 提取新上游的调用契约（每个 endpoint 的参数形态、流式标记、可否取消）
+#    同时写出一份「自描述元数据」，下游工具据此报版本，不靠猜
 node tools/protocol-contract.mjs --json .research/protocol/contracts.json
 
 # 2) 漂移门禁：与已提交基线逐条比对，有差异则非零退出并给出精确差异
@@ -118,10 +148,32 @@ node tools/gen-compat-endpoints.mjs
 node tools/protocol-probe.mjs --base http://127.0.0.1:3111 --token <token>
 ```
 
-配套的**架构回归检查**（期望无输出）：
+**版本间比对**（升级评估时最常用，不需要改动机器上装的 dsh）：
 
 ```sh
-grep -rnE "session/|settings/|workspace/|pluginInventory/" connection/src appstate/src entry/src/main/ets/view
+# 把任意版本的契约装到隔离目录
+npm install --prefix .research/upstream-0.1.5 "@deepseek-ai/dsh@0.1.5-rc.1"
+
+# 用目标版本的契约重生成上表
+DSH_NODE_MODULES=.research/upstream-0.1.5/node_modules \
+  node tools/protocol-contract.mjs --json .research/protocol/contracts.json
+node tools/gen-compat-endpoints.mjs
+
+# 或者：只算「A 版本 → B 版本差了什么」，不动仓库文件
+DSH_CONTRACTS=.research/protocol/contracts-0.1.2-rc.1.json node tools/compat-drift.mjs
+```
+
+配套的**架构回归检查**（期望无输出、exit 0）：
+
+```sh
+node tools/arch-check.mjs --self-test   # 先证明门禁有效（8 个正/负样例）
+node tools/arch-check.mjs
+```
+
+配套的**门禁负测试**（期望非零退出——证明门禁真的会失败）：
+
+```sh
+DSH_CONTRACTS=.research/protocol/contracts-0.1.2-rc.1.json node tools/compat-drift.mjs; echo "exit=$?"
 ```
 
 完整流程、降级策略、版本矩阵维护与「门禁必须经负测试验证」的纪律见
@@ -157,6 +209,27 @@ devecocli run
 devecocli run --module entry --hotreload          # 后台常驻
 devecocli run --module entry --hotreload-apply changes.txt
 ```
+
+### 本地模拟器
+
+```sh
+devecocli emulator list                  # 查看实例（本仓库使用 DshApi26Phone）
+devecocli emulator license accept        # 首次需接受协议（非交互式）
+devecocli emulator start DshApi26Phone   # 启动 API 26 手机实例
+devecocli device list                    # 确认已出现在 hdc targets
+
+# 部署与查看日志
+devecocli run --device DshApi26Phone
+devecocli log --level E --from 5m --tail 200
+devecocli ui screenshot --device DshApi26Phone --path ./screenshots/
+devecocli ui layout --device DshApi26Phone --format json
+```
+
+> **宿主内存门槛**：模拟器的 `HostFreeMemMonitor` 要求**空闲内存 ≥ 3 GB**，不足会自行终止。
+> 启动前请用 `Get-CimInstance Win32_OperatingSystem` 确认 `FreePhysicalMemory`。
+> 另外：本仓库的开发代理运行在 DSH 自身进程内，**任何按进程名匹配的 kill 命令都被禁止**
+> （`Get-Process node | ... | Stop-Process` 这类写法会杀掉代理自己）。
+> 需要停止模拟器时用 `devecocli emulator stop <name>`，停止后台任务用任务 id。
 
 ### 应用内验证（POC-1）
 

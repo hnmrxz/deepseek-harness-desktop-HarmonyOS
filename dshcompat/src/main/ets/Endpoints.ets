@@ -6,15 +6,15 @@
  *   node tools/gen-compat-endpoints.mjs
  * 漂移检测：node tools/compat-drift.mjs（对当前安装/checkout 的上游重新提取并比对）
  *
- * 采集对象：@deepseek-ai/dsh 0.1.2-rc.1 · 74 个 endpoint
+ * 采集对象：@deepseek-ai/dsh 0.1.5-rc.1 · 84 个 endpoint
  */
 
 import { ArgsShape, DshCapability, DshEndpoint, UpstreamIdentity } from './CompatTypes';
 
 export const UPSTREAM_IDENTITY: UpstreamIdentity = {
-  corePackage: '0.1.2-rc.1',
-  capturedAt: '2026-09-10T10:29:00.599Z',
-  endpointCount: 74
+  corePackage: '0.1.5-rc.1',
+  capturedAt: '2026-09-10T14:31:39.170Z',
+  endpointCount: 84
 };
 
 /** 全部 endpoint 调用契约（按 endpoint 名排序） */
@@ -72,7 +72,7 @@ export const DSH_ENDPOINTS: DshEndpoint[] = [
     ns: 'agentPresets',
     method: 'select',
     shape: ArgsShape.NAMED,
-    params: ['agent', 'agentPreset'],
+    params: ['agentId', 'agentPreset'],
     stream: false,
     cancellable: false,
     source: '',
@@ -84,7 +84,7 @@ export const DSH_ENDPOINTS: DshEndpoint[] = [
     ns: 'commands',
     method: 'execute',
     shape: ArgsShape.NAMED,
-    params: ['agent', 'line', 'images'],
+    params: ['agentId', 'line', 'submittedAttachments'],
     stream: false,
     cancellable: true,
     source: '',
@@ -96,7 +96,7 @@ export const DSH_ENDPOINTS: DshEndpoint[] = [
     ns: 'commands',
     method: 'list',
     shape: ArgsShape.NAMED,
-    params: ['agent'],
+    params: ['agentId'],
     stream: false,
     cancellable: false,
     source: '',
@@ -180,7 +180,7 @@ export const DSH_ENDPOINTS: DshEndpoint[] = [
     ns: 'dynamicCordisRunner',
     method: 'getClientCode',
     shape: ArgsShape.NAMED,
-    params: ['agent', 'pluginId', 'pluginRunId'],
+    params: ['agentId', 'pluginId', 'pluginRunId'],
     stream: false,
     cancellable: false,
     source: '',
@@ -216,7 +216,7 @@ export const DSH_ENDPOINTS: DshEndpoint[] = [
     ns: 'dynamicCordisRunner',
     method: 'reportClientGuardFailure',
     shape: ArgsShape.NAMED,
-    params: ['agent', 'pluginId', 'pluginRunId', 'failure'],
+    params: ['agentId', 'pluginId', 'pluginRunId', 'failure'],
     stream: false,
     cancellable: false,
     source: '',
@@ -228,7 +228,7 @@ export const DSH_ENDPOINTS: DshEndpoint[] = [
     ns: 'dynamicCordisRunner',
     method: 'reportRenderFailure',
     shape: ArgsShape.NAMED,
-    params: ['agent', 'pluginId', 'pluginRunId', 'failure'],
+    params: ['agentId', 'pluginId', 'pluginRunId', 'failure'],
     stream: false,
     cancellable: false,
     source: '',
@@ -240,7 +240,7 @@ export const DSH_ENDPOINTS: DshEndpoint[] = [
     ns: 'dynamicCordisRunner',
     method: 'resolveInspectQuery',
     shape: ArgsShape.NAMED,
-    params: ['agent', 'requestId', 'resolution'],
+    params: ['agentId', 'requestId', 'resolution'],
     stream: false,
     cancellable: false,
     source: '',
@@ -264,7 +264,7 @@ export const DSH_ENDPOINTS: DshEndpoint[] = [
     ns: 'dynamicCordisRunner',
     method: 'runHostHalf',
     shape: ArgsShape.NAMED,
-    params: ['agent', 'pluginId', 'packageId', 'mode', 'requestId', 'approveFutureVersions'],
+    params: ['agentId', 'pluginId', 'packageId', 'mode', 'requestId', 'approveFutureVersions'],
     stream: false,
     cancellable: false,
     source: '',
@@ -276,7 +276,7 @@ export const DSH_ENDPOINTS: DshEndpoint[] = [
     ns: 'dynamicCordisRunner',
     method: 'settleUserRun',
     shape: ArgsShape.NAMED,
-    params: ['agent', 'pluginId', 'resolution'],
+    params: ['agentId', 'pluginId', 'resolution'],
     stream: false,
     cancellable: false,
     source: '',
@@ -288,7 +288,7 @@ export const DSH_ENDPOINTS: DshEndpoint[] = [
     ns: 'dynamicCordisRunner',
     method: 'stopFromPanel',
     shape: ArgsShape.NAMED,
-    params: ['agent', 'pluginId'],
+    params: ['agentId', 'pluginId'],
     stream: false,
     cancellable: false,
     source: '',
@@ -312,7 +312,7 @@ export const DSH_ENDPOINTS: DshEndpoint[] = [
     ns: 'dynamicCordisRunner',
     method: 'undefineFromPanel',
     shape: ArgsShape.NAMED,
-    params: ['agent', 'pluginId'],
+    params: ['agentId', 'pluginId'],
     stream: false,
     cancellable: false,
     source: '',
@@ -324,7 +324,7 @@ export const DSH_ENDPOINTS: DshEndpoint[] = [
     ns: 'fileReferences',
     method: 'list',
     shape: ArgsShape.NAMED,
-    params: ['agent', 'query'],
+    params: ['agentId', 'query'],
     stream: false,
     cancellable: true,
     source: '',
@@ -332,11 +332,23 @@ export const DSH_ENDPOINTS: DshEndpoint[] = [
     capabilities: []
   },
   {
+    id: '@deepseek-ai/dsh-client-file-upload#fileUploads/upload',
+    ns: 'fileUploads',
+    method: 'upload',
+    shape: ArgsShape.NAMED,
+    params: ['agentId', 'request'],
+    stream: false,
+    cancellable: true,
+    source: '',
+    capability: 'fileUploads',
+    capabilities: ['fileUploads']
+  },
+  {
     id: '@deepseek-ai/dsh-goal#goals/clear',
     ns: 'goals',
     method: 'clear',
     shape: ArgsShape.NAMED,
-    params: ['agent', 'ref'],
+    params: ['agentId', 'ref'],
     stream: false,
     cancellable: false,
     source: '',
@@ -348,7 +360,7 @@ export const DSH_ENDPOINTS: DshEndpoint[] = [
     ns: 'goals',
     method: 'complete',
     shape: ArgsShape.NAMED,
-    params: ['agent', 'ref'],
+    params: ['agentId', 'ref'],
     stream: false,
     cancellable: false,
     source: '',
@@ -360,7 +372,7 @@ export const DSH_ENDPOINTS: DshEndpoint[] = [
     ns: 'goals',
     method: 'create',
     shape: ArgsShape.NAMED,
-    params: ['agent', 'request'],
+    params: ['agentId', 'request'],
     stream: false,
     cancellable: false,
     source: '',
@@ -372,7 +384,19 @@ export const DSH_ENDPOINTS: DshEndpoint[] = [
     ns: 'goals',
     method: 'edit',
     shape: ArgsShape.NAMED,
-    params: ['agent', 'ref', 'request'],
+    params: ['agentId', 'ref', 'request'],
+    stream: false,
+    cancellable: false,
+    source: '',
+    capability: 'goals',
+    capabilities: ['goals']
+  },
+  {
+    id: '@deepseek-ai/dsh-goal#goals/get',
+    ns: 'goals',
+    method: 'get',
+    shape: ArgsShape.NAMED,
+    params: ['agentId'],
     stream: false,
     cancellable: false,
     source: '',
@@ -384,7 +408,7 @@ export const DSH_ENDPOINTS: DshEndpoint[] = [
     ns: 'goals',
     method: 'pause',
     shape: ArgsShape.NAMED,
-    params: ['agent', 'ref'],
+    params: ['agentId', 'ref'],
     stream: false,
     cancellable: false,
     source: '',
@@ -396,7 +420,7 @@ export const DSH_ENDPOINTS: DshEndpoint[] = [
     ns: 'goals',
     method: 'resume',
     shape: ArgsShape.NAMED,
-    params: ['agent', 'ref'],
+    params: ['agentId', 'ref'],
     stream: false,
     cancellable: false,
     source: '',
@@ -680,11 +704,23 @@ export const DSH_ENDPOINTS: DshEndpoint[] = [
     capabilities: ['sessions']
   },
   {
+    id: '@deepseek-ai/dsh-command-feedback#sessionFeedback/record',
+    ns: 'sessionFeedback',
+    method: 'record',
+    shape: ArgsShape.REQUEST,
+    params: ['request'],
+    stream: false,
+    cancellable: false,
+    source: '',
+    capability: 'sessionFeedback',
+    capabilities: ['sessionFeedback']
+  },
+  {
     id: '@deepseek-ai/dsh-session-reference#sessionReferenceResolver/candidates',
     ns: 'sessionReferenceResolver',
     method: 'candidates',
     shape: ArgsShape.NAMED,
-    params: ['agent', 'query'],
+    params: ['agentId', 'query'],
     stream: false,
     cancellable: true,
     source: '',
@@ -907,6 +943,90 @@ export const DSH_ENDPOINTS: DshEndpoint[] = [
     capability: 'workspaces',
     capabilities: ['workspaces']
   },
+  {
+    id: '@deepseek-ai/dsh-api-workspace-files#workspaceFiles/changes',
+    ns: 'workspaceFiles',
+    method: 'changes',
+    shape: ArgsShape.NAMED,
+    params: ['workspaceFileScopeId'],
+    stream: true,
+    cancellable: true,
+    source: '',
+    capability: 'workspaceFiles',
+    capabilities: ['workspaceFiles']
+  },
+  {
+    id: '@deepseek-ai/dsh-api-workspace-files#workspaceFiles/list',
+    ns: 'workspaceFiles',
+    method: 'list',
+    shape: ArgsShape.NAMED,
+    params: ['workspaceFileScopeId', 'path'],
+    stream: false,
+    cancellable: true,
+    source: '',
+    capability: 'workspaceFiles',
+    capabilities: ['workspaceFiles']
+  },
+  {
+    id: '@deepseek-ai/dsh-api-workspace-files#workspaceFiles/read',
+    ns: 'workspaceFiles',
+    method: 'read',
+    shape: ArgsShape.NAMED,
+    params: ['workspaceFileScopeId', 'path', 'range'],
+    stream: false,
+    cancellable: true,
+    source: '',
+    capability: 'workspaceFiles',
+    capabilities: ['workspaceFiles']
+  },
+  {
+    id: '@deepseek-ai/dsh-api-workspace-files#workspaceFiles/readAll',
+    ns: 'workspaceFiles',
+    method: 'readAll',
+    shape: ArgsShape.NAMED,
+    params: ['workspaceFileScopeId', 'path'],
+    stream: false,
+    cancellable: true,
+    source: '',
+    capability: 'workspaceFiles',
+    capabilities: ['workspaceFiles']
+  },
+  {
+    id: '@deepseek-ai/dsh-api-workspace-files#workspaceFiles/readBytes',
+    ns: 'workspaceFiles',
+    method: 'readBytes',
+    shape: ArgsShape.NAMED,
+    params: ['workspaceFileScopeId', 'path', 'range'],
+    stream: false,
+    cancellable: true,
+    source: '',
+    capability: 'workspaceFiles',
+    capabilities: ['workspaceFiles']
+  },
+  {
+    id: '@deepseek-ai/dsh-api-workspace-files#workspaceFiles/readRelated',
+    ns: 'workspaceFiles',
+    method: 'readRelated',
+    shape: ArgsShape.NAMED,
+    params: ['workspaceFileScopeId', 'path', 'relativePath'],
+    stream: false,
+    cancellable: true,
+    source: '',
+    capability: 'workspaceFiles',
+    capabilities: ['workspaceFiles']
+  },
+  {
+    id: '@deepseek-ai/dsh-api-workspace-files#workspaceFiles/stat',
+    ns: 'workspaceFiles',
+    method: 'stat',
+    shape: ArgsShape.NAMED,
+    params: ['workspaceFileScopeId', 'path'],
+    stream: false,
+    cancellable: true,
+    source: '',
+    capability: 'workspaceFiles',
+    capabilities: ['workspaceFiles']
+  },
 ];
 
 /** 能力映射：产品功能 → 必需/可选端点（用于启动探测与入口置灰） */
@@ -921,9 +1041,9 @@ export const DSH_CAPABILITIES: DshCapability[] = [
   {
     id: 'approvals',
     label: '审批与提问',
-    requires: ['session/control'],
-    optional: ['session/prompt'],
-    missingHint: '该 Host 未提供审批控制流，无法答复审批与提问'
+    requires: [],
+    optional: ['session/control', 'session/prompt'],
+    missingHint: '审批与提问依赖网关转发事件流（$events / $events/result），需确认事件流已就绪'
   },
   {
     id: 'workspaces',
@@ -931,6 +1051,27 @@ export const DSH_CAPABILITIES: DshCapability[] = [
     requires: ['session/canOpenWorkspacePath'],
     optional: ['workspace/create', 'workspace/rename', 'workspace/delete', 'workspace/follow', 'directoryPicker/list', 'directoryPicker/pick', 'directoryPicker/createDirectory'],
     missingHint: '该 Host 未提供工作区端点，无法管理目录'
+  },
+  {
+    id: 'workspaceFiles',
+    label: '工作区文件',
+    requires: [],
+    optional: ['workspaceFiles/list', 'workspaceFiles/stat', 'workspaceFiles/read', 'workspaceFiles/readAll', 'workspaceFiles/readBytes', 'workspaceFiles/readRelated', 'workspaceFiles/changes'],
+    missingHint: '该 Host 未提供工作区文件端点，文件树与预览将不可用（不影响会话与审批）'
+  },
+  {
+    id: 'fileUploads',
+    label: '附件上传',
+    requires: [],
+    optional: ['fileUploads/upload'],
+    missingHint: '该 Host 未提供附件上传端点，无法投喂本机文件'
+  },
+  {
+    id: 'sessionFeedback',
+    label: '会话反馈',
+    requires: [],
+    optional: ['sessionFeedback/record'],
+    missingHint: '该 Host 未提供会话反馈端点，反馈入口将隐藏'
   },
   {
     id: 'agentPresets',
@@ -964,7 +1105,7 @@ export const DSH_CAPABILITIES: DshCapability[] = [
     id: 'goals',
     label: '目标',
     requires: [],
-    optional: ['goals/create', 'goals/edit', 'goals/pause', 'goals/resume', 'goals/complete', 'goals/clear'],
+    optional: ['goals/create', 'goals/edit', 'goals/pause', 'goals/resume', 'goals/complete', 'goals/clear', 'goals/get'],
     missingHint: '该 Host 未提供目标端点'
   },
   {
