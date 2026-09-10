@@ -128,6 +128,86 @@ export function projectPluginInventory(value: Object | undefined): PluginItem[] 
   return out;
 }
 
+/**
+ * 从 `settings/describe` 的回复里取出**凭据引用列表**。
+ *
+ * 这是凭据页的前置：`credentials/describe` **没有「列出全部」模式**——
+ * 实测传 `refs: []` 只得到 `{}`。ref 列表的唯一来源就是各命名空间声明的
+ * `secrets[].path`（D2 §8.7.2 第 17/19 条）。
+ *
+ * **ref 的编码是 `path` 用 `.` 连接，不带命名空间前缀**（实测确证，D2 §8.7.2 第 18 条）：
+ * `"apiKey"` 命中，而看起来更自然的 `"<ns>:apiKey"` 被 `gateway/bad-request` 拒绝。
+ * 这里按实测编码拼接；若上游改变编码，失败会表现为「凭据全部显示未配置」——
+ * 一个不报错只撒谎的形态，因此本函数的上游出处必须在升级时重点复核。
+ */
+export function projectCredentialRefs(value: Object | undefined): string[] {
+  const out: string[] = [];
+  if (value === undefined) {
+    return out;
+  }
+  const namespaces: Object[] | undefined = getArray(value, 'namespaces');
+  if (namespaces === undefined) {
+    return out;
+  }
+  for (let i = 0; i < namespaces.length; i++) {
+    const secrets: Object[] | undefined = getArray(namespaces[i], 'secrets');
+    if (secrets === undefined) {
+      continue;
+    }
+    for (let j = 0; j < secrets.length; j++) {
+      const path: Object[] | undefined = getArray(secrets[j], 'path');
+      if (path === undefined || path.length === 0) {
+        continue;
+      }
+      const parts: string[] = [];
+      for (let k = 0; k < path.length; k++) {
+        const seg: Object = path[k];
+        parts.push(typeof seg === 'string' ? seg as string : '');
+      }
+      const ref: string = parts.join('.');
+      if (ref.length > 0 && out.indexOf(ref) < 0) {
+        out.push(ref);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * 投影 `credentials/describe` 的回复。
+ *
+ * 实测形状：`{"<ref>": {configured, source?, writable}}`——一个**以 ref 为键的映射**。
+ * 因此必须把 `refs` 一起传入：不能靠遍历回复的键还原顺序（Host 只会回应被请求的 ref）。
+ *
+ * 三个取舍：
+ *   - `source` 在**未配置时缺省**（可选字段）。不能当成空串来源，
+ *     否则界面会把「没有来源信息」显示成一个来源；这里仅在存在时赋值。
+ *   - `interactive`（是否支持交互式授权）**线协议里没有对应字段**，一律置 false
+ *     并在此说明——凭空假定为 true 会渲染出一个并不存在的「去授权」按钮。
+ *   - Host 未描述某条 ref 时**保留一个「未配置」条目**而不是丢掉：
+ *     丢掉会让用户以为 Host 上根本没有这项凭据。
+ */
+export function projectCredentials(value: Object | undefined, refs: string[]): CredentialItem[] {
+  const out: CredentialItem[] = [];
+  const map: Record<string, Object> = (value === undefined ? {} : value) as Record<string, Object>;
+  for (let i = 0; i < refs.length; i++) {
+    const ref: string = refs[i];
+    const info: Object | undefined = map[ref];
+    if (info === undefined || info === null) {
+      out.push({ ref: ref, configured: false, writable: false, source: '', interactive: false });
+      continue;
+    }
+    out.push({
+      ref: ref,
+      configured: getBoolean(info, 'configured') === true,
+      writable: getBoolean(info, 'writable') === true,
+      source: getString(info, 'source') ?? '',
+      interactive: false
+    });
+  }
+  return out;
+}
+
 // ─────────────────────────── 设备与 Host ───────────────────────────
 
 /** Host 记录（对应 D1 §7.1 的多 Host 管理） */

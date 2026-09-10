@@ -222,6 +222,7 @@ struct Index {
     // 以为 Host 真有这些模型，所以这里反过来：**已连上就以真实结果为准，哪怕为空**。
     this.models = s.models;
     this.plugins = s.plugins;
+    this.credentials = s.credentials;
     if (s.defaultSelection !== undefined) {
       this.selection = s.defaultSelection;
     }

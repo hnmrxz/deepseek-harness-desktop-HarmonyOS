@@ -60,6 +60,8 @@ export type { FileNode, FilePreview, WorkspaceItem } from './model/Workspace';
 export {
   modelSelectionLabel,
   pluginSummary,
+  projectCredentials,
+  projectCredentialRefs,
   projectDefaultSelection,
   projectModelCatalog,
   projectPluginInventory,

@@ -43,9 +43,11 @@ import {
   isUserAuthoredEvent,
   mayChangeSessionTitle,
   mayChangeTurnState,
+  CREDENTIALS_DESCRIBE_ENDPOINT,
   MODEL_CATALOG_ENDPOINT,
   PLUGIN_INVENTORY_ENDPOINT,
   PROJECTION_TITLE,
+  SETTINGS_DESCRIBE_ENDPOINT,
   RemoteEventFrameType,
   SESSION_CANCEL_ENDPOINT,
   SESSION_CONTROL_ENDPOINT,
@@ -72,11 +74,13 @@ import {
 } from '../model/Trajectory';
 import type { PendingChoice, PendingItem, TrajectoryItem } from '../model/Trajectory';
 import {
+  projectCredentials,
+  projectCredentialRefs,
   projectDefaultSelection,
   projectModelCatalog,
   projectPluginInventory
 } from '../model/Settings';
-import type { ModelOption, ModelSelection, PluginItem } from '../model/Settings';
+import type { CredentialItem, ModelOption, ModelSelection, PluginItem } from '../model/Settings';
 
 /** 中枢运行阶段 */
 export enum HubPhase {
@@ -137,6 +141,8 @@ export interface HubSnapshot {
   defaultSelection: ModelSelection | undefined;
   /** 插件清单（来自 `pluginInventory/list`） */
   plugins: PluginItem[];
+  /** 凭据状态（来自 `settings/describe` 取 refs + `credentials/describe` 取状态）。**永不含明文** */
+  credentials: CredentialItem[];
 }
 
 /**
@@ -211,6 +217,7 @@ export class SessionHub {
   private models: ModelOption[] = [];
   private defaultSelection: ModelSelection | undefined = undefined;
   private plugins: PluginItem[] = [];
+  private credentials: CredentialItem[] = [];
 
   /** waterfall 待答项：eventId → 呈现项 id（应答时必须原样带回 eventId） */
   private waterfallEventIds: Map<string, string> = new Map();
@@ -377,7 +384,8 @@ export class SessionHub {
       unknownEventTypes: this.unknownTypes,
       models: this.models,
       defaultSelection: this.defaultSelection,
-      plugins: this.plugins
+      plugins: this.plugins,
+      credentials: this.credentials
     };
   }
 
@@ -688,6 +696,36 @@ export class SessionHub {
       } else {
         const f = result.error;
         this.record(`pluginInventory fail ${f === undefined ? '?' : f.code}`);
+      }
+    }
+
+    // 凭据：两跳。第一跳 settings/describe 拿 refs（credentials/describe 没有「列出全部」模式），
+    // 第二跳 credentials/describe 拿状态。**任何一跳失败都只是让凭据页为空**，
+    // 绝不因此把整个连接判为失败。
+    const settingsArgs: Object | undefined = argsFor(SETTINGS_DESCRIBE_ENDPOINT, empty as Object);
+    if (settingsArgs !== undefined) {
+      const described: RpcResult = await this.conn.call(SETTINGS_DESCRIBE_ENDPOINT, settingsArgs);
+      if (described.ok) {
+        const refs: string[] = projectCredentialRefs(described.value);
+        this.record(`settings/describe ok, ${refs.length} 个凭据引用`);
+        if (refs.length > 0) {
+          const credArgs: Record<string, Object> = {};
+          credArgs['refs'] = refs;
+          const creds: RpcResult = await this.conn.call(CREDENTIALS_DESCRIBE_ENDPOINT, credArgs as Object);
+          if (creds.ok) {
+            this.credentials = projectCredentials(creds.value, refs);
+            this.record(`credentials ok ${this.credentials.length} 条`);
+          } else {
+            const f = creds.error;
+            this.record(`credentials fail ${f === undefined ? '?' : f.code}`);
+          }
+        } else {
+          // 该 Host 没有任何声明了 secret 的命名空间：这是**正常状态**，不是失败
+          this.credentials = [];
+        }
+      } else {
+        const f = described.error;
+        this.record(`settings/describe fail ${f === undefined ? '?' : f.code}`);
       }
     }
 
