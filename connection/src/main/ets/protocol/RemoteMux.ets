@@ -220,7 +220,13 @@ export class RemoteMux {
       this.streams.delete(streamId);
       stream.settled = true;
       const error: Object | undefined = getRecord(frame, 'error');
-      const code: string = error === undefined ? 'gateway/internal' : (getString(error, 'code') ?? 'gateway/internal');
+      // 【命名修正】原先这里用 `gateway/internal` 作兜底码——那是**我们自造的**，
+      // 不是上游的码（上游的 `gateway/*` 是一组明确的边界错误，见 D2）。
+      // 用自己的码冒充上游命名空间会带来两个问题：一是架构门禁无法区分
+      // 「上游事实」与「我们的兜底」（正是它把此处报成违规的原因），
+      // 二是排查时会把「我们的解析兜底」误读成「Host 报了一个网关错误」。
+      // 语义上这确实是**信封解析**问题（错误对象读不出 code），故归入 carrier/parse。
+      const code: string = error === undefined ? 'carrier/parse' : (getString(error, 'code') ?? 'carrier/parse');
       const message: string = error === undefined ? 'stream error' : (getString(error, 'message') ?? 'stream error');
       stream.sink.onError(code, message);
       return;

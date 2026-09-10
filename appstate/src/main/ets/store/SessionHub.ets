@@ -38,6 +38,9 @@ import {
   argsFor,
   classifyEventType,
   EventFamily,
+  GATEWAY_ARGUMENTS_INVALID,
+  GATEWAY_INPUT_INVALID,
+  GATEWAY_SIGNATURE_INVALID,
   isAuditEventType,
   isSessionListEvent,
   isUserAuthoredEvent,
@@ -997,7 +1000,7 @@ export class SessionHub {
       onError: (code: string, message: string) => {
         this.controlCancel = undefined;
         this.record(`control error ${code}`);
-        if (code !== 'gateway/signature-invalid') {
+        if (code !== GATEWAY_SIGNATURE_INVALID) {
           this.lastError = `控制流失败：${code} ${message}`;
         }
         this.notify();
@@ -1383,7 +1386,7 @@ function friendlyFailure(code: string, message: string): string {
   if (code === 'carrier/timeout') {
     return '请求超时。请检查网络连通性；若 Host 负载很高可稍后重试。';
   }
-  if (code === 'gateway/arguments-invalid' || code === 'gateway/input-invalid') {
+  if (code === GATEWAY_ARGUMENTS_INVALID || code === GATEWAY_INPUT_INVALID) {
     return `调用参数与 Host 的契约不符（${message}）。这是客户端兼容面的问题，请提交诊断报告以便修正上表。`;
   }
   return `${code} ${message}`;

@@ -227,6 +227,29 @@ export function argsFor(endpoint: string, body: Object): Object | undefined {
   return buildArgs(endpoint, body);
 }
 
+// ─────────────────── 网关边界错误码（上游事实，供上层分支判断） ───────────────────
+
+/**
+ * 上游网关的边界错误码。
+ *
+ * 存在理由：上层（`appstate`）需要**按错误码分支**——例如「控制流被网关拒绝」
+ * 与「控制流因网络断开」要区别对待，后者才需要提示用户。
+ * 但错误码是上游事实，直接在上层写字面量会违反「上游知识只允许出现在 dshcompat」，
+ * 而且上游改码时会**静默失效**（判断永远为假、分支永不触发，且不报错）。
+ *
+ * 因此在唯一的事实落点导出常量，上层只消费常量。
+ * 出处：上游 `dsh-api-gateway` 的 `TypertGatewayErrorCode`（D2 §1.1 已登记该枚举）。
+ * 这里只导出**我们真正会分支**的三个，不搬运整个枚举——
+ * 未被使用的常量会变成无人维护的噪声。
+ */
+
+/** 一元载体上打开了流式端点（调用方错误，绝不重试） */
+export const GATEWAY_SIGNATURE_INVALID: string = 'gateway/signature-invalid';
+/** 参数名与描述符不符（调用方错误，绝不重试） */
+export const GATEWAY_ARGUMENTS_INVALID: string = 'gateway/arguments-invalid';
+/** 参数值未通过边界校验（调用方错误，绝不重试） */
+export const GATEWAY_INPUT_INVALID: string = 'gateway/input-invalid';
+
 /**
  * 诊断页「协议旁路日志」的演示行。
  *
