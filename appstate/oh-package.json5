@@ -1,0 +1,11 @@
+{
+  "name": "appstate",
+  "version": "1.0.0",
+  "description": "DSH 鸿蒙端状态层：连接持有、会话列表/轨迹投影、待决聚合、离线缓存。零 UI 依赖。",
+  "main": "Index.ets",
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "connection": "file:../connection"
+  }
+}

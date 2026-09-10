@@ -6,6 +6,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "connection": "file:../connection"
+    "connection": "file:../connection",
+    "appstate": "file:../appstate"
   }
 }

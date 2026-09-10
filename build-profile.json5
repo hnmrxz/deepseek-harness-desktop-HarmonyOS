@@ -46,6 +46,15 @@
           "name": "default"
         }
       ]
+    },
+    {
+      "name": "appstate",
+      "srcPath": "./appstate",
+      "targets": [
+        {
+          "name": "default"
+        }
+      ]
     }
   ]
 }
