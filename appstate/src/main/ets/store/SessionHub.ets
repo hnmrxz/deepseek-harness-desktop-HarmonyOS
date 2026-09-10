@@ -88,9 +88,16 @@ import {
   projectCredentialRefs,
   projectDefaultSelection,
   projectModelCatalog,
-  projectPluginInventory
+  projectPluginInventory,
+  projectSettingsGroups
 } from '../model/Settings';
-import type { CredentialItem, ModelOption, ModelSelection, PluginItem } from '../model/Settings';
+import type {
+  CredentialItem,
+  ModelOption,
+  ModelSelection,
+  PluginItem,
+  SettingGroup
+} from '../model/Settings';
 
 /** 中枢运行阶段 */
 export enum HubPhase {
@@ -153,6 +160,8 @@ export interface HubSnapshot {
   plugins: PluginItem[];
   /** 凭据状态（来自 `settings/describe` 取 refs + `credentials/describe` 取状态）。**永不含明文** */
   credentials: CredentialItem[];
+  /** Host 设置分组（来自 `settings/describe`，每个命名空间一组） */
+  settings: SettingGroup[];
 }
 
 /**
@@ -228,6 +237,13 @@ export class SessionHub {
   private defaultSelection: ModelSelection | undefined = undefined;
   private plugins: PluginItem[] = [];
   private credentials: CredentialItem[] = [];
+  /**
+   * Host 设置分组（来自 `settings/describe`，已按命名空间分组）。
+   *
+   * 与 `credentials` 共享同一次 `settings/describe` 调用：一次 RPC 同时喂两个页面，
+   * 而不是为了「干净」再拉一次。
+   */
+  private settingsGroups: SettingGroup[] = [];
 
   /** waterfall 待答项：eventId → 呈现项 id（应答时必须原样带回 eventId） */
   private waterfallEventIds: Map<string, string> = new Map();
@@ -395,7 +411,8 @@ export class SessionHub {
       models: this.models,
       defaultSelection: this.defaultSelection,
       plugins: this.plugins,
-      credentials: this.credentials
+      credentials: this.credentials,
+      settings: this.settingsGroups
     };
   }
 
@@ -717,7 +734,14 @@ export class SessionHub {
       const described: RpcResult = await this.conn.call(SETTINGS_DESCRIBE_ENDPOINT, settingsArgs);
       if (described.ok) {
         const refs: string[] = projectCredentialRefs(described.value);
-        this.record(`settings/describe ok, ${refs.length} 个凭据引用`);
+        // 同一次回复也喂设置页：设置分组与凭据引用都来自 settings/describe，
+        // 再拉一次只为了「一个函数做一件事」是浪费一次 RPC。
+        this.settingsGroups = projectSettingsGroups(described.value);
+        let itemCount: number = 0;
+        for (let i = 0; i < this.settingsGroups.length; i++) {
+          itemCount += this.settingsGroups[i].items.length;
+        }
+        this.record(`settings/describe ok, ${refs.length} 个凭据引用, ${itemCount} 个设置项`);
         if (refs.length > 0) {
           const credArgs: Record<string, Object> = {};
           credArgs['refs'] = refs;

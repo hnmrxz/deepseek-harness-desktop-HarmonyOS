@@ -7,7 +7,7 @@
  * 的 JSON 取值工具，不认识端点名（端点名一律由调用方从 `dshcompat` 传入）。
  */
 
-import { getArray, getBoolean, getRecord, getString } from 'connection';
+import { getArray, getBoolean, getNumber, getRecord, getString, isRecord } from 'connection';
 
 // ─────────────────────────── 设置 ───────────────────────────
 
@@ -19,9 +19,30 @@ export enum SettingKind {
   INFO = 'info'
 }
 
+/**
+ * 设置项来源：**本项目自己定义**的项，还是从 Host 的 `settings/describe` 读来的。
+ *
+ * 为什么必须区分：本客户端的「通知」「离线缓存」等项属于**本地偏好**，
+ * 上游没有对应命名空间；而外观 / 模型 / 重试策略等项来自 Host。
+ * 两类项混在一起而不标注，用户会以为改通知开关也会影响 Host——
+ * 那是一个**会撒谎的界面**。所以来源是设置项的一等属性，界面上必须显示。
+ */
+export enum SettingOrigin {
+  /** 本客户端本地偏好（Host 不知道它的存在） */
+  LOCAL = 'local',
+  /** 来自 Host 的 `settings/describe` */
+  HOST = 'host'
+}
+
+/** 选择项（`value` 发往上游，`label` 给人看） */
+export interface SettingChoice {
+  value: string;
+  label: string;
+}
+
 /** 设置项 */
 export interface SettingItem {
-  /** 上游设置键（ns 内的路径） */
+  /** 上游设置键（ns 内的路径，用 `.` 连接；本地项为本地键） */
   key: string;
   label: string;
   /** 说明文字（必填：设置项不能只有名字，D3 §4 文案纪律） */
@@ -30,12 +51,37 @@ export interface SettingItem {
   /** 当前值（布尔/字符串） */
   boolValue: boolean;
   textValue: string;
-  /** CHOICE 的选项 */
+  /** CHOICE 的选项（带显示名）；旧字段 `options` 保留为等价的取值列表 */
   options: string[];
-  /** 是否只读（写权限来自 Host） */
+  /** CHOICE 的选项（取值 + 显示名） */
+  choices: SettingChoice[];
+  /** 是否只读（本客户端目前不提供编辑入口） */
   readOnly: boolean;
+  /**
+   * Host 是否接受对该命名空间的写。
+   *
+   * 【为什么与 `readOnly` 分开】两者含义不同，混用会造成**会撒谎的界面**：
+   *   - `hostWritable === false`：Host 明确不接受写，控件必须禁用并**说明原因**；
+   *   - `readOnly === true` 但 `hostWritable === true`：Host 接受写，只是本客户端
+   *     还没做这个形态的编辑器（实测的 `models[]`、`retryPolicy` 就是这种）。
+   * 曾经把两者合成一个 `readOnly`，结果是「本客户端没做」被渲染成「Host 不允许」——
+   * 用户会以为 Host 限制了权限，而实际上是我们自己的功能缺口。
+   */
+  hostWritable: boolean;
   /** 是否需要在 Host 侧生效（提示"应用后生效"） */
   appliesLive: boolean;
+  /** 来源：本地偏好还是 Host 设置 */
+  origin: SettingOrigin;
+  /**
+   * 是否已被**用户层**显式覆盖。
+   *
+   * 实测 `value` 是「schema 默认 → 组合基线 → 用户层」三层合并的结果，
+   * 所以 `value` 无法区分「继承来的默认值」与「用户显式设成同一个值」。
+   * 界面靠这个标记告诉用户「这一项是你在 Host 上改过的」。
+   */
+  userSet: boolean;
+  /** 该设置项是一个凭据引用（实测 `meta.role === 'credential-ref'`） */
+  credentialRef: boolean;
 }
 
 /** 设置分组 */
@@ -43,6 +89,344 @@ export interface SettingGroup {
   /** 分组标题（如「外观」「通知」） */
   title: string;
   items: SettingItem[];
+}
+
+// ───────────────── 从 Host 的 settings/describe 生成设置项 ─────────────────
+
+/**
+ * `schemastery` schema 的一个节点（序列化后的形状）。
+ *
+ * **实测格式（D2b/D3b，必须照此读，不能按嵌套树猜）**：schema 不是树，
+ * 而是一张**以 `uid` 为键的扁平表** `refs` + 一个根 `uid`：
+ *
+ * ```json
+ * {"uid":231,"refs":{
+ *   "225":{"type":"union","meta":{"default":"system"},"list":[220,222]},
+ *   "220":{"type":"const","meta":{"required":true},"value":"light"},
+ *   "231":{"type":"object","meta":{"default":{}},"dict":{"preference":225}}}}
+ * ```
+ *
+ * 各结构键：
+ *   - `dict`：对象字段名 → 子节点 uid（**设置项就来自这里**）
+ *   - `list`：`union` 的候选 uid
+ *   - `inner`：`array` 的元素 uid
+ *   - `meta`：`required` / `default` / `min` / `max` / `step` / `pattern` / `role` / `description`
+ *   - `value`：`const` 的取值
+ */
+const SCHEMA_KIND_STRING = 'string';
+const SCHEMA_KIND_NUMBER = 'number';
+const SCHEMA_KIND_BOOLEAN = 'boolean';
+const SCHEMA_KIND_CONST = 'const';
+const SCHEMA_KIND_UNION = 'union';
+const SCHEMA_KIND_ARRAY = 'array';
+const SCHEMA_KIND_OBJECT = 'object';
+/** 实测值：该字段是一个凭据引用（不是普通字符串） */
+const META_ROLE_CREDENTIAL_REF = 'credential-ref';
+
+/** 从 `Record` 取一个字段（`readPath` 只吃点分路径，这里要按任意字符串键取） */
+function fieldOf(source: Object | undefined, key: string): Object | undefined {
+  if (source === undefined || !isRecord(source)) {
+    return undefined;
+  }
+  return (source as Record<string, Object>)[key];
+}
+
+/** 按 `string[]` 路径读取**
+ *
+ * 为什么不用 `connection.readPath`：那个吃点分**字符串**路径，
+ * 而 schema 的字段名里可能含点（`a.b` 会被它当成两段）。这里的路径是
+ * 上游直接给出的段数组，必须逐段按字面键取。
+ */
+function readSegments(source: Object | undefined, segments: string[]): Object | undefined {
+  let cursor: Object | undefined = source;
+  for (let i = 0; i < segments.length; i++) {
+    cursor = fieldOf(cursor, segments[i]);
+    if (cursor === undefined) {
+      return undefined;
+    }
+  }
+  return cursor;
+}
+
+/** `camelCase` / `snake_case` → 人可读标签（schema 里**没有**显示名，实测） */
+export function humanizeKey(key: string): string {
+  if (key.length === 0) {
+    return key;
+  }
+  let out: string = '';
+  for (let i = 0; i < key.length; i++) {
+    const ch: string = key.charAt(i);
+    const code: number = key.charCodeAt(i);
+    const isUpper: boolean = code >= 65 && code <= 90;
+    if (i > 0 && isUpper) {
+      out += ' ';
+    }
+    out += isUpper ? ch.toLowerCase() : ch;
+  }
+  return out.length > 0 ? out.charAt(0).toUpperCase() + out.substring(1) : key;
+}
+
+/** 把任意 JSON 标量渲染成一行文本（用于取值展示） */
+function scalarText(value: Object | undefined): string {
+  if (value === undefined) {
+    return '';
+  }
+  if (typeof value === 'string') {
+    return value as string;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return `${value}`;
+  }
+  return JSON.stringify(value) ?? '';
+}
+
+/** 该字段是否被用户层显式覆盖（`user` 里出现同名键即为覆盖） */
+function isUserSet(user: Object | undefined, field: string): boolean {
+  if (user === undefined || !isRecord(user)) {
+    return false;
+  }
+  return (user as Record<string, Object>)[field] !== undefined;
+}
+
+/**
+ * 把一棵 schema 子节点的 `union(list:const…)` 展开成选择项。
+ * 非枚举（例如 `union` 里混了对象分支）返回空数组，调用方降级为只读展示。
+ */
+function choicesOf(refs: Object, uid: number): SettingChoice[] {
+  const node: Object | undefined = fieldOf(refs, `${uid}`);
+  if (node === undefined || getString(node, 'type') !== SCHEMA_KIND_UNION) {
+    return [];
+  }
+  const list: Object[] | undefined = getArray(node, 'list');
+  if (list === undefined) {
+    return [];
+  }
+  const out: SettingChoice[] = [];
+  for (let i = 0; i < list.length; i++) {
+    // `list` 的元素可能是 uid（数字）——实测如此
+    const childUid: Object = list[i];
+    if (typeof childUid !== 'number') {
+      // 内联节点（非 uid）：实测未出现，按不可枚举处理而不是猜
+      return [];
+    }
+    const child: Object | undefined = fieldOf(refs, `${childUid as number}`);
+    if (child === undefined || getString(child, 'type') !== SCHEMA_KIND_CONST) {
+      return [];
+    }
+    const value: Object | undefined = fieldOf(child, 'value');
+    const text: string = scalarText(value);
+    if (text.length === 0) {
+      return [];
+    }
+    // 实测：上游**没有**枚举显示名，显示值就是取值本身
+    out.push({ value: text, label: text });
+  }
+  return out;
+}
+
+/** `null` 与 `undefined` 在 JSON 里语义不同，但本层都表示「没有值」 */
+function metaOf(refs: Object, uid: number): Object | undefined {
+  const node: Object | undefined = fieldOf(refs, `${uid}`);
+  return node === undefined ? undefined : fieldOf(node, 'meta');
+}
+
+/**
+ * 为一个字段生成**非空**的说明文字。
+ *
+ * D3 §4 要求设置项不能只有名字。实测**多数字段没有 `description`**，
+ * 因此这里逐级降级到「上游字段名 + 约束」，而不是留下空串：
+ * 空说明比没有说明更糟——它看起来像「这项没什么可说的」。
+ */
+function hintFor(ns: string, field: string, meta: Object | undefined,
+  credentialRef: boolean): string {
+  const described: string | undefined = meta === undefined ? undefined : getString(meta, 'description');
+  if (described !== undefined && described.length > 0) {
+    return described;
+  }
+  const parts: string[] = [];
+  if (credentialRef) {
+    parts.push('凭据引用（不是明文；值由「凭据」页管理）');
+  }
+  const min: number | undefined = meta === undefined ? undefined : getNumber(meta, 'min');
+  const max: number | undefined = meta === undefined ? undefined : getNumber(meta, 'max');
+  if (min !== undefined || max !== undefined) {
+    parts.push(`取值范围 ${min === undefined ? '不限' : min} – ${max === undefined ? '不限' : max}`);
+  }
+  const step: number | undefined = meta === undefined ? undefined : getNumber(meta, 'step');
+  if (step !== undefined && step > 1) {
+    parts.push(`步长 ${step}`);
+  }
+  if (meta !== undefined) {
+    const pattern: Object | undefined = fieldOf(meta, 'pattern');
+    if (pattern !== undefined) {
+      const source: string | undefined = getString(pattern, 'source');
+      if (source !== undefined && source.length > 0) {
+        parts.push(`须匹配 ${source}`);
+      }
+    }
+    if (getBoolean(meta, 'required') === true) {
+      parts.push('必填');
+    }
+  }
+  parts.push(`Host 设置项 ${ns}.${field}`);
+  return parts.join('；');
+}
+
+/** 一个命名空间的投影结果 */
+export interface SettingsNamespaceItems {
+  ns: string;
+  items: SettingItem[];
+}
+
+/**
+ * 把 `settings/describe` 的一个命名空间视图投影成设置分组。
+ *
+ * 只展开 `dict` 的**一级字段**（实测设置项都在这一级）。嵌套对象与数组
+ * （如 `llm-deepseek.models`、`retryPolicy`）以只读信息行呈现——
+ * **不猜**它们的编辑形态：列表编辑器需要被嵌套 schema 的结构，
+ * 而第一版没有实测过「写一个数组项」的线上效果，宁可不给入口。
+ *
+ * `writable` 为 false 时**所有**项只读（Host 明确说了不接受写）。
+ */
+export function projectSettingsNamespace(view: Object, writable: boolean): SettingsNamespaceItems {
+  const ns: string = getString(view, 'ns') ?? '';
+  const out: SettingsNamespaceItems = { ns: ns, items: [] };
+  const schema: Object | undefined = getRecord(view, 'schema');
+  if (schema === undefined || ns.length === 0) {
+    return out;
+  }
+  const refs: Object | undefined = getRecord(schema, 'refs');
+  const rootUid: number | undefined = getNumber(schema, 'uid');
+  if (refs === undefined || rootUid === undefined) {
+    return out;
+  }
+  const dict: Object | undefined = fieldOf(fieldOf(refs, `${rootUid}`), 'dict');
+  if (dict === undefined || !isRecord(dict)) {
+    return out;
+  }
+  const value: Object | undefined = getRecord(view, 'value');
+  const user: Object | undefined = getRecord(view, 'user');
+  const applies: string = getString(view, 'applies') ?? 'live';
+  const fields: Record<string, Object> = dict as Record<string, Object>;
+
+  for (const field of Object.keys(fields)) {
+    const childUid: Object = fields[field];
+    if (typeof childUid !== 'number') {
+      continue;
+    }
+    const uid: number = childUid as number;
+    const node: Object | undefined = fieldOf(refs, `${uid}`);
+    if (node === undefined) {
+      continue;
+    }
+    const type: string = getString(node, 'type') ?? '';
+    const meta: Object | undefined = metaOf(refs, uid);
+    const credentialRef: boolean =
+      (meta === undefined ? '' : (getString(meta, 'role') ?? '')) === META_ROLE_CREDENTIAL_REF;
+    const current: Object | undefined = fieldOf(value, field);
+    const itemKey: string = `${ns}.${field}`;
+    const base: SettingItem = {
+      key: itemKey,
+      label: humanizeKey(field),
+      hint: hintFor(ns, field, meta, credentialRef),
+      kind: SettingKind.INFO,
+      boolValue: false,
+      textValue: '',
+      options: [],
+      choices: [],
+      // Host 不接受写时，任何形态都不可编辑
+      readOnly: !writable,
+      hostWritable: writable,
+      appliesLive: applies !== 'restart',
+      origin: SettingOrigin.HOST,
+      userSet: isUserSet(user, field),
+      credentialRef: credentialRef
+    };
+
+    if (type === SCHEMA_KIND_BOOLEAN) {
+      base.kind = SettingKind.TOGGLE;
+      base.boolValue = current === true;
+      out.items.push(base);
+      continue;
+    }
+    const choices: SettingChoice[] = choicesOf(refs, uid);
+    if (choices.length > 0) {
+      base.kind = SettingKind.CHOICE;
+      base.choices = choices;
+      base.textValue = scalarText(current);
+      for (let c = 0; c < choices.length; c++) {
+        base.options.push(choices[c].value);
+      }
+      out.items.push(base);
+      continue;
+    }
+    if (type === SCHEMA_KIND_STRING || type === SCHEMA_KIND_NUMBER) {
+      base.kind = SettingKind.TEXT;
+      base.textValue = scalarText(current);
+      out.items.push(base);
+      continue;
+    }
+    // `array` / `object` / 复杂 `union`：只读展示，**不提供编辑入口**。
+    // 注意这里说的是「本客户端还没做这个形态的编辑器」，不是「Host 不允许写」——
+    // 所以 `hostWritable` 保持 Host 的真实答复，靠 `readOnly` 关掉控件，
+    // 界面上两者可以给出不同的解释文案。
+    base.kind = SettingKind.INFO;
+    base.readOnly = true;
+    base.textValue = current === undefined
+      ? '（未设置）'
+      : `${type} · ${scalarText(current).length} 字符`;
+    out.items.push(base);
+  }
+  return out;
+}
+
+/**
+ * 把所有命名空间投影成分组列表（分组标题 = 命名空间名）。
+ *
+ * **不硬编码命名空间清单**：实测 Host 上的命名空间集合取决于它装了哪些插件
+ * （本机 14 个），硬编码会退化成又一张「猜测表」。
+ * 未知命名空间同样展示——只是没有友好标题。
+ */
+export function projectSettingsGroups(value: Object | undefined): SettingGroup[] {
+  const out: SettingGroup[] = [];
+  if (value === undefined) {
+    return out;
+  }
+  const writable: boolean = getBoolean(value, 'writable') === true;
+  const namespaces: Object[] | undefined = getArray(value, 'namespaces');
+  if (namespaces === undefined) {
+    return out;
+  }
+  for (let i = 0; i < namespaces.length; i++) {
+    const projected: SettingsNamespaceItems = projectSettingsNamespace(namespaces[i], writable);
+    if (projected.items.length === 0) {
+      continue;
+    }
+    out.push({ title: projected.ns, items: projected.items });
+  }
+  return out;
+}
+
+/**
+ * 合并「来自 Host 的设置」与「本客户端本地偏好」。
+ *
+ * 【为什么必须合并，而不是二选一】
+ *   本客户端的通知、离线缓存等偏好**不存在于上游**——Host 的
+ *   `settings/describe` 里没有这些命名空间。若连上 Host 后整页替换成
+ *   Host 设置，这些本地偏好就会**从界面上消失**（用户会以为功能没了）；
+ *   若反过来只显示本地偏好，用户又无法配置真正生效的 Host 设置。
+ *
+ * Host 分组在前（那是用户来设置页主要想看的东西），本地分组在后。
+ */
+export function mergeSettingsGroups(host: SettingGroup[], local: SettingGroup[]): SettingGroup[] {
+  const out: SettingGroup[] = [];
+  for (let i = 0; i < host.length; i++) {
+    out.push(host[i]);
+  }
+  for (let j = 0; j < local.length; j++) {
+    out.push(local[j]);
+  }
+  return out;
 }
 
 // ─────────────────────────── 凭据 ───────────────────────────

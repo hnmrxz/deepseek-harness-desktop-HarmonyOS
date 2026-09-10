@@ -24,9 +24,26 @@ import {
   SettingGroup,
   SettingItem,
   SettingKind,
+  SettingOrigin,
   Sp,
   Sz
 } from 'appstate';
+
+/**
+ * 选择项的显示文案：优先用选项自带的显示名，找不到就回退到取值本身。
+ *
+ * 上游实测**没有**枚举显示名（`const.value` 就是取值），所以 `label` 与
+ * `value` 目前相同；但契约里两者是分开的，界面按「优先 label」渲染，
+ * 将来上游补上显示名时不需要改这里。
+ */
+function choiceLabel(item: SettingItem): string {
+  for (let i = 0; i < item.choices.length; i++) {
+    if (item.choices[i].value === item.textValue) {
+      return item.choices[i].label;
+    }
+  }
+  return item.textValue.length > 0 ? item.textValue : '未设置';
+}
 
 @Component
 export struct SettingsPane {
@@ -149,13 +166,56 @@ export struct SettingsPane {
   settingRow(item: SettingItem) {
     Row({ space: Sp.M }) {
       Column({ space: 2 }) {
-        Text(item.label)
-          .fontSize(Fs.BODY)
-          .width('100%')
+        Row({ space: Sp.XS }) {
+          Text(item.label)
+            .fontSize(Fs.BODY)
+          // 【来源标记是必需信息，不是装饰】本客户端的通知 / 离线缓存等偏好
+          // 在上游根本没有对应命名空间；不标出来，用户会以为改它也会影响 Host。
+          if (item.origin === SettingOrigin.LOCAL) {
+            Text('本机')
+              .fontSize(Fs.CAPTION)
+              .fontColor($r('sys.color.font_tertiary'))
+              .padding({ left: 6, right: 6, top: 1, bottom: 1 })
+              .borderRadius(Radius.S)
+              .backgroundColor($r('sys.color.background_primary'))
+          }
+          // 实测 value 是「默认 → 基线 → 用户层」三层合并的结果，
+          // 只看 value 无法区分「继承默认」与「用户设成了同一个值」。
+          if (item.userSet) {
+            Text('已自定义')
+              .fontSize(Fs.CAPTION)
+              .fontColor($r('sys.color.brand'))
+              .padding({ left: 6, right: 6, top: 1, bottom: 1 })
+              .borderRadius(Radius.S)
+              .backgroundColor($r('sys.color.background_primary'))
+          }
+        }
+        .width('100%')
+
         Text(item.hint)
           .fontSize(Fs.CAPTION)
           .fontColor($r('sys.color.font_tertiary'))
           .width('100%')
+
+        // `applies: 'restart'` 的命名空间改完需要重启 Host 才生效。
+        // 不提示就是骗用户「已经生效了」。
+        if (!item.appliesLive) {
+          Text('需重启 Host 后生效')
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.warning'))
+            .width('100%')
+        }
+
+        // 不可编辑的原因必须说清楚，而且**两种原因文案不同**：
+        //   - Host 不接受写 → 是权限/来源问题，用户无从改变；
+        //   - 本客户端还没做该形态的编辑器 → 是我们的功能缺口，不是 Host 的限制。
+        // 把后者写成前者会误导用户去 Host 上找权限开关。
+        if (item.readOnly) {
+          Text(item.hostWritable ? '此形态暂不支持在本客户端编辑（只读展示）' : 'Host 不接受对此项写入')
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.font_tertiary'))
+            .width('100%')
+        }
       }
       .layoutWeight(1)
 
@@ -166,11 +226,13 @@ export struct SettingsPane {
             this.onToggleSetting(item.key, on);
           })
       } else if (item.kind === SettingKind.CHOICE) {
-        Text(item.textValue)
+        Text(choiceLabel(item))
           .fontSize(Fs.SECONDARY)
-          .fontColor($r('sys.color.brand'))
+          .fontColor(item.readOnly ? $r('sys.color.font_tertiary') : $r('sys.color.brand'))
           .onClick(() => {
-            this.onPickChoice(item.key, item.textValue);
+            if (!item.readOnly) {
+              this.onPickChoice(item.key, item.textValue);
+            }
           })
       } else {
         Text(item.textValue)

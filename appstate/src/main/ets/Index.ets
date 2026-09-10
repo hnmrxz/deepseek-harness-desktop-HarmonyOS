@@ -61,6 +61,8 @@ export type { FileNode, FilePreview, WorkspaceItem } from './model/Workspace';
 
 // ── 设置 / 凭据 / 插件 / 设备 / 诊断 / 模型 ──
 export {
+  humanizeKey,
+  mergeSettingsGroups,
   modelSelectionLabel,
   pluginSummary,
   projectCredentials,
@@ -68,7 +70,10 @@ export {
   projectDefaultSelection,
   projectModelCatalog,
   projectPluginInventory,
-  SettingKind
+  projectSettingsGroups,
+  projectSettingsNamespace,
+  SettingKind,
+  SettingOrigin
 } from './model/Settings';
 export type {
   AboutInfo,
@@ -80,8 +85,10 @@ export type {
   ModelOption,
   ModelSelection,
   PluginItem,
+  SettingChoice,
   SettingGroup,
-  SettingItem
+  SettingItem,
+  SettingsNamespaceItems
 } from './model/Settings';
 
 // ── 桩数据源（设备到位前驱动 UI；接入真实数据后只替换数据来源） ──
@@ -125,8 +132,7 @@ export {
 export { Breakpoint, Dur, Fs, Lh, Radius, SemanticColor, Sp, Sz } from './ui/Tokens';
 
 // ── 会话中枢（D1 §7.7.5b：全应用单一连接池 + 单一会话状态机 + 单一待发队列） ──
-export { HubPhase, projectWireRecord, SessionHub } from './store/SessionHub';
-export type { HubSnapshot, HubSubscriber, OutboxEntry } from './store/SessionHub';
+export { HubPhase, projectWireRecord, SessionHub } from './store/SessionHub';export type { HubSnapshot, HubSubscriber, OutboxEntry } from './store/SessionHub';
 
 // ── 通知策略（D3 §6：六类通知的标题/正文/优先级/点击目标 + 内容纪律 + 去重键） ──
 export {

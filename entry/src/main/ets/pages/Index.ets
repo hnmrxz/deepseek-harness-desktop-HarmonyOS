@@ -47,6 +47,7 @@ import {
   SettingGroup,
   Sp,
   aboutInfo,
+  mergeSettingsGroups,
   stubCommands,
   stubCredentials,
   stubDetailSections,
@@ -117,6 +118,14 @@ struct Index {
   /** 文件预览结果；undefined = 未选择文件（@State 必须给默认值） */
   @State preview: FilePreview | undefined = undefined;
   @State settings: SettingGroup[] = [];
+  /**
+   * 本客户端本地偏好（通知 / 离线缓存等）。
+   *
+   * 与 `settings`（最终渲染的合并结果）分开保存的理由：这些偏好**不存在于上游**，
+   * 连上 Host 后不能被 Host 设置顶掉——否则用户会以为功能消失了。
+   * 见 `mergeSettingsGroups` 的说明。
+   */
+  @State localSettings: SettingGroup[] = [];
   @State credentials: CredentialItem[] = [];
   @State plugins: PluginItem[] = [];
   @State hosts: HostRecord[] = [];
@@ -223,6 +232,9 @@ struct Index {
     this.models = s.models;
     this.plugins = s.plugins;
     this.credentials = s.credentials;
+    // Host 设置在前、本地偏好在后。**已连上就以真实结果为准**（哪怕为空），
+    // 不再保留桩数据里的「Host 设置」——那会让用户改到并不存在的项。
+    this.settings = mergeSettingsGroups(s.settings, this.localSettings);
     if (s.defaultSelection !== undefined) {
       this.selection = s.defaultSelection;
     }
@@ -234,13 +246,30 @@ struct Index {
     this.recomputeDerived();
   }
 
+  /**
+   * 设置页当前**只读**：改动 Host 设置需要 `settings/set` 写路径（带 `expectedRevision`
+   * 的并发令牌），本客户端尚未实现。
+   *
+   * 【为什么必须显式提示，而不是让点击无声无息】
+   *   控件是**启用**的（`writable: true`、本客户端也做了这个形态的编辑器），
+   *   用户点下去开关会动、看起来像改成功了，但 Host 上的值没有变——
+   *   这是最坏的一种失败：**界面撒了谎，而且用户下次打开才发现**。
+   *   要么禁用控件，要么如实说明。这里选择如实说明，因为读值是真的、
+   *   把整页禁用会让用户以为连读取也坏了。
+   */
+  private noteHostSettingWriteUnavailable(key: string): void {
+    this.hubError = `「${key}」当前只读：本客户端还未实现写回 Host 的路径（settings/set 需要并发令牌）。`
+      + 'Host 上的值没有变化。';
+  }
+
   aboutToAppear(): void {
     this.sessions = stubSessions();
     this.pending = stubPending();
     this.detailSections = stubDetailSections();
     this.workspaces = stubWorkspaces();
     this.fileTree = stubFileTree();
-    this.settings = stubSettings();
+    this.localSettings = stubSettings();
+    this.settings = this.localSettings;
     this.credentials = stubCredentials();
     this.plugins = stubPlugins();
     this.hosts = stubHosts();
@@ -1018,8 +1047,10 @@ struct Index {
         selection: this.selection,
         about: aboutInfo(),
         onToggleSetting: (key: string, value: boolean) => {
+          this.noteHostSettingWriteUnavailable(key);
         },
         onPickChoice: (key: string, current: string) => {
+          this.noteHostSettingWriteUnavailable(key);
         },
         onPickModel: () => {
         },

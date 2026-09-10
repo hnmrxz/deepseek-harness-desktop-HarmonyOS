@@ -20,9 +20,11 @@ import {
   ModelOption,
   ModelSelection,
   PluginItem,
+  SettingChoice,
   SettingGroup,
   SettingItem,
   SettingKind,
+  SettingOrigin,
   DiagEntry
 } from './Settings';
 import { supportedVersionsText, tableStats, upstreamCapturedAt } from 'dshcompat';
@@ -116,25 +118,39 @@ export function stubPreview(path: string, name: string): FilePreview {
 
 // ─────────────────────────── 设置 ───────────────────────────
 
-function toggle(key: string, label: string, hint: string, value: boolean): SettingItem {
+/**
+ * 桩数据的设置项一律标记为 `SettingOrigin.LOCAL`。
+ *
+ * 【为什么桩数据也必须标来源】桩数据的用途是「未连接时界面仍然完整可看」，
+ * 而来源标记正是界面上一等重要的信息（本地偏好 vs Host 设置）。
+ * 如果桩数据留空，未连接状态下的界面会与连接后长得不一样——
+ * 那就失去了桩数据的意义：它要证明的是**布局**，不是内容。
+ */
+function stubItem(key: string, label: string, hint: string, kind: SettingKind,
+  boolValue: boolean, textValue: string, options: string[], readOnly: boolean,
+  appliesLive: boolean): SettingItem {
+  const choices: SettingChoice[] = [];
+  for (let i = 0; i < options.length; i++) {
+    choices.push({ value: options[i], label: options[i] });
+  }
   return {
-    key: key, label: label, hint: hint, kind: SettingKind.TOGGLE,
-    boolValue: value, textValue: '', options: [], readOnly: false, appliesLive: true
+    key: key, label: label, hint: hint, kind: kind,
+    boolValue: boolValue, textValue: textValue, options: options, choices: choices,
+    readOnly: readOnly, hostWritable: !readOnly, appliesLive: appliesLive,
+    origin: SettingOrigin.LOCAL, userSet: false, credentialRef: false
   };
+}
+
+function toggle(key: string, label: string, hint: string, value: boolean): SettingItem {
+  return stubItem(key, label, hint, SettingKind.TOGGLE, value, '', [], false, true);
 }
 
 function choice(key: string, label: string, hint: string, value: string, options: string[]): SettingItem {
-  return {
-    key: key, label: label, hint: hint, kind: SettingKind.CHOICE,
-    boolValue: false, textValue: value, options: options, readOnly: false, appliesLive: true
-  };
+  return stubItem(key, label, hint, SettingKind.CHOICE, false, value, options, false, true);
 }
 
 function info(key: string, label: string, hint: string, value: string): SettingItem {
-  return {
-    key: key, label: label, hint: hint, kind: SettingKind.INFO,
-    boolValue: false, textValue: value, options: [], readOnly: true, appliesLive: false
-  };
+  return stubItem(key, label, hint, SettingKind.INFO, false, value, [], true, false);
 }
 
 /** 演示：设置分组 */
