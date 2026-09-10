@@ -165,28 +165,21 @@ export enum EventFamily {
   ERROR = 'error'
 }
 
-/** 前缀 → 家族 的映射表（顺序即匹配优先级） */
-export const EVENT_FAMILY_PREFIXES: string[] = [
-  'user/', 'assistant/message',
-  'assistant/', 'reasoning',
-  'tool/', 'tool-call',
-  'subagent',
-  'goal',
-  'job',
-  'error'
-];
-
-/** 与 `EVENT_FAMILY_PREFIXES` 一一对应的家族 */
-export const EVENT_FAMILY_OF_PREFIX: EventFamily[] = [
-  EventFamily.MESSAGE, EventFamily.MESSAGE,
-  EventFamily.REASONING, EventFamily.REASONING,
-  EventFamily.TOOL, EventFamily.TOOL,
-  EventFamily.SUBAGENT,
-  EventFamily.GOAL,
-  EventFamily.JOB,
-  EventFamily.ERROR
-];
-
+/**
+ * 【已删除：前缀猜测表】
+ *
+ * 这里原本有两张表 `EVENT_FAMILY_PREFIXES` / `EVENT_FAMILY_OF_PREFIX`，
+ * 把「命名空间前缀 → 呈现家族」硬编码下来（`assistant/` → 思考、`error` → 错误、
+ * `job` → 任务…）。那些前缀**是猜的**，并已被实测推翻（D2 §8.7.8：
+ * 不存在 `reasoning/*`、`error/*`、`job/*` 事件族）。
+ *
+ * 删除而不是注释掉的理由：它们**是导出过的公开 API**，
+ * 留着就会被后来者当成权威用法——照它写出的代码会把思考归到消息、
+ * 让错误与作业永不显示，而且**不报错**。宁可让引用它的代码编译失败，
+ * 也不要让一个已知错误的表继续被使用。
+ *
+ * 正确用法：`classifyEventType()`（按实测清单显式枚举）。
+ */
 /** 是否为无需进入对话流的审计事件 */
 export function isAuditEventType(name: string): boolean {
   for (let i = 0; i < AUDIT_EVENT_TYPES.length; i++) {

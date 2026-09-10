@@ -109,8 +109,6 @@ export {
   EVENT_SETTINGS_DOCUMENT_UPDATED,
   AUDIT_EVENT_TYPES,
   classifyEventType,
-  EVENT_FAMILY_OF_PREFIX,
-  EVENT_FAMILY_PREFIXES,
   EventFamily,
   isAuditEventType,
   isUserAuthoredEvent,
