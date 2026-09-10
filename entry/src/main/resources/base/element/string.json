@@ -1,0 +1,24 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "DeepSeek Harness 鸿蒙客户端"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "DeepSeek Harness 鸿蒙客户端"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "DSH 鸿蒙端"
+    },
+    {
+      "name": "perm_internet_reason",
+      "value": "连接你指定的 DeepSeek Harness Host（本机或局域网/隧道地址）以收发会话与事件"
+    },
+    {
+      "name": "perm_network_info_reason",
+      "value": "检测网络状态切换，用于断线后自动重连与局域网 Host 发现"
+    }
+  ]
+}
