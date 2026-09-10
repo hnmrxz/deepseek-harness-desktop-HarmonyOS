@@ -198,17 +198,56 @@ export function isAuditEventType(name: string): boolean {
 }
 
 /**
- * 按命名空间前缀把事件名归入呈现家族。
+ * 会话事件类型 → 呈现家族的**显式表**。
  *
- * 未知家族一律归为 `MESSAGE`：宁可把原始内容显示出来让用户看到发生了什么，
- * 也不要静默丢弃导致「对话少了一截」。真实家族的完整清单由
- * `SessionHub` 的未识别事件汇总在真机上取得后回填本表。
+ * 【为什么从「前缀猜测」改成显式枚举】
+ *   原实现按命名空间前缀归类（`assistant/` → 思考、`error` → 错误、`job` → 任务…），
+ *   那些前缀是**猜的**。2026-09-10 通过逐帧解码 Host 落盘日志取得权威清单
+ *   （D2 §8.7.8：31 种事件类型，1485 帧 / 5257 条记录）后，三条假设被推翻：
+ *     - **不存在 `reasoning/*`**：思考内容在 `assistant/message` 的 `stream` 字段里
+ *     - **不存在 `error/*`**：错误来自转发事件 `api-session/error` 与 `llm/retry`
+ *     - **不存在 `job/*`**：作业只经 `session/control` 的 `jobs` 帧到达
+ *   照猜实现的话，思考会被当成普通消息、错误与作业永远不会显示——
+ *   而且**不报错**。所以这里改为逐条枚举，未列出的类型显式走「未知」分支。
+ *
+ * 未列出的类型归为 `MESSAGE`（把原始 JSON 显示出来），而不是静默丢弃：
+ * 宁可让用户看到「这里有一条不认识的事件」，也不要让对话少一截。
+ * `SessionHub.noteUnknown()` 会把未识别类型汇总到诊断页，便于回填本表。
+ */
+const SESSION_EVENT_FAMILY: Record<string, EventFamily> = {
+  // 消息
+  'user/message': EventFamily.MESSAGE,
+  'assistant/message': EventFamily.MESSAGE,
+  'system/message': EventFamily.MESSAGE,
+  // 工具
+  'tool/call': EventFamily.TOOL,
+  'tool/result': EventFamily.TOOL,
+  // 子代理
+  'subagent/catalog': EventFamily.SUBAGENT,
+  // 目标
+  'goal/change': EventFamily.GOAL,
+  // 任务（上游的任务清单就是 todo）
+  'todo/write': EventFamily.JOB,
+  // 失败信号（上游没有独立的 error 事件族）
+  'llm/retry': EventFamily.ERROR,
+  'llm/retry-started': EventFamily.ERROR,
+  // 上下文压缩：有用户可读内容（摘要），归入推理家族呈现
+  'compaction/start': EventFamily.REASONING,
+  'compaction/end': EventFamily.REASONING,
+  'compaction/summary': EventFamily.REASONING,
+  // 流式尝试的开端：不是独立条目，但按推理呈现比按消息更贴近其语义
+  'assistant/attempt': EventFamily.REASONING
+};
+
+/**
+ * 按**实测清单**把事件名归入呈现家族。
+ *
+ * 未列出的类型返回 `MESSAGE` 并由上层汇总到「未识别事件类型」（见文件头说明）。
  */
 export function classifyEventType(name: string): EventFamily {
-  for (let i = 0; i < EVENT_FAMILY_PREFIXES.length; i++) {
-    if (name.indexOf(EVENT_FAMILY_PREFIXES[i]) === 0) {
-      return EVENT_FAMILY_OF_PREFIX[i];
-    }
+  const known: EventFamily | undefined = SESSION_EVENT_FAMILY[name];
+  if (known !== undefined) {
+    return known;
   }
   return EventFamily.MESSAGE;
 }
