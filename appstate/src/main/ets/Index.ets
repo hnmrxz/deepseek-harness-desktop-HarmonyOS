@@ -60,6 +60,9 @@ export type { FileNode, FilePreview, WorkspaceItem } from './model/Workspace';
 export {
   modelSelectionLabel,
   pluginSummary,
+  projectDefaultSelection,
+  projectModelCatalog,
+  projectPluginInventory,
   SettingKind
 } from './model/Settings';
 export type {

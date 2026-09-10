@@ -217,6 +217,14 @@ struct Index {
     this.offline = s.phase === HubPhase.DEGRADED;
     this.sessions = s.sessions;
     this.pending = s.pending;
+    // 模型目录与插件清单是「静态事实」：连上后由中枢拉一次。
+    // 只在非空时覆盖桩数据——能力缺失（老 Host 没有这些端点）时保留桩数据会让用户
+    // 以为 Host 真有这些模型，所以这里反过来：**已连上就以真实结果为准，哪怕为空**。
+    this.models = s.models;
+    this.plugins = s.plugins;
+    if (s.defaultSelection !== undefined) {
+      this.selection = s.defaultSelection;
+    }
     this.selectedSessionTitle = s.selectedTitle;
     if (s.selectedSessionId === this.selectedSessionId) {
       this.trajectoryItems = s.trajectory;

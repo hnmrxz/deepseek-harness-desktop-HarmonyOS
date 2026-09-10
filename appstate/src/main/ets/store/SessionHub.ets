@@ -43,6 +43,8 @@ import {
   isUserAuthoredEvent,
   mayChangeSessionTitle,
   mayChangeTurnState,
+  MODEL_CATALOG_ENDPOINT,
+  PLUGIN_INVENTORY_ENDPOINT,
   PROJECTION_TITLE,
   RemoteEventFrameType,
   SESSION_CANCEL_ENDPOINT,
@@ -69,6 +71,12 @@ import {
   TrajectoryKind
 } from '../model/Trajectory';
 import type { PendingChoice, PendingItem, TrajectoryItem } from '../model/Trajectory';
+import {
+  projectDefaultSelection,
+  projectModelCatalog,
+  projectPluginInventory
+} from '../model/Settings';
+import type { ModelOption, ModelSelection, PluginItem } from '../model/Settings';
 
 /** 中枢运行阶段 */
 export enum HubPhase {
@@ -123,6 +131,12 @@ export interface HubSnapshot {
   trace: string[];
   /** 未识别的上游事件类型（自证缺口：设备上跑一次就能看到真实清单） */
   unknownEventTypes: string[];
+  /** 模型目录（来自 `session/modelCatalog`；未连接或能力缺失时为空数组） */
+  models: ModelOption[];
+  /** Host 为未配置会话准备的默认模型选择（无则 undefined，界面保持当前选择） */
+  defaultSelection: ModelSelection | undefined;
+  /** 插件清单（来自 `pluginInventory/list`） */
+  plugins: PluginItem[];
 }
 
 /**
@@ -194,6 +208,9 @@ export class SessionHub {
   private traceEnabled: boolean = true;
   private unknownTypes: string[] = [];
   private outboxList: OutboxEntry[] = [];
+  private models: ModelOption[] = [];
+  private defaultSelection: ModelSelection | undefined = undefined;
+  private plugins: PluginItem[] = [];
 
   /** waterfall 待答项：eventId → 呈现项 id（应答时必须原样带回 eventId） */
   private waterfallEventIds: Map<string, string> = new Map();
@@ -287,6 +304,8 @@ export class SessionHub {
     this.unaryReady = true;
     this.notify();
     await this.refreshSessions();
+    // 静态事实（模型目录 / 插件清单）随后拉一次：无参只读，失败不影响连接
+    await this.loadStaticFacts();
     this.flushOutbox();
     return true;
   }
@@ -355,7 +374,10 @@ export class SessionHub {
       outbox: this.outboxList.length,
       lastError: this.lastError,
       trace: this.traceLines,
-      unknownEventTypes: this.unknownTypes
+      unknownEventTypes: this.unknownTypes,
+      models: this.models,
+      defaultSelection: this.defaultSelection,
+      plugins: this.plugins
     };
   }
 
@@ -631,6 +653,46 @@ export class SessionHub {
   }
 
   // ───────────────────────── 会话与轨迹 ─────────────────────────
+
+  /**
+   * 拉取「静态事实」：模型目录 + 插件清单。
+   *
+   * 这两个端点是**无参只读**的（参数形态 `NONE`，实测可用，见 D2 §8.7.2），
+   * 因此可以在连接建立后无条件拉一次，作为模型页/插件页的真实数据来源。
+   *
+   * 失败不抛也不阻断连接：能力缺失（老 Host 没有这些端点）应当表现为
+   * 「对应页面为空 + 可解释」，而不是让整个连接失败。
+   */
+  async loadStaticFacts(): Promise<void> {
+    const empty: Record<string, Object> = {};
+
+    const catalogArgs: Object | undefined = argsFor(MODEL_CATALOG_ENDPOINT, empty as Object);
+    if (catalogArgs !== undefined) {
+      const result: RpcResult = await this.conn.call(MODEL_CATALOG_ENDPOINT, catalogArgs);
+      if (result.ok) {
+        this.models = projectModelCatalog(result.value);
+        this.defaultSelection = projectDefaultSelection(result.value);
+        this.record(`modelCatalog ok ${this.models.length} 个模型`);
+      } else {
+        const f = result.error;
+        this.record(`modelCatalog fail ${f === undefined ? '?' : f.code}`);
+      }
+    }
+
+    const pluginArgs: Object | undefined = argsFor(PLUGIN_INVENTORY_ENDPOINT, empty as Object);
+    if (pluginArgs !== undefined) {
+      const result: RpcResult = await this.conn.call(PLUGIN_INVENTORY_ENDPOINT, pluginArgs);
+      if (result.ok) {
+        this.plugins = projectPluginInventory(result.value);
+        this.record(`pluginInventory ok ${this.plugins.length} 个条目`);
+      } else {
+        const f = result.error;
+        this.record(`pluginInventory fail ${f === undefined ? '?' : f.code}`);
+      }
+    }
+
+    this.notify();
+  }
 
   /**
    * 新建会话。

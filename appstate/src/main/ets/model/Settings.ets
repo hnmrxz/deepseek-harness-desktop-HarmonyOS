@@ -1,7 +1,13 @@
 /**
  * 设置 / 凭据 / 插件 / 设备 / 诊断的呈现层契约
  * （D3 §1 信息架构的「设置」与「诊断」分支，对应 D1 §7.6 / §7.8）。
+ *
+ * 本文件同时承载「上游回复 → 本层契约」的投影函数。放这里的理由：
+ * 契约与它的投影住在一起，改名/改形状时改一处即可；投影只依赖 `connection`
+ * 的 JSON 取值工具，不认识端点名（端点名一律由调用方从 `dshcompat` 传入）。
  */
+
+import { getArray, getBoolean, getRecord, getString } from 'connection';
 
 // ─────────────────────────── 设置 ───────────────────────────
 
@@ -81,6 +87,45 @@ export function pluginSummary(items: PluginItem[]): string {
     }
   }
   return `${items.length} 个条目 · ${enabled} 已启用 · ${active} 运行中`;
+}
+
+/**
+ * 投影 `pluginInventory/list` 的回复。
+ *
+ * 实测形状（D2 §8.7.2）：`{entries:[{entryId, moduleName, enabled, fiberPhase}]}`，
+ * 其中 `fiberPhase` 是 `'active'` 或 `null`（**不是**空串）。
+ * `null` 表示「已加载但未进入 active 阶段」，界面上按原样展示，不美化。
+ *
+ * `firstParty` 由模块名推断（`@deepseek-ai/*`）——这是**本地展示分类**，
+ * 不是上游字段；上游没有「第一方」这个概念。注释写清楚以免被当成协议事实。
+ */
+export function projectPluginInventory(value: Object | undefined): PluginItem[] {
+  const out: PluginItem[] = [];
+  if (value === undefined) {
+    return out;
+  }
+  const entries: Object[] | undefined = getArray(value, 'entries');
+  if (entries === undefined) {
+    return out;
+  }
+  for (let i = 0; i < entries.length; i++) {
+    const entry: Object = entries[i];
+    const entryId: string = getString(entry, 'entryId') ?? '';
+    if (entryId.length === 0) {
+      // 无 id 的条目无法在界面上区分，跳过而不是产出一行空卡片
+      continue;
+    }
+    const moduleName: string = getString(entry, 'moduleName') ?? '';
+    out.push({
+      entryId: entryId,
+      moduleName: moduleName,
+      enabled: getBoolean(entry, 'enabled') === true,
+      // fiberPhase 为 null 时统一成空串：本层契约里 phase 是 string
+      phase: getString(entry, 'fiberPhase') ?? '',
+      firstParty: moduleName.indexOf('@deepseek-ai/') === 0
+    });
+  }
+  return out;
 }
 
 // ─────────────────────────── 设备与 Host ───────────────────────────
@@ -163,6 +208,94 @@ export interface ModelOption {
   /** 推理强度选项（空 = 不支持） */
   efforts: string[];
   defaultEffort: string;
+}
+
+/**
+ * 投影 `session/modelCatalog` 的回复。
+ *
+ * 实测形状（D2 §8.7.2）：
+ * `{default:{provider,model,routingEffort?}, routableProviders:[…],
+ *   groups:[{id, name, models:[{id, name, description?, reasoning?:{efforts:[{id,name,description?}], defaultEffort?}}]}]}`
+ *
+ * 投影策略：把两级结构（provider 分组 → 模型）**拍平成 `ModelOption[]`**，
+ * 因为本层契约是按「一行一个可选模型」设计的（设置页的模型页签与输入区的
+ * 模型 chip 都按这个粒度选择）。provider 名与 id 都保留下来，
+ * 以便选择后能构造上游要求的 `{provider, model, reasoningEffort}`。
+ *
+ * `efforts` 取的是**强度 id 列表**（不是显示名）——下游要把它原样发回上游。
+ * 显示名由界面按需查表，不在这里混入。
+ */
+export function projectModelCatalog(value: Object | undefined): ModelOption[] {
+  const out: ModelOption[] = [];
+  if (value === undefined) {
+    return out;
+  }
+  const groups: Object[] | undefined = getArray(value, 'groups');
+  if (groups === undefined) {
+    return out;
+  }
+  for (let g = 0; g < groups.length; g++) {
+    const group: Object = groups[g];
+    const providerId: string = getString(group, 'id') ?? '';
+    const providerName: string = getString(group, 'name') ?? providerId;
+    const models: Object[] | undefined = getArray(group, 'models');
+    if (models === undefined) {
+      continue;
+    }
+    for (let m = 0; m < models.length; m++) {
+      const model: Object = models[m];
+      const modelId: string = getString(model, 'id') ?? '';
+      if (modelId.length === 0 || providerId.length === 0) {
+        // provider/model 是后续 selectModel 的必需定位信息，缺一不可用
+        continue;
+      }
+      const efforts: string[] = [];
+      let defaultEffort: string = '';
+      const reasoning: Object | undefined = getRecord(model, 'reasoning');
+      if (reasoning !== undefined) {
+        const list: Object[] | undefined = getArray(reasoning, 'efforts');
+        if (list !== undefined) {
+          for (let e = 0; e < list.length; e++) {
+            const id: string = getString(list[e], 'id') ?? '';
+            if (id.length > 0) {
+              efforts.push(id);
+            }
+          }
+        }
+        defaultEffort = getString(reasoning, 'defaultEffort') ?? '';
+      }
+      out.push({
+        provider: providerId,
+        providerName: providerName,
+        modelId: modelId,
+        modelName: getString(model, 'name') ?? modelId,
+        description: getString(model, 'description') ?? '',
+        efforts: efforts,
+        defaultEffort: defaultEffort
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * 投影模型目录里的**默认选择**（Host 为未配置会话准备的默认路由）。
+ * 返回 undefined 表示 Host 没给默认值（界面应保持当前选择而不是猜一个）。
+ */
+export function projectDefaultSelection(value: Object | undefined): ModelSelection | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const def: Object | undefined = getRecord(value, 'default');
+  if (def === undefined) {
+    return undefined;
+  }
+  const provider: string = getString(def, 'provider') ?? '';
+  const model: string = getString(def, 'model') ?? '';
+  if (provider.length === 0 || model.length === 0) {
+    return undefined;
+  }
+  return { provider: provider, modelId: model, effort: getString(def, 'reasoningEffort') ?? '' };
 }
 
 /** 当前模型与推理强度 */
