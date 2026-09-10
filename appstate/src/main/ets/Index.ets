@@ -10,6 +10,9 @@ export type { SessionListItem, SessionListPage } from './model/SessionList';
 
 // ── 轨迹与待决的呈现层契约 ──
 export {
+  APPROVAL_CHOICE_ALLOW,
+  APPROVAL_CHOICE_ALLOW_ALWAYS,
+  APPROVAL_CHOICE_DENY,
   PendingKind,
   RiskLevel,
   Speaker,
@@ -77,7 +80,7 @@ export type {
 export { stubHost, stubPending, stubSessions, stubTrajectory } from './model/StubData';
 export type { StubHostInfo } from './model/StubData';
 export {
-  stubAbout,
+  aboutInfo,
   stubCommands,
   stubCredentials,
   stubDetailSections,

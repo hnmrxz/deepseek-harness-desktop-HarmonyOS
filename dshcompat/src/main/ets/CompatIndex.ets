@@ -133,6 +133,16 @@ export function upstreamIdentity(): string {
   return UPSTREAM_IDENTITY.corePackage;
 }
 
+/** 兼容面采集时间（About/诊断页展示，证明「这份上表是什么时候、从哪个版本采集的」）。 */
+export function upstreamCapturedAt(): string {
+  return UPSTREAM_IDENTITY.capturedAt;
+}
+
+/** 受支持版本的展示文本（About 页用；顺序即优先级）。 */
+export function supportedVersionsText(): string {
+  return SUPPORTED_VERSIONS.join(' / ');
+}
+
 /**
  * 按参数形态构造 `args` 载荷。
  *

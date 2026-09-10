@@ -18,3 +18,12 @@ local.properties
 Thumbs.db
 # 模拟器/真机验收截图（体积大、可随时重截）
 screenshots/
+
+# hostkit（PC 侧搭桥服务）生成的状态与临时文件（身份私钥/设备白名单/审计/自签证书）
+hostkit/node_modules/
+hostkit/.hostkit/
+hostkit/**/*.pem
+hostkit/**/*.key
+hostkit/**/*.crt
+hostkit/**/*.jsonl
+hostkit/**/*.tmp

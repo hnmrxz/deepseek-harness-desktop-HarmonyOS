@@ -6,6 +6,8 @@
  */
 
 import {
+  APPROVAL_CHOICE_ALLOW,
+  APPROVAL_CHOICE_DENY,
   Fs,
   PendingChoice,
   PendingItem,
@@ -21,6 +23,27 @@ import {
 @Component
 export struct PendingPane {
   @Prop items: PendingItem[] = [];
+
+  /**
+   * 答复审批。`choiceId` 取值来自 `appstate` 的审批选项目契约
+   * （`APPROVAL_CHOICE_ALLOW` / `APPROVAL_CHOICE_ALLOW_ALWAYS` / `APPROVAL_CHOICE_DENY`），
+   * `reason` 是可选的拒绝理由（空串表示未填）。
+   *
+   * **重要**：`APPROVAL_CHOICE_ALLOW_ALWAYS` 不是上游 outcome——上游只有
+   * `allowed-once | rejected | cancelled | unavailable`。上层收到它时应映射为
+   * `allowed-once` 并只在本客户端记住「不再打扰」，**不得伪造上游不认识的词**。
+   */
+  onDecide: (item: PendingItem, choiceId: string, reason: string) => void = () => {
+  };
+
+  /**
+   * 答复提问。`selected` 必须是**选项 label 原文**（不是 id 或下标）——
+   * 上游 `AskUserQuestionAnswerItem.selected` 要的就是 label。
+   * `custom` 是自由文本「其他」答案。
+   */
+  onAnswer: (item: PendingItem, selected: string[], custom: string) => void = () => {
+  };
+
   /** 自由文本输入（按待决 id 保存） */
   @State freeText: string = '';
   @State freeTextFor: string = '';
@@ -122,11 +145,13 @@ export struct PendingPane {
           .width('100%')
           .enabled(this.chosen.length > 0)
           .onClick(() => {
+            const labels: string[] = this.labelsOf(item, this.chosen);
             this.chosen = [];
+            this.onAnswer(item, labels, this.textFor(item));
           })
       } else {
-        ForEach(item.choices, (choice: PendingChoice) => {
-          this.singleChoiceRow(item, choice)
+        ForEach(item.choices, (choice: PendingChoice, index: number) => {
+          this.singleChoiceRow(item, choice, index)
         }, (choice: PendingChoice) => `${item.id}-${choice.id}`)
       }
 
@@ -139,6 +164,23 @@ export struct PendingPane {
     .padding(Sp.M)
     .borderRadius(Radius.L)
     .backgroundColor($r('sys.color.background_secondary'))
+  }
+
+  /** 取当前卡片已填的自由文本（只认属于该卡片的输入，避免串到别的卡片） */
+  private textFor(item: PendingItem): string {
+    return this.freeTextFor === item.id ? this.freeText : '';
+  }
+
+  /** 把选中的 choice id 映射成选项 label 原文（上游要 label，不要 id） */
+  private labelsOf(item: PendingItem, ids: string[]): string[] {
+    const out: string[] = [];
+    for (let i = 0; i < item.choices.length; i++) {
+      const choice: PendingChoice = item.choices[i];
+      if (ids.indexOf(choice.id) >= 0) {
+        out.push(choice.label);
+      }
+    }
+    return out;
   }
 
   @Builder
@@ -165,12 +207,12 @@ export struct PendingPane {
   }
 
   @Builder
-  singleChoiceRow(item: PendingItem, choice: PendingChoice) {
+  singleChoiceRow(item: PendingItem, choice: PendingChoice, index: number) {
     Column({ space: 2 }) {
       Text(choice.label)
         .fontSize(Fs.SECONDARY)
-        .fontColor(this.primaryChoiceColor(item, choice))
-        .fontWeight(this.isPrimaryChoice(item, choice) ? FontWeight.Bold : FontWeight.Normal)
+        .fontColor(this.primaryChoiceColor(item, choice, index))
+        .fontWeight(this.isPrimaryChoice(item, choice, index) ? FontWeight.Bold : FontWeight.Normal)
         .width('100%')
       if (choice.detail.length > 0) {
         Text(choice.detail)
@@ -183,12 +225,17 @@ export struct PendingPane {
     .padding({ left: Sp.M, right: Sp.M, top: Sp.S, bottom: Sp.S })
     .borderRadius(Radius.S)
     .borderWidth(1)
-    .borderColor(this.isPrimaryChoice(item, choice)
+    .borderColor(this.isPrimaryChoice(item, choice, index)
       ? $r('sys.color.brand')
       : $r('sys.color.comp_divider'))
     .margin({ top: Sp.XS })
     .onClick(() => {
-      // 答复动作在接入真实 Host 后调用审批/提问应答端点（M3）
+      // 审批 → 交给上层的审批应答；提问 → 单选即提交（选中的是 label 原文）
+      if (item.kind === PendingKind.APPROVAL) {
+        this.onDecide(item, choice.id, this.textFor(item));
+      } else {
+        this.onAnswer(item, [choice.label], this.textFor(item));
+      }
     })
   }
 
@@ -259,19 +306,28 @@ export struct PendingPane {
   /**
    * D3 §3.4：危险动作把主按钮权重反转（视觉上「拒绝」为主）。
    * 这里用边框与文字色体现：危险动作下「拒绝」获得品牌色描边。
+   *
+   * **用 `appstate` 的稳定 id 契约判定，不再用字面量**：
+   * 曾经视图判 `choice.id === 'once'`，而中枢产出的是 `'allow'`——
+   * 桩数据下看着正常，一接真实 Host 主选样式就静默失效。
+   *
+   * 提问不给「推荐项」：审批的主选是**安全语义**（危险时把拒绝提为主选），
+   * 而提问的选项之间没有安全优劣，替用户高亮一个会构成引导。
+   * 因此提问一律不高亮（此前高亮第一项，属于无意的倾向性）。
    */
-  private isPrimaryChoice(item: PendingItem, choice: PendingChoice): boolean {
+  private isPrimaryChoice(item: PendingItem, choice: PendingChoice, index: number): boolean {
     if (item.kind !== PendingKind.APPROVAL) {
-      return choice.id === 'once' || choice.id === 'a';
+      return false;
     }
     if (item.risk === RiskLevel.DANGEROUS) {
-      return choice.id === 'deny';
+      return choice.id === APPROVAL_CHOICE_DENY;
     }
-    return choice.id === 'once';
+    return choice.id === APPROVAL_CHOICE_ALLOW;
   }
 
-  private primaryChoiceColor(item: PendingItem, choice: PendingChoice): ResourceColor {
-    if (this.isPrimaryChoice(item, choice)) {
+  private primaryChoiceColor(item: PendingItem, choice: PendingChoice,
+    index: number): ResourceColor {
+    if (this.isPrimaryChoice(item, choice, index)) {
       return $r('sys.color.brand');
     }
     return $r('sys.color.font_primary');

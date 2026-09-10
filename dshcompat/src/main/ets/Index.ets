@@ -41,6 +41,8 @@ export {
   evaluateCapability,
   probeArgs,
   tableStats,
+  supportedVersionsText,
+  upstreamCapturedAt,
   upstreamIdentity,
   VersionVerdict
 } from './CompatIndex';

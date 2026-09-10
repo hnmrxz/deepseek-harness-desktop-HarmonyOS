@@ -14,6 +14,9 @@
 
 import { SessionListItem } from './SessionList';
 import {
+  APPROVAL_CHOICE_ALLOW,
+  APPROVAL_CHOICE_ALLOW_ALWAYS,
+  APPROVAL_CHOICE_DENY,
   PendingChoice,
   PendingItem,
   PendingKind,
@@ -165,9 +168,9 @@ export function stubPending(): PendingItem[] {
   const out: PendingItem[] = [];
 
   const dangerousChoices: PendingChoice[] = [
-    { id: 'deny', label: '拒绝', detail: '不执行该操作，并把理由回传给 agent' },
-    { id: 'once', label: '仅本次允许', detail: '只批准这一次调用' },
-    { id: 'policy', label: '按策略允许', detail: '把该动作加入允许策略，后续同类不再询问' }
+    { id: APPROVAL_CHOICE_DENY, label: '拒绝', detail: '不执行该操作，并把理由回传给 agent' },
+    { id: APPROVAL_CHOICE_ALLOW, label: '仅本次允许', detail: '只批准这一次调用' },
+    { id: APPROVAL_CHOICE_ALLOW_ALWAYS, label: '本次会话内均允许', detail: '仅在本客户端生效，Host 侧仍逐次询问' }
   ];
   out.push({
     id: 'p-1',
@@ -185,9 +188,9 @@ export function stubPending(): PendingItem[] {
   });
 
   const normalChoices: PendingChoice[] = [
-    { id: 'deny', label: '拒绝', detail: '' },
-    { id: 'once', label: '允许本次', detail: '' },
-    { id: 'policy', label: '始终允许该命令', detail: '' }
+    { id: APPROVAL_CHOICE_DENY, label: '拒绝', detail: '' },
+    { id: APPROVAL_CHOICE_ALLOW, label: '允许本次', detail: '' },
+    { id: APPROVAL_CHOICE_ALLOW_ALWAYS, label: '本次会话内均允许', detail: '仅在本客户端生效，Host 侧仍逐次询问' }
   ];
   out.push({
     id: 'p-2',

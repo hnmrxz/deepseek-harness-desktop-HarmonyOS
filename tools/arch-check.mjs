@@ -33,7 +33,16 @@ import { join, relative, sep } from 'node:path';
 
 const ROOT = process.cwd();
 
-/** 被扫描的源码根（相对于仓库根） */
+/**
+ * 被扫描的源码根（相对于仓库根）。
+ *
+ * 为什么**不含** `hostkit/`：`hostkit` 是独立的、可选的 PC 侧搭桥服务（Node 包，
+ * 有自己的测试与发布面）。它的职责之一是「以受管方式拉起并守护本机 dsh Host」，
+ * 因此**合法地**知道上游的启动面（`dsh web` 的调用方式与它打印的启动行格式）。
+ * 把 `hostkit` 纳进来会迫使它把这些知识藏到一个不属于它的模块里，
+ * 反而破坏分层。客户端四层（connection / dshcompat / appstate / platform / entry）
+ * 才是「上游知识只允许出现在 dshcompat」这条纪律的适用范围。
+ */
 const SCAN_ROOTS = [
   'connection/src',
   'appstate/src',

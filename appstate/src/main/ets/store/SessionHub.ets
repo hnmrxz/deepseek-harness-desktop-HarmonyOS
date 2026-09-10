@@ -56,7 +56,17 @@ import {
 } from 'dshcompat';
 import { projectSessionList } from '../model/SessionList';
 import type { SessionListItem } from '../model/SessionList';
-import { makeItem, PendingKind, RiskLevel, Speaker, ToolState, TrajectoryKind } from '../model/Trajectory';
+import {
+  APPROVAL_CHOICE_ALLOW,
+  APPROVAL_CHOICE_ALLOW_ALWAYS,
+  APPROVAL_CHOICE_DENY,
+  makeItem,
+  PendingKind,
+  RiskLevel,
+  Speaker,
+  ToolState,
+  TrajectoryKind
+} from '../model/Trajectory';
 import type { PendingChoice, PendingItem, TrajectoryItem } from '../model/Trajectory';
 
 /** 中枢运行阶段 */
@@ -149,7 +159,16 @@ export class SessionHub {
   private controlReady: boolean = false;
   private lastError: string = '';
   private traceLines: string[] = [];
-  private traceEnabled: boolean = false;
+  /**
+   * 协议旁路日志开关。
+   *
+   * **默认开启**（有 300 行上限，不构成内存风险）。理由：连接问题是移动端最难复现的一类，
+   * 而「连上了但列表是空的」「连上几秒后掉线」这些症状**无法从界面区分原因**——
+   * 必须能看到「list ok 4 条」「list fail gateway/...」「events end ...」这类原始轨迹。
+   * 首次真机验证就吃了这个亏：错误只存进状态没渲染，导致「列表为空」被误读成
+   * 「Host 上没有会话」。D3 §7.8 的旁路日志本就要求可查，这里只是把默认值改成开。
+   */
+  private traceEnabled: boolean = true;
   private unknownTypes: string[] = [];
   private outboxList: OutboxEntry[] = [];
 
@@ -598,8 +617,9 @@ export class SessionHub {
     const result: RpcResult = await this.conn.call(SESSION_LIST_ENDPOINT, args);
     if (!result.ok) {
       const failure = result.error;
-      this.lastError = `会话列表获取失败：${failure === undefined ? '未返回失败详情' : `${failure.code} ${failure.message}`}`;
-      this.record(`list fail ${failure === undefined ? '?' : failure.code}`);
+      const code: string = failure === undefined ? 'unknown' : failure.code;
+      this.lastError = `会话列表获取失败：${friendlyFailure(code, failure === undefined ? '' : failure.message)}`;
+      this.record(`list fail ${code}`);
       this.notify();
       return;
     }
@@ -880,7 +900,7 @@ export class SessionHub {
       return true;
     }
     const failure = result.error;
-    this.lastError = `发送失败：${failure === undefined ? '未返回失败详情' : `${failure.code} ${failure.message}`}`;
+    this.lastError = `发送失败：${friendlyFailure(failure === undefined ? 'unknown' : failure.code, failure === undefined ? '' : failure.message)}`;
     this.record(`prompt fail ${failure === undefined ? '?' : failure.code}`);
     this.notify();
     return false;
@@ -922,7 +942,7 @@ export class SessionHub {
       return true;
     }
     const failure = result.error;
-    this.lastError = `取消失败：${failure === undefined ? '未返回失败详情' : `${failure.code} ${failure.message}`}`;
+    this.lastError = `取消失败：${friendlyFailure(failure === undefined ? 'unknown' : failure.code, failure === undefined ? '' : failure.message)}`;
     this.notify();
     return false;
   }
@@ -1100,15 +1120,18 @@ function kindOfFamily(family: EventFamily): TrajectoryKind {
 /**
  * 审批的三选。
  *
+ * id 取自 `Trajectory.ets` 的稳定契约（桩数据与中枢必须一致，否则「主选项判定」会失效——
+ * 真实发生过：桩用 `once`、中枢用 `allow`，导致真机上危险动作的拒绝按钮拿不到主选样式）。
+ *
  * 上游只有一次性授权与拒绝（见 `decideApproval` 的词汇纪律说明），
- * 因此第三项「始终允许」在本实现里标注为**本地策略**，文案必须如实说明，
+ * 因此第三项「本次会话内均允许」必须是**本地策略**，文案如实说明，
  * 不能让用户以为它改变了 Host 的行为。
  */
 function approvalChoices(): PendingChoice[] {
   return [
-    { id: 'allow', label: '允许一次', detail: '仅本次放行' },
-    { id: 'allow-always', label: '本次会话内均允许', detail: '仅在本客户端生效，Host 侧仍逐次询问' },
-    { id: 'deny', label: '拒绝', detail: '阻止该操作' }
+    { id: APPROVAL_CHOICE_ALLOW, label: '允许一次', detail: '仅本次放行' },
+    { id: APPROVAL_CHOICE_ALLOW_ALWAYS, label: '本次会话内均允许', detail: '仅在本客户端生效，Host 侧仍逐次询问' },
+    { id: APPROVAL_CHOICE_DENY, label: '拒绝', detail: '阻止该操作' }
   ];
 }
 
@@ -1153,4 +1176,35 @@ function authAdvice(status: number, message: string): string {
     return '该地址上没有 dsh Web 服务。请确认 Host 已启动，且端口与链接中的一致。';
   }
   return `连接失败（HTTP ${status}）：${message}。请检查网络与 Host 状态后重试。`;
+}
+
+/**
+ * 把载体层失败码翻译成「发生了什么 + 可以做什么」。
+ *
+ * 为什么必须做这层翻译（有实测驱动）：首次真机端到端验证时，界面显示的是
+ * `carrier/parse invalid JSON body for session/list`。这条消息对用户毫无用处——
+ * 它既不说清是网络问题还是 Host 问题，也指不出下一步。而 D3 §4 明确要求
+ * 每条失败文案都要给出可执行动作。
+ *
+ * 这几条翻译背后是一个**真实的排查结论**：`carrier/parse` 与 `carrier/closed`
+ * 同时出现，说明载体链路本身不可靠（典型场景是用 `hdc rport` 之类的开发转发
+ * 通道承载多条并发长连接），而不是 Host 或协议栈的问题——
+ * 同样的调用从宿主直连全部成功。文案要能把用户引向这个判断。
+ */
+function friendlyFailure(code: string, message: string): string {
+  if (code === 'carrier/parse') {
+    return '响应无法解析——通常是中间转发通道截断了连接（开发期的端口转发常见）。'
+      + '请改用直连本机回环，或使用 hostkit 的加密隧道。';
+  }
+  if (code === 'carrier/closed' || code === 'carrier/transport') {
+    return '连接在传输中断开——中间转发通道不稳定，或 Host 已停止。'
+      + '请检查 Host 是否仍在运行；若经端口转发访问，请改用 hostkit 隧道。';
+  }
+  if (code === 'carrier/timeout') {
+    return '请求超时。请检查网络连通性；若 Host 负载很高可稍后重试。';
+  }
+  if (code === 'gateway/arguments-invalid' || code === 'gateway/input-invalid') {
+    return `调用参数与 Host 的契约不符（${message}）。这是客户端兼容面的问题，请提交诊断报告以便修正上表。`;
+  }
+  return `${code} ${message}`;
 }

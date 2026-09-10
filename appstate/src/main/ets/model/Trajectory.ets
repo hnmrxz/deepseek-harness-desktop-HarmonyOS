@@ -120,6 +120,26 @@ export interface PendingChoice {
   detail: string;
 }
 
+/**
+ * 审批三选的**稳定 id 契约**。
+ *
+ * 为什么必须集中声明：审批卡的「主选项判定」（D3 §3.4 危险动作把拒绝提为主选）
+ * 依赖 `choice.id`。曾出现过桩数据用 `once`、真实中枢用 `allow` 的分歧——
+ * 结果是在真机上**危险动作的拒绝按钮拿不到主选样式**，
+ * 而界面看起来完全正常，只是权重反转悄悄失效了（正是最难发现的那类不一致）。
+ * 因此把 id 提为唯一契约，桩数据与中枢都从这里取，视图也用它判定。
+ *
+ * 与上游的对应关系：上游审批结果词表是 `allowed-once | rejected | cancelled | unavailable`
+ * （见 `dshcompat.APPROVAL_OUTCOMES`），**没有**「始终允许」。
+ * `APPROVAL_CHOICE_ALLOW_ALWAYS` 因此只表达**客户端侧**的「本会话内不再打扰」，
+ * 发往 Host 的仍然是 `allowed-once`。
+ */
+export const APPROVAL_CHOICE_ALLOW: string = 'allow';
+/** 客户端侧的「本会话内不再打扰」（**不是**一个上游 outcome） */
+export const APPROVAL_CHOICE_ALLOW_ALWAYS: string = 'allow-always';
+/** 拒绝 */
+export const APPROVAL_CHOICE_DENY: string = 'deny';
+
 /** 待决事项（审批或提问；D3 §3.4 / §3.5） */
 export interface PendingItem {
   id: string;

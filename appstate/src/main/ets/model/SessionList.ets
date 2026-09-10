@@ -17,6 +17,15 @@
 import { getNumber, getRecord, getString, isRecord } from 'connection';
 import { FIELD_ALIASES, SESSION_LIST_ENDPOINT, sessionListArgs, titleFromProjections } from 'dshcompat';
 
+/**
+ * 无标题时的中性兜底文案。
+ *
+ * 故意**不导出**：`Notify.ets` 与 `Wire.ets` 各自也导出同名的 `UNTITLED_SESSION`，
+ * 三者语义相同但分属不同模块；若这里也导出，`appstate/Index.ets` 就会出现重名冲突，
+ * 只能靠改名规避。保持模块私有最简单，也避免出现三份可被误用的公开别名。
+ */
+const UNTITLED_SESSION: string = '新会话';
+
 /** 列表项（宽松投影；未知字段保留在 raw 中） */
 export interface SessionListItem {
   /** 会话 id */
@@ -61,15 +70,24 @@ export function projectSessionList(value: Object | undefined): SessionListPage {
     array = value as Object[];
   } else {
     // 容器键按别名表依次尝试（上游改名时只改 dshcompat）
+    //
+    // 【必须用 getArray，不能用 getRecord】
+    //   `getRecord` 内部走 `isRecord`，而 `isRecord` **明确排除数组**
+    //   （`return !Array.isArray(value)`），因此对 `{items:[…]}` 里的 `items`
+    //   永远返回 undefined。曾经这里用 getRecord → 真实 Host 上**永远解析出 0 条**，
+    //   而桩数据路径完全不经过本函数，所以本地看不出任何异常；
+    //   只有端到端连上真实 Host 才会暴露（首次真机验证即命中：宿主有 4 个会话，界面 0 个）。
+    const holder: Record<string, Object> = value as Record<string, Object>;
     const listKeys: string[] = FIELD_ALIASES.list;
     for (let i = 0; i < listKeys.length; i++) {
-      const container: Object | undefined = getRecord(value, listKeys[i]);
-      if (container !== undefined && Array.isArray(container)) {
-        array = container as Object[];
+      const candidate: Object | undefined = holder[listKeys[i]];
+      if (Array.isArray(candidate)) {
+        array = candidate as Object[];
         break;
       }
     }
-    const more: Object | undefined = getRecord(value, 'hasMore');
+    // hasMore 是布尔值，同样不能用 getRecord（它只认对象）
+    const more: Object | undefined = holder['hasMore'];
     if (typeof more === 'boolean') {
       hasMore = more as boolean;
     }
@@ -137,8 +155,15 @@ function pickString(source: Object, keys: string[]): string {
  *   仅按顶层别名读会让**每一个会话都显示为「无标题」**——而且不会报错，
  *   是最难发现的那类缺陷（静默降级成空值）。
  *
- *   因此这里按「先投影、后顶层别名」的顺序取：
- *   投影是当前上游的权威来源；顶层别名只作为历史形态的容忍，不承担主路径。
+ * 【兜底链（实测驱动）】
+ *   刚在 Host 上建好、还没说过话的会话，`projections.values.title` 就是 **`null`**
+ *   （实测：新建会话的 `values.title === null`，`sessionListMetadata.blank === true`）。
+ *   标题为空**不代表会话不可用**，界面必须给出可辨识的替代文案，否则列表里会出现
+ *   一行空白条目——用户既点不动也认不出。因此按三级兜底：
+ *     1. 投影标题（权威来源）
+ *     2. 顶层别名（容忍历史/第三方 Host）
+ *     3. 工作目录的末段（用户通常靠项目名认出会话）
+ *     4. 中性文案「新会话」
  */
 function pickTitle(source: Object): string {
   const projections: Object | undefined = getRecord(source, 'projections');
@@ -152,7 +177,37 @@ function pickTitle(source: Object): string {
       }
     }
   }
-  return pickString(source, FIELD_ALIASES.title);
+  const fromTopLevel: string = pickString(source, FIELD_ALIASES.title);
+  if (fromTopLevel.length > 0) {
+    return fromTopLevel;
+  }
+  const base: string = lastPathSegment(pickString(source, FIELD_ALIASES.cwd));
+  return base.length > 0 ? base : UNTITLED_SESSION;
+}
+
+/**
+ * 取路径末段（兼容 `/` 与 `\` 两种分隔符）。
+ *
+ * 不引入 `path` 之类模块：只做一次纯字符串切分，避免为一个四行的需求增加依赖与平台差异。
+ * 末尾有分隔符时向前跳过，避免把 `…/foo/` 解析成空串。
+ */
+function lastPathSegment(cwd: string): string {
+  if (cwd.length === 0) {
+    return '';
+  }
+  let end: number = cwd.length;
+  while (end > 0 && (cwd.charAt(end - 1) === '/' || cwd.charAt(end - 1) === '\\')) {
+    end--;
+  }
+  let start: number = end;
+  while (start > 0) {
+    const ch: string = cwd.charAt(start - 1);
+    if (ch === '/' || ch === '\\') {
+      break;
+    }
+    start--;
+  }
+  return cwd.substring(start, end);
 }
 
 /** 按候选键名取第一个数字 */

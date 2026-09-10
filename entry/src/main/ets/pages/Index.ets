@@ -20,6 +20,8 @@
 import { display, router, window } from '@kit.ArkUI';
 import { demoTraceLines } from 'dshcompat';
 import {
+  APPROVAL_CHOICE_ALLOW_ALWAYS,
+  APPROVAL_CHOICE_DENY,
   CommandCandidate,
   CredentialItem,
   detailPanelAvailable,
@@ -44,7 +46,7 @@ import {
   SessionListItem,
   SettingGroup,
   Sp,
-  stubAbout,
+  aboutInfo,
   stubCommands,
   stubCredentials,
   stubDetailSections,
@@ -161,6 +163,8 @@ struct Index {
   @State hubStreams: number = 0;
   /** 未识别的上游事件类型数量（真机跑一次即可据此回填事件表） */
   @State hubUnknownEvents: number = 0;
+  /** 协议旁路日志（取尾部若干行展示，用于区分「列表为空」与「调用失败」） */
+  @State hubTrace: string[] = [];
 
   private widthListener?: (size: window.Size) => void;
   /**
@@ -193,6 +197,7 @@ struct Index {
     this.hubControlReady = s.controlReady;
     this.hubStreams = s.activeStreams;
     this.hubUnknownEvents = s.unknownEventTypes.length;
+    this.hubTrace = s.trace;
     this.queuedCount = s.outbox;
     if (s.phase !== HubPhase.LIVE) {
       this.offline = s.phase !== HubPhase.CONNECTING && s.phase !== HubPhase.IDLE;
@@ -814,6 +819,40 @@ struct Index {
   }
 
   /**
+   * 答复审批。
+   *
+   * 上游的审批结果词表是封闭四值（`dshcompat.APPROVAL_OUTCOMES`），**没有「始终允许」**。
+   * 因此「本次会话内均允许」被映射为 `allowed-once` 发送，只在本客户端记住「不再打扰」——
+   * 绝不为了满足 UI 而去伪造一个上游不认识的词（那会让 Host 直接拒绝或静默误解）。
+   * 当前 `always` 标记只写进协议旁路日志，供用户排查时看到「这条其实是逐次询问的」。
+   *
+   * 未连接时不发任何请求、也不把卡片移除：卡片消失会让用户以为已经答复成功。
+   */
+  private decidePending(item: PendingItem, choiceId: string, reason: string): void {
+    if (this.hubPhase !== HubPhase.LIVE) {
+      return;
+    }
+    // 【已知缺口】拒绝理由目前**无法随审批应答上传**：上游的审批 outcome 只是一个
+    // 封闭词汇里的字符串（`allowed-once | rejected | cancelled | unavailable`），
+    // 没有承载理由的字段。用户填的理由因此只能留在本地。
+    // 不走「把理由塞进 waterfall 的 rejected 错误」这条歪路——那表达的是
+    // 「本应答者处理失败」，会让 Host 转问下一个应答者并最终 fail-closed 成
+    // `unavailable`，与「用户明确拒绝」语义完全不同，会把一次明确拒绝变成一次失败。
+    // 已作为能力缺口登记在 D2 §8.7.5 与 D3 §3.4 的偏离记录里。
+    const allow: boolean = choiceId !== APPROVAL_CHOICE_DENY;
+    const always: boolean = choiceId === APPROVAL_CHOICE_ALLOW_ALWAYS;
+    SessionHub.shared().decideApproval(item.id, allow, always);
+  }
+
+  /** 答复提问（`selected` 是选项 label 原文，符合上游 `AskUserQuestionAnswerItem`）。 */
+  private answerPending(item: PendingItem, selected: string[], custom: string): void {
+    if (this.hubPhase !== HubPhase.LIVE) {
+      return;
+    }
+    SessionHub.shared().answerQuestion(item.id, selected, custom);
+  }
+
+  /**
    * 发送当前草稿。
    *
    * 连上 Host 时交给中枢（它负责构造兼容面要求的 prompt 载荷、
@@ -832,18 +871,90 @@ struct Index {
     }
   }
 
+  /** 旁路日志尾部（最多 4 行）：状态条只展示最近发生的几步，完整日志在诊断页 */
+  private hubTraceTail(): string[] {
+    const all: string[] = this.hubTrace;
+    if (all.length <= 4) {
+      return all;
+    }
+    return all.slice(all.length - 4);
+  }
+
+  @Builder
+  hubBanner() {
+    Column({ space: Sp.XS }) {
+      Row({ space: Sp.S }) {
+        SymbolGlyph($r('sys.symbol.exclamationmark_triangle'))
+          .fontSize(16)
+          .fontColor([$r('sys.color.warning')])
+        Column({ space: 2 }) {
+          Text(this.hubError)
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.font_primary'))
+            .width('100%')
+          Text(`Host ${this.hubAuthority.length > 0 ? this.hubAuthority : '未配置'} · 连接 ${this.hubPhase} · 逻辑流 ${this.hubStreams}`)
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.font_tertiary'))
+            .width('100%')
+        }
+        .layoutWeight(1)
+        Text('诊断')
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.brand'))
+          .onClick(() => {
+            this.stackPage = StackPage.DIAGNOSTICS;
+          })
+      }
+      .width('100%')
+
+      // 协议旁路日志尾部：把「连上了但列表为空」这类无法从界面区分的症状
+      // 变成可读的原始轨迹（D3 §7.8）
+      ForEach(this.hubTraceTail(), (line: string) => {
+        Text(line)
+          .fontSize(10)
+          .fontFamily('monospace')
+          .fontColor($r('sys.color.font_tertiary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+      }, (line: string) => line)
+    }
+    .width('100%')
+    .padding(Sp.S)
+    .backgroundColor($r('sys.color.background_secondary'))
+  }
+
   @Builder
   tabContent(compact: boolean) {
     if (this.tab === NavTab.PENDING) {
-      PendingPane({ items: this.pending })
-    } else if (this.tab === NavTab.SESSIONS) {
-      SessionListPane({
-        sessions: this.sessions,
-        selectedId: this.selectedSessionId,
-        onSelect: (id: string) => {
-          this.openSession(id);
+      PendingPane({
+        items: this.pending,
+        onDecide: (item: PendingItem, choiceId: string, reason: string) => {
+          this.decidePending(item, choiceId, reason);
+        },
+        onAnswer: (item: PendingItem, selected: string[], custom: string) => {
+          this.answerPending(item, selected, custom);
         }
       })
+    } else if (this.tab === NavTab.SESSIONS) {
+      Column() {
+        // 连接状态条：**失败必须可见**（D3 §4）。
+        // 曾经只把错误存进状态而不渲染，结果是「连上了但列表为空」这种
+        // 最容易被误读成「Host 上没有会话」的失败——错误信息被完全吞掉。
+        if (this.hubError.length > 0) {
+          this.hubBanner()
+        }
+        SessionListPane({
+          sessions: this.sessions,
+          selectedId: this.selectedSessionId,
+          onSelect: (id: string) => {
+            this.openSession(id);
+          }
+        })
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .height('100%')
     } else if (this.tab === NavTab.WORKSPACES) {
       WorkspacePane({
         workspaces: this.workspaces,
@@ -879,7 +990,7 @@ struct Index {
         hosts: this.hosts,
         models: this.models,
         selection: this.selection,
-        about: stubAbout(),
+        about: aboutInfo(),
         onToggleSetting: (key: string, value: boolean) => {
         },
         onPickChoice: (key: string, current: string) => {

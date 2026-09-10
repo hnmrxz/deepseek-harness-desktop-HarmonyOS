@@ -25,6 +25,8 @@ import {
   SettingKind,
   DiagEntry
 } from './Settings';
+import { supportedVersionsText, tableStats, upstreamCapturedAt } from 'dshcompat';
+import type { TableStats } from 'dshcompat';
 
 const BASE: number = 1757491200000;
 function at(minutesAgo: number): number {
@@ -245,12 +247,25 @@ export function stubDiagnostics(): DiagReport {
 }
 
 /** 演示：关于页 */
-export function stubAbout(): AboutInfo {
+/**
+ * 关于信息。
+ *
+ * **这不是桩数据**（尽管住在 StubData2 里，因为原先的调用方只从本文件取数据）：
+ * 上游版本矩阵、采集时间、端点上表规模全部**从 `dshcompat` 实时派生**。
+ *
+ * 为什么必须派生而不能写死：这些数字是「兼容面到底覆盖了什么」的唯一用户可见凭据。
+ * 曾经硬编码过——上游基线从 0.1.2-rc.1（74 端点 / 3 流式 / 12 能力）升到
+ * 0.1.5-rc.1（84 / 4 / 15）之后，页面仍在显示旧数字。
+ * 那是**界面在说谎**：用户看到「74 个端点」而实际可用 84 个，排查问题会被这条假信息带偏。
+ * 改为派生之后，升级上表即自动同步，不会再出现第二次。
+ */
+export function aboutInfo(): AboutInfo {
+  const stats: TableStats = tableStats();
   return {
     appVersion: '1.0.0 (1000000)',
-    supportedUpstream: '0.1.2-rc.1',
-    compatCapturedAt: '2026-09-10T10:29:00.599Z',
-    endpointStats: '74 个端点 / 3 个流式 / 12 个能力'
+    supportedUpstream: supportedVersionsText(),
+    compatCapturedAt: upstreamCapturedAt(),
+    endpointStats: `${stats.endpoints} 个端点 / ${stats.streamEndpoints} 个流式 / ${stats.capabilities} 个能力`
   };
 }
 
