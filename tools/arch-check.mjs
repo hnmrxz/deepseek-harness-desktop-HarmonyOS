@@ -58,13 +58,30 @@ const ALLOWED_DIR = `${sep}dshcompat${sep}`;
  *
  * 只匹配**字符串字面量内部**的 `ns/method` 形态：先匹配引号再匹配名字，
  * 这样普通的运算式（如 `a / b`）不会被误判。
+ *
+ * 【命名空间表必须按实测清单维护】
+ *   本表曾只含**端点**命名空间（照 D2 §8.5 的 74 个端点写的），
+ *   于是对**事件**命名空间基本失明：一次真实的违规里 9 处只报出 4 处，
+ *   漏掉的正是 `user/message`、`assistant/message`、`tool/call`、
+ *   `subagent/catalog`、`todo/write` 这些当时不在表内的前缀。
+ *   现已按 D2 §8.7.8 的 31 种实测事件类型补齐。
+ *
+ *   教训：门禁的**覆盖面本身**也需要被审视。一个"通过"的门禁可能只是
+ *   因为它不认识那些名字——这与"门禁失效"是同一种危险，但更难察觉。
  */
 const NAMESPACE = [
+  // 端点命名空间（D2 §8.5 / §8.7.1）
   'session', 'settings', 'workspace', 'workspaceFiles', 'pluginInventory', 'credentials',
   'fileUploads', 'goals', 'subagents', 'commands', 'skills', 'llm', 'agentPresets',
   'directoryPicker', 'fileReferences', 'messageFeedback', 'sessionFeedback',
-  'dynamicCordisRunner', 'sessionReferenceResolver', 'api-session', 'approval',
-  'user-questions', 'cordis', 'agent-preset', 'goal'
+  'dynamicCordisRunner', 'sessionReferenceResolver',
+  // 转发事件命名空间（D2 §8.7.4）
+  'api-session', 'approval', 'user-questions', 'cordis', 'agent-preset', 'goal',
+  // 会话事件命名空间（D2 §8.7.8 的 31 种实测类型）
+  'user', 'assistant', 'system', 'tool', 'subagent', 'todo', 'compaction',
+  'request', 'step', 'turn', 'agent', 'command', 'web',
+  // 网关内部端点
+  'gateway'
 ].join('|');
 
 const NAME_PATTERN = new RegExp(
@@ -156,6 +173,16 @@ function selfTest() {
     { text: `const url = 'http://127.0.0.1:3000/api'; const z = 1;`, want: 0, why: 'URL 里的 // 不得被当成注释剥掉后半行' },
     { text: `const a = 1 / 2; const s = 'workspaceFiles/list';`, want: 1, why: '除法运算符不得干扰匹配' },
     { text: 'const s = "approval/request";', want: 1, why: '双引号字符串必须命中' },
+    {
+      text: "const s = 'user/message';",
+      want: 1,
+      why: '实测事件前缀 user/ 必须被覆盖（曾因表里没有它而漏报真实违规）'
+    },
+    {
+      text: "const s = 'tool/call';",
+      want: 1,
+      why: '实测事件前缀 tool/ 必须被覆盖（同上）'
+    },
     { text: `import { SESSION_LIST_ENDPOINT } from 'dshcompat';`, want: 0, why: '从 dshcompat 导入常量是正确写法，不得命中' }
   ];
   let failed = 0;
