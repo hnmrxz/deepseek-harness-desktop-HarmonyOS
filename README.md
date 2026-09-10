@@ -15,10 +15,19 @@
 >   新增 `workspaceFiles/*`、`fileUploads/upload`、`goals/get`、`sessionFeedback/record` 四个能力域；
 >   漂移门禁绿、负测试通过。
 >
-> **验证状态**：主构建与 `entry@ohosTest` 目标编译通过；架构回归检查与漂移门禁为绿；
+> **验证状态**：主构建与 `entry@ohosTest` 目标编译通过；三道门禁为绿
+> （漂移门禁 + 架构回归门禁 + hostkit 的 295 项测试）；
 > 已对**真实 `0.1.5-rc.1` Host** 完成两轮只读实测（含 mux 帧、`$events` ready、
 > `session/control` baseline、`session/follow` snapshot、`session/page`、会话列表真实字段全集），
 > 结论逐条落在 [`docs/10-协议兼容事实基线.md`](docs/10-协议兼容事实基线.md) §8.7。
+>
+> **设备侧**：API 26 手机模拟器上已完成构建 → 安装 → 启动 → 渲染与交互验收
+> （单栏形态、会话列表状态徽标、待决聚合、**危险动作权重反转**逐条通过），
+> 并已让应用在设备上真的连上宿主 Host：认证、mux、`$events`、控制流全部走通。
+> **但 `session/list` 解析与 `$events` 长连接在经 `hdc rport` 时失败**——
+> 有反证表明这是转发通道的问题而非协议栈（同样调用从宿主直连全部成功）。
+> 详细结论与最小后续实验见
+> [`docs/30-技术验证清单.md`](docs/30-技术验证清单.md) 的「设备 ↔ Host 端到端验证」。
 >
 > **仍待真机/设备的项**：轨迹内容事件（消息/思考/工具调用）的 `data` 内部字段名、
 > `workspaceFileScopeId` 的来源、`agentId` 与会话 id 的关系、2in1 快捷键与多窗口的实机行为、
