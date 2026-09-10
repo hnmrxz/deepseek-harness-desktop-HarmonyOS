@@ -1,390 +1,513 @@
 /**
- * POC-1 验证页：原生协议往返（D4 的「生死门」）。
+ * 应用首屏：三形态导航 + 让步链（D3 §2）。
  *
- * 本页是**验证工具**，不是产品界面。它按 D4 POC-1 的六步判定逐项执行并留下可复制日志：
- *   ① token 换 cookie（含 303 观测）
- *   ② 一元调用 `session/list`（返回信封校验）
- *   ③ 打开 /api/remote.mux 并订阅 $events
- *   ④ 校验首帧为 ready
- *   ⑤ 心跳存活计时（默认 300s 门槛）
- *   ⑥ cancel 生效
+ * 结构（按窗口宽度档位）：
+ *   单栏 SINGLE（< 600vp，手机 / 折叠态）  ：内容区 + 底部标签栏；会话以「列表 → 详情」栈式下钻
+ *   双栏 DOUBLE（600–839vp，折叠展开 / 平板竖屏）：左侧图标条（56vp）+ 内容区
+ *   三栏 TRIPLE（>= 840vp，平板横屏 / 2in1）    ：左导航面板 + 主区 + 右详情栏（可收）
  *
- * 日志纪律：不打印 token / cookie 值（D1 §11.5 S4）。
+ * 让步链（空间不足时的收缩顺序，D3 §2.1）：
+ *   详情栏收窄 → 详情栏关闭 → 导航收为图标条 → 导航抽屉化
+ * 让步只改几何、不改数据；变宽时自行恢复。
+ *
+ * 形态只由**窗口宽度**判定（D3 §2.2 硬规则）。
+ * 数据当前来自桩数据源（方案 2），接入真实连接后仅替换数据来源。
+ *
+ * 验收工具入口：右上角的「POC」按钮进入 `pages/Poc1`（协议往返验证页）。
  */
 
-import { hilog } from '@kit.PerformanceAnalysisKit';
-import { pasteboard } from '@kit.BasicServicesKit';
+import { display, window } from '@kit.ArkUI';
+import { router } from '@kit.ArkUI';
 import {
-  AuthOutcome,
-  Connection,
-  DiagnosticItem,
-  DiagnosticReport,
-  EventStreamPhase,
-  HostConfig,
-  HostFacts,
-  RemoteFailure,
-  RpcResult
-} from 'connection';
+  detailPanelAvailable,
+  Fs,
+  LayoutMode,
+  layoutModeOf,
+  navTabLabel,
+  navTabSymbol,
+  NavTab,
+  PendingItem,
+  Radius,
+  SessionListItem,
+  Sp,
+  stubPending,
+  stubSessions,
+  Sz
+} from 'appstate';
+import { ConversationPane } from '../view/ConversationPane';
+import { PendingPane } from '../view/PendingPane';
+import { PlaceholderPane } from '../view/PlaceholderPane';
+import { SessionListPane } from '../view/SessionListPane';
 
-const DOMAIN: number = 0xD5D5;
-const TAG: string = 'DshPoc1';
-
-/** 日志级别 */
-enum LogLevel {
-  INFO = 'INFO',
-  OK = 'OK',
-  FAIL = 'FAIL',
-  STEP = 'STEP'
+/** 单栏下的页面栈（D3 §2 手机：列表 → 会话） */
+enum StackPage {
+  MAIN = 'main',
+  CONVERSATION = 'conversation'
 }
 
-interface LogLine {
-  level: LogLevel;
-  time: string;
-  text: string;
-}
+/** 一级导航顺序（三形态共用） */
+const TABS: NavTab[] = [NavTab.PENDING, NavTab.SESSIONS, NavTab.WORKSPACES, NavTab.SETTINGS];
 
 @Entry
 @Component
 struct Index {
-  @State address: string = '127.0.0.1:3000';
-  @State token: string = '';
-  @State stateText: string = '未连接';
-  @State busy: boolean = false;
-  @State lines: LogLine[] = [];
-  @State copied: boolean = false;
+  @State mode: LayoutMode = LayoutMode.SINGLE;
+  @State tab: NavTab = NavTab.SESSIONS;
+  @State selectedSessionId: string = '';
+  @State detailOpen: boolean = false;
+  @State stackPage: StackPage = StackPage.MAIN;
+  @State sessions: SessionListItem[] = [];
+  @State pending: PendingItem[] = [];
+  /**
+   * 待决徽标文本（缓存的派生值）。
+   *
+   * 存在理由：ArkTS 性能规则禁止在循环体内频繁读取 @State，
+   * 而徽标出现在多个 ForEach 中；因此把派生值缓存在一个字段里，
+   * 由 recomputeDerived() 在 pending 变化后刷新一次。
+   */
+  @State pendingBadge: string = '';
 
-  private conn: Connection = new Connection();
-  private hostFactsText: string = '';
-  private heartbeatTimer: number = -1;
-  private heartbeatStart: number = 0;
-  private disconnectCount: number = 0;
-  private endpointUsed: string = '';
+  private widthListener?: (size: window.Size) => void;
+
+  aboutToAppear(): void {
+    this.sessions = stubSessions();
+    this.pending = stubPending();
+    this.recomputeDerived();
+    this.applyWidth(initialWidthVp());
+    this.watchWindowSize();
+  }
+
+  /** 刷新派生值（pending 变化后调用一次，避免在循环体内读 @State） */
+  private recomputeDerived(): void {
+    const n: number = this.pending.length;
+    this.pendingBadge = n <= 0 ? '' : (n > 99 ? '99+' : `${n}`);
+  }
 
   aboutToDisappear(): void {
-    this.stopHeartbeatWatch();
-    this.conn.stop();
+    this.unwatchWindowSize();
   }
 
-  // ─────────────────────────── 日志 ───────────────────────────
+  // ───────────────────── 形态判定 ─────────────────────
 
-  private log(level: LogLevel, text: string): void {
-    const time: string = formatClock(Date.now());
-    // 单行日志：ArkTS 不允许数组内直接修改，必须整体替换以触发刷新
-    const next: LogLine[] = this.lines.slice();
-    next.push({ level: level, time: time, text: text });
-    this.lines = next;
-    const head: string = text.length > 400 ? text.substring(0, 400) : text;
-    hilog.info(DOMAIN, TAG, '%{public}s %{public}s', level, head);
-  }
-
-  private clearLog(): void {
-    this.lines = [];
-    this.copied = false;
-  }
-
-  private reportText(): string {
-    const parts: string[] = [];
-    parts.push(`# POC-1 报告  ${new Date().toISOString()}`);
-    parts.push(`地址: ${this.address}`);
-    parts.push(`状态: ${this.stateText}`);
-    parts.push(`Host 事实: ${this.hostFactsText.length > 0 ? this.hostFactsText : '(未获取)'}`);
-    parts.push(`使用的端点: ${this.endpointUsed.length > 0 ? this.endpointUsed : '(未调用)'}`);
-    parts.push(`断连次数: ${this.disconnectCount}`);
-    parts.push('--- 日志 ---');
-    for (let i = 0; i < this.lines.length; i++) {
-      const line: LogLine = this.lines[i];
-      parts.push(`[${line.time}] ${line.level} ${line.text}`);
-    }
-    return parts.join('\n');
-  }
-
-  // ─────────────────────────── 步骤 ① 认证 ───────────────────────────
-
-  private async runAuth(): Promise<void> {
-    this.busy = true;
-    this.log(LogLevel.STEP, '步骤①：token → 签名 cookie');
+  private watchWindowSize(): void {
     try {
-      const trimmed: string = this.address.trim();
-      const rawToken: string = this.token.trim();
-      const input: string = rawToken.length > 0 ? `${trimmed}?token=${rawToken}` : trimmed;
-      const config: HostConfig | undefined = this.conn.configure(input, 'POC Host');
-      if (config === undefined) {
-        this.log(LogLevel.FAIL, '地址解析失败：请填写 host:port 或完整启动 URL');
-        this.busy = false;
-        return;
-      }
-      this.log(LogLevel.INFO, `authority=${config.authority} loopback=${config.isLoopback} scheme=${config.scheme}`);
-      const outcome: AuthOutcome = await this.conn.authenticate();
-      if (!outcome.ok) {
-        this.log(LogLevel.FAIL, `认证失败（HTTP ${outcome.status}）：${outcome.reason ?? ''}`);
-        if (outcome.advice !== undefined) {
-          this.log(LogLevel.INFO, `建议：${outcome.advice}`);
-        }
-        this.stateText = '认证失败';
-        this.busy = false;
-        return;
-      }
-      this.log(LogLevel.OK, '① 认证成功：已获得会话 cookie');
-      this.log(LogLevel.INFO, `已持 cookie: ${this.conn.hasSession() ? 'yes' : 'no'}`);
-      this.stateText = '已认证';
-      await this.runUnary();
+      window.getLastWindow(getContext(this)).then((win: window.Window) => {
+        this.applyWidth(px2vp(win.getWindowProperties().windowRect.width));
+        const listener = (size: window.Size) => {
+          this.applyWidth(px2vp(size.width));
+        };
+        this.widthListener = listener;
+        win.on('windowSizeChange', listener);
+      }).catch(() => {
+        // 拿不到窗口时保留初始档位，不阻断渲染
+      });
     } catch (error) {
-      this.log(LogLevel.FAIL, `认证异常：${asMessage(error)}`);
+      // 同上
     }
-    this.busy = false;
   }
 
-  // ─────────────────────────── 步骤 ② 一元调用 ───────────────────────────
-
-  /**
-   * 依次尝试候选端点，找到可用的那个。
-   *
-   * 端点与参数形态来自**生成调用描述符**（见 D2 §8.4，由 tools/protocol-contract.mjs 提取）：
-   *   session/list      params: _request（注意带下划线）
-   *   session/modelCatalog / pluginInventory/list / settings/describe / agentPresets/list：无参数
-   * 因此这里用「无参数」的只读端点做连通性判定，避免参数形状错误干扰结论。
-   */
-  private async runUnary(): Promise<void> {
-    this.log(LogLevel.STEP, '步骤②：一元 RPC（只读端点连通性判定）');
-    const candidates: string[] = ['session/modelCatalog', 'pluginInventory/list', 'settings/describe'];
-    const noArgs: Record<string, Object> = {};
-    for (let i = 0; i < candidates.length; i++) {
-      const endpoint: string = candidates[i];
-      const result: RpcResult = await this.conn.call(endpoint, noArgs as Object);
-      if (result.ok) {
-        this.endpointUsed = endpoint;
-        const value: Object | undefined = result.value;
-        this.log(LogLevel.OK, `② 一元调用成功：${endpoint}`);
-        this.log(LogLevel.INFO, `value 摘要=${summarize(value)}`);
-        await this.runEventStream();
-        return;
-      }
-      const failure: RemoteFailure | undefined = result.error;
-      this.log(LogLevel.FAIL, `端点半失败：${endpoint} → ${failure?.toString() ?? 'unknown'}`);
-    }
-    this.log(LogLevel.FAIL, '② 一元调用全部候选失败：请核对 D2 §8.4 的调用契约表');
-  }
-
-  // ─────────────────────────── 步骤 ③④⑤ 事件流 ───────────────────────────
-
-  private async runEventStream(): Promise<void> {
-    this.log(LogLevel.STEP, '步骤③：打开 /api/remote.mux 并订阅 $events');
-    const started: boolean = await this.conn.start({
-      onReady: (facts: HostFacts) => {
-        this.hostFactsText = `clientId=${facts.clientId} home=${facts.home}`;
-        this.log(LogLevel.OK, `④ 收到 ready 首项：${this.hostFactsText}`);
-        this.startHeartbeatWatch();
-      },
-      onEvent: (event: Object) => {
-        this.log(LogLevel.INFO, `事件：${summarize(event)}`);
-      },
-      onEnd: (error?: string) => {
-        this.disconnectCount += 1;
-        this.log(LogLevel.FAIL, `事件流终止：${error ?? '(无原因)'}`);
-      }
-    });
-    if (!started) {
-      this.log(LogLevel.FAIL, `③ 连接/开流失败：${this.conn.getLastError() ?? '未知'}`);
+  private unwatchWindowSize(): void {
+    const listener = this.widthListener;
+    if (listener === undefined) {
       return;
     }
-    this.log(LogLevel.OK, '③ mux 已建立，开流帧已发送');
-    this.log(LogLevel.INFO, `事件流阶段=${this.conn.getEventPhase()}`);
-  }
-
-  private startHeartbeatWatch(): void {
-    this.stopHeartbeatWatch();
-    this.heartbeatStart = Date.now();
-    this.log(LogLevel.STEP, '步骤⑤：心跳存活观察开始（建议 ≥300s）');
-    this.heartbeatTimer = setInterval(() => {
-      const elapsed: number = Math.round((Date.now() - this.heartbeatStart) / 1000);
-      if (this.conn.getEventPhase() === EventStreamPhase.LIVE) {
-        this.log(LogLevel.INFO, `⑤ 心跳存活 ${elapsed}s（事件流仍为 LIVE）`);
-      } else {
-        this.log(LogLevel.FAIL, `⑤ 心跳期间事件流失效（${elapsed}s，phase=${this.conn.getEventPhase()}）`);
-        this.stopHeartbeatWatch();
-      }
-    }, 30000);
-  }
-
-  private stopHeartbeatWatch(): void {
-    if (this.heartbeatTimer >= 0) {
-      clearInterval(this.heartbeatTimer);
-      this.heartbeatTimer = -1;
-    }
-  }
-
-  // ─────────────────────────── 步骤 ⑥ + 诊断 ───────────────────────────
-
-  private async runStop(): Promise<void> {
-    this.busy = true;
-    this.stopHeartbeatWatch();
-    const elapsed: number = this.heartbeatStart > 0 ? Math.round((Date.now() - this.heartbeatStart) / 1000) : 0;
-    this.log(LogLevel.STEP, `步骤⑥：停止连接（心跳观察时长 ${elapsed}s）`);
-    await this.conn.stop();
-    this.log(LogLevel.OK, '⑥ 已停止：mux 关闭、逻辑流已 cancel');
-    this.stateText = '已停止';
-    this.busy = false;
-  }
-
-  private async runDiagnose(): Promise<void> {
-    this.busy = true;
-    this.log(LogLevel.STEP, '生成连接诊断（五项判定）');
-    const report: DiagnosticReport = await this.conn.diagnose();
-    for (let i = 0; i < report.items.length; i++) {
-      const item: DiagnosticItem = report.items[i];
-      const level: LogLevel = item.passed ? LogLevel.OK : LogLevel.FAIL;
-      this.log(level, `${item.name}: ${item.detail}`);
-      if (!item.passed && item.advice !== undefined) {
-        this.log(LogLevel.INFO, `  建议：${item.advice}`);
-      }
-    }
-    this.log(report.healthy ? LogLevel.OK : LogLevel.FAIL, `诊断结论：${report.healthy ? '健康' : '存在问题'}`);
-    this.busy = false;
-  }
-
-  /** 生成报告并复制到系统剪贴板（@kit.BasicServicesKit 的 pasteboard） */
-  private async copyReport(): Promise<void> {
-    const text: string = this.reportText();
+    this.widthListener = undefined;
     try {
-      const data: pasteboard.PasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, text);
-      await pasteboard.getSystemPasteboard().setData(data);
-      this.copied = true;
-      this.log(LogLevel.OK, `报告已复制到剪贴板（${text.length} 字符）`);
+      window.getLastWindow(getContext(this)).then((win: window.Window) => {
+        win.off('windowSizeChange', listener);
+      }).catch(() => {
+      });
     } catch (error) {
-      this.log(LogLevel.FAIL, `复制报告失败：${asMessage(error)}`);
     }
   }
 
-  // ─────────────────────────── UI ───────────────────────────
+  /** 应用新宽度：切档位 + 修正派生状态（不重载数据，D3 §2） */
+  private applyWidth(widthVp: number): void {
+    const next: LayoutMode = layoutModeOf(widthVp);
+    if (next === this.mode) {
+      return;
+    }
+    this.mode = next;
+    if (next !== LayoutMode.SINGLE && this.stackPage === StackPage.CONVERSATION) {
+      // 变宽：退出栈式下钻，回到主区，保持已选会话
+      this.stackPage = StackPage.MAIN;
+    }
+    // 只有三栏才展示详情栏（D3 §2.1：空间不足先收详情栏）
+    if (!detailPanelAvailable(next)) {
+      this.detailOpen = false;
+    } else if (this.selectedSessionId.length > 0) {
+      this.detailOpen = true;
+    }
+  }
+
+  // ───────────────────── 交互 ─────────────────────
+
+  private openSession(id: string): void {
+    this.selectedSessionId = id;
+    this.selectedSessionTitle = this.titleOf(id);
+    if (this.mode === LayoutMode.SINGLE) {
+      this.stackPage = StackPage.CONVERSATION;
+    } else if (this.mode === LayoutMode.TRIPLE) {
+      this.detailOpen = true;
+    }
+  }
+
+  /** 从会话列表取标题（仅在选择时调用一次，不参与渲染循环） */
+  private titleOf(id: string): string {
+    const list: SessionListItem[] = this.sessions;
+    for (let i = 0; i < list.length; i++) {
+      if (list[i].id === id) {
+        return list[i].title;
+      }
+    }
+    return '';
+  }
+
+  private selectTab(tab: NavTab): void {
+    this.tab = tab;
+    this.stackPage = StackPage.MAIN;
+    if (tab !== NavTab.SESSIONS) {
+      this.selectedSessionId = '';
+    }
+  }
+
+  private openPoc(): void {
+    router.pushUrl({ url: 'pages/Poc1' }).catch(() => {
+    });
+  }
+
+  private currentSessionTitle(): string {
+    // 使用缓存的派生值，避免在遍历 @State 数组时反复读取状态
+    // （ArkTS 性能规则 @performance/hp-arkui-no-state-var-access-in-loop）
+    return this.selectedSessionTitle.length > 0 ? this.selectedSessionTitle : '会话';
+  }
+
+  /** 选中会话的标题缓存（选择会话时刷新一次） */
+  @State selectedSessionTitle: string = '';
+
+  private showsConversation(): boolean {
+    return this.selectedSessionId.length > 0 && this.tab === NavTab.SESSIONS;
+  }
 
   build() {
-    Column({ space: 10 }) {
-      Text('DSH 协议往返验证（POC-1）')
-        .fontSize(20)
-        .fontWeight(FontWeight.Bold)
-        .width('100%')
+    if (this.mode === LayoutMode.SINGLE) {
+      this.buildSingle()
+    } else if (this.mode === LayoutMode.DOUBLE) {
+      this.buildDouble()
+    } else {
+      this.buildTriple()
+    }
+  }
 
-      TextInput({ text: this.address, placeholder: 'Host 地址，如 127.0.0.1:3000' })
-        .onChange((value: string) => { this.address = value; })
-        .width('100%')
+  // ───────────────────── 单栏（手机） ─────────────────────
 
-      TextInput({ text: this.token, placeholder: 'token（或直接粘贴完整启动 URL 到上一栏）' })
-        .onChange((value: string) => { this.token = value; })
-        .width('100%')
+  @Builder
+  buildSingle() {
+    Column() {
+      this.header(this.stackPage === StackPage.CONVERSATION)
 
-      Row({ space: 8 }) {
-        Button('① 认证并跑通')
-          .enabled(!this.busy)
-          .onClick(() => { this.runAuth(); })
-        Button('诊断')
-          .enabled(!this.busy)
-          .buttonStyle(ButtonStyleMode.NORMAL)
-          .onClick(() => { this.runDiagnose(); })
-        Button('停止')
-          .enabled(!this.busy)
-          .buttonStyle(ButtonStyleMode.NORMAL)
-          .onClick(() => { this.runStop(); })
-        Button('复制报告')
-          .buttonStyle(ButtonStyleMode.TEXTUAL)
-          .onClick(() => { this.copyReport(); })
-        Button('清空')
-          .buttonStyle(ButtonStyleMode.TEXTUAL)
-          .onClick(() => { this.clearLog(); })
-      }
-      .width('100%')
+      Divider().color($r('sys.color.comp_divider'))
 
-      Row({ space: 8 }) {
-        Text(`状态：${this.stateText}`)
-          .fontSize(14)
-        Text(this.busy ? '运行中…' : '空闲')
-          .fontSize(14)
-          .fontColor(Color.Gray)
-      }
-      .width('100%')
-
-      if (this.hostFactsText.length > 0) {
-        Text(this.hostFactsText)
-          .fontSize(12)
-          .fontColor(Color.Gray)
-          .width('100%')
-      }
-
-      List({ space: 4 }) {
-        ForEach(this.lines, (line: LogLine) => {
-          ListItem() {
-            Row({ space: 6 }) {
-              Text(line.time)
-                .fontSize(12)
-                .fontColor(Color.Gray)
-                .width(64)
-              Text(line.level)
-                .fontSize(12)
-                .fontColor(levelColor(line.level))
-                .width(40)
-              Text(line.text)
-                .fontSize(12)
-                .layoutWeight(1)
-            }
-            .width('100%')
-            .alignItems(VerticalAlign.Top)
-          }
-        }, (line: LogLine, index: number) => `${index}-${line.time}-${line.level}`)
+      Column() {
+        if (this.stackPage === StackPage.CONVERSATION) {
+          ConversationPane({ sessionId: this.selectedSessionId })
+        } else {
+          this.tabContent()
+        }
       }
       .layoutWeight(1)
       .width('100%')
-      .borderWidth(1)
-      .borderColor(Color.Gray)
-      .borderRadius(6)
-      .padding(6)
+
+      if (this.stackPage === StackPage.MAIN) {
+        this.bottomTabs()
+      }
     }
-    .padding(12)
     .width('100%')
     .height('100%')
   }
+
+  @Builder
+  header(showBack: boolean) {
+    Row({ space: Sp.S }) {
+      if (showBack) {
+        Button() {
+          SymbolGlyph($r('sys.symbol.chevron_left')).fontSize(20)
+        }
+        .buttonStyle(ButtonStyleMode.TEXTUAL)
+        .onClick(() => {
+          this.stackPage = StackPage.MAIN;
+        })
+      }
+      Text(showBack ? this.currentSessionTitle() : navTabLabel(this.tab))
+        .fontSize(Fs.TITLE_L)
+        .fontWeight(FontWeight.Bold)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+      Button('POC')
+        .buttonStyle(ButtonStyleMode.TEXTUAL)
+        .fontSize(Fs.CAPTION)
+        .onClick(() => {
+          this.openPoc();
+        })
+    }
+    .width('100%')
+    .height(52)
+    .padding({ left: Sp.M, right: Sp.S })
+  }
+
+  @Builder
+  bottomTabs() {
+    Row() {
+      ForEach(TABS, (tab: NavTab) => {
+        Column({ space: 2 }) {
+          Stack({ alignContent: Alignment.TopEnd }) {
+            SymbolGlyph(navTabSymbol(tab))
+              .fontSize(22)
+              .fontColor([this.tab === tab ? $r('sys.color.brand') : $r('sys.color.font_secondary')])
+            if (tab === NavTab.PENDING && this.pendingBadge.length > 0) {
+              this.badge(this.pendingBadge)
+            }
+          }
+          Text(navTabLabel(tab))
+            .fontSize(Fs.CAPTION)
+            .fontColor(this.tab === tab ? $r('sys.color.brand') : $r('sys.color.font_secondary'))
+        }
+        .layoutWeight(1)
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .onClick(() => {
+          this.selectTab(tab);
+        })
+      }, (tab: NavTab) => tab)
+    }
+    .width('100%')
+    .height(56)
+    .backgroundColor($r('sys.color.background_secondary'))
+  }
+
+  // ───────────────────── 双栏（折叠展开 / 平板竖屏） ─────────────────────
+
+  @Builder
+  buildDouble() {
+    Row() {
+      this.navRail()
+      Divider().vertical(true).color($r('sys.color.comp_divider'))
+      Column() {
+        this.header(false)
+        Divider().color($r('sys.color.comp_divider'))
+        Column() {
+          if (this.showsConversation()) {
+            ConversationPane({ sessionId: this.selectedSessionId })
+          } else {
+            this.tabContent()
+          }
+        }
+        .layoutWeight(1)
+        .width('100%')
+      }
+      .layoutWeight(1)
+      .height('100%')
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  @Builder
+  navRail() {
+    Column({ space: Sp.S }) {
+      ForEach(TABS, (tab: NavTab) => {
+        Column() {
+          Stack({ alignContent: Alignment.TopEnd }) {
+            SymbolGlyph(navTabSymbol(tab))
+              .fontSize(22)
+              .fontColor([this.tab === tab ? $r('sys.color.brand') : $r('sys.color.font_secondary')])
+            if (tab === NavTab.PENDING && this.pendingBadge.length > 0) {
+              this.badge(this.pendingBadge)
+            }
+          }
+        }
+        .width(Sz.NAV_RAIL)
+        .height(Sz.TOUCH_MIN)
+        .justifyContent(FlexAlign.Center)
+        .borderRadius(Radius.S)
+        .onClick(() => {
+          this.selectTab(tab);
+        })
+      }, (tab: NavTab) => tab)
+    }
+    .width(Sz.NAV_RAIL)
+    .height('100%')
+    .padding({ top: Sp.M })
+    .backgroundColor($r('sys.color.background_secondary'))
+  }
+
+  // ───────────────────── 三栏（平板横屏 / 2in1） ─────────────────────
+
+  @Builder
+  buildTriple() {
+    Row() {
+      this.navPanel()
+      Divider().vertical(true).color($r('sys.color.comp_divider'))
+      Column() {
+        this.header(false)
+        Divider().color($r('sys.color.comp_divider'))
+        Column() {
+          this.tabContent()
+        }
+        .layoutWeight(1)
+        .width('100%')
+      }
+      .layoutWeight(1)
+      .height('100%')
+      if (this.detailOpen && this.showsConversation()) {
+        Divider().vertical(true).color($r('sys.color.comp_divider'))
+        this.detailPanel()
+      }
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  @Builder
+  navPanel() {
+    Column({ space: Sp.XS }) {
+      Text('DSH 鸿蒙端')
+        .fontSize(Fs.TITLE_S)
+        .fontWeight(FontWeight.Bold)
+        .width('100%')
+        .padding({ left: Sp.M, top: Sp.M, bottom: Sp.S })
+
+      ForEach(TABS, (tab: NavTab) => {
+        Row({ space: Sp.M }) {
+          SymbolGlyph(navTabSymbol(tab))
+            .fontSize(20)
+            .fontColor([this.tab === tab ? $r('sys.color.brand') : $r('sys.color.font_secondary')])
+          Text(navTabLabel(tab))
+            .fontSize(Fs.SECONDARY)
+            .fontColor(this.tab === tab ? $r('sys.color.brand') : $r('sys.color.font_primary'))
+            .layoutWeight(1)
+          if (tab === NavTab.PENDING && this.pendingBadge.length > 0) {
+            Text(this.pendingBadge)
+              .fontSize(Fs.CAPTION)
+              .fontColor(Color.White)
+              .backgroundColor($r('sys.color.alert'))
+              .borderRadius(9)
+              .padding({ left: 6, right: 6 })
+          }
+        }
+        .width('100%')
+        .height(Sz.TOUCH_MIN)
+        .padding({ left: Sp.M, right: Sp.M })
+        .borderRadius(Radius.S)
+        .backgroundColor(this.tab === tab ? $r('sys.color.background_secondary') : Color.Transparent)
+        .onClick(() => {
+          this.selectTab(tab);
+        })
+      }, (tab: NavTab) => tab)
+
+      Blank()
+
+      Button('POC 协议验证')
+        .buttonStyle(ButtonStyleMode.TEXTUAL)
+        .fontSize(Fs.CAPTION)
+        .width('100%')
+        .onClick(() => {
+          this.openPoc();
+        })
+    }
+    .width(Sz.NAV_PANEL)
+    .height('100%')
+    .padding({ left: Sp.S, right: Sp.S, bottom: Sp.S })
+    .backgroundColor($r('sys.color.background_secondary'))
+  }
+
+  @Builder
+  detailPanel() {
+    Column() {
+      Row({ space: Sp.S }) {
+        Text('详情')
+          .fontSize(Fs.SECONDARY)
+          .fontWeight(FontWeight.Medium)
+          .layoutWeight(1)
+        Button() {
+          SymbolGlyph($r('sys.symbol.xmark')).fontSize(16)
+        }
+        .buttonStyle(ButtonStyleMode.TEXTUAL)
+        .onClick(() => {
+          this.detailOpen = false;
+        })
+      }
+      .width('100%')
+      .height(Sz.TOUCH_MIN)
+      .padding({ left: Sp.M, right: Sp.S })
+
+      Divider().color($r('sys.color.comp_divider'))
+
+      PlaceholderPane({
+        title: '详情栏',
+        hint: '工具 / 子代理 / 交付物 / 目标 / 任务在此展示（M2 实现）'
+      })
+    }
+    .width(Sz.DETAIL_PANEL)
+    .height('100%')
+    .backgroundColor($r('sys.color.background_secondary'))
+  }
+
+  // ───────────────────── 共用 ─────────────────────
+
+  @Builder
+  tabContent() {
+    if (this.tab === NavTab.PENDING) {
+      PendingPane({ items: this.pending })
+    } else if (this.tab === NavTab.SESSIONS) {
+      SessionListPane({
+        sessions: this.sessions,
+        selectedId: this.selectedSessionId,
+        onSelect: (id: string) => {
+          this.openSession(id);
+        }
+      })
+    } else if (this.tab === NavTab.WORKSPACES) {
+      PlaceholderPane({ title: '工作区', hint: '工作区列表、文件树与文件投喂（M5 实现）' })
+    } else {
+      PlaceholderPane({ title: '设置', hint: '通用 / 模型 / 凭据 / 设备 / 连接诊断（M6 实现）' })
+    }
+  }
+
+  @Builder
+  badge(text: string) {
+    Text(text)
+      .fontSize(10)
+      .fontColor(Color.White)
+      .backgroundColor($r('sys.color.alert'))
+      .borderRadius(8)
+      .padding({ left: 5, right: 5 })
+      .margin({ top: -4, right: -10 })
+  }
+
+  /**
+   * 待决徽标文本。
+   *
+   * 单独取值再传入 ForEach 的 item builder，避免在循环体内频繁读取 @State
+   * （ArkTS 性能规则 @performance/hp-arkui-no-state-var-access-in-loop）。
+   * 状态变化时 build 重跑，因此这里每次都是新鲜值。
+   */
+  private pendingBadgeText(): string {
+    const n: number = this.pending.length;
+    if (n <= 0) {
+      return '';
+    }
+    return n > 99 ? '99+' : `${n}`;
+  }
 }
 
-function pad2(value: number): string {
-  return value < 10 ? `0${value}` : `${value}`;
-}
-
-/** 本地时钟字符串 HH:MM:SS（用单个 Date 实例派生，避免重复构造） */
-function formatClock(epochMs: number): string {
-  const d: Date = new Date(epochMs);
-  const hh: string = pad2(d.getHours());
-  const mm: string = pad2(d.getMinutes());
-  const ss: string = pad2(d.getSeconds());
-  return `${hh}:${mm}:${ss}`;
-}
-
-function levelColor(level: LogLevel): Color {
-  if (level === LogLevel.OK) {
-    return Color.Green;
-  }
-  if (level === LogLevel.FAIL) {
-    return Color.Red;
-  }
-  if (level === LogLevel.STEP) {
-    return Color.Blue;
-  }
-  return Color.Gray;
-}
-
-function summarize(value: Object | undefined): string {
-  if (value === undefined) {
-    return '(undefined)';
-  }
-  let text: string = '';
+/** 用 display 推导初始窗口宽度（vp）；失败时给一个安全的手机宽度 */
+function initialWidthVp(): number {
   try {
-    text = JSON.stringify(value);
+    const d: display.Display = display.getPrimaryDisplaySync();
+    return px2vp(d.width);
   } catch (error) {
-    text = '<不可序列化>';
+    return 400;
   }
-  return text.length > 300 ? `${text.substring(0, 300)}…(共 ${text.length} 字符)` : text;
-}
-
-function asMessage(error: Object): string {
-  if (error instanceof Error) {
-    return (error as Error).message;
-  }
-  return `${error}`;
 }

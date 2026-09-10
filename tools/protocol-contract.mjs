@@ -139,6 +139,31 @@ function topLevelValue(objText, key) {
 const scope = join(DSH_NM, '@deepseek-ai');
 const packages = readdirSync(scope, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
 
+/**
+ * 第一遍：找出「流式」方法。
+ *
+ * 为什么必须单独扫：`invocation: { kind }` 只有 `direct` / `scoped`，
+ * 流式与否记录在 `Remote` **装饰器**参数里（`Remote({ mode: "stream" })`），
+ * 描述符本身不携带该信息。误把流式端点当一元调用会被 Host 以
+ * `gateway/signature-invalid` 拒绝（D2 §8.4 实测），因此这个标记必须准确。
+ */
+const streamProps = new Set();
+/** 同时记录带 scope 与不带 scope 两种键，兼容 id 的书写形式 */
+for (const pkg of packages) {
+  for (const file of walk(join(scope, pkg), [])) {
+    let src;
+    try {
+      src = readFileSync(file, 'utf8');
+    } catch {
+      continue;
+    }
+    for (const m of src.matchAll(/_(\w+)_decorators\s*=\s*\[\s*Remote\(\s*\{\s*mode:\s*"stream"/g)) {
+      streamProps.add(`@deepseek-ai/${pkg}#${m[1]}`);
+      streamProps.add(`${pkg}#${m[1]}`);
+    }
+  }
+}
+
 const descriptors = [];
 const seen = new Set();
 
@@ -160,7 +185,13 @@ for (const pkg of packages) {
       if (objText === undefined) continue;
       seen.add(id);
       const invocationText = topLevelValue(objText, 'invocation') ?? '';
-      const kind = (invocationText.match(/kind:\s*"([^"]+)"/) ?? [, 'unknown'])[1];
+      const invocationKind = (invocationText.match(/kind:\s*"([^"]+)"/) ?? [, 'unknown'])[1];
+      // 流式判定：装饰器集合按「声明包#属性名」记录。
+      // 关键：descriptor 的**声明包**在 id 里（`<declPkg>#<ns>/<method>`），
+      // 而所有 descriptor 都集中由 dsh-api-remotes 装配，因此不能用「文件所在包」做键。
+      const declPkg = id.includes('#') ? id.slice(0, id.indexOf('#')) : pkg;
+      const isStream = streamProps.has(`${declPkg}#${m[4]}`)
+        || streamProps.has(`${declPkg}#${m[2]}`);
       const cancelText = topLevelValue(objText, 'cancellation');
       const paramsText = topLevelValue(objText, 'parameters') ?? '[]';
       const params = [];
@@ -174,7 +205,8 @@ for (const pkg of packages) {
       const locLine = (locText.match(/line:\s*(\d+)/) ?? [, ''])[1];
       descriptors.push({
         id, pkg, service: m[2], namespace: m[3], method: m[4],
-        kind,
+        kind: isStream ? 'stream' : invocationKind,
+        invocationKind,
         cancellable: cancelText !== undefined,
         params,
         resultSymbol,

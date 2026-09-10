@@ -1,15 +1,22 @@
 /**
- * 会话列表模型：`session/list` 的返回投影。
+ * 会话列表模型：会话查询的返回投影。
  *
  * 事实基线（D2 §8.5）：
  *   端点 `session/list`，参数 `{ _request: {...} }`（**注意下划线**），可取消；
  *   实测返回 `{"items":[...]}`。
  *
- * 本模块只做「形状无关的宽松投影」：字段名以实测为准，缺失字段一律不猜测，
- * 用 `RawSessionItem` 保留原始对象供上层按需读取。
+ * 分层纪律（回答「方便适配上游升级」）：
+ *   本模块**不硬编码** endpoint 名与字段名——
+ *   端点与参数形态由 `dshcompat` 的 `sessionListArgs()` 决定，
+ *   字段别名由 `dshcompat` 的 `FIELD_ALIASES` 提供。
+ *   上游改名/改端点时只改 dshcompat，本文件不动。
+ *
+ * 投影策略：对每个字段按候选别名依次尝试（容忍上游改名与历史名称），
+ * 缺失字段不猜测；同时保留 `raw` 供尚未建模的字段使用。
  */
 
 import { getNumber, getRecord, getString, isRecord } from 'connection';
+import { FIELD_ALIASES, SESSION_LIST_ENDPOINT, sessionListArgs } from 'dshcompat';
 
 /** 列表项（宽松投影；未知字段保留在 raw 中） */
 export interface SessionListItem {
@@ -37,8 +44,8 @@ export interface SessionListPage {
 }
 
 /**
- * 从 `session/list` 的返回投影出列表。
- * 兼容两种形态：`{ items: [...] }` 与直接返回数组。
+ * 从会话查询的返回投影出列表。
+ * 兼容两种形态：`{ items: [...] }`（容器键由 dshcompat 的别名表提供）与直接返回数组。
  */
 export function projectSessionList(value: Object | undefined): SessionListPage {
   const items: SessionListItem[] = [];
@@ -52,9 +59,14 @@ export function projectSessionList(value: Object | undefined): SessionListPage {
   if (Array.isArray(value)) {
     array = value as Object[];
   } else {
-    const container: Object | undefined = getRecord(value, 'items');
-    if (container !== undefined && Array.isArray(container)) {
-      array = container as Object[];
+    // 容器键按别名表依次尝试（上游改名时只改 dshcompat）
+    const listKeys: string[] = FIELD_ALIASES.list;
+    for (let i = 0; i < listKeys.length; i++) {
+      const container: Object | undefined = getRecord(value, listKeys[i]);
+      if (container !== undefined && Array.isArray(container)) {
+        array = container as Object[];
+        break;
+      }
     }
     const more: Object | undefined = getRecord(value, 'hasMore');
     if (typeof more === 'boolean') {
@@ -72,12 +84,12 @@ export function projectSessionList(value: Object | undefined): SessionListPage {
       continue;
     }
     const item: SessionListItem = {
-      id: pickString(raw, ['id', 'sessionId', 'sid']),
-      title: pickString(raw, ['title', 'name', 'summary']),
-      cwd: pickString(raw, ['cwd', 'workspace', 'workspacePath', 'directory']),
-      updatedAt: pickNumber(raw, ['updatedAt', 'lastActivityAt', 'lastActiveAt', 'mtime']),
-      createdAt: pickNumber(raw, ['createdAt', 'ctime']),
-      running: pickBoolean(raw, ['running', 'isRunning', 'active']),
+      id: pickString(raw, FIELD_ALIASES.id),
+      title: pickString(raw, FIELD_ALIASES.title),
+      cwd: pickString(raw, FIELD_ALIASES.cwd),
+      updatedAt: pickNumber(raw, FIELD_ALIASES.updatedAt),
+      createdAt: pickNumber(raw, FIELD_ALIASES.createdAt),
+      running: pickBoolean(raw, FIELD_ALIASES.running),
       raw: raw
     };
     if (item.id.length === 0) {
@@ -90,6 +102,16 @@ export function projectSessionList(value: Object | undefined): SessionListPage {
   // 默认按最近活动倒序（Host 若已排序则此步为稳定无操作）
   items.sort((a: SessionListItem, b: SessionListItem) => b.updatedAt - a.updatedAt);
   return { items: items, hasMore: hasMore };
+}
+
+/** 本轮会话查询使用的 endpoint（供调用方构造请求，避免在 UI 层写字面量） */
+export function sessionListEndpoint(): string {
+  return SESSION_LIST_ENDPOINT;
+}
+
+/** 会话查询的 args 载荷（形状由 dshcompat 的上表决定） */
+export function sessionListPayload(body: Object): Object | undefined {
+  return sessionListArgs(body);
 }
 
 /** 按候选键名取第一个非空字符串 */

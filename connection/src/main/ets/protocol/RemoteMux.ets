@@ -17,7 +17,7 @@
 import { webSocket } from '@kit.NetworkKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { getString, getRecord, parseJson, stringifyJson } from './JsonValue';
-import { REMOTE_MUX_PATH } from './RpcTypes';
+import { ProtocolSurface, FALLBACK_SURFACE } from './Surface';
 import { StreamSink } from './Types';
 
 /** 一条逻辑流的本地记账 */
@@ -38,6 +38,8 @@ export enum MuxState {
 export class RemoteMux {
   private baseUrl: string;
   private cookieProvider: () => string | undefined;
+  /** 上游接口面（路径等事实由兼容面注入，不在本类硬编码） */
+  private surface: ProtocolSurface;
   private socket?: webSocket.WebSocket;
   private state: MuxState = MuxState.CLOSED;
   private streams: Map<string, LogicalStream> = new Map<string, LogicalStream>();
@@ -45,9 +47,11 @@ export class RemoteMux {
   private openWaiters: Array<(ok: boolean, reason?: string) => void> = [];
   private lastError?: string;
 
-  constructor(baseUrl: string, cookieProvider: () => string | undefined) {
+  constructor(baseUrl: string, cookieProvider: () => string | undefined,
+    surface: ProtocolSurface = FALLBACK_SURFACE) {
     this.baseUrl = baseUrl;
     this.cookieProvider = cookieProvider;
+    this.surface = surface;
   }
 
   getState(): MuxState {
@@ -119,7 +123,7 @@ export class RemoteMux {
     };
 
     try {
-      const opened: boolean = await socket.connect(`${this.baseUrl}${REMOTE_MUX_PATH}`, options);
+      const opened: boolean = await socket.connect(`${this.baseUrl}${this.surface.muxPath}`, options);
       if (!opened) {
         this.lastError = 'ws connect 返回 false';
         this.state = MuxState.CLOSED;
@@ -234,7 +238,7 @@ export class RemoteMux {
       'type': 'open',
       'streamId': streamId,
       'endpoint': endpoint,
-      'payload': payload ?? (parseJson('{"args":{}}') as Object)
+      'payload': payload ?? (parseJson(this.surface.eventsPayloadJson) as Object)
     };
     const text: string | undefined = stringifyJson(frame as Object);
     if (text === undefined) {

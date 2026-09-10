@@ -55,6 +55,15 @@
           "name": "default"
         }
       ]
+    },
+    {
+      "name": "dshcompat",
+      "srcPath": "./dshcompat",
+      "targets": [
+        {
+          "name": "default"
+        }
+      ]
     }
   ]
 }

@@ -9,7 +9,7 @@
 
 import { getRecord, getString } from './JsonValue';
 import { RemoteMux } from './RemoteMux';
-import { EMPTY_ARGS_PAYLOAD, EVENTS_ENDPOINT, EVENTS_RESULT_ENDPOINT } from './RpcTypes';
+import { ProtocolSurface, FALLBACK_SURFACE } from './Surface';
 import { EventSink, HostFacts } from './Types';
 
 /** 事件流当前阶段 */
@@ -27,6 +27,8 @@ export enum EventStreamPhase {
 export class EventStream {
   private mux: RemoteMux;
   private sink: EventSink;
+  /** 上游接口面（事件流端点等事实由兼容面注入） */
+  private surface: ProtocolSurface;
   private streamId?: string;
   private phase: EventStreamPhase = EventStreamPhase.IDLE;
   private facts?: HostFacts;
@@ -34,9 +36,10 @@ export class EventStream {
   private readySeen: boolean = false;
   private lastFailure?: string;
 
-  constructor(mux: RemoteMux, sink: EventSink) {
+  constructor(mux: RemoteMux, sink: EventSink, surface: ProtocolSurface = FALLBACK_SURFACE) {
     this.mux = mux;
     this.sink = sink;
+    this.surface = surface;
   }
 
   getPhase(): EventStreamPhase {
@@ -62,7 +65,7 @@ export class EventStream {
     }
     this.readySeen = false;
     this.phase = EventStreamPhase.OPENING;
-    const streamId: string | undefined = this.mux.open(EVENTS_ENDPOINT, EMPTY_ARGS_PAYLOAD, {
+    const streamId: string | undefined = this.mux.open(this.surface.eventsEndpoint, this.surface.eventsPayloadJson, {
       onItem: (value: Object) => {
         this.handleItem(value);
       },
@@ -135,8 +138,8 @@ export class EventStream {
     this.phase = EventStreamPhase.LOST;
   }
 
-  /** 结果回送端点（waterfall 场景，D2 §1.3）；本版本仅暴露端点名供上层使用 */
-  static resultEndpoint(): string {
-    return EVENTS_RESULT_ENDPOINT;
+  /** 结果回送端点（waterfall 场景，D2 §1.3）；由兼容面注入，不在本类硬编码 */
+  eventsResultEndpoint(): string {
+    return this.surface.eventsResultEndpoint;
   }
 }

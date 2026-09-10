@@ -12,6 +12,7 @@ import {
   ParsedTarget,
   parseTarget
 } from './HostAddress';
+import { ProtocolSurface, FALLBACK_SURFACE } from './Surface';
 import { CookieJar } from './Cookies';
 import { HttpClient, HttpOutcome } from './HttpClient';
 import { AuthOutcome, AuthSession, isAuthFailureStatus } from './AuthSession';
@@ -44,6 +45,11 @@ export interface ConnectionOptions {
   defaultTimeoutMs?: number;
   /** mux 单次连接尝试超时（毫秒） */
   muxConnectTimeoutMs?: number;
+  /**
+   * 上游接口面。装配时应由兼容面（dshcompat）显式注入；
+   * 缺省为 FALLBACK_SURFACE，仅用于测试与安全退化（生产路径漏注入会在诊断页暴露）。
+   */
+  surface?: ProtocolSurface;
 }
 
 const DEFAULT_TIMEOUT_MS: number = 30000;
@@ -69,6 +75,7 @@ export function randomUuid(): string {
 
 export class Connection {
   private options: Required<ConnectionOptions>;
+  private surface: ProtocolSurface;
   private jar: CookieJar = new CookieJar();
   private http: HttpClient;
   private mux?: RemoteMux;
@@ -85,10 +92,17 @@ export class Connection {
   constructor(options?: ConnectionOptions) {
     const merged: Required<ConnectionOptions> = {
       defaultTimeoutMs: options?.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS,
-      muxConnectTimeoutMs: options?.muxConnectTimeoutMs ?? DEFAULT_MUX_TIMEOUT_MS
+      muxConnectTimeoutMs: options?.muxConnectTimeoutMs ?? DEFAULT_MUX_TIMEOUT_MS,
+      surface: options?.surface ?? FALLBACK_SURFACE
     };
     this.options = merged;
+    this.surface = merged.surface;
     this.http = new HttpClient(this.jar);
+  }
+
+  /** 当前使用的上游接口面（诊断用：能立刻看出是否漏注入） */
+  getSurface(): ProtocolSurface {
+    return this.surface;
   }
 
   // ─────────────────────────── 配置与状态 ───────────────────────────
@@ -234,7 +248,7 @@ export class Connection {
       return false;
     }
     if (this.mux === undefined) {
-      this.mux = new RemoteMux(address.wsBaseUrl, () => this.jar.headerFor(address.authority));
+      this.mux = new RemoteMux(address.wsBaseUrl, () => this.jar.headerFor(address.authority), this.surface);
     }
     this.setState(ConnectionState.CONNECTING, '正在连接…');
     const opened: boolean = await this.mux.connectOnce(this.options.muxConnectTimeoutMs);
@@ -266,7 +280,7 @@ export class Connection {
         this.lastError = error ?? '事件流结束';
         this.scheduleReconnect(sink);
       }
-    });
+    }, this.surface);
     const ok: boolean = await this.connectOnce();
     if (!ok) {
       this.scheduleReconnect(sink);
@@ -285,7 +299,7 @@ export class Connection {
     if (this.mux === undefined) {
       const base: string = address === undefined ? '' : address.wsBaseUrl;
       const authority: string = address === undefined ? '' : address.authority;
-      this.mux = new RemoteMux(base, () => this.jar.headerFor(authority));
+      this.mux = new RemoteMux(base, () => this.jar.headerFor(authority), this.surface);
     }
     return this.mux;
   }
@@ -353,7 +367,7 @@ export class Connection {
     if (address === undefined) {
       return rpcFail(RemoteFailure.carrier('未配置 Host 地址'));
     }
-    const target = checkTarget(API_CHANNEL, endpoint);
+    const target = checkTarget(this.surface.apiChannel, endpoint);
     if (!target.ok) {
       return rpcFail(RemoteFailure.parse(`非法 endpoint：${target.reason ?? endpoint}`));
     }
@@ -384,7 +398,7 @@ export class Connection {
       return rpcFail(RemoteFailure.parse(`无法序列化请求体：${endpoint}`));
     }
     const outcome: HttpOutcome = await this.http.send(
-      `${address.baseUrl}${API_CHANNEL}/${endpoint}`,
+      `${address.baseUrl}${this.surface.apiChannel}/${endpoint}`,
       address.authority, true, body, timeoutMs, true);
 
     if (!outcome.responded) {
@@ -410,7 +424,8 @@ export class Connection {
   // ─────────────────────────── 逻辑流 ───────────────────────────
 
   /**
-   * 打开一条业务逻辑流（如 `session/follow`）。
+   * 打开一条业务逻辑流（例如会话轨迹流；具体 endpoint 由调用方从兼容面取得，
+   * 本层不硬编码任何端点名）。
    * @returns 取消函数；未连接时返回 undefined
    */
   openStream(endpoint: string, args: Object, sink: StreamSink): (() => void) | undefined {

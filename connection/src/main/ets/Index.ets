@@ -1,12 +1,18 @@
 /**
- * HAR 模块：dsh 协议兼容层。
+ * HAR 模块：dsh 协议兼容层（机制层）。
  *
- * 这是 D1 §6.1 中「协议兼容层」的唯一对外入口。上层（状态层 / UI / 设备接入层）
- * 只应通过本文件导入，不得深层导入 src/main/ets/protocol/*。
+ * 分层纪律（回答「方便适配上游升级」）：
+ *   本模块只提供**机制**——HTTP/WS 载体、信封编解码、cookie、退避、诊断。
+ *   **具体端点与路径不在这里**：它们由 `ProtocolSurface` 注入，
+ *   上游事实集中在 `dshcompat` 模块（端点上表 + 能力表 + 漂移门禁）。
+ *   上层应通过 `dshcompat` 装配，而不是直接用本模块的 FALLBACK_SURFACE。
  */
 
 export { Connection, randomUuid, serializeCookies, deserializeCookies } from './protocol/Connection';
 export type { ConnectionOptions, CookiePersistence } from './protocol/Connection';
+
+export { FALLBACK_SURFACE } from './protocol/Surface';
+export type { ProtocolSurface } from './protocol/Surface';
 
 export {
   API_CHANNEL,
