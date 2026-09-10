@@ -74,6 +74,23 @@ export const READONLY_PROBE_ENDPOINTS: string[] = [
   SETTINGS_DESCRIBE_ENDPOINT
 ];
 
+/**
+ * 诊断页「协议旁路日志」的演示行。
+ *
+ * 放在兼容面而不是 UI：这些行展示的是**上游端点名**，
+ * 属于上游知识；UI 不得自行拼写（D5 §1 架构约束）。
+ * 接入真实连接后由连接层的 trace 记录替换。
+ */
+export function demoTraceLines(): string[] {
+  return [
+    `rpc  ${MODEL_CATALOG_ENDPOINT}  41ms  ok`,
+    `rpc  ${PLUGIN_INVENTORY_ENDPOINT}  168ms  ok`,
+    `rpc  ${SETTINGS_DESCRIBE_ENDPOINT}  10ms  ok`,
+    'ws   frame item (128B)  stream=events',
+    'ws   frame ready  clientId=…'
+  ];
+}
+
 /** 会话列表的 args 载荷（参数形态由生成上表决定，禁止按方法名猜） */
 export function sessionListArgs(body: Object): Object | undefined {
   return buildArgs(SESSION_LIST_ENDPOINT, body);

@@ -1,47 +1,70 @@
 /**
- * 会话面板（轨迹 + 输入区）。
+ * 会话面板（轨迹 + 输入区）—— D3 §3.2 / §3.3 / §3.6。
  *
- * 规格依据 D3 §3.2（轨迹条目类型）、§3.3（工具调用卡片）、§3.6（输入区）。
+ * 轨迹条目类型（D3 §3.2）：用户/助手消息、思考折叠、工具调用卡、子代理、交付物、
+ * 目标、任务、错误。工具调用卡按 §3.3 的徽标与默认展开规则呈现。
  *
- * 数据来源：当前由桩数据源提供（方案 2）。接入真实连接后，
- * 只需把 `items` 的来源换成事件流投影，本组件不改动。
+ * 数据来源：宿主注入（当前为桩数据源）。本组件不直接调用协议层，
+ * 所有动作通过回调上报宿主，便于接入真实连接时只改宿主。
  */
 
 import {
+  CommandCandidate,
   formatBytes,
   formatClock,
   formatDuration,
   Fs,
   Lh,
+  ModelOption,
+  ModelSelection,
   previewOutput,
   Radius,
+  ReferenceCandidate,
   Sp,
   Speaker,
-  Sz,
   ToolState,
   toolStateIsProblem,
   toolStateLabel,
   TrajectoryItem,
-  TrajectoryKind,
-  stubTrajectory
+  TrajectoryKind
 } from 'appstate';
+import { Composer } from './Composer';
 
 @Component
 export struct ConversationPane {
   @Prop sessionId: string = '';
-  @State items: TrajectoryItem[] = [];
-  @State draft: string = '';
-  /** 展开状态的工具卡片 id 集合 */
+  @Prop items: TrajectoryItem[] = [];
+  @Prop running: boolean = false;
+  @Prop offline: boolean = false;
+  @Prop queuedCount: number = 0;
+  @Prop draft: string = '';
+  @Prop attachments: string[] = [];
+  @Prop models: ModelOption[] = [];
+  @Prop selection: ModelSelection = { provider: '', modelId: '', effort: '' };
+  @Prop references: ReferenceCandidate[] = [];
+  @Prop commands: CommandCandidate[] = [];
+
+  onDraftChange: (text: string) => void = () => {
+  };
+  onSend: () => void = () => {
+  };
+  onStop: () => void = () => {
+  };
+  onAddAttachment: () => void = () => {
+  };
+  onRemoveAttachment: (name: string) => void = () => {
+  };
+  onPickModel: () => void = () => {
+  };
+  /** 打开详情栏（单栏/双栏下没有并排详情栏时使用） */
+  onOpenDetail: () => void = () => {
+  };
+
   @State expanded: string[] = [];
   private scroller: Scroller = new Scroller();
 
-  aboutToAppear(): void {
-    this.items = stubTrajectory();
-  }
-
   build() {
     Column() {
-      // 轨迹
       List({ space: Sp.M, scroller: this.scroller }) {
         ForEach(this.items, (item: TrajectoryItem) => {
           ListItem() {
@@ -56,8 +79,23 @@ export struct ConversationPane {
 
       Divider().color($r('sys.color.comp_divider'))
 
-      // 输入区（D3 §3.6）
-      this.composer()
+      Composer({
+        draft: this.draft,
+        running: this.running,
+        offline: this.offline,
+        queuedCount: this.queuedCount,
+        attachments: this.attachments,
+        models: this.models,
+        selection: this.selection,
+        references: this.references,
+        commands: this.commands,
+        onDraftChange: this.onDraftChange,
+        onSend: this.onSend,
+        onStop: this.onStop,
+        onAddAttachment: this.onAddAttachment,
+        onRemoveAttachment: this.onRemoveAttachment,
+        onPickModel: this.onPickModel
+      })
     }
     .width('100%')
     .height('100%')
@@ -113,9 +151,14 @@ export struct ConversationPane {
         .lineHeight(Fs.BODY * Lh.BODY)
         .width('100%')
         .textAlign(TextAlign.Start)
+        .copyOption(CopyOptions.LocalDevice)
+        .accessibilityText(this.speakableText(item))
 
       Row({ space: Sp.L }) {
-        Text('复制').fontSize(Fs.CAPTION).fontColor($r('sys.color.brand'))
+        Text('复制')
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.brand'))
+          .copyOption(CopyOptions.LocalDevice)
         Text('引用').fontSize(Fs.CAPTION).fontColor($r('sys.color.brand'))
         if (item.speaker === Speaker.USER) {
           Text('重发').fontSize(Fs.CAPTION).fontColor($r('sys.color.brand'))
@@ -138,7 +181,8 @@ export struct ConversationPane {
         SymbolGlyph($r('sys.symbol.lightbulb'))
           .fontSize(14)
           .fontColor([$r('sys.color.font_tertiary')])
-        Text(item.elapsedMs > 0 ? `已思考 ${formatDuration(item.elapsedMs)}` : '思考中…')
+        Text(item.streaming ? '思考中…'
+          : (item.elapsedMs > 0 ? `已思考 ${formatDuration(item.elapsedMs)}` : '思考过程'))
           .fontSize(Fs.CAPTION)
           .fontColor($r('sys.color.font_tertiary'))
           .layoutWeight(1)
@@ -153,6 +197,7 @@ export struct ConversationPane {
           .fontSize(Fs.SECONDARY)
           .fontColor($r('sys.color.font_secondary'))
           .width('100%')
+          .textAlign(TextAlign.Start)
       }
     }
     .width('100%')
@@ -160,6 +205,7 @@ export struct ConversationPane {
     .borderRadius(Radius.S)
     .borderWidth(1)
     .borderColor($r('sys.color.comp_divider'))
+    .accessibilityText('思考过程，点击展开或收起')
     .onClick(() => {
       this.toggle(item.id);
     })
@@ -197,16 +243,17 @@ export struct ConversationPane {
           .width('100%')
       }
 
-      // 失败/被拒默认展开（D3 §3.3）
-      if (item.toolOutput.length > 0 && (this.isExpanded(item.id) || toolStateIsProblem(item.toolState))) {
-        this.outputBlock(item)
-      } else if (item.toolOutput.length > 0) {
-        Text('▸ 查看结果')
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.brand'))
-          .onClick(() => {
-            this.toggle(item.id);
-          })
+      if (item.toolOutput.length > 0) {
+        if (this.isExpanded(item.id) || toolStateIsProblem(item.toolState)) {
+          this.outputBlock(item)
+        } else {
+          Text('▸ 查看结果')
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.brand'))
+            .onClick(() => {
+              this.toggle(item.id);
+            })
+        }
       }
     }
     .width('100%')
@@ -214,9 +261,8 @@ export struct ConversationPane {
     .borderRadius(Radius.M)
     .backgroundColor($r('sys.color.background_secondary'))
     .borderWidth(1)
-    .borderColor(toolStateIsProblem(item.toolState)
-      ? $r('sys.color.alert')
-      : $r('sys.color.comp_divider'))
+    .borderColor(toolStateIsProblem(item.toolState) ? $r('sys.color.alert') : $r('sys.color.comp_divider'))
+    .accessibilityText(`工具 ${item.toolName}，状态 ${toolStateLabel(item.toolState)}`)
   }
 
   @Builder
@@ -226,6 +272,8 @@ export struct ConversationPane {
         .fontSize(Fs.CAPTION)
         .fontFamily('monospace')
         .width('100%')
+        .textAlign(TextAlign.Start)
+        .copyOption(CopyOptions.LocalDevice)
       if (previewOutput(item.toolOutput).truncated) {
         Text(`▸ 查看完整输出（共 ${previewOutput(item.toolOutput).totalLength} 字符）`)
           .fontSize(Fs.CAPTION)
@@ -260,12 +308,14 @@ export struct ConversationPane {
         .fontSize(Fs.SECONDARY)
         .fontColor($r('sys.color.font_secondary'))
         .width('100%')
+        .textAlign(TextAlign.Start)
     }
     .width('100%')
     .padding(Sp.M)
     .borderRadius(Radius.M)
     .borderWidth(1)
     .borderColor($r('sys.color.comp_divider'))
+    .accessibilityText(`子代理 ${item.subagentName}`)
   }
 
   @Builder
@@ -290,11 +340,15 @@ export struct ConversationPane {
       Text('保存')
         .fontSize(Fs.CAPTION)
         .fontColor($r('sys.color.brand'))
+      Text('分享')
+        .fontSize(Fs.CAPTION)
+        .fontColor($r('sys.color.brand'))
     }
     .width('100%')
     .padding(Sp.M)
     .borderRadius(Radius.M)
     .backgroundColor($r('sys.color.background_secondary'))
+    .accessibilityText(`交付物 ${item.fileName}`)
   }
 
   @Builder
@@ -310,6 +364,9 @@ export struct ConversationPane {
           .fontSize(Fs.SECONDARY)
           .fontWeight(FontWeight.Medium)
           .layoutWeight(1)
+        Text(item.kind === TrajectoryKind.GOAL ? '目标' : '任务')
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.font_tertiary'))
       }
       .width('100%')
 
@@ -342,9 +399,15 @@ export struct ConversationPane {
         Text(item.body)
           .fontSize(Fs.SECONDARY)
           .width('100%')
+          .textAlign(TextAlign.Start)
         Row({ space: Sp.L }) {
           Text('重试').fontSize(Fs.CAPTION).fontColor($r('sys.color.brand'))
-          Text('查看诊断').fontSize(Fs.CAPTION).fontColor($r('sys.color.brand'))
+          Text('查看诊断')
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.brand'))
+            .onClick(() => {
+              this.onOpenDetail();
+            })
         }
         .width('100%')
       }
@@ -354,44 +417,7 @@ export struct ConversationPane {
     .padding(Sp.M)
     .borderRadius(Radius.M)
     .backgroundColor($r('sys.color.background_secondary'))
-  }
-
-  // ───────────────────── 输入区（D3 §3.6） ─────────────────────
-
-  @Builder
-  composer() {
-    Column({ space: Sp.S }) {
-      Row({ space: Sp.S }) {
-        Text('@ 引用').fontSize(Fs.CAPTION).fontColor($r('sys.color.font_secondary'))
-        Text('/ 命令').fontSize(Fs.CAPTION).fontColor($r('sys.color.font_secondary'))
-        Blank()
-        Text('deepseek-v4-flash').fontSize(Fs.CAPTION).fontColor($r('sys.color.font_tertiary'))
-      }
-      .width('100%')
-
-      Row({ space: Sp.S }) {
-        TextArea({ text: this.draft, placeholder: '输入消息…（Shift+Enter 换行）' })
-          .onChange((value: string) => {
-            this.draft = value;
-          })
-          .layoutWeight(1)
-          .constraintSize({ minHeight: Sz.TOUCH_MIN, maxHeight: Sz.TOUCH_MIN * 4 })
-
-        Button() {
-          SymbolGlyph($r('sys.symbol.arrow_up'))
-            .fontSize(18)
-            .fontColor([Color.White])
-        }
-        .width(Sz.TOUCH_MIN)
-        .height(Sz.TOUCH_MIN)
-        .enabled(this.draft.trim().length > 0)
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Bottom)
-    }
-    .width('100%')
-    .padding(Sp.M)
-    .backgroundColor($r('sys.color.background_primary'))
+    .accessibilityText(`错误：${item.body}`)
   }
 
   // ───────────────────── 辅助 ─────────────────────
@@ -430,5 +456,12 @@ export struct ConversationPane {
       return $r('sys.color.brand');
     }
     return $r('sys.color.font_tertiary');
+  }
+
+  /** 无障碍朗读文本（D3 §7） */
+  private speakableText(item: TrajectoryItem): string {
+    const who: string = item.speaker === Speaker.USER ? '我说' : '助手回复';
+    const head: string = item.body.length > 60 ? `${item.body.substring(0, 60)}…` : item.body;
+    return `${who}：${head}（共 ${item.body.length} 字）`;
   }
 }

@@ -2,11 +2,15 @@
 
 面向 HarmonyOS（手机 / 折叠屏 / 平板 / 2in1 PC）的 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）一等客户端，**ArkTS + ArkUI 原生实现**。
 
-> **当前进度**：M1/M2 并行推进 —— 工程骨架、协议兼容层、**DSH 上游兼容面**、状态层骨架与产品 UI
-> （三形态导航 + 待决 + 会话 + 轨迹）均已建成；主构建与 `entry@ohosTest` 测试目标编译通过；
+> **当前进度**：**UI 开发已全部完成**（M1/M2/M3 界面部分）—— 工程骨架、协议机制层、
+> **DSH 上游兼容面**、状态层与全部界面（三形态导航与让步链、待决聚合、会话列表、
+> 会话轨迹与输入区、详情栏、工作区与文件预览、设置五页签、连接诊断、添加 Host）均已建成；
+> 主构建与 `entry@ohosTest` 测试目标编译通过；架构回归检查与漂移门禁均为绿。
 > 已对**真实 dsh Host** 完成协议实测（只读端点 10/10 通过，认证与信任栅栏逐条命中）。
+>
+> **界面当前由桩数据驱动**（方案 2），接入真实数据仅需替换数据来源，视图组件零改动。
 > **阻塞**：缺少可用设备（无真机连接；模拟器受宿主内存限制无法启动），
-> 因此 POC-1 的设备侧步骤（mux / ready / 心跳 / cancel）尚未执行，详见
+> 因此 POC-1 的设备侧步骤（mux / ready / 心跳 / cancel）与真机界面验收尚未执行，详见
 > [`docs/30-技术验证清单.md`](docs/30-技术验证清单.md) 的「POC-1 当前进展」。
 
 ## 核心主张
@@ -31,9 +35,9 @@
 ├── entry/                    # HAP 入口：Ability、页面、视图、形态适配
 │   └── src/
 │       ├── main/ets/
-│       │   ├── pages/Index.ets   # 产品首屏：三形态导航 + 让步链
+│       │   ├── pages/Index.ets   # 应用首屏：三形态导航 + 让步链 + 全部页面装配
 │       │   ├── pages/Poc1.ets    # POC-1 协议往返验证页（验收工具）
-│       │   └── view/             # 会话列表 / 会话轨迹 / 待决 / 占位面板
+│       │   └── view/             # 全部界面组件（清单见下）
 │       └── ohosTest/             # 单元测试（Hypium，约 60 条断言）
 ├── connection/               # HAR：协议**机制层**（零 UI 依赖，不含具体端点/字段名）
 │   └── src/main/ets/protocol/
@@ -58,9 +62,21 @@
 ├── appstate/                 # HAR：状态层（投影 / 派生 / 呈现契约；零 UI 依赖）
 │   ├── model/SessionList.ets # 会话列表投影（字段名走 dshcompat 别名表）
 │   ├── model/Trajectory.ets  # 轨迹与待决的**呈现层契约**
+│   ├── model/Workspace.ets   # 工作区/文件树/预览的呈现契约（含预览类型推导）
+│   ├── model/Settings.ets    # 设置/凭据/插件/Host/诊断/模型 的呈现契约
 │   ├── model/Present.ets     # 呈现层纯函数（相对时间 / 截断 / 排序 / 朗读文本）
-│   ├── model/StubData.ets    # 桩数据源（设备到位前驱动 UI）
+│   ├── model/StubData*.ets   # 桩数据源（设备到位前驱动全部界面）
 │   └── ui/                   # 断点与导航模型、设计令牌
+├── entry/src/main/ets/view/  # 全部界面组件（9 个）
+│   ├── ConversationPane.ets  # 会话轨迹（7 类条目）+ 输入区
+│   ├── Composer.ets          # 输入区：@引用 / 斜杠命令 / 附件 / 模型 chip / 离线排队
+│   ├── DetailPane.ets        # 详情栏：工具 / 子代理 / 交付物 / 目标 / 任务
+│   ├── SessionListPane.ets   # 会话列表（运行中/待审核/空闲/失败 状态徽标）
+│   ├── PendingPane.ets       # 待决聚合（审批三选 / 提问单选与多选 / 自由文本）
+│   ├── WorkspacePane.ets     # 工作区 → 文件树 → 文件预览（宽屏三列、窄屏栈式）
+│   ├── SettingsPane.ets      # 设置五页签：通用 / 模型 / 凭据 / 插件 / 设备
+│   ├── DiagnosticsPane.ets   # 连接诊断：五项判定 + 兼容面自检 + 旁路日志
+│   └── ConnectPane.ets       # 添加 Host：URL / 手输 / 发现 / 授权 / 安全说明
 ├── tools/                    # 协议与兼容面工具（Node，独立于应用）
 │   ├── protocol-enum.mjs        # 从已安装 dsh 包枚举 endpoint
 │   ├── protocol-enum2.mjs       # 精确版：修正命名空间跨文件声明 / 属性名≠线上名

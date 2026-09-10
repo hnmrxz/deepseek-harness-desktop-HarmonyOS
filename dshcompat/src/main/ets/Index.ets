@@ -53,6 +53,7 @@ export { SURFACE } from './Surface';
 export {
   argsFor,
   CREDENTIALS_DESCRIBE_ENDPOINT,
+  demoTraceLines,
   FIELD_ALIASES,
   MODEL_CATALOG_ENDPOINT,
   PLUGIN_INVENTORY_ENDPOINT,

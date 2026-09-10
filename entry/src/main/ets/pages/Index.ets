@@ -1,70 +1,140 @@
 /**
- * 应用首屏：三形态导航 + 让步链（D3 §2）。
+ * 应用首屏：三形态导航 + 让步链 + 全部页面装配（D3 §2 / §1）。
  *
- * 结构（按窗口宽度档位）：
- *   单栏 SINGLE（< 600vp，手机 / 折叠态）  ：内容区 + 底部标签栏；会话以「列表 → 详情」栈式下钻
- *   双栏 DOUBLE（600–839vp，折叠展开 / 平板竖屏）：左侧图标条（56vp）+ 内容区
- *   三栏 TRIPLE（>= 840vp，平板横屏 / 2in1）    ：左导航面板 + 主区 + 右详情栏（可收）
+ * 形态（按**窗口宽度**判定，D3 §2.2 硬规则）：
+ *   单栏 SINGLE（< 600vp，手机 / 折叠态）  ：内容区 + 底部标签栏；会话栈式下钻
+ *   双栏 DOUBLE（600–839vp，折叠展开 / 平板竖屏）：左侧图标条 + 内容区
+ *   三栏 TRIPLE（>= 840vp，平板横屏 / 2in1）    ：导航面板 + 主区 + 详情栏
  *
- * 让步链（空间不足时的收缩顺序，D3 §2.1）：
- *   详情栏收窄 → 详情栏关闭 → 导航收为图标条 → 导航抽屉化
+ * 让步链（D3 §2.1）：详情栏收窄 → 详情栏关闭 → 导航收为图标条 → 导航抽屉化。
  * 让步只改几何、不改数据；变宽时自行恢复。
  *
- * 形态只由**窗口宽度**判定（D3 §2.2 硬规则）。
- * 数据当前来自桩数据源（方案 2），接入真实连接后仅替换数据来源。
+ * 页面装配（D3 §1 信息架构全覆盖）：
+ *   待决 / 会话（+轨迹+输入区+详情栏）/ 工作区（工作区→文件树→预览）/
+ *   设置（通用·模型·凭据·插件·设备）/ 连接诊断 / 添加 Host
  *
- * 验收工具入口：右上角的「POC」按钮进入 `pages/Poc1`（协议往返验证页）。
+ * 数据当前全部来自 appstate 的桩数据源（方案 2）。接入真实连接时，
+ * 只需把这里的赋值换成连接层的结果，所有视图组件无需改动。
  */
 
-import { display, window } from '@kit.ArkUI';
-import { router } from '@kit.ArkUI';
+import { display, router, window } from '@kit.ArkUI';
+import { demoTraceLines } from 'dshcompat';
 import {
+  CommandCandidate,
+  CredentialItem,
   detailPanelAvailable,
+  DetailSection,
+  DiagReport,
+  FileNode,
+  FilePreview,
   Fs,
+  HostRecord,
   LayoutMode,
   layoutModeOf,
+  ModelOption,
+  ModelSelection,
+  NavTab,
   navTabLabel,
   navTabSymbol,
-  NavTab,
   PendingItem,
+  PluginItem,
   Radius,
+  ReferenceCandidate,
   SessionListItem,
+  SettingGroup,
   Sp,
-  stubPending,
+  stubAbout,
+  stubCommands,
+  stubCredentials,
+  stubDetailSections,
+  stubDiagnostics,
+  stubFileTree,
+  stubHosts,
+  stubModelSelection,
+  stubModels,
+  stubPlugins,
+  stubPreview,
+  stubReferences,
+  stubSettings,
+  stubTrajectory,
+  stubWorkspaces,
   stubSessions,
-  Sz
+  stubPending,
+  Sz,
+  TrajectoryItem,
+  WorkspaceItem
 } from 'appstate';
+import { ConnectPane } from '../view/ConnectPane';
 import { ConversationPane } from '../view/ConversationPane';
+import { DetailPane } from '../view/DetailPane';
+import { DiagnosticsPane } from '../view/DiagnosticsPane';
 import { PendingPane } from '../view/PendingPane';
-import { PlaceholderPane } from '../view/PlaceholderPane';
 import { SessionListPane } from '../view/SessionListPane';
+import { SettingsPane } from '../view/SettingsPane';
+import { WorkspacePane } from '../view/WorkspacePane';
 
-/** 单栏下的页面栈（D3 §2 手机：列表 → 会话） */
+/** 单栏下的页面栈 */
 enum StackPage {
   MAIN = 'main',
-  CONVERSATION = 'conversation'
+  CONVERSATION = 'conversation',
+  DETAIL = 'detail',
+  DIAGNOSTICS = 'diagnostics',
+  CONNECT = 'connect'
 }
 
-/** 一级导航顺序（三形态共用） */
+/** 一级导航顺序 */
 const TABS: NavTab[] = [NavTab.PENDING, NavTab.SESSIONS, NavTab.WORKSPACES, NavTab.SETTINGS];
 
 @Entry
 @Component
 struct Index {
+  // ── 形态 ──
   @State mode: LayoutMode = LayoutMode.SINGLE;
   @State tab: NavTab = NavTab.SESSIONS;
-  @State selectedSessionId: string = '';
-  @State detailOpen: boolean = false;
   @State stackPage: StackPage = StackPage.MAIN;
+  @State detailOpen: boolean = false;
+
+  // ── 数据（当前来自桩数据源） ──
   @State sessions: SessionListItem[] = [];
   @State pending: PendingItem[] = [];
-  /**
-   * 待决徽标文本（缓存的派生值）。
-   *
-   * 存在理由：ArkTS 性能规则禁止在循环体内频繁读取 @State，
-   * 而徽标出现在多个 ForEach 中；因此把派生值缓存在一个字段里，
-   * 由 recomputeDerived() 在 pending 变化后刷新一次。
-   */
+  @State selectedSessionId: string = '';
+  @State selectedSessionTitle: string = '';
+  @State trajectoryItems: TrajectoryItem[] = [];
+  @State detailSections: DetailSection[] = [];
+  @State workspaces: WorkspaceItem[] = [];
+  @State fileTree: FileNode[] = [];
+  /** 文件预览结果；undefined = 未选择文件（@State 必须给默认值） */
+  @State preview: FilePreview | undefined = undefined;
+  @State settings: SettingGroup[] = [];
+  @State credentials: CredentialItem[] = [];
+  @State plugins: PluginItem[] = [];
+  @State hosts: HostRecord[] = [];
+  @State models: ModelOption[] = [];
+  @State selection: ModelSelection = { provider: '', modelId: '', effort: '' };
+  @State diag: DiagReport = {
+    entries: [], healthy: false, generatedAt: 0, versionVerdict: '',
+    versionMessage: '', versionAdvice: '', tableStats: '', surface: ''
+  };
+  @State references: ReferenceCandidate[] = [];
+  @State commands: CommandCandidate[] = [];
+
+  // ── 交互状态 ──
+  @State draft: string = '';
+  @State attachments: string[] = [];
+  @State running: boolean = false;
+  @State offline: boolean = false;
+  @State queuedCount: number = 0;
+  @State wsDrill: number = 0;
+  @State traceEnabled: boolean = false;
+  @State traceLines: string[] = [];
+  @State connectAddress: string = '';
+  @State connectToken: string = '';
+  @State connectBusy: boolean = false;
+  @State connectResult: string = '';
+  @State connectOk: boolean = false;
+  @State connectAdvice: string = '';
+
+  /** 派生值：避免在循环体内读取 @State（ArkTS 性能规则） */
   @State pendingBadge: string = '';
 
   private widthListener?: (size: window.Size) => void;
@@ -72,22 +142,33 @@ struct Index {
   aboutToAppear(): void {
     this.sessions = stubSessions();
     this.pending = stubPending();
+    this.detailSections = stubDetailSections();
+    this.workspaces = stubWorkspaces();
+    this.fileTree = stubFileTree();
+    this.settings = stubSettings();
+    this.credentials = stubCredentials();
+    this.plugins = stubPlugins();
+    this.hosts = stubHosts();
+    this.models = stubModels();
+    this.selection = stubModelSelection();
+    this.diag = stubDiagnostics();
+    this.references = stubReferences();
+    this.commands = stubCommands();
     this.recomputeDerived();
     this.applyWidth(initialWidthVp());
     this.watchWindowSize();
-  }
-
-  /** 刷新派生值（pending 变化后调用一次，避免在循环体内读 @State） */
-  private recomputeDerived(): void {
-    const n: number = this.pending.length;
-    this.pendingBadge = n <= 0 ? '' : (n > 99 ? '99+' : `${n}`);
   }
 
   aboutToDisappear(): void {
     this.unwatchWindowSize();
   }
 
-  // ───────────────────── 形态判定 ─────────────────────
+  private recomputeDerived(): void {
+    const n: number = this.pending.length;
+    this.pendingBadge = n <= 0 ? '' : (n > 99 ? '99+' : `${n}`);
+  }
+
+  // ───────────────────── 形态判定（D3 §2.2） ─────────────────────
 
   private watchWindowSize(): void {
     try {
@@ -99,10 +180,8 @@ struct Index {
         this.widthListener = listener;
         win.on('windowSizeChange', listener);
       }).catch(() => {
-        // 拿不到窗口时保留初始档位，不阻断渲染
       });
     } catch (error) {
-      // 同上
     }
   }
 
@@ -121,18 +200,17 @@ struct Index {
     }
   }
 
-  /** 应用新宽度：切档位 + 修正派生状态（不重载数据，D3 §2） */
+  /** 切档位并修正派生状态（不重载数据，D3 §2） */
   private applyWidth(widthVp: number): void {
     const next: LayoutMode = layoutModeOf(widthVp);
     if (next === this.mode) {
       return;
     }
     this.mode = next;
-    if (next !== LayoutMode.SINGLE && this.stackPage === StackPage.CONVERSATION) {
-      // 变宽：退出栈式下钻，回到主区，保持已选会话
+    if (next !== LayoutMode.SINGLE
+      && (this.stackPage === StackPage.CONVERSATION || this.stackPage === StackPage.DETAIL)) {
       this.stackPage = StackPage.MAIN;
     }
-    // 只有三栏才展示详情栏（D3 §2.1：空间不足先收详情栏）
     if (!detailPanelAvailable(next)) {
       this.detailOpen = false;
     } else if (this.selectedSessionId.length > 0) {
@@ -142,17 +220,6 @@ struct Index {
 
   // ───────────────────── 交互 ─────────────────────
 
-  private openSession(id: string): void {
-    this.selectedSessionId = id;
-    this.selectedSessionTitle = this.titleOf(id);
-    if (this.mode === LayoutMode.SINGLE) {
-      this.stackPage = StackPage.CONVERSATION;
-    } else if (this.mode === LayoutMode.TRIPLE) {
-      this.detailOpen = true;
-    }
-  }
-
-  /** 从会话列表取标题（仅在选择时调用一次，不参与渲染循环） */
   private titleOf(id: string): string {
     const list: SessionListItem[] = this.sessions;
     for (let i = 0; i < list.length; i++) {
@@ -163,11 +230,25 @@ struct Index {
     return '';
   }
 
+  private openSession(id: string): void {
+    this.selectedSessionId = id;
+    this.selectedSessionTitle = this.titleOf(id);
+    this.trajectoryItems = stubTrajectory();
+    this.running = true;
+    if (this.mode === LayoutMode.SINGLE) {
+      this.stackPage = StackPage.CONVERSATION;
+    } else if (this.mode === LayoutMode.TRIPLE) {
+      this.detailOpen = true;
+    }
+  }
+
   private selectTab(tab: NavTab): void {
     this.tab = tab;
     this.stackPage = StackPage.MAIN;
+    this.wsDrill = 0;
     if (tab !== NavTab.SESSIONS) {
       this.selectedSessionId = '';
+      this.selectedSessionTitle = '';
     }
   }
 
@@ -176,14 +257,27 @@ struct Index {
     });
   }
 
-  private currentSessionTitle(): string {
-    // 使用缓存的派生值，避免在遍历 @State 数组时反复读取状态
-    // （ArkTS 性能规则 @performance/hp-arkui-no-state-var-access-in-loop）
-    return this.selectedSessionTitle.length > 0 ? this.selectedSessionTitle : '会话';
+  private toggleDirectory(path: string): void {
+    const next: FileNode[] = [];
+    for (let i = 0; i < this.fileTree.length; i++) {
+      const node: FileNode = this.fileTree[i];
+      next.push(node.path === path
+        ? {
+          name: node.name, path: node.path, kind: node.kind, size: node.size,
+          modifiedAt: node.modifiedAt, loaded: !node.loaded, children: node.children,
+          deliverable: node.deliverable
+        }
+        : node);
+    }
+    this.fileTree = next;
   }
 
-  /** 选中会话的标题缓存（选择会话时刷新一次） */
-  @State selectedSessionTitle: string = '';
+  private openFile(node: FileNode): void {
+    this.preview = stubPreview(node.path, node.name);
+    if (this.mode === LayoutMode.SINGLE) {
+      this.wsDrill = 2;
+    }
+  }
 
   private showsConversation(): boolean {
     return this.selectedSessionId.length > 0 && this.tab === NavTab.SESSIONS;
@@ -204,20 +298,13 @@ struct Index {
   @Builder
   buildSingle() {
     Column() {
-      this.header(this.stackPage === StackPage.CONVERSATION)
-
+      this.header()
       Divider().color($r('sys.color.comp_divider'))
-
       Column() {
-        if (this.stackPage === StackPage.CONVERSATION) {
-          ConversationPane({ sessionId: this.selectedSessionId })
-        } else {
-          this.tabContent()
-        }
+        this.mainContent(true)
       }
       .layoutWeight(1)
       .width('100%')
-
       if (this.stackPage === StackPage.MAIN) {
         this.bottomTabs()
       }
@@ -227,23 +314,37 @@ struct Index {
   }
 
   @Builder
-  header(showBack: boolean) {
+  header() {
     Row({ space: Sp.S }) {
-      if (showBack) {
+      if (this.stackPage !== StackPage.MAIN) {
         Button() {
           SymbolGlyph($r('sys.symbol.chevron_left')).fontSize(20)
         }
         .buttonStyle(ButtonStyleMode.TEXTUAL)
+        .accessibilityText('返回')
         .onClick(() => {
-          this.stackPage = StackPage.MAIN;
+          if (this.stackPage === StackPage.DETAIL) {
+            this.stackPage = StackPage.CONVERSATION;
+          } else {
+            this.stackPage = StackPage.MAIN;
+          }
         })
       }
-      Text(showBack ? this.currentSessionTitle() : navTabLabel(this.tab))
+      Text(this.headerTitle())
         .fontSize(Fs.TITLE_L)
         .fontWeight(FontWeight.Bold)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
+
+      if (this.stackPage === StackPage.CONVERSATION && this.mode !== LayoutMode.TRIPLE) {
+        Text('详情')
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.brand'))
+          .onClick(() => {
+            this.stackPage = StackPage.DETAIL;
+          })
+      }
       Button('POC')
         .buttonStyle(ButtonStyleMode.TEXTUAL)
         .fontSize(Fs.CAPTION)
@@ -254,6 +355,22 @@ struct Index {
     .width('100%')
     .height(52)
     .padding({ left: Sp.M, right: Sp.S })
+  }
+
+  private headerTitle(): string {
+    if (this.stackPage === StackPage.CONVERSATION) {
+      return this.selectedSessionTitle.length > 0 ? this.selectedSessionTitle : '会话';
+    }
+    if (this.stackPage === StackPage.DETAIL) {
+      return '详情';
+    }
+    if (this.stackPage === StackPage.DIAGNOSTICS) {
+      return '连接诊断';
+    }
+    if (this.stackPage === StackPage.CONNECT) {
+      return '添加 Host';
+    }
+    return navTabLabel(this.tab);
   }
 
   @Builder
@@ -276,6 +393,7 @@ struct Index {
         .layoutWeight(1)
         .height('100%')
         .justifyContent(FlexAlign.Center)
+        .accessibilityText(`${navTabLabel(tab)}标签`)
         .onClick(() => {
           this.selectTab(tab);
         })
@@ -286,7 +404,7 @@ struct Index {
     .backgroundColor($r('sys.color.background_secondary'))
   }
 
-  // ───────────────────── 双栏（折叠展开 / 平板竖屏） ─────────────────────
+  // ───────────────────── 双栏 ─────────────────────
 
   @Builder
   buildDouble() {
@@ -294,14 +412,10 @@ struct Index {
       this.navRail()
       Divider().vertical(true).color($r('sys.color.comp_divider'))
       Column() {
-        this.header(false)
+        this.header()
         Divider().color($r('sys.color.comp_divider'))
         Column() {
-          if (this.showsConversation()) {
-            ConversationPane({ sessionId: this.selectedSessionId })
-          } else {
-            this.tabContent()
-          }
+          this.mainContent(true)
         }
         .layoutWeight(1)
         .width('100%')
@@ -331,6 +445,7 @@ struct Index {
         .height(Sz.TOUCH_MIN)
         .justifyContent(FlexAlign.Center)
         .borderRadius(Radius.S)
+        .accessibilityText(`${navTabLabel(tab)}标签`)
         .onClick(() => {
           this.selectTab(tab);
         })
@@ -342,7 +457,7 @@ struct Index {
     .backgroundColor($r('sys.color.background_secondary'))
   }
 
-  // ───────────────────── 三栏（平板横屏 / 2in1） ─────────────────────
+  // ───────────────────── 三栏 ─────────────────────
 
   @Builder
   buildTriple() {
@@ -350,10 +465,10 @@ struct Index {
       this.navPanel()
       Divider().vertical(true).color($r('sys.color.comp_divider'))
       Column() {
-        this.header(false)
+        this.header()
         Divider().color($r('sys.color.comp_divider'))
         Column() {
-          this.tabContent()
+          this.mainContent(false)
         }
         .layoutWeight(1)
         .width('100%')
@@ -362,7 +477,7 @@ struct Index {
       .height('100%')
       if (this.detailOpen && this.showsConversation()) {
         Divider().vertical(true).color($r('sys.color.comp_divider'))
-        this.detailPanel()
+        this.detailColumn()
       }
     }
     .width('100%')
@@ -408,13 +523,16 @@ struct Index {
 
       Blank()
 
-      Button('POC 协议验证')
-        .buttonStyle(ButtonStyleMode.TEXTUAL)
-        .fontSize(Fs.CAPTION)
-        .width('100%')
-        .onClick(() => {
-          this.openPoc();
-        })
+      // 二级入口：诊断 / 添加 Host / POC
+      this.navPanelAction('连接诊断', () => {
+        this.stackPage = StackPage.DIAGNOSTICS;
+      })
+      this.navPanelAction('添加 Host', () => {
+        this.stackPage = StackPage.CONNECT;
+      })
+      this.navPanelAction('POC 协议验证', () => {
+        this.openPoc();
+      })
     }
     .width(Sz.NAV_PANEL)
     .height('100%')
@@ -423,7 +541,21 @@ struct Index {
   }
 
   @Builder
-  detailPanel() {
+  navPanelAction(label: string, action: () => void) {
+    Text(label)
+      .fontSize(Fs.CAPTION)
+      .fontColor($r('sys.color.font_secondary'))
+      .width('100%')
+      .height(Sz.TOUCH_MIN - 8)
+      .padding({ left: Sp.M })
+      .textAlign(TextAlign.Start)
+      .onClick(() => {
+        action();
+      })
+  }
+
+  @Builder
+  detailColumn() {
     Column() {
       Row({ space: Sp.S }) {
         Text('详情')
@@ -434,6 +566,7 @@ struct Index {
           SymbolGlyph($r('sys.symbol.xmark')).fontSize(16)
         }
         .buttonStyle(ButtonStyleMode.TEXTUAL)
+        .accessibilityText('关闭详情栏')
         .onClick(() => {
           this.detailOpen = false;
         })
@@ -444,9 +577,10 @@ struct Index {
 
       Divider().color($r('sys.color.comp_divider'))
 
-      PlaceholderPane({
-        title: '详情栏',
-        hint: '工具 / 子代理 / 交付物 / 目标 / 任务在此展示（M2 实现）'
+      DetailPane({
+        sections: this.detailSections,
+        onLineTap: (section: string, index: number) => {
+        }
       })
     }
     .width(Sz.DETAIL_PANEL)
@@ -454,10 +588,132 @@ struct Index {
     .backgroundColor($r('sys.color.background_secondary'))
   }
 
-  // ───────────────────── 共用 ─────────────────────
+  // ───────────────────── 主内容路由 ─────────────────────
 
   @Builder
-  tabContent() {
+  mainContent(compact: boolean) {
+    if (this.stackPage === StackPage.DIAGNOSTICS) {
+      DiagnosticsPane({
+        report: this.diag,
+        running: false,
+        traceEnabled: this.traceEnabled,
+        traceLines: this.traceLines,
+        onRerun: () => {
+          this.diag = stubDiagnostics();
+        },
+        onToggleTrace: (on: boolean) => {
+          this.traceEnabled = on;
+          // 演示行来自兼容面（UI 不得自行拼写上游端点名，D5 §1）
+          this.traceLines = on ? demoTraceLines() : [];
+        },
+        onExportLog: () => {
+        },
+        onClearCache: () => {
+        },
+        onBack: () => {
+          this.stackPage = StackPage.MAIN;
+        }
+      })
+    } else if (this.stackPage === StackPage.CONNECT) {
+      ConnectPane({
+        hosts: this.hosts,
+        address: this.connectAddress,
+        token: this.connectToken,
+        busy: this.connectBusy,
+        resultText: this.connectResult,
+        resultOk: this.connectOk,
+        resultAdvice: this.connectAdvice,
+        discoveryAvailable: false,
+        onAddressChange: (v: string) => {
+          this.connectAddress = v;
+        },
+        onTokenChange: (v: string) => {
+          this.connectToken = v;
+        },
+        onSubmit: () => {
+          this.connectBusy = true;
+          this.connectResult = '演示模式：尚未接入真实连接层。设备到位后这里会执行 token 交换并保存会话。';
+          this.connectOk = false;
+          this.connectAdvice = '可在「连接诊断」页查看五项判定；POC 页可做协议往返验证。';
+          this.connectBusy = false;
+        },
+        onSelectHost: (id: string) => {
+        },
+        onRemoveHost: (id: string) => {
+        },
+        onStartDiscovery: () => {
+        },
+        onOpenDiagnostics: () => {
+          this.stackPage = StackPage.DIAGNOSTICS;
+        },
+        onBack: () => {
+          this.stackPage = StackPage.MAIN;
+        }
+      })
+    } else if (this.stackPage === StackPage.DETAIL) {
+      DetailPane({
+        sections: this.detailSections,
+        onLineTap: (section: string, index: number) => {
+        }
+      })
+    } else if (this.showsConversation() && this.stackPage === StackPage.CONVERSATION) {
+      ConversationPane({
+        sessionId: this.selectedSessionId,
+        items: this.trajectoryItems,
+        running: this.running,
+        offline: this.offline,
+        queuedCount: this.queuedCount,
+        draft: this.draft,
+        attachments: this.attachments,
+        models: this.models,
+        selection: this.selection,
+        references: this.references,
+        commands: this.commands,
+        onDraftChange: (text: string) => {
+          this.draft = text;
+        },
+        onSend: () => {
+          this.sendDraft();
+        },
+        onStop: () => {
+          this.running = false;
+        },
+        onAddAttachment: () => {
+          this.attachments = this.attachments.concat(['screenshot.png']);
+        },
+        onRemoveAttachment: (name: string) => {
+          const next: string[] = [];
+          for (let i = 0; i < this.attachments.length; i++) {
+            if (this.attachments[i] !== name) {
+              next.push(this.attachments[i]);
+            }
+          }
+          this.attachments = next;
+        },
+        onPickModel: () => {
+          this.selectTab(NavTab.SETTINGS);
+        },
+        onOpenDetail: () => {
+          this.stackPage = StackPage.DETAIL;
+        }
+      })
+    } else {
+      this.tabContent(compact)
+    }
+  }
+
+  /** 发送：桩模式下不产生真实请求（接入真实连接后改为兼容面的 prompt 端点调用） */
+  private sendDraft(): void {
+    const text: string = this.draft.trim();
+    if (text.length === 0) {
+      return;
+    }
+    this.draft = '';
+    this.attachments = [];
+  }
+
+  @Builder
+  tabContent(compact: boolean) {
     if (this.tab === NavTab.PENDING) {
       PendingPane({ items: this.pending })
     } else if (this.tab === NavTab.SESSIONS) {
@@ -469,9 +725,63 @@ struct Index {
         }
       })
     } else if (this.tab === NavTab.WORKSPACES) {
-      PlaceholderPane({ title: '工作区', hint: '工作区列表、文件树与文件投喂（M5 实现）' })
+      WorkspacePane({
+        workspaces: this.workspaces,
+        tree: this.fileTree,
+        selectedPath: this.preview === undefined ? '' : this.preview.path,
+        preview: this.preview,
+        compact: compact && this.mode === LayoutMode.SINGLE,
+        drillLevel: this.wsDrill,
+        onSelectWorkspace: (id: string) => {
+          if (this.mode === LayoutMode.SINGLE) {
+            this.wsDrill = 1;
+          }
+        },
+        onToggleDirectory: (path: string) => {
+          this.toggleDirectory(path);
+        },
+        onOpenFile: (node: FileNode) => {
+          this.openFile(node);
+        },
+        onAttachFile: (node: FileNode) => {
+          this.attachments = this.attachments.concat([node.name]);
+          this.selectTab(NavTab.SESSIONS);
+        },
+        onBack: () => {
+          this.wsDrill = this.wsDrill > 0 ? this.wsDrill - 1 : 0;
+        }
+      })
     } else {
-      PlaceholderPane({ title: '设置', hint: '通用 / 模型 / 凭据 / 设备 / 连接诊断（M6 实现）' })
+      SettingsPane({
+        groups: this.settings,
+        credentials: this.credentials,
+        plugins: this.plugins,
+        hosts: this.hosts,
+        models: this.models,
+        selection: this.selection,
+        about: stubAbout(),
+        onToggleSetting: (key: string, value: boolean) => {
+        },
+        onPickChoice: (key: string, current: string) => {
+        },
+        onPickModel: () => {
+        },
+        onPickEffort: (effort: string) => {
+          this.selection = {
+            provider: this.selection.provider, modelId: this.selection.modelId, effort: effort
+          };
+        },
+        onAuthorizeCredential: (ref: string) => {
+        },
+        onPairHost: () => {
+          this.stackPage = StackPage.CONNECT;
+        },
+        onRevokeHost: (id: string) => {
+        },
+        onOpenDiagnostics: () => {
+          this.stackPage = StackPage.DIAGNOSTICS;
+        }
+      })
     }
   }
 
@@ -484,21 +794,6 @@ struct Index {
       .borderRadius(8)
       .padding({ left: 5, right: 5 })
       .margin({ top: -4, right: -10 })
-  }
-
-  /**
-   * 待决徽标文本。
-   *
-   * 单独取值再传入 ForEach 的 item builder，避免在循环体内频繁读取 @State
-   * （ArkTS 性能规则 @performance/hp-arkui-no-state-var-access-in-loop）。
-   * 状态变化时 build 重跑，因此这里每次都是新鲜值。
-   */
-  private pendingBadgeText(): string {
-    const n: number = this.pending.length;
-    if (n <= 0) {
-      return '';
-    }
-    return n > 99 ? '99+' : `${n}`;
   }
 }
 
