@@ -248,6 +248,15 @@ export default class EntryAbility extends UIAbility {
    *
    * 为什么 onCreate 与 onNewWant 都要发布：复用实例时页面**不会重建**，
    * 这条通道是唯一能把新路由送进已有窗口的路径。
+   *
+   * 已知代价（写下来，免得后来者以为它是免费的）：AppStorage 是**进程级**的，四个键名不带
+   * 窗口标识，因此它承载的语义是「最近一次发布的启动参数」。正常情况下每个窗口在自己的
+   * onCreate/onNewWant 里发布、紧接着自己的页面初始化时读取，时序自洽；但若两个窗口几乎
+   * 同时启动（例如连续 startAbility 两个会话），后发布者会覆盖前者的值，理论上会出现
+   * 「新窗口读到上一个窗口的会话」。真正无歧义的做法是**每窗一份**：把参数存进该窗口自己的
+   * LocalStorage 并通过 `windowStage.loadContent(path, storage)` 注入，或把窗口 id 拼进键名。
+   * 本层按约定只落这四个全局键（页面侧据此读取），故先把风险记在这里：一旦出现
+   * 「新窗口显示的是上一个窗口的会话」这类反馈，就按上面的方向改成每窗一份，而不是加锁。
    */
   private applyLaunchParams(want: Want): void {
     const parsed: WindowParams = parseWindowParams(want.parameters);

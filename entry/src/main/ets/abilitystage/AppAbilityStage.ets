@@ -31,6 +31,9 @@
  *   - specified 实例与主实例**同进程**（官方《UIAbility 组件启动模式》），因此 appstate 的
  *     模块级单例连接池被所有窗口共享。这是 §7.7.5b 验收点「N 个窗口只有 1 条 mux 连接、
  *     1 条 $events」的实现基础：窗口变多不会变出第二条连接。
+ *   - 本类与 HAP **一一对应**（整个模块只有一个 AbilityStage 实例），所以这里绝不能保存
+ *     任何窗口级状态——窗口级状态属于 UIAbility 实例。分清这两层，是排查
+ *     「改了 A 窗口却影响 B 窗口」时的第一条线索。
  */
 
 import { AbilityStage, Want } from '@kit.AbilityKit';
