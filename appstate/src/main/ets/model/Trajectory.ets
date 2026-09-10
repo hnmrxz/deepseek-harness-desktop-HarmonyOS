@@ -113,7 +113,7 @@ export function makeItem(id: string, kind: TrajectoryKind, at: number): Trajecto
  * 合并两条**同一工具调用**的条目（`tool/call` 与 `tool/result`）。
  *
  * 【为什么必须合并，而不是各占一行】
- *   实测（D2 §8.7.8）：`tool/call` 携带 `name` + `arguments`，
+ *   实测（D2 §8.7.7）：`tool/call` 携带 `name` + `arguments`，
  *   `tool/result` 只携带 `message.content` + `message.source.callId`——
  *   **结果帧里没有工具名**。若各占一行，用户会看到一张没有名字的工具卡，
  *   后面跟着一段不知从哪来的输出。两帧必须落在同一张卡上。

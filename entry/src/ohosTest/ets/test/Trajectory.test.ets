@@ -2,7 +2,7 @@
  * 会话事件 → 轨迹条目的投影测试。
  *
  * 【这些样本从哪来】
- *   全部是 D2 §8.7.8 记录下来的**实测**键名与内层结构
+ *   全部是 D2 §8.7.7 记录下来的**实测**键名与内层结构
  *   （来源：逐帧解码 Host 落盘的 `session.v3.jsonl.zstd`，
  *   1485 帧 / 5257 条记录，零凭据、零设备）。样本里的字面量不是编造的，
  *   是为了让「取值路径写错了」在真机之前就被测出来。
@@ -18,6 +18,8 @@ import { parseJson, readPath } from 'connection';
 import {
   ContentSlot,
   eventShapeOf,
+  isKnownEventType,
+  KNOWN_EVENT_TYPE_COUNT,
   isMeasuredEventType,
   MEASURED_EVENT_TYPE_COUNT,
   SESSION_EVENT_SHAPES
@@ -73,7 +75,7 @@ export default function trajectoryProjectionTest() {
 
   describe('EventShapeTable', () => {
     /**
-     * 形状表与 D2 §8.7.8 的清单必须条数一致。
+     * 形状表与 D2 §8.7.7 的清单必须条数一致。
      * 这条断言的作用是：**改了 D2 表格忘了改表**（或反之）会立刻失败。
      *
      * 口径：`session.v3.jsonl.zstd` 的**顶层事件记录**，不含 `session` 文件头，
@@ -141,6 +143,37 @@ export default function trajectoryProjectionTest() {
       expect(isMeasuredEventType('reasoning/delta')).assertFalse();
       expect(isMeasuredEventType('error/turn')).assertFalse();
       expect(isMeasuredEventType('job/update')).assertFalse();
+    });
+
+    /**
+     * **两张表必须认识同一批类型**：形状表（字段路径）与家族表（呈现归类）。
+     *
+     * 两表不一致时失效方式是**静默的**：
+     *   只登记在形状表 → 归类走「未知」分支、被汇总到诊断页（误报「未知事件」）；
+     *   只登记在家族表 → 没有取值路径，条目正文永远为空（漏显）。
+     * 所以把「键集一致」直接钉成断言，而不是靠人记住要同时改两处。
+     */
+    it('keeps the shape table and the family table in sync', 0, () => {
+      expect(KNOWN_EVENT_TYPE_COUNT).assertEqual(SESSION_EVENT_SHAPES.length);
+      for (let i = 0; i < SESSION_EVENT_SHAPES.length; i++) {
+        const type: string = SESSION_EVENT_SHAPES[i].type;
+        expect(isKnownEventType(type)).assertTrue();
+        expect(isMeasuredEventType(type)).assertTrue();
+      }
+      const probes: string[] = [
+        'turn/start', 'turn/end', 'step/start', 'step/end', 'session/title',
+        'request/context', 'request/header', 'command/run', 'command/done',
+        'agent/inbox/spliced', 'web/deepseek-search-llm-request', 'session/end-seed',
+        'permission/preset', 'sandbox/mode', 'approval/policy',
+        'subagent/descriptor', 'session/title-llm-request'
+      ];
+      for (let i = 0; i < probes.length; i++) {
+        expect(isKnownEventType(probes[i])).assertTrue();
+        expect(isMeasuredEventType(probes[i])).assertTrue();
+      }
+      // 未知类型必须两条判定都为假：这就是「升级后新事件」的检测入口
+      expect(isKnownEventType('brand/new-event')).assertFalse();
+      expect(isMeasuredEventType('brand/new-event')).assertFalse();
     });
   });
 

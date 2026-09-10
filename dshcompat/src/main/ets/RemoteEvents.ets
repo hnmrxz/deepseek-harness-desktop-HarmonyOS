@@ -133,17 +133,16 @@ export function mayChangeTurnState(name: string): boolean {
 
 // ── 轨迹事件归类（把任意上游事件名映射到「呈现家族」） ──
 //
-// 为什么放在 dshcompat 而不是投影层：归类规则是**上游命名约定**的知识
-// （哪个前缀属于用户消息、哪个属于工具调用），上游增删事件族时必须只改这里。
-// 返回的是中性字符串，`appstate` 再把它映射到自己的 `TrajectoryKind` 枚举——
-// 这样 dshcompat 不反向依赖状态层。
-
-/** 用户消息事件前缀 */
-export const EVENT_PREFIX_USER: string = 'user/';
-/** 助手消息事件前缀 */
-export const EVENT_PREFIX_ASSISTANT_MESSAGE: string = 'assistant/message';
-/** 助手其它事件前缀（思考、尝试过程等） */
-export const EVENT_PREFIX_ASSISTANT: string = 'assistant/';
+// 归类规则是**实测清单**（`SESSION_EVENT_FAMILY`，见 D2 §8.7.7 的 32 种类型），
+// 不是命名空间前缀推断。返回的是中性字符串，`appstate` 再把它映射到自己的
+// `TrajectoryKind` 枚举——这样 dshcompat 不反向依赖状态层。
+//
+// 【已删除的三个前缀常量】这里原有 `EVENT_PREFIX_USER` /
+// `EVENT_PREFIX_ASSISTANT_MESSAGE` / `EVENT_PREFIX_ASSISTANT`，用来按前缀
+// 区分「用户消息」与「助手思考」。它们与本文件已删除的前缀猜测表同源，
+// 已被实测推翻（不存在 `reasoning/*`；思考内容在 `assistant/message` 的
+// `stream` 里）。留着就是让 `assistant/attempt` 之类的事件被归错家族，
+// 而且**不报错**——所以删除而不是保留。
 
 /**
  * 审计类事件：有记录价值但**没有用户可读对话内容**。
@@ -181,11 +180,15 @@ export function isAuditEventType(name: string): boolean {
  *
  * 【为什么从「前缀猜测」改成显式枚举】
  *   原实现按命名空间前缀归类（`assistant/` → 思考、`error` → 错误、`job` → 任务…），
- *   那些前缀是**猜的**。2026-09-10 通过逐帧解码 Host 落盘日志取得权威清单
- *   （D2 §8.7.8：31 种事件类型，1485 帧 / 5257 条记录）后，三条假设被推翻：
- *     - **不存在 `reasoning/*`**：思考内容在 `assistant/message` 的 `stream` 字段里
- *     - **不存在 `error/*`**：错误来自转发事件 `api-session/error` 与 `llm/retry`
+ *   那些前缀是**猜的**。2026-09-10 通过逐帧解码 Host 落盘日志取得权威清单，
+ *   2026-09-11 复核修订为 **32 种**（D2 §8.7.7：4876 帧 / 11013 条记录）后，
+ *   四条假设被推翻：
+ *     - **不存在 `reasoning/*` 事件族**：思考内容在 `assistant/message.data.stream[]`
+ *       的 `reasoning-chunks` 记录里
+ *     - **不存在 `error/*`**：错误来自转发事件 `api-session/error`、`llm/retry`，
+ *       以及 `tool/result` 自带的 `error` 字段
  *     - **不存在 `job/*`**：作业只经 `session/control` 的 `jobs` 帧到达
+ *     - `subagent` 前缀实际是 `subagent/catalog` 与 `subagent/descriptor` 两个事件
  *   照猜实现的话，思考会被当成普通消息、错误与作业永远不会显示——
  *   而且**不报错**。所以这里改为逐条枚举，未列出的类型显式走「未知」分支。
  *
@@ -201,29 +204,53 @@ const SESSION_EVENT_FAMILY: Record<string, EventFamily> = {
   // 工具
   'tool/call': EventFamily.TOOL,
   'tool/result': EventFamily.TOOL,
-  // 子代理
+  // 子代理（两行都登记：descriptor 不是独立条目，但仍须「已被认识」）
   'subagent/catalog': EventFamily.SUBAGENT,
+  'subagent/descriptor': EventFamily.SUBAGENT,
   // 目标
   'goal/change': EventFamily.GOAL,
   // 任务（上游的任务清单就是 todo）
   'todo/write': EventFamily.JOB,
-  // 交付物（实测：tools 工具把产物路径与说明放在这里）
+  // 交付物（实测：工具把产物路径与说明放在这里）
   'deliverables/presented': EventFamily.DELIVERABLE,
   // 失败信号（上游没有独立的 error 事件族）
   'llm/retry': EventFamily.ERROR,
   'llm/retry-started': EventFamily.ERROR,
-  // 上下文压缩：有用户可读内容（摘要），归入推理家族呈现
+  // 上下文压缩
   'compaction/start': EventFamily.REASONING,
   'compaction/end': EventFamily.REASONING,
   'compaction/summary': EventFamily.REASONING,
-  // 流式尝试的开端：不是独立条目，但按推理呈现比按消息更贴近其语义
-  'assistant/attempt': EventFamily.REASONING
+  // 增量流式尝试：不是独立条目，但语义上属于推理过程
+  'assistant/attempt': EventFamily.REASONING,
+  // ── 以下均已实测确认，但不产生独立条目（只驱动状态或只作中间过程） ──
+  // 【为什么也要登记】`classifyEventType` 对未登记类型返回 MESSAGE，
+  // 而上层用「形状表里没有」来判定未识别事件。若已实测的类型只登记在形状表、
+  // 不登记在这里，两表就不一致，且 `noteUnknown()` 与分类结果会给出不同的答案。
+  // 登记为 MESSAGE 表示「这是普通内容类事件，但没有独立条目」。
+  'turn/start': EventFamily.MESSAGE,
+  'turn/end': EventFamily.MESSAGE,
+  'step/start': EventFamily.MESSAGE,
+  'step/end': EventFamily.MESSAGE,
+  'session/title': EventFamily.MESSAGE,
+  'session/title-llm-request': EventFamily.MESSAGE,
+  'session/end-seed': EventFamily.MESSAGE,
+  'request/context': EventFamily.MESSAGE,
+  'request/header': EventFamily.MESSAGE,
+  'command/run': EventFamily.MESSAGE,
+  'command/done': EventFamily.MESSAGE,
+  'agent/inbox/spliced': EventFamily.MESSAGE,
+  'web/deepseek-search-llm-request': EventFamily.MESSAGE,
+  // 审计类：有记录价值、无对话内容（`isAuditEventType` 另有判定）
+  'permission/preset': EventFamily.MESSAGE,
+  'sandbox/mode': EventFamily.MESSAGE,
+  'approval/policy': EventFamily.MESSAGE
 };
 
 /**
  * 按**实测清单**把事件名归入呈现家族。
  *
  * 未列出的类型返回 `MESSAGE` 并由上层汇总到「未识别事件类型」（见文件头说明）。
+ * **不要**用返回值去判断「这是不是未知事件」——那要问 `isKnownEventType()`。
  */
 export function classifyEventType(name: string): EventFamily {
   const known: EventFamily | undefined = SESSION_EVENT_FAMILY[name];
@@ -233,9 +260,58 @@ export function classifyEventType(name: string): EventFamily {
   return EventFamily.MESSAGE;
 }
 
-/** 是否为用户发起的事件（决定轨迹条目的角色） */
+/**
+ * 已认识的事件类型名清单（由 `SESSION_EVENT_FAMILY` 的键派生）。
+ *
+ * 为什么要单独一个数组：ArkTS **禁止 `Object.prototype` 上的调用**
+ * （`arkts-no-func-apply-call` / `arkts-no-prototype-assignment`），
+ * 所以不能用 `Object.keys()`／`hasOwnProperty.call()` 在运行时查表键。
+ * 把键集**在声明处**物化成数组，既绕开限制，也让「键集」本身可被测试断言。
+ */
+const KNOWN_EVENT_TYPES: string[] = [
+  'user/message', 'assistant/message', 'system/message',
+  'tool/call', 'tool/result',
+  'subagent/catalog', 'subagent/descriptor',
+  'goal/change', 'todo/write', 'deliverables/presented',
+  'llm/retry', 'llm/retry-started',
+  'compaction/start', 'compaction/end', 'compaction/summary',
+  'assistant/attempt',
+  'turn/start', 'turn/end', 'step/start', 'step/end',
+  'session/title', 'session/title-llm-request', 'session/end-seed',
+  'request/context', 'request/header',
+  'command/run', 'command/done',
+  'agent/inbox/spliced', 'web/deepseek-search-llm-request',
+  'permission/preset', 'sandbox/mode', 'approval/policy'
+];
+
+/**
+ * 该事件类型是否**已被实测认识**（与是否产生独立条目无关）。
+ *
+ * 【为什么必须与 `classifyEventType` 分开】
+ *   `classifyEventType` 对未知类型**返回 MESSAGE**（有意的降级：把原始载荷显示出来，
+ *   而不是丢事件）。于是「返回 MESSAGE」同时意味着两件完全不同的事：
+ *     - 「这是内容类事件，但没有独立条目」（例：`request/header`）
+ *     - 「这是从没见过的类型，升级后新出现的」
+ *   若用返回值判断未知，第二种情况永远检测不到——**升级静默失效**。
+ *   所以「是否认识」由本函数回答；`KNOWN_EVENT_TYPES` 与 `SESSION_EVENT_FAMILY`
+ *   的键集也必须一致（测试里有断言钉住，见 `Trajectory.test.ets`）。
+ */
+export function isKnownEventType(name: string): boolean {
+  return KNOWN_EVENT_TYPES.indexOf(name) >= 0;
+}
+
+/** 已认识的事件类型总数（供测试与诊断页断言） */
+export const KNOWN_EVENT_TYPE_COUNT: number = KNOWN_EVENT_TYPES.length;
+
+/**
+ * 是否为**用户本人**发起的事件（决定轨迹条目的角色）。
+ *
+ * 用的是唯一一个仍然成立的前缀事实：用户消息的命名空间就是 `user/`
+ * （实测 32 种类型里只有 `user/message` 落在该命名空间）。
+ * 这不是「前缀猜测」——它是对一个**已实测确认**的事件名的判定。
+ */
 export function isUserAuthoredEvent(name: string): boolean {
-  return name.indexOf(EVENT_PREFIX_USER) === 0;
+  return name === 'user/message';
 }
 
 /** 转发事件流 `$events` 的下行帧判别值 */

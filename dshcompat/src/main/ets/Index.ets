@@ -111,6 +111,8 @@ export {
   classifyEventType,
   EventFamily,
   isAuditEventType,
+  isKnownEventType,
+  KNOWN_EVENT_TYPE_COUNT,
   isUserAuthoredEvent,
   FORWARDED_EVENTS,
   ForwardedEventMode,
@@ -139,5 +141,4 @@ export {
   MEASURED_EVENT_TYPE_COUNT,
   SESSION_EVENT_SHAPES,
   slotBinding
-} from './EventShape';
-export type { SessionEventShape, SlotBinding } from './EventShape';
+} from './EventShape';export type { SessionEventShape, SlotBinding } from './EventShape';

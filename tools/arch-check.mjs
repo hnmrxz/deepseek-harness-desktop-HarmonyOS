@@ -64,7 +64,11 @@ const ALLOWED_DIR = `${sep}dshcompat${sep}`;
  *   于是对**事件**命名空间基本失明：一次真实的违规里 9 处只报出 4 处，
  *   漏掉的正是 `user/message`、`assistant/message`、`tool/call`、
  *   `subagent/catalog`、`todo/write` 这些当时不在表内的前缀。
- *   现已按 D2 §8.7.8 的 31 种实测事件类型补齐。
+ *   现已按 D2 §8.7.7 的 32 种实测事件类型补齐。
+ *
+ *   复核（2026-09-11）：上一轮补齐后**仍然漏了两个**命名空间——
+ *   `deliverables/` 与 `permission/` 在表外，于是它们的事件名可以自由泄漏。
+ *   再次说明：门禁"通过"不等于"覆盖到了"。
  *
  *   教训：门禁的**覆盖面本身**也需要被审视。一个"通过"的门禁可能只是
  *   因为它不认识那些名字——这与"门禁失效"是同一种危险，但更难察觉。
@@ -76,10 +80,11 @@ const NAMESPACE = [
   'directoryPicker', 'fileReferences', 'messageFeedback', 'sessionFeedback',
   'dynamicCordisRunner', 'sessionReferenceResolver',
   // 转发事件命名空间（D2 §8.7.4）
-  'api-session', 'approval', 'user-questions', 'cordis', 'agent-preset', 'goal',
-  // 会话事件命名空间（D2 §8.7.8 的 31 种实测类型）
-  'user', 'assistant', 'system', 'tool', 'subagent', 'todo', 'compaction',
-  'request', 'step', 'turn', 'agent', 'command', 'web',
+  'api-session', 'approval', 'user-questions', 'cordis', 'agent-preset',
+  // 会话事件命名空间（D2 §8.7.7 的 32 种实测类型）
+  'user', 'assistant', 'system', 'tool', 'deliverables', 'subagent', 'goal', 'todo',
+  'compaction', 'request', 'step', 'turn', 'agent', 'command', 'web', 'permission',
+  'sandbox',
   // 网关内部端点
   'gateway'
 ].join('|');

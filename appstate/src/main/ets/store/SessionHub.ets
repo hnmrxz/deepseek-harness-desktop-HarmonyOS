@@ -44,6 +44,7 @@ import {
   GATEWAY_INPUT_INVALID,
   GATEWAY_SIGNATURE_INVALID,
   isAuditEventType,
+  isKnownEventType,
   isSessionListEvent,
   isUserAuthoredEvent,
   mayChangeSessionTitle,
@@ -927,6 +928,13 @@ export class SessionHub {
       const event: Object | undefined = getRecord(value, 'event');
       if (event !== undefined) {
         const eventType: string = getString(event, 'type') ?? '';
+        // 未识别的事件类型要汇总到诊断页供回填形状表。
+        // 判据是 `isKnownEventType()` 而**不是** `classifyEventType()` 的返回值：
+        // 后者对未知类型刻意降级为 MESSAGE，用返回值判断会把「新事件」
+        // 和「已知但不占行的内容事件」混为一谈，于是升级永远静默通过。
+        if (!isKnownEventType(eventType)) {
+          this.noteUnknown(`event:${eventType}`);
+        }
         // 运行态与标题都可能因事件变化；标题取投影，需要重新拉列表才准，
         // 这里只在「轮次结束」类事件上做一次轻量刷新，避免每个 token 都拉一次列表。
         if (mayChangeTurnState(eventType) || mayChangeSessionTitle(eventType)) {
@@ -1235,7 +1243,7 @@ export class SessionHub {
  *
  * 【取值路径从哪来（这一版的关键变化）】
  *   字段名与取值路径**全部**来自 `dshcompat` 的实测形状表
- *   （`SESSION_EVENT_SHAPES`，见 D2 §8.7.8：逐帧解码 Host 落盘日志取得）。
+ *   （`SESSION_EVENT_SHAPES`，见 D2 §8.7.7：逐帧解码 Host 落盘日志取得）。
  *   本文件不再持有任何字段名——这不是纪律上的洁癖：**写错字段名不会报错，
  *   只会让正文永远是空的**，这种失效必须在编译期与门禁上被拦住。
  *
@@ -1386,7 +1394,7 @@ function resolveSlot(data: Object | undefined, shape: SessionEventShape,
 /**
  * `content` 块数组 → 文本。
  *
- * 实测形状（D2 §8.7.8）：`array<{type:'text', text}>`。
+ * 实测形状（D2 §8.7.7）：`array<{type:'text', text}>`。
  * 需要处理两种真实的嵌套：
  *   1. `tool/result` 的块是 `{type:'tool-result', content:[…]}`——正文在**内层** `content`；
  *   2. 非文本块的内部形状**仍未实测**，因此按块类型名占位，
