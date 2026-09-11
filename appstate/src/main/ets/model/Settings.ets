@@ -7,7 +7,7 @@
  * 的 JSON 取值工具，不认识端点名（端点名一律由调用方从 `dshcompat` 传入）。
  */
 
-import { getArray, getBoolean, getNumber, getRecord, getString, isRecord } from 'connection';
+import { getArray, getBoolean, getNumber, getRecord, getString, isRecord, parseJson } from 'connection';
 
 // ─────────────────────────── 设置 ───────────────────────────
 
@@ -16,6 +16,32 @@ export enum SettingKind {
   TOGGLE = 'toggle',
   CHOICE = 'choice',
   TEXT = 'text',
+  /**
+   * 结构化值编辑器（数组 / 嵌套对象 / 复杂 union）。
+   *
+   * 【为什么是「整值编辑」而不是「逐字段编辑」】实测（`.research/protocol/probe-deep-path.mjs`）：
+   *   - `path: ['models','0','maxTokens']` → `settings/rejected`，
+   *     消息是 `$.models expected array but got [object Object]`——
+   *     字符串段被当成**对象属性名**，于是往数组里加了个属性，数组就坏了；
+   *   - `path: ['models',0,'maxTokens']`（数字下标）→ `gateway/input-invalid`，
+   *     连**线上边界校验**都过不去（`ops` 里不接受数字段）。
+   * 也就是说：**数组元素无法按路径寻址**。唯一可行的写法是把整个值读出来、
+   * 在本地改、再整值写回（实测 `path: ['models']` 传完整数组、以及
+   * `path: ['retryPolicy']` 传完整对象都成功）。
+   * 因此这里提供的是「整值编辑」——不是因为省事，而是因为深路径**走不通**。
+   *
+   * 【写回是**合并**还是**替换**——实测是合并，别想当然】
+   *   把 `retryPolicy` 写成 `{mode:'normal', maxRetries:9}`（**故意省略** `retryableCodes`
+   *   与 `backoff`）后回读，缺失的键**原样保留**。也就是说 `set` 一个对象是
+   *   **逐键合并**，不是整体替换。界面上必须如实说明「没提到的键不会被删除」——
+   *   写成「整体替换」会让用户以为遗漏的键会被清掉，那是一个会撒谎的界面
+   *   （本项目的初版文案就是这么写的，实测后改正）。
+   *
+   * 【删除键的路径】实测 `{op:'unset', path:['retryPolicy','maxRetries']}` **成功**
+   *   （该键的用户层被移除，值回落到 schema 默认 5）。所以「删键」是可达的，
+   *   只是本客户端当前没有暴露该入口——如实标注为未提供，而不是提供半真的替代。
+   */
+  STRUCT = 'struct',
   INFO = 'info'
 }
 
@@ -116,6 +142,23 @@ export interface SettingItem {
   pattern: string;
   /** 该字段是否必填（`meta.required === true`） */
   required: boolean;
+  /**
+   * 结构化字段的**当前值原文**（紧凑 JSON；仅 `STRUCT` 有内容）。
+   *
+   * 用紧凑 JSON 而不是美化版：它是「当前真实状态」的忠实表示，
+   * 界面在打开编辑器时再美化（缩进）以便人读写。
+   * 直接存美化版会在比较与复位时引入无意义的空白差异。
+   */
+  rawJson: string;
+  /**
+   * 结构化字段期望的外层类型（`'array'` / `'object'` / 空串 = 不校验）。
+   *
+   * 空串的情形是复杂 `union`（实测 `retryPolicy` 是
+   * `union(object, object)`，两个分支都是对象，但**未来可能出现异构 union**）。
+   * 对异构 union 强行按其中一支校验，会把合法的另一支挡在门外——
+   * 所以宁可不校验，交给 Host 判定。
+   */
+  structType: string;
 }
 
 /** 设置分组 */
@@ -316,9 +359,57 @@ function choicesOf(refs: Object, uid: number): SettingChoice[] {
   return out;
 }
 
-/** `null` 与 `undefined` 在 JSON 里语义不同，但本层都表示「没有值」 */
-function metaOf(refs: Object, uid: number): Object | undefined {
+/**
+ * 结构化字段的**外层**类型（`'array'` / `'object'` / 空串 = 不校验）。
+ *
+ * 只有两种情况能给出确定的答案：
+ *   - schema 节点本身是 `array` 或 `object`；
+ *   - 是 `union` 且**所有**分支都是同一种外层类型（实测 `retryPolicy` 的
+ *     `union(object,object)` 属于这种）。
+ * 其余（含嵌套 union、异构 union）一律返回空串——**宁可不校验**，
+ * 也不要因为猜错类型把合法输入挡在门外。
+ */
+function structOuterType(refs: Object, uid: number, type: string): string {
+  if (type === SCHEMA_KIND_ARRAY || type === SCHEMA_KIND_OBJECT) {
+    return type;
+  }
+  if (type !== SCHEMA_KIND_UNION) {
+    return '';
+  }
   const node: Object | undefined = fieldOf(refs, `${uid}`);
+  if (node === undefined) {
+    return '';
+  }
+  const list: Object[] | undefined = getArray(node, 'list');
+  if (list === undefined || list.length === 0) {
+    return '';
+  }
+  let seen: string = '';
+  for (let i = 0; i < list.length; i++) {
+    const childUid: Object = list[i];
+    if (typeof childUid !== 'number') {
+      return '';
+    }
+    const child: Object | undefined = fieldOf(refs, `${childUid as number}`);
+    if (child === undefined) {
+      return '';
+    }
+    const childType: string = getString(child, 'type') ?? '';
+    if (childType !== SCHEMA_KIND_ARRAY && childType !== SCHEMA_KIND_OBJECT) {
+      return '';
+    }
+    if (seen.length === 0) {
+      seen = childType;
+    } else if (seen !== childType) {
+      // 异构 union：不校验
+      return '';
+    }
+  }
+  return seen;
+}
+
+/** `null` 与 `undefined` 在 JSON 里语义不同，但本层都表示「没有值」 */
+function metaOf(refs: Object, uid: number): Object | undefined {  const node: Object | undefined = fieldOf(refs, `${uid}`);
   return node === undefined ? undefined : fieldOf(node, 'meta');
 }
 
@@ -335,8 +426,7 @@ function hintFor(ns: string, field: string, meta: Object | undefined,
   if (described !== undefined && described.length > 0) {
     return described;
   }
-  const parts: string[] = [];
-  if (credentialRef) {
+  const parts: string[] = [];  if (credentialRef) {
     parts.push('凭据引用（不是明文；值由「凭据」页管理）');
   }
   const min: number | undefined = meta === undefined ? undefined : getNumber(meta, 'min');
@@ -454,7 +544,9 @@ export function projectSettingsNamespace(view: Object, writable: boolean): Setti
       hasMin: minValue !== undefined,
       hasMax: maxValue !== undefined,
       pattern: patternSource,
-      required: meta === undefined ? false : getBoolean(meta, 'required') === true
+      required: meta === undefined ? false : getBoolean(meta, 'required') === true,
+      rawJson: current === undefined ? '' : (JSON.stringify(current) ?? ''),
+      structType: structOuterType(refs, uid, type)
     };
 
     if (type === SCHEMA_KIND_BOOLEAN) {
@@ -480,12 +572,26 @@ export function projectSettingsNamespace(view: Object, writable: boolean): Setti
       out.items.push(base);
       continue;
     }
-    // `array` / `object` / 复杂 `union`：只读展示，**不提供编辑入口**。
-    // 注意这里说的是「本客户端还没做这个形态的编辑器」，不是「Host 不允许写」——
-    // 所以 `hostWritable` 保持 Host 的真实答复，靠 `readOnly` 关掉控件，
-    // 界面上两者可以给出不同的解释文案。
-    base.kind = SettingKind.INFO;
-    base.readOnly = true;
+    // `array` / `object` / 复杂 `union`：**整值编辑**。
+    //
+    // 【为什么不是只读】早先这里标成 `INFO` + `readOnly`，理由是「还没实测过
+    // 怎么写数组元素」。现在实测过了（见 `SettingKind.STRUCT` 的说明）：
+    // 深路径走不通，但**整值写回可行**。既然有可用的写法，就不该继续把这一整类
+    // 设置标成「本客户端暂不支持」——那会让 `llm-deepseek.models`（4 个模型、
+    // 各约 8 个字段）这样的重要配置永远改不了。
+    //
+    // Host 不接受写时仍然只读（`readOnly` 已由 `!writable` 置好）。
+    base.kind = SettingKind.STRUCT;
+    // 写回语义**按外层类型不同**，必须在说明里讲清（实测）：
+    //   - 对象：`set` 一个对象是**逐键合并**，没提到的键保留旧值；
+    //   - 数组：`set` 一个数组是**整体替换**（写成 [] 就真的清空了）。
+    // 这条差异是用户最容易猜错的地方，而猜错的后果是「以为清空了其实没清」
+    // 或「以为保留了其实被删了」——两种都很难察觉。
+    if (base.structType === 'object') {
+      base.hint = `${base.hint}；写回为逐键合并（未提到的键保留）`;
+    } else if (base.structType === 'array') {
+      base.hint = `${base.hint}；写回为整体替换（未列出的元素会被删除）`;
+    }
     base.textValue = current === undefined
       ? '（未设置）'
       : `${type} · ${scalarText(current).length} 字符`;
@@ -662,6 +768,64 @@ export interface SettingInputResult {
   message: string;
   /** 合法时待写入的值（已按 `valueType` 转成正确的 JSON 类型） */
   value: Object | undefined;
+}
+
+/**
+ * 结构化值（数组 / 对象）的输入解析。
+ *
+ * 【为什么必须校验「类型与外层一致」】写回意味着我们提交的是整个字段的新内容。
+ * 若用户的输入是合法 JSON 但类型不对（该是数组却给了对象），Host 的报错是
+ * `$.models expected array but got [object Object]`（实测原文）——
+ * 对用户来说是天书。这里先挡住，并把这句翻译成「这一项需要一个数组」。
+ *
+ * 【为什么允许 `null`】实测 schema 里存在 `{"type":"const","value":null}` 的分支
+ * （`providers.*.models[].reasoningEfforts` 的 union 就有 null 分支），
+ * 所以 `null` 是**合法取值**，不能当成「空输入」拒掉。
+ *
+ * @param item - 目标设置项（用于取期望的外层类型）
+ * @param raw - 用户输入的文本
+ */
+export function parseStructInput(item: SettingItem, raw: string): SettingInputResult {
+  const text: string = raw.trim();
+  if (text.length === 0) {
+    return { ok: false, message: '内容不能为空。若要清空一个数组，请输入 []。', value: undefined };
+  }
+  const parsed: Object | undefined = parseJson(text);
+  if (parsed === undefined) {
+    // `parseJson` 对语法错误只返回 undefined，不会有更细的原因——
+    // 因此文案指向最常见的两类问题，而不是编一个具体的出错位置
+    return {
+      ok: false,
+      message: '不是合法的 JSON。请检查引号（必须用双引号）、逗号与括号是否配对。',
+      value: undefined
+    };
+  }
+  if (parsed === null) {
+    // null 是合法取值，直接放行
+    return { ok: true, message: '', value: parsed };
+  }
+  const expected: string = structExpectation(item);
+  const isArray: boolean = Array.isArray(parsed);
+  if (expected === 'array' && !isArray) {
+    return { ok: false, message: '这一项需要一个数组（以 [ 开头、] 结尾）。', value: undefined };
+  }
+  if (expected === 'object' && (isArray || typeof parsed !== 'object')) {
+    return { ok: false, message: '这一项需要一个 JSON 对象（以 { 开头、} 结尾）。', value: undefined };
+  }
+  return { ok: true, message: '', value: parsed };
+}
+
+/**
+ * 该结构化字段期望的外层类型。
+ *
+ * 取不到时返回空串 = **不做外层类型校验**（而不是猜一个）：
+ * 猜错会把合法输入挡在门外，那比让 Host 去判更糟。
+ */
+function structExpectation(item: SettingItem): string {
+  if (item.structType === 'array' || item.structType === 'object') {
+    return item.structType;
+  }
+  return '';
 }
 
 /**

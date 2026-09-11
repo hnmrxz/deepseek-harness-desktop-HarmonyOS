@@ -74,6 +74,7 @@ export {
   projectSettingsGroups,
   projectSettingsNamespace,
   parseSettingInput,
+  parseStructInput,
   SettingKind,
   SettingOrigin,
   SettingValueType,

@@ -141,7 +141,7 @@ function stubItem(key: string, label: string, hint: string, kind: SettingKind,
     origin: SettingOrigin.LOCAL, userSet: false, credentialRef: false,
     valueType: kind === SettingKind.TOGGLE ? SettingValueType.BOOLEAN : SettingValueType.STRING,
     minValue: 0, maxValue: 0, stepValue: 0, hasMin: false, hasMax: false,
-    pattern: '', required: false
+    pattern: '', required: false, rawJson: '', structType: ''
   };
 }
 

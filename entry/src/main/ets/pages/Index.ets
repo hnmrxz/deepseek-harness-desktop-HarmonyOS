@@ -48,6 +48,7 @@ import {
   SettingValueType,
   SettingsWriteOutcome,
   parseSettingInput,
+  parseStructInput,
   Sp,
   aboutInfo,
   mergeSettingsGroups,
@@ -89,7 +90,7 @@ import type {
   SettingsWriteResult
 } from 'appstate';
 import { emitter } from '@kit.BasicServicesKit';
-import { extractToken } from 'connection';
+import { extractToken, parseJson } from 'connection';
 import { EVENT_HOST_CONNECTED, EVENT_KEY_HOST_TOKEN, EVENT_KEY_HOST_URL } from 'platform';
 import { ConnectPane } from '../view/ConnectPane';
 import { ConversationPane } from '../view/ConversationPane';
@@ -99,6 +100,25 @@ import { PendingPane } from '../view/PendingPane';
 import { SessionListPane } from '../view/SessionListPane';
 import { SettingsPane } from '../view/SettingsPane';
 import { WorkspacePane } from '../view/WorkspacePane';
+
+/**
+ * 把紧凑 JSON 美化以便人读写；失败时原样返回。
+ *
+ * 【为什么要自己缩进而不是用 `JSON.stringify(v, null, 2)`】整值编辑的对象是
+ * **已经解析过的文本**，而 `JSON.stringify` 的缩进参数只对「对象」生效——
+ * 我们手上是字符串，必须先 parse。失败（旧数据里存了非法 JSON）时原样返回，
+ * 让用户在编辑器里直接看到原文并自己修，而不是显示一个空白框。
+ */
+function prettyJson(compact: string): string {
+  if (compact.length === 0) {
+    return '';
+  }
+  const parsed: Object | undefined = parseJson(compact);
+  if (parsed === undefined) {
+    return compact;
+  }
+  return JSON.stringify(parsed, null, 2) ?? compact;
+}
 
 /**
  * 把「刚刚连上的 Host」报告给能力层，由它落盘（地址明文、token 加密）。
@@ -207,6 +227,17 @@ struct Index {
   @State textSettingDraft: string = '';
   /** 编辑中的设置项（提交时要按它的 `valueType` 与约束解析输入） */
   private textSettingItem: SettingItem | undefined = undefined;
+  /**
+   * 正在整值编辑的结构化设置项 key（数组 / 嵌套对象 / 复杂 union）。
+   *
+   * 【为什么必须整值编辑】实测数组元素**无法按路径寻址**
+   * （字符串下标 → `settings/rejected`；数字下标 → `gateway/input-invalid`），
+   * 详见 `SettingKind.STRUCT` 的说明。唯一可行的写法是读整个值、本地改、整值写回。
+   */
+  @State structSettingKey: string = '';
+  @State structSettingLabel: string = '';
+  @State structSettingDraft: string = '';
+  private structSettingItem: SettingItem | undefined = undefined;
   @State credentials: CredentialItem[] = [];
   @State plugins: PluginItem[] = [];
   @State hosts: HostRecord[] = [];
@@ -638,6 +669,9 @@ struct Index {
       if (this.textSettingKey.length > 0) {
         this.textSettingSheet()
       }
+      if (this.structSettingKey.length > 0) {
+        this.structSettingSheet()
+      }
     }
     .width('100%')
     .height('100%')
@@ -1023,6 +1057,144 @@ struct Index {
       return;
     }
     // 冲突/被拒/失败都留在浮层里：用户需要就地看到原因并改值重试
+    this.credentialNote = result.message;
+  }
+
+  // ───────────────────── 结构化值（数组 / 对象）整值编辑浮层 ─────────────────────
+
+  /**
+   * 结构化设置的**整值**编辑浮层。
+   *
+   * 设计取舍：
+   *   1. **多行 `TextArea`**：实测 `llm-deepseek.models` 的 JSON 约 820 字符、
+   *      `providers` 更大；单行输入框在这里不可用。
+   *   2. **打开时美化（缩进 2 空格）**，写回时用紧凑形式：
+   *      人读写需要缩进，而对 Host 来说空白无意义——紧凑形式也能让「值是否变化」
+   *      的比较不受无关空白干扰。
+   *   3. **给出「恢复为当前值」按钮**：整值编辑最容易出的事故是
+   *      改坏了一个大 JSON 又退不回去。有了它，用户永远能回到进入编辑器时的状态。
+   *   4. 明确写出「整值替换」：用户必须知道写回是**替换整个字段**，
+   *      不是合并——否则会以为没提到的部分会被保留。
+   */
+  @Builder
+  structSettingSheet() {
+    Column() {
+      Column({ space: Sp.S }) {
+        Text(`编辑「${this.structSettingLabel}」`)
+          .fontSize(Fs.BODY)
+          .width('100%')
+        Text('写回是**逐键合并**：这里没提到的键会保留 Host 上已有的值，不会被删除。')
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.font_tertiary'))
+          .width('100%')
+        Text('本客户端暂不提供「删除某个键」的入口（那需要 unset 操作；实测顶层与嵌套路径都可用）。')
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.font_tertiary'))
+          .width('100%')
+        Text(`上游设置项 ${this.structSettingKey}`)
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.font_tertiary'))
+          .width('100%')
+
+        TextArea({ placeholder: 'JSON', text: this.structSettingDraft })
+          .width('100%')
+          .height(320)
+          .onChange((v: string) => {
+            this.structSettingDraft = v;
+          })
+
+        Row({ space: Sp.S }) {
+          Button('恢复为当前值')
+            .layoutWeight(1)
+            .backgroundColor($r('sys.color.background_secondary'))
+            .fontColor($r('sys.color.font_primary'))
+            .onClick(() => {
+              this.resetStructDraft();
+            })
+          Button('取消')
+            .layoutWeight(1)
+            .backgroundColor($r('sys.color.background_secondary'))
+            .fontColor($r('sys.color.font_primary'))
+            .onClick(() => {
+              this.closeStructSettingSheet();
+            })
+        }
+        .width('100%')
+
+        Button(this.credentialBusy ? '写入中…' : '写入 Host')
+          .width('100%')
+          .enabled(!this.credentialBusy)
+          .onClick(() => {
+            this.submitStructSetting();
+          })
+
+        if (this.credentialNote.length > 0) {
+          Text(this.credentialNote)
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.font_secondary'))
+            .width('100%')
+        }
+      }
+      .width('92%')
+      .padding(Sp.L)
+      .borderRadius(Radius.L)
+      .backgroundColor($r('sys.color.background_secondary'))
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .backgroundColor('rgba(0,0,0,0.35)')
+  }
+
+  /** 把草稿恢复为进入编辑器时的值（整值编辑的安全网） */
+  private resetStructDraft(): void {
+    const item: SettingItem | undefined = this.structSettingItem;
+    if (item === undefined) {
+      return;
+    }
+    this.structSettingDraft = prettyJson(item.rawJson);
+    this.credentialNote = '已恢复为 Host 上的当前值（尚未写回）。';
+  }
+
+  private closeStructSettingSheet(): void {
+    this.structSettingKey = '';
+    this.structSettingDraft = '';
+    this.structSettingItem = undefined;
+    this.credentialNote = '';
+    this.credentialBusy = false;
+  }
+
+  private openStructSettingSheet(item: SettingItem): void {
+    this.structSettingKey = item.key;
+    this.structSettingLabel = item.label;
+    this.structSettingDraft = prettyJson(item.rawJson);
+    this.structSettingItem = item;
+    this.credentialNote = '';
+    this.credentialBusy = false;
+  }
+
+  private async submitStructSetting(): Promise<void> {
+    const item: SettingItem | undefined = this.structSettingItem;
+    if (item === undefined) {
+      return;
+    }
+    const parsed: SettingInputResult = parseStructInput(item, this.structSettingDraft);
+    if (!parsed.ok || parsed.value === undefined) {
+      this.credentialNote = parsed.message;
+      return;
+    }
+    const key: string = item.key;
+    this.credentialBusy = true;
+    this.credentialNote = `正在写入 ${key}…`;
+    const hub: SessionHub = SessionHub.shared();
+    // 整值写回：`parsed.value` 已经是完整的新值（见 SettingKind.STRUCT 的说明）
+    const result: SettingsWriteResult = await hub.writeSetting(key, parsed.value);
+    this.credentialBusy = false;
+    if (result.outcome === SettingsWriteOutcome.OK) {
+      this.settingWriteNote = result.message;
+      this.closeStructSettingSheet();
+      return;
+    }
     this.credentialNote = result.message;
   }
 
@@ -1675,6 +1847,9 @@ struct Index {
         },
         onEditText: (item: SettingItem) => {
           this.openTextSettingSheet(item);
+        },
+        onEditStruct: (item: SettingItem) => {
+          this.openStructSettingSheet(item);
         },
         onPickModel: () => {
         },

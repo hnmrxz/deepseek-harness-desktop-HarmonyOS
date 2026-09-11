@@ -116,6 +116,9 @@ export struct SettingsPane {
   /** 打开文本 / 数字设置项的编辑浮层 */
   onEditText: (item: SettingItem) => void = () => {
   };
+  /** 打开结构化值（数组/对象）的整值编辑浮层 */
+  onEditStruct: (item: SettingItem) => void = () => {
+  };
   onPickModel: () => void = () => {
   };
   onPickEffort: (effort: string) => void = () => {
@@ -298,6 +301,19 @@ export struct SettingsPane {
           .onClick(() => {
             if (!item.readOnly) {
               this.onPickChoice(item.key, item.textValue);
+            }
+          })
+      } else if (item.kind === SettingKind.STRUCT) {
+        // 结构化值（数组 / 嵌套对象 / 复杂 union）：整值编辑。
+        // 与 TEXT 一样**必须可点**——不可点的控件等于没有这个功能。
+        Text(item.textValue)
+          .fontSize(Fs.SECONDARY)
+          .fontColor(item.readOnly ? ('sys.color.font_tertiary') : ('sys.color.brand'))
+          .maxLines(1)
+          .constraintSize({ maxWidth: 160 })
+          .onClick(() => {
+            if (!item.readOnly) {
+              this.onEditStruct(item);
             }
           })
       } else {

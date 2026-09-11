@@ -15,6 +15,7 @@ import {
   humanizeKey,
   mergeSettingsGroups,
   parseSettingInput,
+  parseStructInput,
   projectSettingsEntries,
   projectSettingsGroups,
   projectSettingsNamespace,
@@ -54,9 +55,50 @@ function itemOf(valueType: SettingValueType, text: string, min: number, max: num
     readOnly: false, hostWritable: true, appliesLive: true,
     origin: SettingOrigin.HOST, userSet: false, credentialRef: false,
     valueType: valueType, minValue: min, maxValue: max, stepValue: step,
-    hasMin: min !== 0, hasMax: max !== 0, pattern: pattern, required: required
+    hasMin: min !== 0, hasMax: max !== 0, pattern: pattern, required: required,
+    rawJson: '', structType: ''
   };
 }
+
+/** 造一个结构化设置项（structType 决定外层类型校验） */
+function structItem(structType: string, rawJson: string): SettingItem {
+  return {
+    key: 'ns.models', label: 'Models', hint: 'h', kind: SettingKind.STRUCT,
+    boolValue: false, textValue: '', options: [], choices: [],
+    readOnly: false, hostWritable: true, appliesLive: true,
+    origin: SettingOrigin.HOST, userSet: false, credentialRef: false,
+    valueType: SettingValueType.OTHER, minValue: 0, maxValue: 0, stepValue: 0,
+    hasMin: false, hasMax: false, pattern: '', required: false,
+    rawJson: rawJson, structType: structType
+  };
+}
+
+/**
+ * 实测 `llm-deepseek` 的关键结构（截取到本次断言用到的部分）：
+ * `models` 是 array，`retryPolicy` 是 `union([21,24])` 且两支都是 object。
+ */
+const LLM_DEEPSEEK = '{"ns":"llm-deepseek","applies":"live","revision":0,"secrets":[],'
+  + '"schema":{"uid":374,"refs":{'
+  + '"5":{"type":"number","meta":{"max":2147483647,"default":10000}},'
+  + '"9":{"type":"number","meta":{"min":0,"max":1,"default":0.1}},'
+  + '"10":{"type":"object","meta":{"default":{}},'
+  + '"dict":{"initialDelayMs":5,"jitterRatio":9}},'
+  + '"12":{"type":"const","meta":{"required":true},"value":"normal"},'
+  + '"17":{"type":"number","meta":{"step":1,"min":0,"max":9007199254740991,"default":5}},'
+  + '"18":{"type":"string","meta":{}},'
+  + '"20":{"type":"array","meta":{"default":["A"]},"inner":18},'
+  + '"21":{"type":"object","meta":{"default":{}},'
+  + '"dict":{"mode":12,"maxRetries":17,"retryableCodes":20,"backoff":10}},'
+  + '"23":{"type":"const","meta":{"required":true},"value":"always"},'
+  + '"24":{"type":"object","meta":{"default":{}},"dict":{"mode":23,"backoff":10}},'
+  + '"25":{"type":"union","meta":{},"list":[21,24]},'
+  + '"271":{"type":"string","meta":{"required":true}},'
+  + '"298":{"type":"object","meta":{"default":{}},"dict":{"id":271}},'
+  + '"327":{"type":"array","meta":{"default":[]},"inner":298},'
+  + '"374":{"type":"object","meta":{"default":{}},"dict":{"models":327,"retryPolicy":25}}}},'
+  + '"value":{"models":[{"id":"deepseek-flash"}],'
+  + '"retryPolicy":{"mode":"normal","maxRetries":5,"retryableCodes":["A"],'
+  + '"backoff":{"initialDelayMs":10000,"jitterRatio":0.1}}}}';
 
 export default function settingsProjectionTest() {
   describe('SettingsSchema', () => {
@@ -175,13 +217,14 @@ export default function settingsProjectionTest() {
     });
 
     /**
-     * 数组 / 嵌套对象**不提供编辑入口**（第一版没有实测过「写数组元素」的线上效果）：
-     * 以只读信息行呈现，而不是猜一个编辑器出来。
+     * 数组 / 嵌套对象现在都是**可编辑的 STRUCT**（见下面「整值编辑」的说明）。
      *
-     * 同时断言 `hostWritable` 仍为 true：**「本客户端没做」不等于「Host 不允许」**。
-     * 两者混用会渲染出会撒谎的界面（用户会去 Host 上找一个并不存在的权限开关）。
+     * 这条断言记录状态的**变迁**，避免有人凭旧印象改回只读：
+     * 早先它们被标成 `INFO` + `readOnly`，理由是「还没实测过怎么写数组元素」；
+     * 实测发现深路径走不通但**整值写回可行**，于是转为可编辑。
+     * `hostWritable` 仍为 true——「本客户端没做」从来不等于「Host 不允许」。
      */
-    it('presents array and object fields read-only without claiming the host refused', 0, () => {
+    it('presents array and object fields as editable structs', 0, () => {
       const withArray = '{"ns":"x","applies":"live","revision":0,"secrets":[],'
         + '"schema":{"uid":1,"refs":{'
         + '"2":{"type":"string","meta":{}},'
@@ -190,8 +233,8 @@ export default function settingsProjectionTest() {
         + '"value":{"models":[{"id":"a"},{"id":"b"}]}}';
       const ns = projectSettingsNamespace(parseJson(withArray)!, true);
       const item = ns.items[0];
-      expect(`count=${ns.items.length};kind=${item.kind};readOnly=${item.readOnly};hostWritable=${item.hostWritable}`)
-        .assertEqual('count=1;kind=info;readOnly=true;hostWritable=true');
+      expect(`count=${ns.items.length};kind=${item.kind};readOnly=${item.readOnly};hostWritable=${item.hostWritable};structType=${item.structType}`)
+        .assertEqual('count=1;kind=struct;readOnly=false;hostWritable=true;structType=array');
     });
 
     /** `projectSettingsGroups` 只保留有字段的命名空间，标题就是命名空间名 */
@@ -400,6 +443,129 @@ export default function settingsProjectionTest() {
       expect(ns.items.length).assertEqual(1);
       expect(ns.items[0].pattern.indexOf('^[A-Za-z]') === 0).assertTrue();
       expect(ns.items[0].valueType).assertEqual(SettingValueType.STRING);
+    });
+  });
+
+  describe('SettingsStruct', () => {
+    it('accepts a valid array', 0, () => {
+      const item = structItem('array', '[]');
+      const r = parseStructInput(item, '[{"id":"a"}]');
+      expect(r.ok).assertTrue();
+      expect(Array.isArray(r.value)).assertTrue();
+    });
+
+    /**
+     * **类型不符必须本地挡住。** 整值写回时 Host 的报错是
+     * `$.models expected array but got [object Object]`（实测原文），
+     * 对用户是天书。本地翻译成「这一项需要一个数组」。
+     */
+    it('rejects an object where the schema expects an array', 0, () => {
+      const item = structItem('array', '[]');
+      const r = parseStructInput(item, '{"id":"a"}');
+      expect(r.ok).assertFalse();
+      expect(r.message.indexOf('数组') >= 0).assertTrue();
+    });
+
+    it('rejects an array where the schema expects an object', 0, () => {
+      const item = structItem('object', '{}');
+      const r = parseStructInput(item, '[1,2]');
+      expect(r.ok).assertFalse();
+      expect(r.message.indexOf('对象') >= 0).assertTrue();
+    });
+
+    /** 语法错误要给出**可操作**的提示，而不是只说「不合法」 */
+    it('explains what to check when the JSON is malformed', 0, () => {
+      const item = structItem('array', '[]');
+      const r = parseStructInput(item, '[{"id": "a",}]');
+      expect(r.ok).assertFalse();
+      expect(r.message.indexOf('双引号') >= 0).assertTrue();
+    });
+
+    it('rejects an empty draft and says how to empty an array', 0, () => {
+      const item = structItem('array', '[]');
+      const r = parseStructInput(item, '   ');
+      expect(r.ok).assertFalse();
+      expect(r.message.indexOf('[]') >= 0).assertTrue();
+    });
+
+    /**
+     * 实测 schema 里存在 `{"type":"const","value":null}` 分支，
+     * 所以 `null` 是**合法取值**，不能当成「空输入」拒掉。
+     */
+    it('accepts null as a legitimate value', 0, () => {
+      const item = structItem('', '');
+      const r = parseStructInput(item, 'null');
+      expect(r.ok).assertTrue();
+      expect(r.value === null).assertTrue();
+    });
+
+    /** `structType` 为空（复杂/异构 union）时**不做**外层校验，交给 Host */
+    it('skips the outer-type check when the union is heterogeneous', 0, () => {
+      const item = structItem('', '');
+      expect(parseStructInput(item, '{"a":1}').ok).assertTrue();
+      expect(parseStructInput(item, '[1]').ok).assertTrue();
+    });
+
+    /**
+     * 投影侧：`array` / `object` / `union(object,object)` 现在都是**可编辑的
+     * STRUCT**，而不是只读 INFO。
+     *
+     * 【为什么这条断言重要】早先这一整类被标成只读，理由是「还没实测过怎么写
+     * 数组元素」。实测发现深路径走不通但**整值写回可行**，于是它们是可编辑的。
+     * 若哪天有人把这里改回只读，这条会失败并指向那段实测结论。
+     */
+    it('projects array and union(object,object) as editable structs', 0, () => {
+      // 实测 `llm-deepseek`：models 是 array，retryPolicy 是 union(21,24) 两个 object
+      const ns = projectSettingsNamespace(parseJson(LLM_DEEPSEEK)!, true);
+      let modelsKind: string = '(缺失)';
+      let modelsStructType: string = '';
+      let policyKind: string = '(缺失)';
+      let policyStructType: string = '';
+      for (let i = 0; i < ns.items.length; i++) {
+        if (ns.items[i].key === 'llm-deepseek.models') {
+          modelsKind = ns.items[i].kind;
+          modelsStructType = ns.items[i].structType;
+        }
+        if (ns.items[i].key === 'llm-deepseek.retryPolicy') {
+          policyKind = ns.items[i].kind;
+          policyStructType = ns.items[i].structType;
+        }
+      }
+      expect(`models=${modelsKind}/${modelsStructType};policy=${policyKind}/${policyStructType}`)
+        .assertEqual('models=struct/array;policy=struct/object');
+    });
+
+    /** `rawJson` 是「当前值原文」，编辑器打开时以它为准 */
+    it('carries the current value as compact JSON', 0, () => {
+      const ns = projectSettingsNamespace(parseJson(UI_THEME)!, true);
+      const fontSize = ns.items[1];
+      expect(fontSize.rawJson).assertEqual('14');
+    });
+
+    /**
+     * 结构化项的 `hint` 必须说清写回语义，而且**数组与对象不同**：
+     *   - 对象：逐键合并（实测：写成不含 `retryableCodes`/`backoff` 的对象后回读，
+     *     缺失的键**原样保留**）；
+     *   - 数组：整体替换（实测：写成 `[]` 后 `models.length` 变 0）。
+     *
+     * 【为什么值得一条断言】据此写过一版「写回会整体替换」的界面文案，是**错的**——
+     * 它会让用户以为遗漏的键会被清掉。文案错了也是一种撒谎。
+     */
+    it('states the correct write semantics per outer type', 0, () => {
+      const ns = projectSettingsNamespace(parseJson(LLM_DEEPSEEK)!, true);
+      for (let i = 0; i < ns.items.length; i++) {
+        const item = ns.items[i];
+        if (item.key === 'llm-deepseek.retryPolicy') {
+          expect(item.structType).assertEqual('object');
+          expect(item.hint.indexOf('逐键合并') >= 0).assertTrue();
+          expect(item.hint.indexOf('整体替换') < 0).assertTrue();
+        }
+        if (item.key === 'llm-deepseek.models') {
+          expect(item.structType).assertEqual('array');
+          expect(item.hint.indexOf('整体替换') >= 0).assertTrue();
+          expect(item.hint.indexOf('逐键合并') < 0).assertTrue();
+        }
+      }
     });
   });
 
