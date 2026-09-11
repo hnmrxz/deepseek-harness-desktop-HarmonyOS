@@ -1566,9 +1566,18 @@ export class SessionHub {
     this.record(`follow open ${sessionId.substring(0, 12)}`);
     this.notify();
     // 命令目录与文件树都是**会话作用域**的（`commands/list` 要 agentId，
-    // `workspaceFiles/*` 要 workspaceFileScopeId = sessionId）。
-    // 因此切会话必须重拉：不重拉的话新会话会用着上一个会话的命令集与目录树。
-    this.refreshSessionScoped();
+    // `workspaceFiles/*` 要 workspaceFileScopeId = sessionId）。因此切会话必须重拉。
+    //
+    // 【但重连重开流时不该重拉】自从 `handleConnectionState(CONNECTED)` 会重开 follow，
+    // 每次重连都会走到这里；在"约 5 秒必断、每 2 秒重连"的设备上，
+    // 无条件重拉意味着**每 2 秒多打 4 个一元调用**（命令目录 / 文件树根 / 两类引用候选），
+    // 而它们的内容一个字都没变。
+    // 判据用「数据是否已经属于这个会话」而不是「是否换了会话」：
+    // 若上一次拉取失败（例如选会话时恰好离线），`commandsFor` 仍是空串，
+    // 那么重连时必须补拉——只看"换没换"会让命令目录永远空着。
+    if (changed || this.commandsFor !== sessionId || this.fileTreeFor !== sessionId) {
+      this.refreshSessionScoped();
+    }
   }
 
   /**
