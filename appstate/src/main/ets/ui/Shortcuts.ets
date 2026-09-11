@@ -71,18 +71,23 @@ export const MODIFIER_LABEL: string = 'Ctrl';
 /**
  * D3 §5.1 快捷键表。
  *
- * 规模说明（**容易数错，因此写清楚**）：规范 §5.1 的表体是 **11 行**；
- * 其中 `Enter` / `Shift+Enter` **一行含两种键**，本表把两种键拆成两个规格
- * （绑定必须分别指定，否则没法在 UI 里区分「发送」与「换行」），
- * 因此本数组是 **13 个规格 = 11 行规范**（只有 `Enter` 那一行被拆开，逐行对应关系没有增删）。
+ * 规模说明（**此处曾写错，数字以实测为准，并已由单测钉住**）：
+ *   - 规范 §5.1 的表体是 **12 行**（不是 11 行——旧注释少算了一行）；
+ *   - 本数组是 **12 个规格，与规范逐行一一对应**：`Enter` / `Shift+Enter` 是规范里的
+ *     **同一行**，本表**不为它单列一行**，而是在键位判定里用方向字段区分
+ *     （见 `entry/view/ShortcutKeys.ts` 的 `ShortcutHit.delta`）。
+ *     旧注释声称"拆成两个规格、共 13 个"，与数组实际内容不符。
  *
  * 取值说明（逐行核对用）：
- *   - 8 个规格可走 `keyboardShortcut`：规范前 6 行（N / K / F / B / J / `Ctrl+Shift+P`）
- *     加第 10 行 `Ctrl+Shift+C`、第 11 行 `Ctrl+,`；
- *   - 4 个规格标记 `requiresKeyEvent`：`Enter`、`Shift+Enter`（同属规范第 7 行）、
- *     `Esc`（第 8 行）、`Alt+↑/↓`（第 9 行）；
- *   - 1 个规格标记 `functionKey`：`F5`（第 12 行，空修饰键的 `FunctionKey.F5`）。
- *   8 + 4 + 1 = 13，与数组元素数一致。
+ *   - **8 行**可走 `keyboardShortcut`：N / K / F / B / J / `Ctrl+Shift+P` /
+ *     `Ctrl+Shift+C` / `Ctrl+,`；
+ *   - **3 行**必须 `onKeyEvent`（`keyboardShortcut` 表达不了非可打印键）：
+ *     `Enter`（含 `Shift+Enter`）、`Esc`、`Alt+↑/↓`；
+ *   - **1 行**是功能键：`F5`（属于 `keyboardShortcut` 可绑定的那一类）。
+ *   8 + 3 + 1 = 12，与数组元素数一致，也与规范行数一致。
+ *
+ * > 这条说明本身是**可验证的**：`LiveWire.test.ets` 断言了 12 = 8 + 3 + 1 的构成。
+ * > 写下来是因为"表里到底几行"曾经被注释说错——而它是"规范到底覆盖了多少"的唯一凭据。
  */
 export const SHORTCUTS: ShortcutSpec[] = [
   {

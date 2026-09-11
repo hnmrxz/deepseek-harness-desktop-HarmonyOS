@@ -104,6 +104,8 @@ import { PendingPane } from '../view/PendingPane';
 import { SessionListPane } from '../view/SessionListPane';
 import { SettingsPane } from '../view/SettingsPane';
 import { WorkspacePane } from '../view/WorkspacePane';
+import { hitOfKeyEvent } from '../view/ShortcutKeys';
+import type { ShortcutHit } from '../view/ShortcutKeys';
 
 /**
  * 把紧凑 JSON 美化以便人读写；失败时原样返回。
@@ -913,6 +915,154 @@ struct Index {
     }
     .width('100%')
     .height('100%')
+    /**
+     * 2in1 / 平板（外接键盘）快捷键：**声明式**那 8 个规格。
+     *
+     * 【为什么在这里声明而不是在各自的按钮上】这些动作是**全局**的（新建、切页签、
+     * 重连…），挂在某个按钮上会随该按钮的可见性一起失效（例如"新建会话"按钮只在
+     * 会话页存在，于是别的页面上 Ctrl+N 不生效）。挂在根容器上语义才是对的。
+     *
+     * 【为什么只有 8 个】另外 5 个（Enter / Esc / Alt+↑↓ / F5）`keyboardShortcut`
+     * 表达不了（见 `ShortcutKeys.ets` 的说明），走下面的 `onKeyEvent`。
+     *
+     * 【为什么不做形态门控】D3 §5.1 那一节的适用对象是"有外接键盘"的设备，
+     * 但**绑定本身在无键盘设备上无害**（手机没有 Ctrl 键，按不出来）。
+     * 真正需要按形态过滤的是"把它展示给用户看"（帮助浮层/设置页），
+     * 那部分用 `shortcutsForDesktop()`——目前尚无该浮层，故不在此假装。
+     */
+    .keyboardShortcut('n', [ModifierKey.CTRL], () => {
+      this.runShortcut('new-session');
+    })
+    .keyboardShortcut('k', [ModifierKey.CTRL], () => {
+      this.runShortcut('command-palette');
+    })
+    .keyboardShortcut('f', [ModifierKey.CTRL], () => {
+      this.runShortcut('search-in-session');
+    })
+    .keyboardShortcut('b', [ModifierKey.CTRL], () => {
+      this.runShortcut('toggle-nav');
+    })
+    .keyboardShortcut('j', [ModifierKey.CTRL], () => {
+      this.runShortcut('toggle-detail');
+    })
+    .keyboardShortcut('p', [ModifierKey.CTRL, ModifierKey.SHIFT], () => {
+      this.runShortcut('pending-inbox');
+    })
+    .keyboardShortcut('c', [ModifierKey.CTRL, ModifierKey.SHIFT], () => {
+      this.runShortcut('copy-code-block');
+    })
+    .keyboardShortcut(',', [ModifierKey.CTRL], () => {
+      this.runShortcut('open-settings');
+    })
+    .onKeyEvent((event: KeyEvent) => {
+      // 只取「按下」那一次：抬起时再分发会执行两遍（`sendDraft` 会被调用两次）
+      if (event.type !== KeyType.Down) {
+        return;
+      }
+      const shift: boolean = event.getModifierKeyState !== undefined
+        && event.getModifierKeyState(['shift']);
+      const alt: boolean = event.getModifierKeyState !== undefined
+        && event.getModifierKeyState(['alt']);
+      const hit: ShortcutHit = hitOfKeyEvent(event.keyCode, shift, alt);
+      this.dispatchKeyHit(hit);
+    })
+  }
+
+  /**
+   * 按键判定 → 动作。
+   *
+   * 【为什么单独抽出来】声明式绑定与 `onKeyEvent` 两条路都要落到同一处分发；
+   * 分散写会让"某个 id 忘了接"成为一件没有提示的事（而 `ShortcutKeys` 只能保证
+   * id 来自表，保证不了"每个 id 都有人处理"）。
+   */
+  private runShortcut(id: string): void {
+    if (id === 'new-session') {
+      SessionHub.shared().createSession();
+      return;
+    }
+    if (id === 'toggle-detail') {
+      this.detailOpen = !this.detailOpen;
+      return;
+    }
+    if (id === 'pending-inbox') {
+      this.selectTab(NavTab.PENDING);
+      return;
+    }
+    if (id === 'open-settings') {
+      this.selectTab(NavTab.SETTINGS);
+      return;
+    }
+    if (id === 'reconnect') {
+      SessionHub.shared().reconnect();
+      return;
+    }
+    if (id === 'stop-turn') {
+      this.escapePressed();
+      return;
+    }
+    if (id === 'send-message') {
+      this.sendDraft();
+      return;
+    }
+    // 以下是**尚未实现**的能力。如实说明而不是静默无反应（D3 §4 文案纪律：
+    // 能力缺失要说明原因，不隐藏）。静默无反应会让用户以为快捷键坏了。
+    if (id === 'command-palette' || id === 'search-in-session') {
+      this.attachNotice = `「${id === 'command-palette' ? '命令面板' : '会话内搜索'}」尚未实现（快捷键已按规范绑定，功能待补）。`;
+      return;
+    }
+    if (id === 'toggle-nav') {
+      this.attachNotice = '导航栏的显隐当前由窗口宽度自动决定（让步链），手动折叠尚未实现。';
+      return;
+    }
+    if (id === 'copy-code-block') {
+      this.attachNotice = '「复制选中代码块」需要消息内的选中状态，尚未实现。';
+      return;
+    }
+    if (id === 'prev-next-message') {
+      this.attachNotice = '「上一条 / 下一条消息」跳转尚未实现。';
+      return;
+    }
+  }
+
+  /** `Enter`（无 Shift）与 `Shift+Enter` 的分流 */
+  private dispatchKeyHit(hit: ShortcutHit): void {
+    if (hit.id.length === 0) {
+      return;
+    }
+    if (hit.id === 'send-message' && hit.delta < 0) {
+      // Shift+Enter = 换行：交给输入框自己处理，页面**不**拦截
+      return;
+    }
+    this.runShortcut(hit.id);
+  }
+
+  /**
+   * `Esc`：先关浮层，再停轮次（D3 §5.1「停止当前轮次（弹二次确认）/ 关闭弹层」）。
+   *
+   * 顺序不能反：有浮层时按 Esc 的意图是"关掉它"，而不是把正在跑的轮次停掉——
+   * 后者是有副作用的破坏性动作，绝不能被"我只是想关个弹窗"触发。
+   */
+  private escapePressed(): void {
+    if (this.choosing !== undefined) {
+      this.choosing = undefined;
+      return;
+    }
+    if (this.credentialRef.length > 0) {
+      this.credentialRef = '';
+      return;
+    }
+    if (this.textSettingKey.length > 0) {
+      this.textSettingKey = '';
+      return;
+    }
+    if (this.structSettingKey.length > 0) {
+      this.structSettingKey = '';
+      return;
+    }
+    if (this.running && this.hubConnected) {
+      SessionHub.shared().cancelTurn();
+    }
+    this.running = false;
   }
 
   // ───────────────────── 枚举选择浮层 ─────────────────────
