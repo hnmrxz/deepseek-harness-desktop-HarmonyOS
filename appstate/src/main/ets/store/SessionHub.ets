@@ -30,6 +30,7 @@
  */
 
 import { Connection } from 'connection';
+import { ConnectionState } from 'connection';
 import type { DiagnosticReport, EventSink, HostFacts, RemoteFailure, RpcResult, StreamSink } from 'connection';
 import { EVENTS_RESULT_ENDPOINT, getArray, getBoolean, getNumber, getRecord, getString, readPath } from 'connection';
 import {
@@ -339,6 +340,14 @@ export class SessionHub {
     if (this.phase === HubPhase.LIVE || this.phase === HubPhase.CONNECTING) {
       return this.phase === HubPhase.LIVE;
     }
+    // 【必须订阅连接状态，否则底层判死对本层不可见】
+    // 实测（D4 待收口第 1 项）：底层（`RemoteMux`）静默失效时 `close` **可能不来**，
+    // 只有连接级探活能发现；而这里过去**只**通过事件流的 `onEnd` 感知失败，
+    // 于是出现「探活已经发现失效、横幅仍显示『连接 live』」——
+    // 界面与事实相反。订阅之后，底层的降级能立刻反映到中枢阶段上。
+    this.conn.onStateChange((state: ConnectionState, detail: string) => {
+      this.handleConnectionState(state, detail);
+    });
     this.phase = HubPhase.CONNECTING;
     this.lastError = '';
     this.notify();
@@ -391,9 +400,41 @@ export class SessionHub {
     return true;
   }
 
+  /**
+   * 把底层的连接状态映射到中枢阶段。
+   *
+   * 【为什么映射而不是照抄】中枢的阶段是**呈现契约**（IDLE/CONNECTING/LIVE/DEGRADED），
+   * 底层的状态是**载体事实**（idle/connecting/connected/disconnected）。
+   * 两者不是一回事：底层 `CONNECTING` 在中枢看来是「降级（可读但实时性损失）」
+   * 而不是「正在首次连接」——因为此时界面上的数据仍在、只是可能不新。
+   * 直接把枚举抄过来会让界面把「重连中」显示成「首次连接中」，误导用户以为
+   * 自己从没连上过。
+   */
+  private handleConnectionState(state: ConnectionState, detail: string): void {
+    if (state === ConnectionState.CONNECTED) {
+      // 载体恢复：事件流是否也已恢复由 EventStream 自己上报，这里不越权
+      return;
+    }
+    if (state === ConnectionState.DISCONNECTED) {
+      this.phase = HubPhase.DEGRADED;
+      if (this.lastError.length === 0) {
+        this.lastError = detail;
+      }
+      this.record(`connection disconnected: ${detail}`);
+      this.notify();
+      return;
+    }
+    if (state === ConnectionState.CONNECTING && this.phase === HubPhase.LIVE) {
+      // 从 LIVE 退回 CONNECTING：载体失效、正在重连 —— 中枢据此显示「降级」
+      this.phase = HubPhase.DEGRADED;
+      this.eventsReady = false;
+      this.record(`connection degraded: ${detail}`);
+      this.notify();
+    }
+  }
+
   /** 断开并释放所有流（仅一个窗口会调用；其他窗口只订阅快照） */
-  async disconnect(): Promise<void> {
-    this.cancelFollow();
+  async disconnect(): Promise<void> {    this.cancelFollow();
     this.cancelControl();
     await this.conn.stop();
     this.phase = HubPhase.IDLE;

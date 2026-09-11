@@ -89,6 +89,15 @@ export class Connection {
   private lastError?: string;
   private persistence?: CookiePersistence;
   private stateListeners: Array<(state: ConnectionState, detail: string) => void> = [];
+  /**
+   * `start()` 时记下的事件流回调。
+   *
+   * 为什么必须留着：底层判定连接失效（`handleMuxDead`）之后要**驱动重连**，
+   * 而 `scheduleReconnect(sink)` 需要这个 sink。不存的话，
+   * 连接失效后**没有任何人再次进入重连循环**——实测症状就是
+   * 「探活发现失效了，但连接一直不恢复」（D4 待收口第 1 项）。
+   */
+  private startSink?: EventSink;
 
   constructor(options?: ConnectionOptions) {
     const merged: Required<ConnectionOptions> = {
@@ -181,6 +190,13 @@ export class Connection {
     // 「重试耗尽或凭证失效，需人工干预」——那是另一种结论，这里用它会误导用户
     // 去手工处理一个正在自动恢复的问题。
     this.setState(ConnectionState.CONNECTING, `连接失效，正在重连：${reason}`);
+    // 【关键：驱动重连】此前这里只改状态、不驱动重连，于是「探活能发现失效、
+    // 但连接永远不恢复」。重连策略仍集中在 `ReconnectController`——
+    // 这里只是**重新进入**那个循环，不自己实现退避。
+    const sink: EventSink | undefined = this.startSink;
+    if (sink !== undefined) {
+      this.scheduleReconnect(sink);
+    }
   }
 
   /** 注入 cookie 持久化实现并立即恢复已保存的 cookie */
@@ -309,6 +325,7 @@ export class Connection {
    * @param sink 事件流回调
    */
   async start(sink: EventSink): Promise<boolean> {
+    this.startSink = sink;
     this.reconnector.reset();
     this.eventStream = new EventStream(this.getMux(), {
       onReady: (facts) => {
