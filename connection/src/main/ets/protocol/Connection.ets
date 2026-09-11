@@ -164,6 +164,14 @@ export class Connection {
    */
   private handleMuxDead(reason: string): void {
     this.lastError = reason;
+    // 【可观测性】不在这里写日志：`connection` 层没有 trace 通道（那是 appstate 的），
+    // 而 `lastError` 会被上层 `SessionHub` 读进快照、显示在横幅与诊断页上——
+    // 那正是判断「底层判死有没有传到上层」的直接证据。
+    // 【实测时要看的判据】横幅/诊断页是否出现本行的 `reason`
+    // （例如 `探活发送失败 code=-1`）：
+    //   - 出现 → 上报链通，问题在「谁来重连」；
+    //   - 没出现 → 回调没被调用，问题在 RemoteMux 的判定或注册。
+    // 不加这条可观测路径就只能靠「界面显示对不对」间接推断，而那个推断本轮已错过一次。
     const stream: EventStream | undefined = this.eventStream;
     if (stream !== undefined) {
       stream.markLost();
