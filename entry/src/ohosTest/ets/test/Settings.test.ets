@@ -14,15 +14,17 @@ import { parseJson } from 'connection';
 import {
   humanizeKey,
   mergeSettingsGroups,
+  parseSettingInput,
   projectSettingsEntries,
   projectSettingsGroups,
   projectSettingsNamespace,
   SettingKind,
   SettingOrigin,
+  SettingValueType,
   settingsMutateArgs,
   splitSettingKey
 } from 'appstate';
-import type { SettingGroup } from 'appstate';
+import type { SettingGroup, SettingItem } from 'appstate';
 
 /** 实测 `ui-theme` 命名空间（union(const×3) + number(12–17)） */
 const UI_THEME = '{"ns":"ui-theme","applies":"live","revision":0,"secrets":[],'
@@ -34,6 +36,27 @@ const UI_THEME = '{"ns":"ui-theme","applies":"live","revision":0,"secrets":[],'
   + '"230":{"type":"number","meta":{"step":1,"min":12,"max":17,"default":14}},'
   + '"231":{"type":"object","meta":{"default":{}},"dict":{"preference":225,"fontSize":230}}}},'
   + '"value":{"preference":"system","fontSize":14}}';
+
+/** 实测 `locale` 命名空间（string + pattern，且 `value` 为 `{}`） */
+const LOCALE_NS = '{"ns":"locale","applies":"live","revision":0,"secrets":[],'
+  + '"schema":{"uid":235,"refs":{'
+  + '"234":{"type":"string","meta":{"pattern":{"source":"^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$","flags":"u"},'
+  + '"required":false}},'
+  + '"235":{"type":"object","meta":{"default":{}},"dict":{"preference":234}}}},'
+  + '"value":{}}';
+
+/** 从实测 schema 造一个设置项，只覆盖要断言的那部分字段 */
+function itemOf(valueType: SettingValueType, text: string, min: number, max: number,
+  step: number, pattern: string, required: boolean): SettingItem {
+  return {
+    key: 'ns.field', label: 'F', hint: 'h', kind: SettingKind.TEXT,
+    boolValue: false, textValue: text, options: [], choices: [],
+    readOnly: false, hostWritable: true, appliesLive: true,
+    origin: SettingOrigin.HOST, userSet: false, credentialRef: false,
+    valueType: valueType, minValue: min, maxValue: max, stepValue: step,
+    hasMin: min !== 0, hasMax: max !== 0, pattern: pattern, required: required
+  };
+}
 
 export default function settingsProjectionTest() {
   describe('SettingsSchema', () => {
@@ -266,6 +289,117 @@ export default function settingsProjectionTest() {
       expect(entries[0].state.applies).assertEqual('live');
       // 纯展示路径不暴露 revision
       expect(projectSettingsGroups(parseJson(describe)).length).assertEqual(1);
+    });
+  });
+
+  describe('SettingsInput', () => {
+    /**
+     * **数字字段必须发数字，不能发字符串。**
+     * 实测 `ui-theme.fontSize` 的 schema 是 `{"type":"number"}`：
+     * 发 `"16"` 会被 Host 的 schema 校验拒绝，而错误只说「不符合 schema」——
+     * 用户看到一个自己按提示填的数字被拒，无从下手。
+     */
+    it('converts a numeric input to a JSON number', 0, () => {
+      const item = itemOf(SettingValueType.NUMBER, '14', 12, 17, 1, '', false);
+      const r = parseSettingInput(item, '16');
+      expect(r.ok).assertTrue();
+      expect(typeof r.value).assertEqual('number');
+      expect(r.value as number).assertEqual(16);
+    });
+
+    it('keeps a string input as a string', 0, () => {
+      const item = itemOf(SettingValueType.STRING, '', 0, 0, 0, '', false);
+      const r = parseSettingInput(item, 'deepseek-chat');
+      expect(r.ok).assertTrue();
+      expect(typeof r.value).assertEqual('string');
+    });
+
+    /** 客户端先校验：给出**具体**原因，而不是把 Host 的「不符合 schema」转给用户 */
+    it('rejects a number outside the measured range with a specific reason', 0, () => {
+      const item = itemOf(SettingValueType.NUMBER, '14', 12, 17, 1, '', false);
+      const low = parseSettingInput(item, '11');
+      expect(low.ok).assertFalse();
+      expect(low.message.indexOf('12') >= 0).assertTrue();
+      const high = parseSettingInput(item, '18');
+      expect(high.ok).assertFalse();
+      expect(high.message.indexOf('17') >= 0).assertTrue();
+      // 边界值本身必须放行
+      expect(parseSettingInput(item, '12').ok).assertTrue();
+      expect(parseSettingInput(item, '17').ok).assertTrue();
+    });
+
+    it('rejects a non-numeric input for a numeric field', 0, () => {
+      const item = itemOf(SettingValueType.NUMBER, '14', 0, 0, 1, '', false);
+      const r = parseSettingInput(item, 'abc');
+      expect(r.ok).assertFalse();
+      expect(r.message.indexOf('数字') >= 0).assertTrue();
+    });
+
+    /** 空串对数字字段永远非法（JSON 里没有「空数字」） */
+    it('rejects an empty value for a numeric field', 0, () => {
+      const item = itemOf(SettingValueType.NUMBER, '14', 0, 0, 1, '', false);
+      expect(parseSettingInput(item, '   ').ok).assertFalse();
+    });
+
+    /**
+     * `step` 只在 >1 时当约束：实测多数项的 `step` 是 1，
+     * 把 step=1 也拿来提示会变成无意义的噪音（「须为 1 的整数倍」）。
+     */
+    it('enforces step only when it is greater than one', 0, () => {
+      const stepped = itemOf(SettingValueType.NUMBER, '', 0, 20, 5, '', false);
+      expect(parseSettingInput(stepped, '15').ok).assertTrue();
+      expect(parseSettingInput(stepped, '13').ok).assertFalse();
+      const unit = itemOf(SettingValueType.NUMBER, '', 0, 20, 1, '', false);
+      expect(parseSettingInput(unit, '13').ok).assertTrue();
+    });
+
+    /** 字符串字段的 `pattern`（实测形如 `{source, flags}`）要被真正执行 */
+    it('enforces a string pattern', 0, () => {
+      const item = itemOf(SettingValueType.STRING, '', 0, 0, 0,
+        '^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$', false);
+      expect(parseSettingInput(item, 'zh-Hans').ok).assertTrue();
+      const bad = parseSettingInput(item, '中文');
+      expect(bad.ok).assertFalse();
+      expect(bad.message.indexOf('格式') >= 0).assertTrue();
+    });
+
+    it('rejects an empty value only when the field is required', 0, () => {
+      const req = itemOf(SettingValueType.STRING, '', 0, 0, 0, '', true);
+      expect(parseSettingInput(req, '').ok).assertFalse();
+      const opt = itemOf(SettingValueType.STRING, '', 0, 0, 0, '', false);
+      expect(parseSettingInput(opt, '').ok).assertTrue();
+    });
+
+    /**
+     * 上游 schema 里的正则若本身非法，**不能**因此拦下用户输入——
+     * 那会让这一项永远改不了（一个坏 schema 就锁死一个设置）。
+     * 放行并交给 Host 判定。
+     */
+    it('does not block input when the schema pattern is itself invalid', 0, () => {
+      const item = itemOf(SettingValueType.STRING, '', 0, 0, 0, '([unclosed', false);
+      expect(parseSettingInput(item, 'anything').ok).assertTrue();
+    });
+
+    /**
+     * `valueType` 必须由 schema 决定：实测 `ui-theme.fontSize` 是 number，
+     * 而 `llm-deepseek.apiKeyEnv` 是 string。投影时搞错类型，
+     * 表现就是「按提示填的数字被 Host 拒绝」。
+     */
+    it('derives the wire value type from the schema', 0, () => {
+      const ns = projectSettingsNamespace(parseJson(UI_THEME)!, true);
+      // items[0] = preference（union → CHOICE），items[1] = fontSize（number）
+      expect(ns.items[1].valueType).assertEqual(SettingValueType.NUMBER);
+      expect(ns.items[1].hasMin).assertTrue();
+      expect(ns.items[1].minValue).assertEqual(12);
+      expect(ns.items[1].maxValue).assertEqual(17);
+    });
+
+    /** 实测 `locale.preference` 带 pattern，投影要把它取出来 */
+    it('carries the pattern from meta into the item', 0, () => {
+      const ns = projectSettingsNamespace(parseJson(LOCALE_NS)!, true);
+      expect(ns.items.length).assertEqual(1);
+      expect(ns.items[0].pattern.indexOf('^[A-Za-z]') === 0).assertTrue();
+      expect(ns.items[0].valueType).assertEqual(SettingValueType.STRING);
     });
   });
 

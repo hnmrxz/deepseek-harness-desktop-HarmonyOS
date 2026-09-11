@@ -20,6 +20,21 @@ export enum SettingKind {
 }
 
 /**
+ * 设置项的**线上类型**。
+ *
+ * 【为什么必须与 `SettingKind` 分开】`SettingKind` 是「用哪种控件呈现」，
+ * 这个是「发什么类型的 JSON 值」。实测 `ui-theme.fontSize` 的 schema 是
+ * `{"type":"number"}`——若按字符串发 `"16"`，Host 会以 schema 校验失败拒绝。
+ * 两者只是**经常**一一对应，不是同一个概念（例如布尔也能用 CHOICE 呈现）。
+ */
+export enum SettingValueType {
+  STRING = 'string',
+  NUMBER = 'number',
+  BOOLEAN = 'boolean',
+  OTHER = 'other'
+}
+
+/**
  * 设置项来源：**本项目自己定义**的项，还是从 Host 的 `settings/describe` 读来的。
  *
  * 为什么必须区分：本客户端的「通知」「离线缓存」等项属于**本地偏好**，
@@ -82,6 +97,25 @@ export interface SettingItem {
   userSet: boolean;
   /** 该设置项是一个凭据引用（实测 `meta.role === 'credential-ref'`） */
   credentialRef: boolean;
+  /** 发往上游时的 JSON 值类型（决定 `"16"` 还是 `16`） */
+  valueType: SettingValueType;
+  /**
+   * 数值约束（仅 `valueType === NUMBER` 时有意义）。
+   *
+   * 从 `meta.min` / `meta.max` / `meta.step` 实测取得。
+   * 用 `hasBound` 而不是「`min === 0` 表示没有下界」这类哨兵值：
+   * 实测 `min: 0` 是**真实存在的下界**（`llm-deepseek` 的若干项），
+   * 用 0 当「无约束」会把合法值判成越界。
+   */
+  minValue: number;
+  maxValue: number;
+  stepValue: number;
+  hasMin: boolean;
+  hasMax: boolean;
+  /** 字符串约束：实测形如 `{source, flags}` 的正则源码（空串 = 无约束） */
+  pattern: string;
+  /** 该字段是否必填（`meta.required === true`） */
+  required: boolean;
 }
 
 /** 设置分组 */
@@ -383,6 +417,20 @@ export function projectSettingsNamespace(view: Object, writable: boolean): Setti
       (meta === undefined ? '' : (getString(meta, 'role') ?? '')) === META_ROLE_CREDENTIAL_REF;
     const current: Object | undefined = fieldOf(value, field);
     const itemKey: string = `${ns}.${field}`;
+    const minValue: number | undefined = meta === undefined ? undefined : getNumber(meta, 'min');
+    const maxValue: number | undefined = meta === undefined ? undefined : getNumber(meta, 'max');
+    const stepValue: number | undefined = meta === undefined ? undefined : getNumber(meta, 'step');
+    const patternObj: Object | undefined = meta === undefined ? undefined : fieldOf(meta, 'pattern');
+    const patternSource: string = patternObj === undefined
+      ? '' : (getString(patternObj, 'source') ?? '');
+    let valueType: SettingValueType = SettingValueType.OTHER;
+    if (type === SCHEMA_KIND_STRING) {
+      valueType = SettingValueType.STRING;
+    } else if (type === SCHEMA_KIND_NUMBER) {
+      valueType = SettingValueType.NUMBER;
+    } else if (type === SCHEMA_KIND_BOOLEAN) {
+      valueType = SettingValueType.BOOLEAN;
+    }
     const base: SettingItem = {
       key: itemKey,
       label: humanizeKey(field),
@@ -398,7 +446,15 @@ export function projectSettingsNamespace(view: Object, writable: boolean): Setti
       appliesLive: applies !== 'restart',
       origin: SettingOrigin.HOST,
       userSet: isUserSet(user, field),
-      credentialRef: credentialRef
+      credentialRef: credentialRef,
+      valueType: valueType,
+      minValue: minValue === undefined ? 0 : minValue,
+      maxValue: maxValue === undefined ? 0 : maxValue,
+      stepValue: stepValue === undefined ? 0 : stepValue,
+      hasMin: minValue !== undefined,
+      hasMax: maxValue !== undefined,
+      pattern: patternSource,
+      required: meta === undefined ? false : getBoolean(meta, 'required') === true
     };
 
     if (type === SCHEMA_KIND_BOOLEAN) {
@@ -540,6 +596,72 @@ export function splitSettingKey(key: string): SettingsKeyParts | undefined {
 export interface SettingsKeyParts {
   ns: string;
   fieldPath: string;
+}
+
+/**
+ * 用户输入 → 待写入的 JSON 值。
+ *
+ * 【为什么必须按 `valueType` 转换】实测 `ui-theme.fontSize` 的 schema 是
+ * `{"type":"number"}`。把 `"16"` 当字符串发过去会被 Host 的 schema 校验拒绝，
+ * 而错误信息只说「不符合 schema」——用户看到一个自己明明按提示填的数字被拒。
+ * 所以数字字段必须发**数字**。
+ *
+ * 【为什么在客户端做校验，而不是直接让 Host 拒】两条都做，但客户端先做：
+ * Host 的拒绝文案是给开发者看的（「不符合 schema」），而用户需要的是
+ * 「这个值超出 12–17 的范围」。本地校验能把这句话说清楚，也省一次往返。
+ * Host 仍是最终权威——它的拒绝走 `settings/rejected` 分支如实呈现。
+ */
+export function parseSettingInput(item: SettingItem, raw: string): SettingInputResult {
+  const text: string = raw.trim();
+  if (item.valueType === SettingValueType.NUMBER) {
+    if (text.length === 0) {
+      // 数字字段不接受空串：空串在 JSON 里没有对应的数字
+      return { ok: false, message: '请输入一个数字。', value: undefined };
+    }
+    const num: number = Number(text);
+    if (Number.isNaN(num)) {
+      return { ok: false, message: `「${text}」不是有效的数字。`, value: undefined };
+    }
+    if (item.hasMin && num < item.minValue) {
+      return { ok: false, message: `不能小于 ${item.minValue}。`, value: undefined };
+    }
+    if (item.hasMax && num > item.maxValue) {
+      return { ok: false, message: `不能大于 ${item.maxValue}。`, value: undefined };
+    }
+    if (item.stepValue > 1 && num % item.stepValue !== 0) {
+      // 实测 `step` 语义是「整数步长」；只对 >1 的步长提示，避免把 step=1 说成约束
+      return { ok: false, message: `必须是 ${item.stepValue} 的整数倍。`, value: undefined };
+    }
+    return { ok: true, message: '', value: num as Object };
+  }
+  // 字符串字段
+  if (text.length === 0 && item.required) {
+    return { ok: false, message: '这一项是必填的，不能留空。', value: undefined };
+  }
+  if (item.pattern.length > 0) {
+    let matched: boolean = true;
+    try {
+      const re: RegExp = new RegExp(item.pattern);
+      matched = re.test(text);
+    } catch (err) {
+      // 正则本身非法（上游 schema 出错）：不因此拦下用户的输入——
+      // 放行并让 Host 去判定，否则一个坏 schema 会让这一项永远改不了。
+      matched = true;
+    }
+    if (!matched) {
+      return { ok: false, message: `格式不符合要求（须匹配 ${item.pattern}）。`, value: undefined };
+    }
+  }
+  return { ok: true, message: '', value: text as Object };
+}
+
+/** 输入解析结果 */
+export interface SettingInputResult {
+  ok: boolean;
+  /** 不合法时的原因（给人看的一句话） */
+  message: string;
+  /** 合法时待写入的值（已按 `valueType` 转成正确的 JSON 类型） */
+  value: Object | undefined;
 }
 
 /**

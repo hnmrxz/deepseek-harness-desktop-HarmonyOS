@@ -73,8 +73,10 @@ export {
   projectSettingsEntries,
   projectSettingsGroups,
   projectSettingsNamespace,
+  parseSettingInput,
   SettingKind,
   SettingOrigin,
+  SettingValueType,
   SettingsWriteOutcome,
   settingsMutateArgs,
   splitSettingKey
@@ -93,6 +95,7 @@ export type {
   SettingChoice,
   SettingGroup,
   SettingItem,
+  SettingInputResult,
   SettingsGroupEntry,
   SettingsKeyParts,
   SettingsNamespaceItems,

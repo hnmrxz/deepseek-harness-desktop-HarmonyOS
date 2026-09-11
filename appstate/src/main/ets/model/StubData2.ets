@@ -25,6 +25,7 @@ import {
   SettingItem,
   SettingKind,
   SettingOrigin,
+  SettingValueType,
   DiagEntry
 } from './Settings';
 import { supportedVersionsText, tableStats, upstreamCapturedAt } from 'dshcompat';
@@ -137,7 +138,10 @@ function stubItem(key: string, label: string, hint: string, kind: SettingKind,
     key: key, label: label, hint: hint, kind: kind,
     boolValue: boolValue, textValue: textValue, options: options, choices: choices,
     readOnly: readOnly, hostWritable: !readOnly, appliesLive: appliesLive,
-    origin: SettingOrigin.LOCAL, userSet: false, credentialRef: false
+    origin: SettingOrigin.LOCAL, userSet: false, credentialRef: false,
+    valueType: kind === SettingKind.TOGGLE ? SettingValueType.BOOLEAN : SettingValueType.STRING,
+    minValue: 0, maxValue: 0, stepValue: 0, hasMin: false, hasMax: false,
+    pattern: '', required: false
   };
 }
 

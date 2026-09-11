@@ -45,7 +45,9 @@ import {
   ReferenceCandidate,
   SessionListItem,
   SettingGroup,
+  SettingValueType,
   SettingsWriteOutcome,
+  parseSettingInput,
   Sp,
   aboutInfo,
   mergeSettingsGroups,
@@ -81,6 +83,7 @@ import type {
   HubSnapshot,
   HubSubscriber,
   SettingChoice,
+  SettingInputResult,
   SettingItem,
   SettingsNamespaceState,
   SettingsWriteResult
@@ -194,6 +197,16 @@ struct Index {
   @State credentialNote: string = '';
   /** 凭据请求进行中（防重复提交；不复用 `connectBusy`，那是连接的状态） */
   @State credentialBusy: boolean = false;
+  /**
+   * 正在编辑的文本/数字设置项 key（空串 = 没有在编辑）。
+   *
+   * 与凭据浮层复用同一个模式：先进入编辑态，再提交。
+   */
+  @State textSettingKey: string = '';
+  @State textSettingLabel: string = '';
+  @State textSettingDraft: string = '';
+  /** 编辑中的设置项（提交时要按它的 `valueType` 与约束解析输入） */
+  private textSettingItem: SettingItem | undefined = undefined;
   @State credentials: CredentialItem[] = [];
   @State plugins: PluginItem[] = [];
   @State hosts: HostRecord[] = [];
@@ -622,6 +635,9 @@ struct Index {
       if (this.credentialRef.length > 0) {
         this.credentialSheet()
       }
+      if (this.textSettingKey.length > 0) {
+        this.textSettingSheet()
+      }
     }
     .width('100%')
     .height('100%')
@@ -855,6 +871,158 @@ struct Index {
       this.applyHubSnapshot(hub.snapshot());
       return;
     }
+    this.credentialNote = result.message;
+  }
+
+  // ───────────────────── 文本 / 数字设置编辑浮层 ─────────────────────
+
+  /**
+   * 文本与数字设置项的编辑浮层。
+   *
+   * 【为什么用文本输入而不是数字步进器】实测设置里的数字项跨度极大
+   * （`llm-deepseek.maxTokens` 的默认值是 256000，上界 9007199254740991），
+   * 步进器要点几万次；而数量级不同的项又需要不同的步进。文本输入 + 客户端校验
+   * （`parseSettingInput`：类型、min/max、step、pattern）更实用。
+   *
+   * 【为什么用 `InputType.Normal` 而不是 Password】这是配置项不是秘密；
+   * 而且用户需要看见自己输的数字有没有多一个 0——`maxTokens: 2560000` 与
+   * `256000` 的差别在这里是实打实的后果。
+   */
+  @Builder
+  textSettingSheet() {
+    Column() {
+      Column({ space: Sp.S }) {
+        Text(`编辑「${this.textSettingLabel}」`)
+          .fontSize(Fs.BODY)
+          .width('100%')
+        Text(this.textSettingHint())
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.font_tertiary'))
+          .width('100%')
+        Text(`上游设置项 ${this.textSettingKey}`)
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.font_tertiary'))
+          .width('100%')
+
+        TextInput({ placeholder: this.textSettingPlaceholder(), text: this.textSettingDraft })
+          .type(InputType.Normal)
+          .width('100%')
+          .onChange((v: string) => {
+            this.textSettingDraft = v;
+          })
+
+        Row({ space: Sp.S }) {
+          Button('取消')
+            .layoutWeight(1)
+            .backgroundColor($r('sys.color.background_secondary'))
+            .fontColor($r('sys.color.font_primary'))
+            .onClick(() => {
+              this.closeTextSettingSheet();
+            })
+          Button('写入 Host')
+            .layoutWeight(1)
+            .enabled(this.textSettingDraft.length > 0 && !this.credentialBusy)
+            .onClick(() => {
+              this.submitTextSetting();
+            })
+        }
+        .width('100%')
+
+        if (this.credentialNote.length > 0) {
+          Text(this.credentialNote)
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.font_secondary'))
+            .width('100%')
+        }
+      }
+      .width('86%')
+      .padding(Sp.L)
+      .borderRadius(Radius.L)
+      .backgroundColor($r('sys.color.background_secondary'))
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .backgroundColor('rgba(0,0,0,0.35)')
+  }
+
+  /** 编辑浮层里的约束说明（把服务端约束在**输入前**讲清楚） */
+  private textSettingHint(): string {
+    const item: SettingItem | undefined = this.textSettingItem;
+    if (item === undefined) {
+      return '';
+    }
+    const parts: string[] = [];
+    if (item.valueType === SettingValueType.NUMBER) {
+      parts.push('请输入数字');
+      if (item.hasMin || item.hasMax) {
+        parts.push(`范围 ${item.hasMin ? item.minValue : '不限'} – ${item.hasMax ? item.maxValue : '不限'}`);
+      }
+      if (item.stepValue > 1) {
+        parts.push(`须为 ${item.stepValue} 的整数倍`);
+      }
+    } else {
+      parts.push('请输入文本');
+      if (item.pattern.length > 0) {
+        parts.push(`须匹配 ${item.pattern}`);
+      }
+    }
+    if (item.required) {
+      parts.push('必填');
+    }
+    return parts.join('；');
+  }
+
+  private textSettingPlaceholder(): string {
+    const item: SettingItem | undefined = this.textSettingItem;
+    if (item === undefined) {
+      return '';
+    }
+    return item.textValue.length > 0 ? `当前：${item.textValue}` : '当前未设置';
+  }
+
+  private closeTextSettingSheet(): void {
+    this.textSettingKey = '';
+    this.textSettingDraft = '';
+    this.textSettingItem = undefined;
+    this.credentialNote = '';
+    this.credentialBusy = false;
+  }
+
+  private openTextSettingSheet(item: SettingItem): void {
+    this.textSettingKey = item.key;
+    this.textSettingLabel = item.label;
+    // 预填当前值：改一个长数字串时，让用户从现值改起比从空开始可靠得多
+    this.textSettingDraft = item.textValue;
+    this.textSettingItem = item;
+    this.credentialNote = '';
+    this.credentialBusy = false;
+  }
+
+  private async submitTextSetting(): Promise<void> {
+    const item: SettingItem | undefined = this.textSettingItem;
+    if (item === undefined) {
+      return;
+    }
+    // 客户端先校验：Host 的拒绝文案是给开发者看的（「不符合 schema」），
+    // 而用户需要的是「不能大于 17」这类具体原因（见 parseSettingInput 的说明）。
+    const parsed: SettingInputResult = parseSettingInput(item, this.textSettingDraft);
+    if (!parsed.ok || parsed.value === undefined) {
+      this.credentialNote = parsed.message;
+      return;
+    }
+    const key: string = item.key;
+    this.credentialBusy = true;
+    this.credentialNote = `正在写入 ${key}…`;
+    const hub: SessionHub = SessionHub.shared();
+    const result: SettingsWriteResult = await hub.writeSetting(key, parsed.value);
+    this.credentialBusy = false;
+    if (result.outcome === SettingsWriteOutcome.OK) {
+      this.settingWriteNote = result.message;
+      this.closeTextSettingSheet();
+      return;
+    }
+    // 冲突/被拒/失败都留在浮层里：用户需要就地看到原因并改值重试
     this.credentialNote = result.message;
   }
 
@@ -1496,16 +1664,17 @@ struct Index {
             return;
           }
           if (item.choices.length === 0) {
-            // 没有枚举分支的字段（如自由文本 / 数字）：不猜一个编辑器，
-            // 而是说明当前能力边界，避免用户以为点了没反应
-            this.settingWriteNote = `「${item.label}」需要输入值，本客户端暂未提供该编辑器；`
-              + `可在 Host 的设置文档里直接修改 ${key}。`;
+            // 防御分支：列表里的 TEXT 项已直接走 `onEditText`，不会走到这里。
+            this.openTextSettingSheet(item);
             return;
           }
           this.choosingKey = key;
           this.choosingLabel = item.label;
           this.choosingCurrent = current;
           this.choosing = item.choices;
+        },
+        onEditText: (item: SettingItem) => {
+          this.openTextSettingSheet(item);
         },
         onPickModel: () => {
         },

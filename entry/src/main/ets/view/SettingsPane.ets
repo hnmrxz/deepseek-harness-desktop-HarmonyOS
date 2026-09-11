@@ -113,6 +113,9 @@ export struct SettingsPane {
   };
   onPickChoice: (key: string, current: string) => void = () => {
   };
+  /** 打开文本 / 数字设置项的编辑浮层 */
+  onEditText: (item: SettingItem) => void = () => {
+  };
   onPickModel: () => void = () => {
   };
   onPickEffort: (effort: string) => void = () => {
@@ -298,11 +301,21 @@ export struct SettingsPane {
             }
           })
       } else {
-        Text(item.textValue)
+        // TEXT（字符串 / 数字）：**必须可点**才有编辑入口。
+        // 曾经这里只是一个带 `.maxLines(1)` 的静态 `Text`——数据与 kind 都对，
+        // 但没有任何点击处理，于是「文本/数字项可编辑」这件事**只存在于代码里**，
+        // 界面上看不出可以点（UI 导出里该节点没有 clickable 标记）。
+        // 一个不可点的控件等于没有这个功能。
+        Text(item.textValue.length > 0 ? item.textValue : '未设置')
           .fontSize(Fs.SECONDARY)
-          .fontColor($r('sys.color.font_secondary'))
+          .fontColor(item.readOnly ? $r('sys.color.font_tertiary') : $r('sys.color.brand'))
           .maxLines(1)
           .constraintSize({ maxWidth: 160 })
+          .onClick(() => {
+            if (!item.readOnly) {
+              this.onEditText(item);
+            }
+          })
       }
     }
     .width('100%')
@@ -313,7 +326,8 @@ export struct SettingsPane {
   }
 
   @Builder
-  diagnosticsEntry() {    Row({ space: Sp.S }) {
+  diagnosticsEntry() {
+    Row({ space: Sp.S }) {
       SymbolGlyph($r('sys.symbol.bell')).fontSize(16)
         .fontColor([$r('sys.color.brand')])
       Column({ space: 2 }) {
