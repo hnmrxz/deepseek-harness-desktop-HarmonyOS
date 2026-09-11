@@ -308,22 +308,12 @@ export class Connection {
       this.lastError = '未配置 Host 地址';
       return false;
     }
-    if (this.mux === undefined) {
-      this.mux = new RemoteMux(address.wsBaseUrl, () => this.jar.headerFor(address.authority), this.surface);
-      // 底层（RemoteMux）判定物理连接失效时，把事实传上来。
-      // 【为什么必须有这条链路】实测：socket 静默失效时 WebSocket 的 `close`
-      // **可能不来**，只有探活超时/send 失败能发现（见 D2 §8.7.13）。
-      // 若不通知，Connection 会一直停在 CONNECTED —— 诊断页显示「连接 live」
-      // 而底层早已判死，用户看到的是「数据不更新」而不是「掉线」。
-      const mux: RemoteMux = this.mux;
-      mux.setOnSocketDead((reason: string) => {
-        this.handleMuxDead(reason);
-      });
-    }
+    // 【唯一的 mux 创建点】`getMux()` 同时负责注册失效回调，见其说明。
+    const mux: RemoteMux = this.getMux();
     this.setState(ConnectionState.CONNECTING, '正在连接…');
-    const opened: boolean = await this.mux.connectOnce(this.options.muxConnectTimeoutMs);
+    const opened: boolean = await mux.connectOnce(this.options.muxConnectTimeoutMs);
     if (!opened) {
-      this.lastError = this.mux.getLastError() ?? 'WebSocket 连接失败';
+      this.lastError = mux.getLastError() ?? 'WebSocket 连接失败';
       return false;
     }
     return true;
@@ -336,6 +326,37 @@ export class Connection {
   async start(sink: EventSink): Promise<boolean> {
     this.startSink = sink;
     this.reconnector.reset();
+    this.bindEventStream(sink);
+    const ok: boolean = await this.connectOnce();
+    if (!ok) {
+      this.scheduleReconnect(sink);
+      return false;
+    }
+    const stream: EventStream | undefined = this.eventStream;
+    const streamOk: boolean = stream === undefined ? false : stream.open();
+    if (!streamOk) {
+      this.scheduleReconnect(sink);
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * 把事件流绑到**当前**的 mux 上（`start()` 与每次重连都要调用）。
+   *
+   * 【为什么必须每次重连都重建，而不是复用同一个 `EventStream`】
+   *   `EventStream` 在**构造时**就把 `RemoteMux` 实例存了下来。重连会
+   *   `this.mux = undefined` 并创建一个新实例，而事件流若不重建，就仍然指着
+   *   那条**已经死掉的**旧 mux——`open()` 第一句 `this.mux.isOpen()` 恒为 false，
+   *   于是重连循环的表现是：**TCP 连上了、却永远开不了事件流**。
+   *   连带后果是一整条链：`ready` 永不送达 → `CONNECTED` 永不发布 →
+   *   `SessionHub` 永远等不到"载体恢复"事件 → 轨迹流永不重开 → 界面永远停在 degraded。
+   *
+   *   实测症状（本轮定位）：首次静默掉线之后，旁路日志在 **39 秒**里
+   *   **一条重连记录都没有**（连"第 N 次重试"也没有），而同一时刻一元调用是好的。
+   *   这不是"重连没被驱动"，而是"重连在驱动、但每次都在开一条注定失败的事件流"。
+   */
+  private bindEventStream(sink: EventSink): void {
     this.eventStream = new EventStream(this.getMux(), {
       onReady: (facts) => {
         this.setState(ConnectionState.CONNECTED, `已连接（clientId=${facts.clientId}）`);
@@ -352,17 +373,6 @@ export class Connection {
         this.scheduleReconnect(sink);
       }
     }, this.surface);
-    const ok: boolean = await this.connectOnce();
-    if (!ok) {
-      this.scheduleReconnect(sink);
-      return false;
-    }
-    const streamOk: boolean = this.eventStream.open();
-    if (!streamOk) {
-      this.scheduleReconnect(sink);
-      return false;
-    }
-    return true;
   }
 
   private getMux(): RemoteMux {
@@ -370,7 +380,23 @@ export class Connection {
     if (this.mux === undefined) {
       const base: string = address === undefined ? '' : address.wsBaseUrl;
       const authority: string = address === undefined ? '' : address.authority;
-      this.mux = new RemoteMux(base, () => this.jar.headerFor(authority), this.surface);
+      const mux: RemoteMux = new RemoteMux(base, () => this.jar.headerFor(authority), this.surface);
+      /**
+       * 底层（RemoteMux）判定物理连接失效时，把事实传上来。
+       *
+       * 【为什么注册必须放在**创建点**而不是 `connectOnce()` 里】
+       *   实测（本轮定位）：手动「重连」可以恢复，而**自动重连在两分钟里一条记录都没有**。
+       *   原因是创建 mux 有两条路径——`connectOnce()` 与 `getMux()`——而注册只写在
+       *   `connectOnce()` 的 `if (this.mux === undefined)` 分支里。重连路径是
+       *   「先 `bindEventStream()`（内部 `getMux()` 建 mux）→ 再 `connectOnce()`」，
+       *   于是 `connectOnce()` 看到 mux 已存在就**跳过了注册**：
+       *   新 mux 没有失效回调 ⇒ 它下一次静默死亡时**无人知晓**，应用从此冻结。
+       *   创建点只有一个（就是这里），把注册放这里才不会有第二条路径漏掉。
+       */
+      mux.setOnSocketDead((reason: string) => {
+        this.handleMuxDead(reason);
+      });
+      this.mux = mux;
     }
     return this.mux;
   }
@@ -382,6 +408,9 @@ export class Connection {
         await mux.close();
       }
       this.mux = undefined;
+      // 【必须先重建事件流再连】否则事件流仍指向刚被关掉的那条 mux，
+      // `open()` 会因 `isOpen()` 为假而恒失败（详见 `bindEventStream` 的说明）。
+      this.bindEventStream(sink);
       const ok: boolean = await this.connectOnce();
       if (!ok) {
         return false;
