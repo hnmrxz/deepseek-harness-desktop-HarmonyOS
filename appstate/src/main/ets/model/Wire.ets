@@ -1545,6 +1545,22 @@ export function projectFileUpload(value: Object | undefined): FileUploadValue | 
 // ═════════════════════════ 11. 工作区与文件（workspaceFiles/*） ═════════════════════════
 
 /**
+ * 列举**工作区根目录**时 `path` 要填的实参。
+ *
+ * 【这是一条实测事实，不是约定】把根写成空串会被 Host 拒绝：
+ *   `workspaceFiles/list { workspaceFileScopeId, path: '' }`
+ *   → `{"ok":false,"error":{"code":"gateway/bad-request","message":"path is required"}}`
+ * 而 `path: '.'` 正确返回根层条目，且**回复里的 `path` 仍是空串**
+ * （回复说「工作区相对路径」，工作区根就是空串——请求词法与回复词法不是一回事）。
+ *
+ * 【为什么要单独起个常量】`path` 与 `workspaceFileScopeId` 在上游声明里都标必填，
+ * 但「必填」并不告诉你「根该怎么写」。空串是最自然的猜法，而它**静默地**变成一个
+ * 空文件树——用户看到的是「这个目录是空的」，而不是任何错误。
+ * 出处：`.research/protocol/probe-workspace.mjs`（见 D2 §8.7.16）。
+ */
+export const WORKSPACE_ROOT_REQUEST_PATH: string = '.';
+
+/**
  * `workspaceFiles/list` 的 args 载荷。
  *
  * 【`workspaceFileScopeId` 填什么】就是当前会话 id，**不是**工作区 id，

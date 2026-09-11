@@ -133,7 +133,8 @@ import {
   workspaceListEndpoint,
   workspaceListPayload,
   workspaceReadEndpoint,
-  workspaceReadPayload
+  workspaceReadPayload,
+  WORKSPACE_ROOT_REQUEST_PATH
 } from '../model/Wire';
 import type { CommandCandidate, ReferenceCandidate } from '../model/Wire';
 import type { FileNode, FilePreview } from '../model/Workspace';
@@ -356,6 +357,13 @@ export class SessionHub {
 
   private constructor() {
     this.conn = new Connection({ surface: SURFACE });
+    // 【订阅必须只做一次，放在构造里】此前它写在 `connect()` 开头，
+    // 而 `connect()` 会被**每次自动重连与手动重连**调用，于是每重连一次就多一个
+    // 监听者：同一份降级事件被处理 N 次（N = 重连次数）。这类泄漏不会报错，
+    // 只会让日志与状态更新随运行时长越来越重，属于最难在测试里发现的一类。
+    this.conn.onStateChange((state: ConnectionState, detail: string) => {
+      this.handleConnectionState(state, detail);
+    });
   }
 
   // ───────────────────────── 生命周期 ─────────────────────────
@@ -387,14 +395,8 @@ export class SessionHub {
     if (this.phase === HubPhase.LIVE || this.phase === HubPhase.CONNECTING) {
       return this.phase === HubPhase.LIVE;
     }
-    // 【必须订阅连接状态，否则底层判死对本层不可见】
-    // 实测（D4 待收口第 1 项）：底层（`RemoteMux`）静默失效时 `close` **可能不来**，
-    // 只有连接级探活能发现；而这里过去**只**通过事件流的 `onEnd` 感知失败，
-    // 于是出现「探活已经发现失效、横幅仍显示『连接 live』」——
-    // 界面与事实相反。订阅之后，底层的降级能立刻反映到中枢阶段上。
-    this.conn.onStateChange((state: ConnectionState, detail: string) => {
-      this.handleConnectionState(state, detail);
-    });
+    // 【连接状态订阅已在构造函数里做过一次】这里**不再重复订阅**：
+    // 重复订阅会让同一次降级被处理多次，且随重连次数累积。
     this.phase = HubPhase.CONNECTING;
     this.lastError = '';
     this.notify();
@@ -478,6 +480,25 @@ export class SessionHub {
       this.record(`connection degraded: ${detail}`);
       this.notify();
     }
+  }
+
+  /**
+   * 手动重连（D3 §4「已断连」横幅的必需动作）。
+   *
+   * 【为什么自动重连之外还必须有它】自动重试的档位表**有终点**：
+   * 走到「重试已耗尽」就是终态，此后不再有任何自动尝试。
+   * 而问题往往只是 Host 刚重启、网络刚恢复——此时用户唯一的动作竟只能是
+   * **重启应用**，这显然不合规范，也不合直觉。
+   *
+   * 【为什么先 `disconnect()` 而不是直接 `connect()`】`connect()` 在
+   * `CONNECTING` 时会早退（避免并发连接），而「重试耗尽」后底层可能还留着
+   * 半死的 socket 与探活计时器。先显式停干净再重来，重连路径只有一条，
+   * 不会出现「旧的探活计时器把新连接判死」这种交叉。
+   */
+  async reconnect(): Promise<boolean> {
+    this.record('手动重连');
+    await this.disconnect();
+    return await this.connect();
   }
 
   /** 断开并释放所有流（仅一个窗口会调用；其他窗口只订阅快照） */
@@ -1577,7 +1598,8 @@ export class SessionHub {
       return;
     }
     this.fileTreeFor = sessionId;
-    const listing: FileNode[] | undefined = await this.listDirectory('', sessionId);
+    const listing: FileNode[] | undefined =
+      await this.listDirectory(WORKSPACE_ROOT_REQUEST_PATH, '', sessionId);
     if (listing === undefined) {
       this.fileNodes = [];
       this.fileTreeFor = '';
@@ -1595,11 +1617,18 @@ export class SessionHub {
   /**
    * 列出一层目录。
    *
+   * `requestPath` 是**发给 Host 的路径**，`parentPath` 是**用来拼子节点路径的
+   * 工作区相对路径**。两者在根目录上**不相等**：请求必须用
+   * `WORKSPACE_ROOT_REQUEST_PATH`（空串会被 `gateway/bad-request: path is required`
+   * 拒绝），而子节点前缀必须是空串（回复词法里工作区根就是空串）。
+   * 合并成一个参数会让根目录要么列不出来、要么子节点路径变成 `./docs`。
+   *
    * 返回 `undefined` 表示**调用失败**（与「目录为空」严格区分）：
    * 把失败当成空目录会让用户以为目录里没有文件。
    */
-  private async listDirectory(path: string, scope: string): Promise<FileNode[] | undefined> {
-    const payload: Object | undefined = workspaceListPayload(scope, path);
+  private async listDirectory(requestPath: string, parentPath: string,
+    scope: string): Promise<FileNode[] | undefined> {
+    const payload: Object | undefined = workspaceListPayload(scope, requestPath);
     if (payload === undefined) {
       this.record('workspaceFiles 端点不在兼容上表');
       return undefined;
@@ -1607,10 +1636,13 @@ export class SessionHub {
     const result: RpcResult = await this.conn.call(workspaceListEndpoint(), payload);
     if (!result.ok) {
       const code: string = result.error === undefined ? 'unknown' : result.error.code;
-      this.record(`ws list fail ${code}`);
+      const message: string = result.error === undefined ? '' : result.error.message;
+      // 把上游的 message 一起记下来：`gateway/bad-request` 的成因可能是
+      // 「path 必填」（根写成空串）或别的参数问题，而错误码本身不区分它们。
+      this.record(`ws list fail ${code} ${message}`);
       return undefined;
     }
-    const projection = projectWorkspaceListing(result.value, path, this.deliverablePaths());
+    const projection = projectWorkspaceListing(result.value, parentPath, this.deliverablePaths());
     if (projection.truncated) {
       this.fileTruncated = true;
     }
@@ -1649,7 +1681,7 @@ export class SessionHub {
       this.notify();
       return;
     }
-    const children: FileNode[] | undefined = await this.listDirectory(path, scope);
+    const children: FileNode[] | undefined = await this.listDirectory(path, path, scope);
     if (children === undefined) {
       this.lastError = `目录「${path}」列表获取失败（详见诊断页旁路日志）`;
       this.notify();

@@ -1939,6 +1939,20 @@ struct Index {
             .width('100%')
         }
         .layoutWeight(1)
+        // 「手动重连」是 D3 §4 对断连横幅的**必需**动作：
+        // 自动重试有终点（走到「重试已耗尽」就是终态），没有手动入口时
+        // 用户在 Host 刚重启、网络刚恢复这类可恢复场景下只能重启应用。
+        //
+        // 只在确实可以重试时才显示：`idle` 是「还没配置过 Host」，
+        // 此时该做的是「添加 Host」而不是重连（否则按钮点了必然失败）。
+        if (this.hubPhase === HubPhase.DEGRADED) {
+          Text('重连')
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.brand'))
+            .onClick(() => {
+              SessionHub.shared().reconnect();
+            })
+        }
         Text('诊断')
           .fontSize(Fs.CAPTION)
           .fontColor($r('sys.color.brand'))

@@ -247,7 +247,8 @@ export {
   workspaceListEndpoint,
   workspaceListPayload,
   workspaceReadEndpoint,
-  workspaceReadPayload
+  workspaceReadPayload,
+  WORKSPACE_ROOT_REQUEST_PATH
 } from './model/Wire';
 export type {
   AskUserQuestionAnswer,

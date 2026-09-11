@@ -34,7 +34,9 @@ import {
   makeItem,
   NodeKind,
   PreviewKind,
-  Speaker
+  Speaker,
+  workspaceListPayload,
+  WORKSPACE_ROOT_REQUEST_PATH
 } from 'appstate';
 import type {
   DetailSection,
@@ -293,6 +295,20 @@ export default function liveWireTest() {
       };
       expect(n.children.length).assertEqual(0);
       expect(n.deliverable).assertFalse();
+    });
+
+    // ───────────────── 工作区列表的请求词法（实测事实，极易猜错） ─────────────────
+
+    it('workspaceListPayload：根目录的 path 必须是 "."，不是空串', 0, () => {
+      // 实测：空串被 Host 拒绝 ——
+      //   {"ok":false,"error":{"code":"gateway/bad-request","message":"path is required"}}
+      // 而它**静默地**表现为一个空文件树（用户看到「这个目录是空的」，没有任何错误）。
+      // 这条钉住的正是「必填 ≠ 知道根怎么写」这个坑。
+      expect(WORKSPACE_ROOT_REQUEST_PATH).assertEqual('.');
+      const args: Object | undefined = workspaceListPayload('s-1', WORKSPACE_ROOT_REQUEST_PATH);
+      const bag: Record<string, Object> = args as Record<string, Object>;
+      expect(bag['path'] as string).assertEqual('.');
+      expect(bag['workspaceFileScopeId'] as string).assertEqual('s-1');
     });
   });
 }
