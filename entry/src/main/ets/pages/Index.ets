@@ -18,7 +18,14 @@
  */
 
 import { display, router, window } from '@kit.ArkUI';
-import { demoTraceLines } from 'dshcompat';
+import {
+  demoTraceLines,
+  supportedVersionsText,
+  tableStats,
+  upstreamIdentity
+} from 'dshcompat';
+import type { DiagnosticItem, DiagnosticReport } from 'connection';
+import { copyText } from 'platform';
 import {
   APPROVAL_CHOICE_ALLOW_ALWAYS,
   APPROVAL_CHOICE_DENY,
@@ -26,6 +33,7 @@ import {
   CredentialItem,
   detailPanelAvailable,
   DetailSection,
+  DiagEntry,
   DiagReport,
   FileNode,
   FilePreview,
@@ -140,6 +148,42 @@ function reportConnectedHost(baseUrl: string, token: string): void {
   emitter.emit({ eventId: EVENT_HOST_CONNECTED }, { data: payload });
 }
 
+/**
+ * 把 connection 的真实诊断报告投影成诊断页的呈现模型。
+ *
+ * 【为什么不在这里再跑一次版本判定】`Connection.diagnose()` 已经产出
+ * 「端点 / TLS / 认证 / 协议 / Host」五项判定，**其中就包含 Host 版本判定**。
+ * 在这里用 `checkVersion()` 再算一次不但重复，还需要一份运行时 `ProbeTable`——
+ * 而那份探测结果正是 connection 内部的产物，从外面拿不到，硬凑只会得到错误结论。
+ * 因此这里只做两件事：
+ *   1. 逐项搬运**已实测**的判定；
+ *   2. 附上 `dshcompat` 的**静态兼容面事实**（受支持版本矩阵、上表规模）——
+ *      UI 不得自行拼写上游版本号或端点名（D5 §1）。
+ */
+function projectDiagnostics(report: DiagnosticReport): DiagReport {
+  const entries: DiagEntry[] = [];
+  for (let i = 0; i < report.items.length; i++) {
+    const item: DiagnosticItem = report.items[i];
+    entries.push({
+      name: item.name,
+      passed: item.passed,
+      detail: item.detail,
+      advice: item.advice === undefined ? '' : item.advice
+    });
+  }
+  const stats = tableStats();
+  return {
+    entries: entries,
+    healthy: report.healthy,
+    generatedAt: report.generatedAt,
+    versionVerdict: supportedVersionsText(),
+    versionMessage: `本客户端支持的 Host 核心包版本：${supportedVersionsText()}`,
+    versionAdvice: '若 Host 版本不在矩阵内，请按「上游升级手册」的流程升级兼容面。',
+    tableStats: `${stats.endpoints} 个端点 / ${stats.streamEndpoints} 个流式 / ${stats.capabilities} 个能力`,
+    surface: upstreamIdentity()
+  };
+}
+
 /** 单栏下的页面栈 */
 enum StackPage {
   MAIN = 'main',
@@ -243,6 +287,8 @@ struct Index {
   @State hosts: HostRecord[] = [];
   @State models: ModelOption[] = [];
   @State selection: ModelSelection = { provider: '', modelId: '', effort: '' };
+  /** 诊断是否在跑（驱动「重新检测」按钮的忙碌态） */
+  @State diagRunning: boolean = false;
   @State diag: DiagReport = {
     entries: [], healthy: false, generatedAt: 0, versionVerdict: '',
     versionMessage: '', versionAdvice: '', tableStats: '', surface: ''
@@ -521,6 +567,69 @@ struct Index {
       SessionHub.shared().unsubscribe(listener);
       this.hubListener = undefined;
     }
+  }
+
+  /**
+   * 跑一次**真实**连接诊断并把结果接到界面。
+   *
+   * 【为什么必须用真实报告】此前诊断页整页显示的是 `stubDiagnostics()` 的桩数据，
+   * 于是连上真实 Host 后仍然显示 `home=D:/work`、`74 个端点（0.1.2-rc.1）`——
+   * 与真正连着的 Host（`home=C:\Users\aotian`、48 个设置项的 0.1.5-rc.1）**完全不同**。
+   * 一个「诊断页」报出与事实不符的主机信息，比没有诊断页更糟：
+   * 用户会据此判断「连错了 Host」或「版本不匹配」，而两者都不成立。
+   * （本轮就是这么被误导过一次。）
+   *
+   * 结论行仍由 `dshcompat` 提供（UI 不得自行拼写上游端点名，D5 §1），
+   * 五项的判定值来自 `SessionHub.diagnose()` → `Connection.diagnose()`。
+   */
+  /** 打开诊断页：先跑一次**真实**诊断再进入，避免显示上一次或桩的结果 */
+  private openDiagnostics(): void {
+    this.stackPage = StackPage.DIAGNOSTICS;
+    this.runDiagnostics();
+  }
+
+  private async runDiagnostics(): Promise<void> {
+    this.diagRunning = true;
+    const hub: SessionHub = SessionHub.shared();
+    const report: DiagnosticReport = await hub.diagnose();
+    this.diag = projectDiagnostics(report);
+    this.diagRunning = false;
+  }
+
+  /**
+   * 导出诊断报告到剪贴板。
+   *
+   * 只包含判定结论与旁路日志，**不含**消息内容、token、cookie（D1 §11.5 S4）。
+   */
+  private exportDiagnostics(): void {
+    const lines: string[] = [];
+    lines.push(`# DSH 鸿蒙端诊断报告（${new Date().toISOString()}）`);
+    lines.push(`Host: ${this.hubAuthority.length > 0 ? this.hubAuthority : '未配置'}`);
+    lines.push(`阶段: ${this.hubPhase} · 连接=${this.hubConnected}`);
+    lines.push('');
+    for (let i = 0; i < this.diag.entries.length; i++) {
+      const e: DiagEntry = this.diag.entries[i];
+      lines.push(`${e.passed ? '通过' : '失败'}  ${e.name}: ${e.detail}`);
+      if (e.advice.length > 0) {
+        lines.push(`      建议: ${e.advice}`);
+      }
+    }
+    lines.push('');
+    lines.push(`版本判定: ${this.diag.versionVerdict} — ${this.diag.versionMessage}`);
+    lines.push(`端点上表: ${this.diag.tableStats}`);
+    if (this.traceEnabled) {
+      lines.push('');
+      lines.push('## 协议旁路日志');
+      for (let j = 0; j < this.traceLines.length; j++) {
+        lines.push(this.traceLines[j]);
+      }
+    }
+    const text: string = lines.join('\n');
+    copyText(text).then((ok: boolean) => {
+      this.hubError = ok
+        ? '诊断报告已复制到剪贴板（已剔除凭据与消息内容）。'
+        : '复制失败：剪贴板不可用。';
+    });
   }
 
   private recomputeDerived(): void {
@@ -1473,7 +1582,7 @@ struct Index {
 
       // 二级入口：诊断 / 添加 Host / POC
       this.navPanelAction('连接诊断', () => {
-        this.stackPage = StackPage.DIAGNOSTICS;
+        this.openDiagnostics();
       })
       this.navPanelAction('添加 Host', () => {
         this.stackPage = StackPage.CONNECT;
@@ -1543,18 +1652,22 @@ struct Index {
     if (this.stackPage === StackPage.DIAGNOSTICS) {
       DiagnosticsPane({
         report: this.diag,
-        running: false,
+        running: this.diagRunning,
         traceEnabled: this.traceEnabled,
         traceLines: this.traceLines,
         onRerun: () => {
-          this.diag = stubDiagnostics();
+          this.runDiagnostics();
         },
         onToggleTrace: (on: boolean) => {
           this.traceEnabled = on;
-          // 演示行来自兼容面（UI 不得自行拼写上游端点名，D5 §1）
-          this.traceLines = on ? demoTraceLines() : [];
+          // 打开时显示**中枢的真实旁路日志**，而不是演示行。
+          // 演示行只在未连接时作为布局示例出现（见 `applyHubSnapshot`）。
+          this.traceLines = on
+            ? SessionHub.shared().snapshot().trace
+            : [];
         },
         onExportLog: () => {
+          this.exportDiagnostics();
         },
         onClearCache: () => {
         },
@@ -1620,7 +1733,7 @@ struct Index {
         onStartDiscovery: () => {
         },
         onOpenDiagnostics: () => {
-          this.stackPage = StackPage.DIAGNOSTICS;
+          this.openDiagnostics();
         },
         onBack: () => {
           this.stackPage = StackPage.MAIN;
@@ -1766,7 +1879,7 @@ struct Index {
           .fontSize(Fs.CAPTION)
           .fontColor($r('sys.color.brand'))
           .onClick(() => {
-            this.stackPage = StackPage.DIAGNOSTICS;
+            this.openDiagnostics();
           })
       }
       .width('100%')
@@ -1910,7 +2023,7 @@ struct Index {
         onRevokeHost: (id: string) => {
         },
         onOpenDiagnostics: () => {
-          this.stackPage = StackPage.DIAGNOSTICS;
+          this.openDiagnostics();
         }
       })
     }
