@@ -1121,12 +1121,29 @@ struct Index {
         }
         .width('100%')
 
-        Button(this.credentialBusy ? '写入中…' : '写入 Host')
+        Button('写入 Host')
           .width('100%')
           .enabled(!this.credentialBusy)
           .onClick(() => {
             this.submitStructSetting();
           })
+
+        // 「恢复默认」= `unset`：移除该项在 Host 用户层的取值，值回落到 schema 默认。
+        // 【文案必须说成「恢复默认」而不是「清空」】实测 `unset` 的语义是回落默认；
+        // 而「把值设为 null」是另一回事（`null` 在若干 schema 里是合法取值）。
+        // 两者混为一谈会让用户以为自己清空了、实际只是回到默认（或反过来）。
+        // 只有**已被用户覆盖**的项才显示这个入口——对继承默认的项执行 unset 是无操作，
+        // 给它一个按钮等于让用户白点一次。
+        if (this.structSettingItem !== undefined && this.structSettingItem.userSet) {
+          Button('恢复默认（移除这里的设置）')
+            .width('100%')
+            .enabled(!this.credentialBusy)
+            .backgroundColor($r('sys.color.background_secondary'))
+            .fontColor($r('sys.color.warning'))
+            .onClick(() => {
+              this.unsetStructSetting();
+            })
+        }
 
         if (this.credentialNote.length > 0) {
           Text(this.credentialNote)
@@ -1189,6 +1206,32 @@ struct Index {
     const hub: SessionHub = SessionHub.shared();
     // 整值写回：`parsed.value` 已经是完整的新值（见 SettingKind.STRUCT 的说明）
     const result: SettingsWriteResult = await hub.writeSetting(key, parsed.value);
+    this.credentialBusy = false;
+    if (result.outcome === SettingsWriteOutcome.OK) {
+      this.settingWriteNote = result.message;
+      this.closeStructSettingSheet();
+      return;
+    }
+    this.credentialNote = result.message;
+  }
+
+  /**
+   * 「恢复默认」：移除该项在 Host 用户层的取值。
+   *
+   * 与「写入」分开是刻意的：`unset` 是**破坏性**的（用户层的值会消失，
+   * 值回落到 schema 默认，可能与用户当前看到的不同），
+   * 不该和「保存」长得一样、也不该顺手就点到。
+   */
+  private async unsetStructSetting(): Promise<void> {
+    const item: SettingItem | undefined = this.structSettingItem;
+    if (item === undefined) {
+      return;
+    }
+    const key: string = item.key;
+    this.credentialBusy = true;
+    this.credentialNote = `正在恢复 ${key} 的默认值…`;
+    const hub: SessionHub = SessionHub.shared();
+    const result: SettingsWriteResult = await hub.unsetSetting(key);
     this.credentialBusy = false;
     if (result.outcome === SettingsWriteOutcome.OK) {
       this.settingWriteNote = result.message;

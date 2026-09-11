@@ -80,6 +80,7 @@ export {
   SettingValueType,
   SettingsWriteOutcome,
   settingsMutateArgs,
+  settingsUnsetArgs,
   splitSettingKey
 } from './model/Settings';
 export type {

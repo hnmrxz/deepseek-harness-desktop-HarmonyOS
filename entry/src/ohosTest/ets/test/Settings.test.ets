@@ -23,6 +23,7 @@ import {
   SettingOrigin,
   SettingValueType,
   settingsMutateArgs,
+  settingsUnsetArgs,
   splitSettingKey
 } from 'appstate';
 import type { SettingGroup, SettingItem } from 'appstate';
@@ -332,6 +333,36 @@ export default function settingsProjectionTest() {
       expect(entries[0].state.applies).assertEqual('live');
       // 纯展示路径不暴露 revision
       expect(projectSettingsGroups(parseJson(describe)).length).assertEqual(1);
+    });
+
+    /**
+     * `unset` 的实参：`op` 是 `unset`，且**没有** `value` 键。
+     *
+     * 【为什么这条重要】`unset` 与「把值设为 null」语义不同：
+     * 实测 `unset` 会移除该键的**用户层**并让值回落到 schema 默认；
+     * 而 `null` 在若干 schema 里是**合法取值**（存在 `{"type":"const","value":null}`），
+     * 所以 `set null` 只是「设成 null」。若这里给 `unset` 也塞一个 `value`，
+     * 语义就退化成「写 null」，用户以为在恢复默认、实际把值设成了 null。
+     */
+    it('builds an unset operation with no value key', 0, () => {
+      const args = settingsUnsetArgs('llm-deepseek', 'retryPolicy.maxRetries', 3) as Record<string, Object>;
+      expect(args['ns'] as string).assertEqual('llm-deepseek');
+      expect(args['expectedRevision'] as number).assertEqual(3);
+      const ops = args['ops'] as Object[];
+      expect(ops.length).assertEqual(1);
+      const op = ops[0] as Record<string, Object>;
+      expect(op['op'] as string).assertEqual('unset');
+      expect(op['value'] === undefined).assertTrue();
+      const path = op['path'] as Object[];
+      expect(path.length).assertEqual(2);
+      expect(path[0] as string).assertEqual('retryPolicy');
+      expect(path[1] as string).assertEqual('maxRetries');
+    });
+
+    /** `unset` 同样必须带并发令牌（与 `set` 一致，理由同 §5.2） */
+    it('carries the concurrency token on unset too', 0, () => {
+      const args = settingsUnsetArgs('ui-theme', 'preference', 0) as Record<string, Object>;
+      expect(args['expectedRevision'] as number).assertEqual(0);
     });
   });
 

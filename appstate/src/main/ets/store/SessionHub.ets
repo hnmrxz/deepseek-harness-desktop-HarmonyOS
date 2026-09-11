@@ -40,6 +40,8 @@ import {
   ContentSlot,
   eventShapeOf,
   EventFamily,
+  EVENT_CREDENTIALS_REFERENCE_UPDATED,
+  EVENT_SETTINGS_DOCUMENT_UPDATED,
   GATEWAY_ARGUMENTS_INVALID,
   GATEWAY_INPUT_INVALID,
   GATEWAY_SIGNATURE_INVALID,
@@ -97,6 +99,7 @@ import {
   projectPluginInventory,
   projectCredentialRefs,
   settingsMutateArgs,
+  settingsUnsetArgs,
   SettingsWriteOutcome,
   splitSettingKey
 } from '../model/Settings';
@@ -202,6 +205,14 @@ export type HubSubscriber = (snapshot: HubSnapshot) => void;
 const TRACE_LIMIT: number = 300;
 /** 会话列表刷新节流（上游事件可能成串到达） */
 const SESSION_REFRESH_THROTTLE_MS: number = 800;
+/**
+ * 设置刷新节流。
+ *
+ * 比列表刷新长：实测 `settings/document-updated` 在**每次**提交后都会发，
+ * 包括本端自己写的那次。太短会让「本端写 → 事件 → 重拉」与写操作本身的
+ * 重拉叠在一起，白白多打一次 RPC。
+ */
+const SETTINGS_REFRESH_THROTTLE_MS: number = 1200;
 
 export class SessionHub {
   private static instance: SessionHub | undefined;
@@ -291,6 +302,9 @@ export class SessionHub {
   private controlCancel: (() => void) | undefined;
   private lastRefreshAt: number = 0;
   private refreshTimer: number = -1;
+  /** 设置刷新自己的节流状态（与列表刷新分开，理由见 `scheduleSettingsRefresh`） */
+  private lastSettingsRefreshAt: number = 0;
+  private settingsRefreshTimer: number = -1;
 
   private constructor() {
     this.conn = new Connection({ surface: SURFACE });
@@ -510,6 +524,21 @@ export class SessionHub {
       // 中枢只维护会话列表这一项（它被多个页面共享）。
       if (isSessionListEvent(name)) {
         this.scheduleSessionRefresh();
+      }
+      // 设置文档 / 凭据引用被别的客户端（或 Host 自身）改了：拉一次最新状态。
+      //
+      // 【为什么必须处理这两条事件】`settings/describe` 是**读一次就冻结**的快照。
+      // 不接它们时，另一个窗口或另一台设备改了设置，本端界面会一直显示旧值，
+      // 而且**正在编辑的 revision 已经过期**——用户改一次撞一次
+      // `settings/conflict`，却看不出为什么。
+      // `credentials/reference-updated` 同理：别的客户端新增/删除凭据后，
+      // 本端的 refs 列表（它只来自 `settings/describe`）会多一项或少一项。
+      //
+      // 【为什么要节流】实测 `settings/document-updated` 在每次提交后都会发
+      // （**包括本端自己写的那次**）。不节流会与写操作自身的重拉叠在一起，
+      // 白白多打一次 RPC。节流让一串连改合并成一次读取。
+      if (name === EVENT_SETTINGS_DOCUMENT_UPDATED || name === EVENT_CREDENTIALS_REFERENCE_UPDATED) {
+        this.scheduleSettingsRefresh();
       }
       return;
     }
@@ -802,6 +831,32 @@ export class SessionHub {
   }
 
   /**
+   * 节流地重新读取设置。
+   *
+   * 与 `scheduleSessionRefresh` 同样的形状，但用**独立的计时器与时间戳**：
+   * 两类刷新由不同事件驱动、频率也不同（设置改动远少于会话活动）。
+   * 共用一个时间戳会让「刚刷过会话列表」把设置刷新一起压掉——
+   * 表现为另一个客户端改了设置而本端半天不动。
+   */
+  private scheduleSettingsRefresh(): void {
+    const now: number = Date.now();
+    if (now - this.lastSettingsRefreshAt < SETTINGS_REFRESH_THROTTLE_MS) {
+      if (this.settingsRefreshTimer !== -1) {
+        return;
+      }
+      const wait: number = SETTINGS_REFRESH_THROTTLE_MS - (now - this.lastSettingsRefreshAt);
+      this.settingsRefreshTimer = setTimeout(() => {
+        this.settingsRefreshTimer = -1;
+        this.lastSettingsRefreshAt = Date.now();
+        this.refreshSettings();
+      }, wait);
+      return;
+    }
+    this.lastSettingsRefreshAt = now;
+    this.refreshSettings();
+  }
+
+  /**
    * 写入一个 Host 设置项（`settings/mutate`，按路径 set 单个字段）。
    *
    * 【为什么必须带 `expectedRevision`】上游把「并发写」做成一种**独立结果**
@@ -891,9 +946,77 @@ export class SessionHub {
     };
   }
 
+  /**
+   * 删除一个 Host 设置项在**用户层**的取值（`settings/mutate` 的 `unset`）。
+   *
+   * 语义是「恢复默认」而不是「清空」：实测该键的用户层被移除后，
+   * 值回落到 schema 默认（`.research/protocol/probe-deep-path.mjs`）。
+   * 这一点必须在界面文案上说清——用户以为自己在清空、实际在恢复默认
+   * （或反过来）都会造成困惑。
+   */
+  async unsetSetting(key: string): Promise<SettingsWriteResult> {
+    const parts: SettingsKeyParts | undefined = splitSettingKey(key);
+    if (parts === undefined) {
+      return {
+        outcome: SettingsWriteOutcome.FAILED, actualRevision: -1,
+        message: `设置项标识「${key}」无法解析出命名空间，已拒绝操作。`
+      };
+    }
+    const state: SettingsNamespaceState | undefined = this.namespaceState(parts.ns);
+    if (state === undefined) {
+      return {
+        outcome: SettingsWriteOutcome.FAILED, actualRevision: -1,
+        message: `Host 上没有名为「${parts.ns}」的设置命名空间。请重新连接以刷新设置清单。`
+      };
+    }
+    if (!state.writable) {
+      return {
+        outcome: SettingsWriteOutcome.REJECTED, actualRevision: state.revision,
+        message: 'Host 不接受对这项设置的写入（可能是只读来源）。'
+      };
+    }
+    if (!this.unaryReady) {
+      return {
+        outcome: SettingsWriteOutcome.FAILED, actualRevision: state.revision,
+        message: '尚未连接 Host，未做改动。请先完成连接后重试。'
+      };
+    }
+    const args: Object = settingsUnsetArgs(parts.ns, parts.fieldPath, state.revision);
+    const result: RpcResult = await this.conn.call(SETTINGS_MUTATE_ENDPOINT, args);
+    if (result.ok) {
+      await this.refreshSettings();
+      this.record(`settings/unset ok ${key}`);
+      this.notify();
+      return { outcome: SettingsWriteOutcome.OK, actualRevision: state.revision, message: `已恢复 ${key} 的默认值。` };
+    }
+    const failure: RemoteFailure | undefined = result.error;
+    const code: string = failure === undefined ? 'unknown' : failure.code;
+    if (code === SETTINGS_CONFLICT) {
+      const actual: number = this.conflictActualRevision(failure);
+      this.record(`settings/unset conflict ${key} expected=${state.revision} actual=${actual}`);
+      await this.refreshSettings();
+      return {
+        outcome: SettingsWriteOutcome.CONFLICT, actualRevision: actual,
+        message: '这项设置已被其他客户端改过，你的界面是旧的。已重新读取最新值，请确认后再操作。'
+      };
+    }
+    if (code === SETTINGS_REJECTED) {
+      this.record(`settings/unset rejected ${key}`);
+      await this.refreshSettings();
+      return {
+        outcome: SettingsWriteOutcome.REJECTED, actualRevision: state.revision,
+        message: 'Host 拒绝了这个操作（该键可能不允许删除，或是必填项）。已重新读取最新值。'
+      };
+    }
+    this.record(`settings/unset fail ${key} ${code}`);
+    return {
+      outcome: SettingsWriteOutcome.FAILED, actualRevision: state.revision,
+      message: `未生效：${friendlyFailure(code, failure === undefined ? '' : failure.message)}`
+    };
+  }
+
   /** 重新拉一次 `settings/describe`（只刷新设置页与凭据，不做其它副作用） */
-  async refreshSettings(): Promise<void> {
-    const empty: Record<string, Object> = {};
+  async refreshSettings(): Promise<void> {    const empty: Record<string, Object> = {};
     const args: Object | undefined = argsFor(SETTINGS_DESCRIBE_ENDPOINT, empty as Object);
     if (args === undefined) {
       return;

@@ -687,6 +687,43 @@ export function settingsMutateArgs(ns: string, fieldPath: string, value: Object,
 }
 
 /**
+ * 构造 `settings/mutate` 的**删除**实参（`{op:'unset', path}`）。
+ *
+ * 【`unset` 与「把值设为 null」的区别——这决定文案怎么写】
+ *   实测：`{op:'unset', path:['retryPolicy','maxRetries']}` 成功，且该键的
+ *   **用户层被移除、值回落到 schema 默认**（实测回读到默认值 5）。
+ *   而 `{op:'set', path:[...], value:null}` 只是把值设成 `null`——
+ *   `null` 在若干 schema 里是**合法取值**（实测存在 `{"type":"const","value":null}`），
+ *   所以那是「设成 null」，不是「删掉」。
+ *   界面上必须说成「恢复默认」而不是「清空为 null」，否则语义是错的。
+ */
+export function settingsUnsetArgs(ns: string, fieldPath: string, expectedRevision: number): Object {
+  const segments: string[] = [];
+  let start: number = 0;
+  while (start <= fieldPath.length) {
+    const dot: number = fieldPath.indexOf('.', start);
+    const end: number = dot < 0 ? fieldPath.length : dot;
+    const segment: string = fieldPath.substring(start, end);
+    if (segment.length > 0) {
+      segments.push(segment);
+    }
+    if (dot < 0) {
+      break;
+    }
+    start = dot + 1;
+  }
+  const op: Record<string, Object> = {};
+  op['op'] = 'unset';
+  op['path'] = segments;
+  const ops: Object[] = [op as Object];
+  const args: Record<string, Object> = {};
+  args['ns'] = ns;
+  args['ops'] = ops;
+  args['expectedRevision'] = expectedRevision;
+  return args as Object;
+}
+
+/**
  * 把设置项的 key 拆成「命名空间 + 字段路径」（第一个点之前是命名空间）。
  * 拆不开时返回 undefined——调用方应**拒绝**这次写，而不是猜一个命名空间出来。
  */
