@@ -83,6 +83,7 @@ export type {
   AboutInfo,
   ConnectionBanner,
   CredentialItem,
+  CredentialWriteResult,
   DiagEntry,
   DiagReport,
   HostRecord,

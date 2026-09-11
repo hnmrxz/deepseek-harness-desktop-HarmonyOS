@@ -50,6 +50,9 @@ import {
   mayChangeSessionTitle,
   mayChangeTurnState,
   CREDENTIALS_DESCRIBE_ENDPOINT,
+  CREDENTIALS_SET_ENDPOINT,
+  CREDENTIALS_UNSET_ENDPOINT,
+  CREDENTIAL_REJECTED,
   MODEL_CATALOG_ENDPOINT,
   PLUGIN_INVENTORY_ENDPOINT,
   PROJECTION_TITLE,
@@ -99,6 +102,7 @@ import {
 } from '../model/Settings';
 import type {
   CredentialItem,
+  CredentialWriteResult,
   ModelOption,
   ModelSelection,
   PluginItem,
@@ -900,6 +904,121 @@ export class SessionHub {
     }
     this.applySettingsDescribe(described.value);
     this.notify();
+  }
+
+  /**
+   * 写入一份凭据（`credentials/set`）。
+   *
+   * 【本客户端**绝不保存**这份明文】它只在一次 `set` 调用里存在，
+   * 之后立刻从内存里消失（D1 §11.5 S3/S4：端侧不保存也不显示明文值）。
+   * 真正持有它的是 Host 的凭据存储。
+   *
+   * 【成功回复是 `{ok:true}`——没有 `value` 键】不能用「有没有 value」判成败：
+   * 那会把每一次成功都判为畸形响应（D2b §4.1 / D2 §8.7.6 缺陷 2）。
+   * 解析层已按键存在性处理，这里只看 `result.ok`。
+   *
+   * @param ref - 凭据引用（实测编码：`path.join('.')`，**不带命名空间前缀**）
+   * @param value - 明文值；调用方用完即弃，不要存进任何状态
+   */
+  async setCredential(ref: string, value: string): Promise<CredentialWriteResult> {
+    if (ref.length === 0 || value.length === 0) {
+      return { ok: false, message: '凭据引用或值不能为空。' };
+    }
+    if (!this.unaryReady) {
+      return { ok: false, message: '尚未连接 Host，值没有写入。请先完成连接后重试。' };
+    }
+    const args: Record<string, Object> = {};
+    args['ref'] = ref;
+    args['value'] = value;
+    const result: RpcResult = await this.conn.call(CREDENTIALS_SET_ENDPOINT, args as Object);
+    if (result.ok) {
+      // 写完立刻回读状态：界面要显示的是**Host 的实际状态**，
+      // 而不是「我们认为写成功了」。实测 `source` 会变成写入目标（如 `file`）。
+      await this.refreshCredentials();
+      this.record(`credentials/set ok ${ref} 快照已配置=${this.countConfiguredCredentials()}`);
+      this.notify();
+      return { ok: true, message: `已写入 ${ref}。明文没有留在本机。` };
+    }
+    const failure: RemoteFailure | undefined = result.error;
+    const code: string = failure === undefined ? 'unknown' : failure.code;
+    this.record(`credentials/set fail ${ref} ${code}`);
+    if (code === CREDENTIAL_REJECTED) {
+      // 上游只回传 `ref`，不回传任何值——这里也不能把它打印出来
+      return {
+        ok: false,
+        message: `${ref} 被 Host 拒绝：可能是只读来源（例如环境变量）遮蔽了这个引用。`
+          + '请在 Host 侧检查该引用的来源后重试。'
+      };
+    }
+    return { ok: false, message: `写入未生效：${friendlyFailure(code, failure === undefined ? '' : failure.message)}` };
+  }
+
+  /**
+   * 删除一份凭据（`credentials/unset`）。
+   *
+   * 【为什么需要显式确认】这是**破坏性**操作：Host 侧的值会被删除，
+   * 依赖它的功能（例如联网搜索）会立刻失效。调用方必须来自一次明确的用户确认。
+   */
+  async unsetCredential(ref: string): Promise<CredentialWriteResult> {
+    if (ref.length === 0) {
+      return { ok: false, message: '凭据引用不能为空。' };
+    }
+    if (!this.unaryReady) {
+      return { ok: false, message: '尚未连接 Host，未做改动。请先完成连接后重试。' };
+    }
+    const args: Record<string, Object> = {};
+    args['ref'] = ref;
+    const result: RpcResult = await this.conn.call(CREDENTIALS_UNSET_ENDPOINT, args as Object);
+    if (result.ok) {
+      await this.refreshCredentials();
+      this.record(`credentials/unset ok ${ref} 快照已配置=${this.countConfiguredCredentials()}`);
+      this.notify();
+      return { ok: true, message: `已清除 ${ref}。` };
+    }
+    const failure: RemoteFailure | undefined = result.error;
+    const code: string = failure === undefined ? 'unknown' : failure.code;
+    this.record(`credentials/unset fail ${ref} ${code}`);
+    if (code === CREDENTIAL_REJECTED) {
+      return { ok: false, message: `${ref} 被 Host 拒绝删除：该引用由只读来源提供。` };
+    }
+    return { ok: false, message: `清除未生效：${friendlyFailure(code, failure === undefined ? '' : failure.message)}` };
+  }
+
+  /** 已配置的凭据数（诊断用；凭据写入后界面没变时靠它区分「Host 说没配置」与「我们没刷新」） */
+  private countConfiguredCredentials(): number {
+    let configured: number = 0;
+    for (let i = 0; i < this.credentials.length; i++) {
+      if (this.credentials[i].configured) {
+        configured++;
+      }
+    }
+    return configured;
+  }
+
+  /** 重新拉一次凭据状态（`settings/describe` 取 refs → `credentials/describe` 取状态） */
+  async refreshCredentials(): Promise<void> {
+    if (this.credentialRefs.length === 0) {
+      this.credentials = [];
+      return;
+    }
+    const credArgs: Record<string, Object> = {};
+    credArgs['refs'] = this.credentialRefs;
+    const creds: RpcResult = await this.conn.call(CREDENTIALS_DESCRIBE_ENDPOINT, credArgs as Object);
+    if (creds.ok) {
+      this.credentials = projectCredentials(creds.value, this.credentialRefs);
+      // 记下**回读到的**状态：凭据写入成功但界面没变时，这行是唯一能区分
+      // 「Host 说没配置」与「我们没刷新」的证据（实测靠它定位过）。
+      let configured: number = 0;
+      for (let i = 0; i < this.credentials.length; i++) {
+        if (this.credentials[i].configured) {
+          configured++;
+        }
+      }
+      this.record(`credentials 回读 refs=${this.credentialRefs.length} 已配置=${configured}`);
+    } else {
+      const f = creds.error;
+      this.record(`credentials 回读失败 ${f === undefined ? '?' : f.code}`);
+    }
   }
 
   /** 在命名空间台账里找写状态 */

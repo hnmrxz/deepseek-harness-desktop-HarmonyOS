@@ -46,6 +46,53 @@ function choiceLabel(item: SettingItem): string {
   return item.textValue.length > 0 ? item.textValue : '未设置';
 }
 
+/**
+ * 凭据项右侧的动作文案（模块级纯函数）。
+ *
+ * 三种情况都必须给出**明确**的一个词，不留空白：
+ *   - 线协议支持交互式授权（当前实测没有这个字段，恒为 false）→ 授权/重新授权；
+ *   - 只读来源（`writable === false`）→ 「只读」；
+ *   - 其余可写项 → 配置/更换（走 `credentials/set`）。
+ *
+ * 【为什么以前这里是空白】更早的实现只渲染 `interactive` 分支，而线协议里
+ * **没有**「是否支持交互式授权」这个字段（`projectCredentials` 因此一律置 false）——
+ * 于是每一项既没有按钮也没有说明，用户看到的是「凭据页什么都做不了」。
+ *
+ * 【为什么是模块级纯函数而不是 struct 方法】实测：写成 struct 方法时，
+ * `configured` 变化后 `ForEach` 内的行**不重新求值**（诊断输出显示组件已收到
+ * `cfg=true`，按钮文字却仍是「配置」）。同文件里的 `choiceLabel()` 是模块级纯函数、
+ * 工作正常。**在 `@Builder` 内联表达式里调用 struct 方法不可靠**——
+ * 依赖追踪没有覆盖到方法体内部读的字段。
+ * 这与「条件渲染各分支结构相同时会被复用」是同一类问题的两种表现：
+ * ArkUI 只在它**看得见的**表达式上建立依赖。
+ */
+function credentialActionLabel(c: CredentialItem): string {
+  if (c.interactive) {
+    return c.configured ? '重新授权' : '授权';
+  }
+  if (!c.writable) {
+    return '只读';
+  }
+  return c.configured ? '更换' : '配置';
+}
+
+/**
+ * `ForEach` 的行 key。
+ *
+ * 【为什么不是 `c.ref`】实测：只用 `ref` 作 key 时，`credentials/describe` 回读到
+ * `configured` 从 true 变成 false，界面上的按钮文案**仍是「更换」**
+ * （诊断输出同时显示组件已收到 `cfg=false`——数据对了，行没重建）。
+ * `ref` 在这种变化下**没有变**，于是 ArkUI 认为这一行没变，直接复用了旧节点。
+ *
+ * 把**影响这一行渲染的字段**都编进 key，等于告诉 ArkUI「这些值变了就要重建」
+ * （这里的代价可以忽略：凭据项是个位数量级，重建一行没有可感开销）。
+ * 一般化的教训：`ForEach` 的 key 必须覆盖该行的**全部渲染输入**，
+ * 只用「业务主键」在数据可变时会得到静默的旧界面。
+ */
+function credentialRowKey(c: CredentialItem): string {
+  return `${c.ref}|${c.configured}|${c.writable}|${c.interactive}|${c.source}`;
+}
+
 @Component
 export struct SettingsPane {
   @Prop groups: SettingGroup[] = [];
@@ -439,26 +486,29 @@ export struct SettingsPane {
         }
         .layoutWeight(1)
 
-        if (c.interactive) {
-          Text(c.configured ? '重新授权' : '授权')
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.brand'))
-            .onClick(() => {
+        // 【为什么不写成 if/else 分支】实测：把三个分支各写一个 `Text` 时，
+        // `configured` 从 true 变回 false 后界面**仍停留在旧分支**上
+        // （诊断输出显示组件已收到 `cfg=false`，而按钮文字还是「更换」）。
+        // 三个分支的结构完全相同（都是 `Text`），ArkUI 复用了旧的渲染节点。
+        // 压成一个 `Text` 之后，文案随状态重算，不再有分支可被复用。
+        // 教训：条件渲染的**各分支结构不同**时才用分支；只是文案不同就用三元表达式。
+        Text(credentialActionLabel(c))
+          .fontSize(Fs.CAPTION)
+          .fontColor(c.writable ? $r('sys.color.brand') : $r('sys.color.font_tertiary'))
+          .onClick(() => {
+            if (c.writable && !c.interactive) {
               this.onAuthorizeCredential(c.ref);
-            })
-        } else if (!c.writable) {
-          Text('只读')
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_tertiary'))
-        }
+            }
+          })
       }
       .width('100%')
       .padding(Sp.M)
       .borderRadius(Radius.M)
       .backgroundColor($r('sys.color.background_secondary'))
-    }, (c: CredentialItem) => c.ref)
+    }, (c: CredentialItem) => credentialRowKey(c))
   }
 
+  /** 凭据项的说明文字 */
   private credentialHint(c: CredentialItem): string {
     if (c.configured) {
       const source: string = c.source.length > 0 ? `来源：${c.source}` : '已配置';

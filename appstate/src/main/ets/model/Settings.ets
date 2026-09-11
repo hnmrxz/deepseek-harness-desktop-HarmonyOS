@@ -116,8 +116,7 @@ export interface SettingsGroupEntry {
   state: SettingsNamespaceState;
 }
 
-/** 写操作的结果（用于界面给出**可执行**的提示，而不是笼统的「失败」） */
-export enum SettingsWriteOutcome {
+/** 写操作的结果（用于界面给出**可执行**的提示，而不是笼统的「失败」） */export enum SettingsWriteOutcome {
   /** 写入成功，Host 已接受 */
   OK = 'ok',
   /** 版本冲突：别的客户端改过，需要重新读取后再改（重试同一请求永远失败） */
@@ -135,6 +134,19 @@ export interface SettingsWriteResult {
   message: string;
   /** 冲突时的实际 revision（若 Host 给出） */
   actualRevision: number;
+}
+
+/**
+ * 凭据写入的结果。
+ *
+ * 与 `SettingsWriteResult` 分开：凭据写入没有 revision/冲突概念，
+ * 强行复用会带上一堆永远为空的字段（而空字段正是「这格没测过」
+ * 与「这格确实没有」无法区分的原因）。
+ */
+export interface CredentialWriteResult {
+  ok: boolean;
+  /** 用户可读的一句话（含发生了什么事 + 可以做什么） */
+  message: string;
 }
 
 // ───────────────── 从 Host 的 settings/describe 生成设置项 ─────────────────
@@ -646,6 +658,13 @@ export function projectPluginInventory(value: Object | undefined): PluginItem[] 
  * `"apiKey"` 命中，而看起来更自然的 `"<ns>:apiKey"` 被 `gateway/bad-request` 拒绝。
  * 这里按实测编码拼接；若上游改变编码，失败会表现为「凭据全部显示未配置」——
  * 一个不报错只撒谎的形态，因此本函数的上游出处必须在升级时重点复核。
+ *
+ * ⚠️ **只取 `path`，绝不要读同一个对象里的 `set`。** 实测（2026-09-11）：
+ * 对同一个 Host 连续做 `credentials/set`（→ `configured: true, source: "file"`）
+ * 与 `credentials/unset`（→ `configured: false`），`settings/describe` 的
+ * `secrets[].set` **始终是 `false`**。它表达的是「这个 secret 槽位**是否存在**」，
+ * 不是「是否已配置」。拿它当配置状态用会让界面**永远显示未配置**，
+ * 而真正的状态在 `credentials/describe`（那一份会如实变化）。
  */
 export function projectCredentialRefs(value: Object | undefined): string[] {
   const out: string[] = [];
@@ -686,11 +705,19 @@ export function projectCredentialRefs(value: Object | undefined): string[] {
  * 实测形状：`{"<ref>": {configured, source?, writable}}`——一个**以 ref 为键的映射**。
  * 因此必须把 `refs` 一起传入：不能靠遍历回复的键还原顺序（Host 只会回应被请求的 ref）。
  *
+ * 实测（2026-09-11）这一份状态是**活的**：
+ *   - 未配置时 `{configured:false, writable:true}`，且 `source` **缺省**；
+ *   - `credentials/set` 之后 `{configured:true, source:"file", writable:true}`；
+ *   - `credentials/unset` 之后回到 `{configured:false, writable:true}`。
+ * 因此**配置状态的唯一权威来源就是这里**（`settings/describe` 的 `secrets[].set`
+ * 在同样的操作下始终为 false，见 `projectCredentialRefs` 的说明）。
+ *
  * 三个取舍：
  *   - `source` 在**未配置时缺省**（可选字段）。不能当成空串来源，
  *     否则界面会把「没有来源信息」显示成一个来源；这里仅在存在时赋值。
  *   - `interactive`（是否支持交互式授权）**线协议里没有对应字段**，一律置 false
  *     并在此说明——凭空假定为 true 会渲染出一个并不存在的「去授权」按钮。
+ *     注意：这不代表凭据不可写；可写性由 `writable` 表达（实测有可写的 ref）。
  *   - Host 未描述某条 ref 时**保留一个「未配置」条目**而不是丢掉：
  *     丢掉会让用户以为 Host 上根本没有这项凭据。
  */

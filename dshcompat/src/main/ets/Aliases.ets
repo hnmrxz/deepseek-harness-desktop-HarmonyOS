@@ -109,6 +109,18 @@ export const MODEL_CATALOG_ENDPOINT: string = 'session/modelCatalog';
 export const PLUGIN_INVENTORY_ENDPOINT: string = 'pluginInventory/list';
 /** 凭据描述 */
 export const CREDENTIALS_DESCRIBE_ENDPOINT: string = 'credentials/describe';
+/**
+ * 凭据写入。
+ *
+ * 【成功回复是 `{ok:true}`，没有 `value` 键】上游把它的 `typeSymbol` 标为 `void`，
+ * `JSON.stringify` 会把 `value: undefined` 丢掉（D2b §4.1）。因此
+ * **不能用「有没有 value」判断成败**——那会把每一次成功都当失败。
+ * 解析层已按「键存在性」区分「没有 value 键」与「有 value 键但值为 null」
+ * （见 D2 §8.7.6 缺陷 2 的同类陷阱）。
+ */
+export const CREDENTIALS_SET_ENDPOINT: string = 'credentials/set';
+/** 凭据删除（同样是 `void` 回复） */
+export const CREDENTIALS_UNSET_ENDPOINT: string = 'credentials/unset';
 
 // ── 0.1.5-rc.1 新增端点（升级时新增；老 Host 上会 404，由能力探测降级） ──
 

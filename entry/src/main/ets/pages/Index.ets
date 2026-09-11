@@ -77,6 +77,7 @@ import {
  * 与值导入分开写更贴近 ArkTS 的类型/值导入区分。
  */
 import type {
+  CredentialWriteResult,
   HubSnapshot,
   HubSubscriber,
   SettingChoice,
@@ -172,6 +173,27 @@ struct Index {
   @State choosingKey: string = '';
   @State choosingLabel: string = '';
   @State choosingCurrent: string = '';
+  /**
+   * 正在编辑的凭据引用（空串 = 没有在编辑）。
+   *
+   * 【为什么先起编辑态再写】写凭据是**破坏性**操作（`credentials/unset` 会删掉
+   * Host 侧的值，依赖它的功能立刻失效）。要求用户先明确进入编辑态再提交，
+   * 比「点一下就直接写」多一道有意的摩擦。
+   */
+  @State credentialRef: string = '';
+  /** 待写入的凭据明文。**只在这里存在**：提交后立刻清空，不进任何持久状态。 */
+  @State credentialDraft: string = '';
+  /**
+   * 凭据浮层自己的结果/进度文案。
+   *
+   * 【为什么不用共享的 `settingWriteNote`】那个字段被列表上方的回显与设置写入共用，
+   * 而浮层盖住了列表——把结果写进一个**看不见**的地方，失败就变成了静默失败。
+   * 实测踩到过：写入没有到达 Host，而界面上没有任何提示。
+   * 每个会盖住内容的界面都必须有自己的结果出口。
+   */
+  @State credentialNote: string = '';
+  /** 凭据请求进行中（防重复提交；不复用 `connectBusy`，那是连接的状态） */
+  @State credentialBusy: boolean = false;
   @State credentials: CredentialItem[] = [];
   @State plugins: PluginItem[] = [];
   @State hosts: HostRecord[] = [];
@@ -597,6 +619,9 @@ struct Index {
       if (this.choosing !== undefined) {
         this.choiceSheet()
       }
+      if (this.credentialRef.length > 0) {
+        this.credentialSheet()
+      }
     }
     .width('100%')
     .height('100%')
@@ -685,6 +710,152 @@ struct Index {
     const key: string = this.choosingKey;
     this.choosing = undefined;
     this.writeSetting(key, value as Object, this.choosingLabel);
+  }
+
+  // ───────────────────── 凭据写入浮层 ─────────────────────
+
+  /**
+   * 凭据编辑浮层。
+   *
+   * 三条刻意的设计：
+   *   1. **输入框是密码型**（`InputType.Password`）：凭据值不该在有人旁观时明文显示，
+   *      也不该被输入法学习/记录（`enableAutoFill(false)` 关掉自动填充联想）。
+   *   2. **明确写出「明文只在本机内存里存在一次」**：用户有权知道他们的密钥
+   *      去了哪里——写到 Host 的凭据存储，本客户端不留副本（D1 §11.5 S3/S4）。
+   *      不写这句，用户会合理地担心自己的密钥被留在了手机上。
+   *   3. **清除是单独的、二次确认的动作**：删除凭据会让依赖它的功能立刻失效，
+   *      不该和「保存」长得一样。
+   */
+  @Builder
+  credentialSheet() {
+    Column() {
+      Column({ space: Sp.S }) {
+        Text(`配置 ${this.credentialRef}`)
+          .fontSize(Fs.BODY)
+          .width('100%')
+        Text('值会写入 Host 的凭据存储；本客户端只在这一次请求里持有明文，不会保存副本。')
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.font_tertiary'))
+          .width('100%')
+
+        TextInput({ placeholder: '粘贴凭据值', text: this.credentialDraft })
+          .type(InputType.Password)
+          .enableAutoFill(false)
+          .width('100%')
+          .onChange((v: string) => {
+            this.credentialDraft = v;
+          })
+
+        Row({ space: Sp.S }) {
+          Button('取消')
+            .layoutWeight(1)
+            .backgroundColor($r('sys.color.background_secondary'))
+            .fontColor($r('sys.color.font_primary'))
+            .enabled(!this.credentialBusy)
+            .onClick(() => {
+              this.closeCredentialSheet();
+            })
+          Button(this.credentialBusy ? '写入中…' : '保存到 Host')
+            .layoutWeight(1)
+            .enabled(this.credentialDraft.length > 0 && !this.credentialBusy)
+            .onClick(() => {
+              this.submitCredential();
+            })
+        }
+        .width('100%')
+
+        if (this.credentialConfigured) {
+          Button('清除 Host 上的这项凭据')
+            .width('100%')
+            .enabled(!this.credentialBusy)
+            .backgroundColor($r('sys.color.background_secondary'))
+            .fontColor($r('sys.color.warning'))
+            .onClick(() => {
+              this.clearCredential();
+            })
+        }
+
+        if (this.credentialNote.length > 0) {
+          Text(this.credentialNote)
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.font_secondary'))
+            .width('100%')
+        }
+      }
+      .width('86%')
+      .padding(Sp.L)
+      .borderRadius(Radius.L)
+      .backgroundColor($r('sys.color.background_secondary'))
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .backgroundColor('rgba(0,0,0,0.35)')
+  }
+
+  private closeCredentialSheet(): void {
+    this.credentialRef = '';
+    // 清掉草稿：明文不该因为「关掉了浮层」而继续留在状态里
+    this.credentialDraft = '';
+    this.credentialNote = '';
+    this.credentialBusy = false;
+  }
+
+  /** 当前编辑的凭据是否已配置（决定是否显示「清除」） */
+  private credentialConfigured: boolean = false;
+
+  private openCredentialSheet(ref: string): void {
+    for (let i = 0; i < this.credentials.length; i++) {
+      if (this.credentials[i].ref === ref) {
+        this.credentialConfigured = this.credentials[i].configured;
+      }
+    }
+    this.credentialDraft = '';
+    this.credentialNote = '';
+    this.credentialBusy = false;
+    this.credentialRef = ref;
+  }
+
+  private async submitCredential(): Promise<void> {
+    const ref: string = this.credentialRef;
+    const value: string = this.credentialDraft;
+    // 先清草稿再发请求：请求发出后明文就不再需要留在内存里，
+    // 也避免用户重复点击导致重复写入。
+    this.credentialDraft = '';
+    this.credentialBusy = true;
+    this.credentialNote = `正在写入 ${ref}…`;
+    const hub: SessionHub = SessionHub.shared();
+    const result: CredentialWriteResult = await hub.setCredential(ref, value);
+    this.credentialBusy = false;
+    if (result.ok) {
+      // 【成功时必须关掉浮层】`HubSnapshot` 里没有凭据写入的结果字段，
+      // 而浮层盖住了凭据列表——用户看不到状态已经变成「已配置」，
+      // 会以为写入没生效（实测踩到：Host 已经 configured=true，
+      // 而界面还停在浮层上）。
+      // 关掉浮层让列表回到视野，成功信息写到列表上方那条回显里。
+      this.settingWriteNote = result.message;
+      this.closeCredentialSheet();
+      this.applyHubSnapshot(hub.snapshot());
+      return;
+    }
+    // 失败留在浮层里：用户需要就地改值重试，而不是被赶回列表
+    this.credentialNote = result.message;
+  }
+
+  private async clearCredential(): Promise<void> {
+    const ref: string = this.credentialRef;
+    this.credentialBusy = true;
+    this.credentialNote = `正在清除 ${ref}…`;
+    const hub: SessionHub = SessionHub.shared();
+    const result: CredentialWriteResult = await hub.unsetCredential(ref);
+    this.credentialBusy = false;
+    if (result.ok) {
+      this.settingWriteNote = result.message;
+      this.closeCredentialSheet();
+      this.applyHubSnapshot(hub.snapshot());
+      return;
+    }
+    this.credentialNote = result.message;
   }
 
   // ───────────────────── 单栏（手机） ─────────────────────
@@ -1344,6 +1515,7 @@ struct Index {
           };
         },
         onAuthorizeCredential: (ref: string) => {
+          this.openCredentialSheet(ref);
         },
         onPairHost: () => {
           this.stackPage = StackPage.CONNECT;
