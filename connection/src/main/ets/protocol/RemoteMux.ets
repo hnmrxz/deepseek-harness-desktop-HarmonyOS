@@ -45,13 +45,23 @@ export enum MuxState {
 }
 
 /**
- * `error` 事件之后的**活性宽限期**（毫秒）。
+ * 【已废弃的机制，保留此说明以免被重新发明】曾经用一段 6 s 的「活性宽限期」
+ * 来判断 `error` 事件之后链路是否真的断了：宽限期内没收到**数据帧**就判死。
  *
- * 依据：服务端每 2 s 发一次 Ping（文件头的「心跳事实」），所以 6 s 内至少应有一个
- * 周期到达。取 6 s 是在「真断了要尽快恢复」与「不要被一个含义含糊的事件误判」
- * 之间折中——实测这个误判会让全部逻辑流被杀掉（见 `socket.on('error')` 的说明）。
+ * 这个机制已被**删除**，原因有两条，都由实测得出：
+ *
+ * 1. `error` 事件本身就不是死亡信号。设备内部探测（`MuxProbe.test.ets`）显示
+ *    ArkTS 会在链路健康时抛 `code=200 message=undefined`，且**不伴随 `close`**，
+ *    连接存活整个观察窗口。既然 error 不代表断，就不需要围绕它做任何判定。
+ *
+ * 2. 更糟的是，这个计时器是**连接级**的（一个 mux 一个），而 `session/control`
+ *    这类流在空闲时**根本不推数据帧**。于是「`$events` 的 error 启动了计时器 →
+ *    `control` 在计时器到点时被一起杀掉」——杀掉的是一条**完全健康**的流。
+ *    实测症状：启动后约 3–6 秒出现 `control error carrier/closed`。
+ *
+ * 现在的判死依据只有 WebSocket 层的 `close` 事件（权威信号）+ 库自身的心跳。
+ * **不要把「数据帧静默」当判据**——有些流本来就是静默的。
  */
-const LIVENESS_GRACE_MS: number = 6000;
 
 export class RemoteMux {
   private baseUrl: string;
@@ -64,8 +74,6 @@ export class RemoteMux {
   private disposed: boolean = false;
   private openWaiters: Array<(ok: boolean, reason?: string) => void> = [];
   private lastError?: string;
-  /** 活性宽限期计时器（-1 = 未在宽限期内），见 `startLivenessGrace` */
-  private livenessTimer: number = -1;
 
   constructor(baseUrl: string, cookieProvider: () => string | undefined,
     surface: ProtocolSurface = FALLBACK_SURFACE) {
@@ -128,23 +136,25 @@ export class RemoteMux {
       this.onSocketClosed(`close code=${code}${reason.length > 0 ? ` reason=${reason}` : ''}${err !== undefined && err !== null && err.code !== 0 ? ` err=${err.code}` : ''}`);
     });
     socket.on('error', (err: BusinessError) => {
+      // 【`error` 事件不是「连接已断」——这是本文件最重要的一条实测结论】
+      //
+      // 设备内部探测（`entry/src/ohosTest/ets/test/MuxProbe.test.ets`，
+      // 连同一个 mux 地址）给出的读数：
+      //   - 升级成功（`connected=true`）；
+      //   - 窗口内**从未收到 `close` 事件**（`closed=false`、`closedAt=-1ms`）；
+      //   - `error` 在 **73–216 ms** 到达，内容恒为 `code=200 message=undefined`；
+      //   - 连接**存活整个 8 s 观察窗口**；有无客户端心跳配置表现一致。
+      // 也就是说：ArkTS 会在链路健康时抛这个 error。
+      //
+      // 旧实现一见 error 就 `onSocketClosed()`，后果：
+      //   - 全部逻辑流被以 `carrier/closed` 终止（症状＝「open 后几十毫秒就 closed」）；
+      //   - 上层以为「连接失效」，而物理链路其实是好的；
+      //   - 错误文案把排查方向指向「载体/转发通道断了」——本项目因此长期记着一个
+      //     **错结论**（已在 D4 明确推翻）。
+      //
+      // 所以这里只**记下错误**（供诊断页展示），不据此终止任何流。
+      // 判死交给 `close` 事件（WebSocket 层的权威信号）+ 库自身的心跳。
       this.lastError = `ws error code=${err.code} message=${err.message}`;
-      // 【不要把 error 事件当成连接已死】实测（`entry/src/ohosTest/.../MuxProbe.test.ets`，
-      // 在设备内部连同一个 mux 地址）：ArkTS 会在**连接仍然健康**时抛出
-      // `code=200 message=undefined` 的 error 事件——实测该事件在 73–198 ms 到达，
-      // 而**没有任何 close 事件**，连接随后稳定存活整个 8 s 观察窗口
-      // （无心跳与带心跳两种配置都一样）。
-      //
-      // 旧实现一见 error 就 `onSocketClosed()`，于是：
-      //   - 全部逻辑流被以 `carrier/closed` 终止（症状就是「open 后 ~27 ms 就 closed」）；
-      //   - 上层看到「连接失效」，而物理链路其实是好的。
-      // 表现为审批/提问推送、通知、设置页外部改动刷新全部失效，且错误文案指向
-      // 「载体断了」这个**错误的方向**。
-      //
-      // 改为：记下错误并给一段**宽限期**，让后续到达的帧来证明链路仍然活着；
-      // 只有宽限期内**一个帧都没来**，才判定为真的断开。
-      // 「谁说了算」这样才落在证据（收到帧）上，而不是落在一个含义含糊的事件上。
-      this.startLivenessGrace();
     });
 
     const header: Record<string, string> = {};
@@ -208,36 +218,31 @@ export class RemoteMux {
    */
   // 常量在文件末尾声明（ArkTS 要求先声明后用，这里用类静态字段规避顺序问题）
 
-  /**
-   * 进入活性宽限期：等一个**真实的帧**来证明链路还活着。
-   *
-   * 为什么不是直接判死：实测 `error` 事件会在链路健康时到来（见 `socket.on('error')`
-   * 的说明）。只有「宽限期内一个帧都没收到」才是可靠证据。
-   */
-  private startLivenessGrace(): void {
-    if (this.livenessTimer !== -1) {
-      // 已在宽限期内：重复的 error 不重置计时（否则持续的错误会让宽限期永不结束）
-      return;
-    }
-    this.livenessTimer = setTimeout(() => {
-      this.livenessTimer = -1;
-      // 宽限期内没有任何帧到达 → 这次是真的断了
-      this.onSocketClosed(this.lastError ?? 'wss 活性宽限期超时（未收到任何帧）');
-    }, LIVENESS_GRACE_MS);
-  }
-
-  /** 收到任何服务端帧：链路被证明是活的，撤销宽限期并清掉错误 */
+  /** 收到任何服务端帧：清掉上一次的 error 记录（链路已被证明是活的） */
   private clearLivenessGrace(): void {
-    if (this.livenessTimer !== -1) {
-      clearTimeout(this.livenessTimer);
-      this.livenessTimer = -1;
-    }
     if (this.lastError !== undefined) {
       this.lastError = undefined;
     }
   }
 
-  /** 物理连接关闭：终止全部逻辑流并让上层（ReconnectController）看到失效 */
+  /**
+   * 物理连接关闭：终止全部逻辑流并让上层（ReconnectController）看到失效
+   *
+   * 【只有两个调用点，都代表**连接确实断了**】
+   *   1. `socket.on('close')` —— WebSocket 层给出的权威信号；
+   *   2. `clientClose()` —— 我们自己主动关闭。
+   *
+   * 【为什么不把 `error` 事件也接进来】实测：ArkTS 会在链路**健康**时抛
+   * `code=200 message=undefined`，而且**不伴随 `close`**（设备内部探测，
+   * `MuxProbe.test.ets`：`closed=false`、`closedAt=-1ms`，连接存活整个观察窗口）。
+   * 把它当死亡通知会杀掉健康的流，并让错误文案指向「载体断了」这个错误方向。
+   *
+   * 【那「真断了但没有 close 事件」怎么办】由**库自身的心跳**负责：
+   * 服务端每 2 s 发 Ping，客户端在 `pongTimeout` 内未回 Pong 时库会关闭连接并
+   * 触发 `close`。判死因此落在「一个权威的关闭信号」上，而不是一个含义含糊的事件。
+   * 若将来实测发现库在无响应时不关，再在这里补一条**连接级**的超时——
+   * 但不能再用「数据帧静默」当判据：`session/control` 空闲时就是不推帧。
+   */
   private onSocketClosed(reason: string): void {
     if (this.state === MuxState.CLOSED) {
       return;
