@@ -538,7 +538,20 @@ export class SessionHub {
    */
   private handleConnectionState(state: ConnectionState, detail: string): void {
     if (state === ConnectionState.CONNECTED) {
-      // 载体恢复：事件流是否也已恢复由 EventStream 自己上报，这里不越权
+      this.record('connection connected');
+      /**
+       * 【必须在载体恢复后重新开流】这里曾经直接 `return`，于是**一次断线之后
+       * `session/follow` 永远不会再被打开**：轨迹停在断开那一刻的内容上，
+       * 用户看到的是「消息发出去了、对方永远不回」——而 Host 其实早就把这一轮算完了、
+       * 结果就在它自己的日志里（实测：无订阅时 Host 仍会跑完整轮，
+       * 迟到的 follow 快照里能读到 `assistant/message`）。
+       * 在"约 5 秒必断"的设备上，这条缺陷会让应用**看起来完全不能执行任务**。
+       */
+      this.refreshSessions();
+      if (this.selectedSessionId.length > 0) {
+        // `selectSession` 的守卫已放宽为「同会话但流已断 ⇒ 重开」，因此这里可以安全复用
+        this.selectSession(this.selectedSessionId);
+      }
       return;
     }
     if (state === ConnectionState.DISCONNECTED) {
@@ -1479,19 +1492,30 @@ export class SessionHub {
    * 被写两遍，且抓包会看到多于一条 follow 流，直接违反 D1 §7.7.5b 的验收点。
    */
   async selectSession(sessionId: string): Promise<void> {
-    if (this.selectedSessionId === sessionId) {
+    /**
+     * 【守卫为什么要看 `followCancel`】只比 id 会让"重连后重开流"无处落脚：
+     * 载体恢复时 `selectedSessionId` 没变，而 `followCancel` 已在流被终结时清空。
+     * 于是同 id 会被直接 `return`，轨迹永远停在断开那一刻——
+     * 用户看到的是"发出去了、永远不回"（而 Host 其实早算完了）。
+     */
+    if (this.selectedSessionId === sessionId && this.followCancel !== undefined) {
       return;
     }
+    // 只有**换了会话**才清空那些与会话绑定的东西（附件回执、排队项）；
+    // 重连重开流时清空会把用户刚加好的附件悄悄丢掉。
+    const changed: boolean = this.selectedSessionId !== sessionId;
     this.cancelFollow();
     this.selectedSessionId = sessionId;
     this.trajectoryList = [];
     this.running = false;
-    // 附件回执是**上一个会话的** Agent 作用域内的东西，切会话后一律失效。
-    // 不清理会让用户以为附件还挂着，实际发送时被 Host 判为未知回执。
-    this.attachmentList = [];
-    // 排队项同理：它是**每个会话各自**的队列。切会话后旧列表必须清空，
-    // 否则用户会对着 A 会话的队列项在 B 会话上点"插话"。
-    this.queuedItems = [];
+    if (changed) {
+      // 附件回执是**上一个会话的** Agent 作用域内的东西，切会话后一律失效。
+      // 不清理会让用户以为附件还挂着，实际发送时被 Host 判为未知回执。
+      this.attachmentList = [];
+      // 排队项同理：它是**每个会话各自**的队列。切会话后旧列表必须清空，
+      // 否则用户会对着 A 会话的队列项在 B 会话上点"插话"。
+      this.queuedItems = [];
+    }
     this.notify();
     if (sessionId.length === 0) {
       return;

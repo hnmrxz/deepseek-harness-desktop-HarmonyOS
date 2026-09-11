@@ -189,11 +189,57 @@ for (const h of trustedHosts) {
   trustedArgs.push('--trusted-host', h);
 }
 
+/**
+ * 把模型 API 密钥交给核心（若本机有的话）。
+ *
+ * 【为什么需要这一步】上游在缺密钥时的报错是明确的：
+ *   `llm-deepseek: no API key for provider route "deepseek-official";
+ *    store DEEPSEEK_API_KEY through the credentials service …, or export DEEPSEEK_API_KEY`
+ * 也就是说"能执行任务"的最后一块是**凭据**。而 Windows 上有一个坑：
+ * 机器/用户级环境变量可能是在**当前 shell 启动之后**才设置的——
+ * 于是 `process.env` 里没有它，但注册表里有（实测正是如此）。
+ * 因此这里两级读取：先看当前进程环境，再问注册表。
+ *
+ * 【纪律】值**只在内存里传递**，既不打印也不落盘（只打印"已注入/未找到"）。
+ * 应用侧的正规入口是「凭据页」调 `credentials/set`；这里只是让开发工作流开箱可用。
+ */
+function resolveApiKey() {
+  if (process.env.DEEPSEEK_API_KEY) {
+    return process.env.DEEPSEEK_API_KEY;
+  }
+  if (process.platform !== 'win32') {
+    return '';
+  }
+  for (const scope of ['User', 'Machine']) {
+    try {
+      const out = execFileSync('powershell', [
+        '-NoProfile', '-Command',
+        `[Environment]::GetEnvironmentVariable('DEEPSEEK_API_KEY','${scope}')`
+      ], { encoding: 'utf8' }).trim();
+      if (out.length > 0) {
+        return out;
+      }
+    } catch (e) {
+      // 读不到就继续；密钥缺失不是致命错误，核心会以明确的错误消息回报
+    }
+  }
+  return '';
+}
+
+const apiKey = resolveApiKey();
+const childEnv = { ...process.env, DSH_HOME: HOME };
+if (apiKey.length > 0) {
+  childEnv.DEEPSEEK_API_KEY = apiKey;
+}
+console.log(apiKey.length > 0
+  ? `模型密钥    : 已注入（长度 ${apiKey.length}，值不打印）`
+  : '模型密钥    : **未找到**（DEEPSEEK_API_KEY 不在环境/注册表里）——Agent 能起但会在模型调用处失败');
+
 const child = spawn(process.execPath, [
   dsh, 'web', '--no-open', '--port', String(PORT), '--host', '127.0.0.1',
   ...trustedArgs
 ], {
-  env: { ...process.env, DSH_HOME: HOME },
+  env: childEnv,
   stdio: ['ignore', 'pipe', 'inherit']
 });
 
