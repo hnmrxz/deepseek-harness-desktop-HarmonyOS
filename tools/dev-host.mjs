@@ -28,8 +28,9 @@
  *   node tools/dev-host.mjs --no-launch     # 只起核心并打印地址与令牌
  *   node tools/dev-host.mjs --stop          # 停止本项目起的核心
  */
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 const ROOT = process.cwd();
@@ -40,7 +41,23 @@ const arg = (n, d) => {
 };
 
 const PORT = Number(arg('--port', '3115'));
-const HOME = arg('--home', join(ROOT, '.research', 'dev-host-home'));
+/**
+ * 用哪个 `DSH_HOME`（= 用哪份 dsh 配置与会话）。
+ *
+ * 【默认用**用户自己的**那份，而不是一个空目录】这是「能真正执行任务」的前提：
+ * 模型凭据与 provider 配置都在 `DSH_HOME` 里，空目录里没有它们，
+ * 于是 `session/prompt` 会被**接受**（`{accepted:true}`）但 Agent 无法产出任何回复——
+ * 实测：空 home 下 `session/page` 在 75 秒内始终 0 条记录。
+ * 这个失败特别有欺骗性：投递成功了、没有报错、只是永远没有回答。
+ *
+ * 这与 D1 §6.4 的红线不冲突：那条说的是**客户端**不得写 `$DSH_HOME` 的包状态。
+ * 这里写它的是 **Host 自己**（`dsh web`），与用户手工在终端里跑 dsh 完全同一条路径。
+ * 想要一份干净环境时用 `--isolated`。
+ */
+const HOME = arg('--home',
+  args.includes('--isolated')
+    ? join(ROOT, '.research', 'dev-host-home')
+    : (process.env.DSH_HOME ?? join(homedir(), '.dsh')));
 const STATE = join(ROOT, '.research', 'dev-host.json');
 const BUNDLE = arg('--bundle', 'com.deepseek.dshharmony');
 const ABILITY = arg('--ability', 'EntryAbility');
@@ -93,6 +110,11 @@ if (args.includes('--relaunch')) {
   const state = JSON.parse(readFileSync(STATE, 'utf8'));
   const tok = readFileSync(TOKEN_FILE, 'utf8').trim();
   console.log(`复用核心 pid=${state.pid} 地址=${state.url}`);
+  try {
+    execFileSync(HDC, ['shell', 'aa', 'force-stop', BUNDLE], { stdio: 'ignore' });
+  } catch (e) {
+    // 同上：本来没跑也无所谓
+  }
   const relaunch = spawn(HDC, [
     'shell', 'aa', 'start', '-a', ABILITY, '-b', BUNDLE,
     '--ps', 'dshHost', state.url, '--ps', 'dshToken', tok
@@ -114,21 +136,62 @@ mkdirSync(HOME, { recursive: true });
 /**
  * 设备侧要用的地址。
  *
- * 模拟器经 slirp 网关访问开发机 loopback；真机需要显式给 `--host-url`
- * （例如 USB 反连或 hostkit 隧道地址）。
+ * 三条候选路径，按可靠性从高到低（`--rport` 会自己建立反连，仍是零手填）：
+ *   1. `--rport <devicePort>`：`hdc rport` 把设备侧端口反连到开发机的 loopback。
+ *      这是**权限与信任模型最干净**的一条：客户端请求的 `Host` 头就是它自己连的
+ *      `127.0.0.1:<devicePort>`，我们把这条权威显式加进信任栅栏即可（无需伪造任何头）。
+ *   2. `--host-url http://10.0.2.2:<port>`：模拟器的 slirp 网关。**实测不稳定**
+ *      （同一配置有时通、有时 `code=2300028` 超时），因此不是默认值。
+ *   3. 真机/隧道：用 `--host-url` 显式给（如 hostkit 隧道地址）。
  */
-const HOST_URL = arg('--host-url', `http://10.0.2.2:${PORT}`);
-const trustedHost = new URL(HOST_URL).host;
+const RPORT = arg('--rport', '');
+const HOST_URL = arg('--host-url', RPORT.length > 0 ? `http://127.0.0.1:${RPORT}` : `http://10.0.2.2:${PORT}`);
+/** 需要被信任的权威：核心自己的监听权威 + 客户端实际请求的那个权威 */
+const trustedHosts = [`127.0.0.1:${PORT}`];
+const clientAuthority = new URL(HOST_URL).host;
+if (!trustedHosts.includes(clientAuthority)) {
+  trustedHosts.push(clientAuthority);
+}
 
 console.log(`dsh 入口    : ${dsh}`);
 console.log(`DSH_HOME    : ${HOME}`);
 console.log(`监听        : 127.0.0.1:${PORT}（不绑 0.0.0.0）`);
-console.log(`信任的额外权威: ${trustedHost}`);
-console.log(`客户端地址  : ${HOST_URL}\n`);
+console.log(`信任的权威  : ${trustedHosts.join('、')}`);
+console.log(`客户端地址  : ${HOST_URL}${RPORT.length > 0 ? `（经 hdc rport ${RPORT}→${PORT}）` : ''}\n`);
+
+if (RPORT.length > 0) {
+  // 先清掉可能残留的同端口映射：`hdc rport` 对已占用的端口只打印
+  // `[Fail]TCP Port listen failed` 而**不返回非零码**，不检查就会拿着一个
+  // "看起来建好了、实际指向旧进程"的地址去启动应用，症状是应用连不上而日志毫无线索。
+  try {
+    execFileSync(HDC, ['fport', 'rm', `tcp:${RPORT}`, `tcp:${PORT}`], { stdio: 'ignore' });
+  } catch (e) {
+    // 本来就没有这条映射
+  }
+  try {
+    execFileSync(HDC, ['rport', `tcp:${RPORT}`, `tcp:${PORT}`], { stdio: 'inherit' });
+  } catch (e) {
+    console.error(`建立 rport 失败：${e.message}`);
+    process.exit(2);
+  }
+  // 校验映射真的在（而不是只有一句 [Fail]）
+  const listing = execFileSync(HDC, ['fport', 'ls'], { encoding: 'utf8' });
+  if (!listing.includes(`tcp:${RPORT}`)) {
+    console.error(`rport ${RPORT} 未生效。换一个端口重试（hdc 的反连端口有时会被残留占用）：`);
+    console.error(`  node tools/dev-host.mjs --port ${PORT} --rport ${Number(RPORT) + 1}`);
+    process.exit(2);
+  }
+  console.log(`rport 已生效：${RPORT} → ${PORT}`);
+}
+
+const trustedArgs = [];
+for (const h of trustedHosts) {
+  trustedArgs.push('--trusted-host', h);
+}
 
 const child = spawn(process.execPath, [
   dsh, 'web', '--no-open', '--port', String(PORT), '--host', '127.0.0.1',
-  '--trusted-host', trustedHost
+  ...trustedArgs
 ], {
   env: { ...process.env, DSH_HOME: HOME },
   stdio: ['ignore', 'pipe', 'inherit']
@@ -174,6 +237,18 @@ child.stdout.on('data', async (chunk) => {
 
 /** 用启动参数把地址与令牌交给应用（**无需在界面上手填**）。 */
 function launchApp(tok) {
+  /**
+   * 【必须先 force-stop】启动参数只在**冷启动**时被完整消费：
+   * 应用还活着时 `aa start` 走 `onNewWant`，那只更新 AppStorage 里的值，
+   * 而页面的「自动连接」逻辑有**只跑一次**的守卫（避免重复认证）——
+   * 结果就是「换了地址重启，界面还连着上一个 Host」。
+   * 实测踩到过：新地址是 `127.0.0.1:3128`，界面仍显示 `10.0.2.2:3115`。
+   */
+  try {
+    execFileSync(HDC, ['shell', 'aa', 'force-stop', BUNDLE], { stdio: 'ignore' });
+  } catch (e) {
+    // force-stop 失败不致命（可能本来就没在跑），继续启动
+  }
   const start = spawn(HDC, [
     'shell', 'aa', 'start', '-a', ABILITY, '-b', BUNDLE,
     '--ps', 'dshHost', HOST_URL, '--ps', 'dshToken', tok
