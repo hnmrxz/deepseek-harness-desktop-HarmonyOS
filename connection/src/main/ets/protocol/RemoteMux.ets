@@ -154,6 +154,17 @@ export class RemoteMux {
       //
       // 所以这里只**记下错误**（供诊断页展示），不据此终止任何流。
       // 判死交给 `close` 事件（WebSocket 层的权威信号）+ 库自身的心跳。
+      //
+      // 【为什么**不**在这里主动关闭 socket】
+      // 一度想「既然 close 可能不来，那就主动关掉它」。但实测反对这个做法：
+      // 同一个手工客户端在这次 error 之后**仍然正常工作**——它收到了 `ready`、
+      // 也收到了后续的 `api-session/added`（见 D2 §8.7.11/§8.7.12）。
+      // 也就是说这条 error 之后 socket 往往**仍可用**；一见 error 就关，
+      // 会把一条能用的连接反复掐断，制造出「一直重连」的抖动。
+      //
+      // 因此这里只记录。真正的收尾放在**确实发不出去**的地方：
+      // `open()` 里 `socket.send()` 的失败会调用 `onSocketClosed()`
+      // （见那里的说明），那时「连接不可用」是**已经被证实的事实**，而不是推测。
       this.lastError = `ws error code=${err.code} message=${err.message}`;
     });
 
@@ -345,6 +356,14 @@ export class RemoteMux {
         stream.settled = true;
         stream.sink.onError('carrier/transport', `send 失败 code=${error.code}`);
       }
+      // 【发送失败必须让连接失效，否则会「一直失败下去」】
+      // 实测症状：`follow open` 后立刻 `follow error carrier/transport send 失败 code=-1`，
+      // 而诊断页显示「连接 live」——因为 `open()` 是**同步返回 streamId**、
+      // 失败发生在异步的 `send()` 里，**状态没有被改动**。
+      // 于是 `isOpen()` 继续为真，上层每次重试都在同一个死 socket 上发帧，
+      // 每次都失败，形成「看起来已连接、实际什么都发不出去」的死循环。
+      // 这里把失败升级为连接失效：终止全部逻辑流并让重连控制器介入。
+      this.onSocketClosed(`send 失败 code=${error.code}`);
     });
     return streamId;
   }
