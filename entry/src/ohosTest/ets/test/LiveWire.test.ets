@@ -25,11 +25,17 @@ import {
   projectDetailSections,
   projectFileReferences,
   projectHosts,
+  projectQueuedItems,
   projectSessionReferences,
   projectWorkspaceListing,
   projectWorkspaceFailure,
   projectWorkspaceText,
   projectWorkspaces,
+  queuedItemsOf,
+  queueEditAction,
+  queueRemoveAction,
+  queueSteerAction,
+  sessionUpdateQueuePayload,
   TrajectoryKind,
   makeItem,
   NodeKind,
@@ -50,8 +56,10 @@ import type {
   HostRecord,
   CommandCandidate,
   PromptContentPart,
+  QueuedItem,
   ReferenceCandidate,
   SessionListItem,
+  SessionQueuedItem,
   TrajectoryItem,
   WorkspaceItem,
   WorkspaceListingProjection
@@ -359,6 +367,66 @@ export default function liveWireTest() {
       expect(ok!.bytes).assertEqual(3);
       expect(ok!.data).assertEqual('AAEC');
       expect(ok!.eof).assertTrue();
+    });
+
+    // ───────────────── 排队项（Host 侧待发队列） ─────────────────
+
+    it('queuedItemsOf：从基线的 queues（sessionId → 数组）取本会话的条目', 0, () => {
+      const queues: Object | undefined = parseJson(
+        '{"s-1":[{"id":"m-1","placement":"queued","message":{"content":[{"type":"text","text":"甲"}]}}],'
+        + '"s-2":[{"id":"m-9","placement":"steering","message":{"content":[]}}]}');
+      const mine: SessionQueuedItem[] = queuedItemsOf(queues, 's-1');
+      expect(mine.length).assertEqual(1);
+      expect(mine[0].id).assertEqual('m-1');
+      // 别的会话的条目**不得**混进来：混进来会让用户对着 A 的队列项在 B 上点"插话"
+      const other: SessionQueuedItem[] = queuedItemsOf(queues, 's-2');
+      expect(other.length).assertEqual(1);
+      expect(other[0].id).assertEqual('m-9');
+      expect(queuedItemsOf(queues, 's-3').length).assertEqual(0);
+      expect(queuedItemsOf(undefined, 's-1').length).assertEqual(0);
+    });
+
+    it('projectQueuedItems：拼接文本块；只有非文本块时给一句说明而不是空串', 0, () => {
+      const items: SessionQueuedItem[] = queuedItemsOf(parseJson(
+        '{"s":['
+        + '{"id":"a","placement":"queued","message":{"content":[{"type":"text","text":"第一行"},{"type":"text","text":"第二行"}]}},'
+        + '{"id":"b","placement":"queued","message":{"content":[{"type":"text","text":"带附件"},{"type":"image","mediaType":"image/png"}]}},'
+        + '{"id":"c","placement":"context","message":{"content":[{"type":"image"}]}},'
+        + '{"id":"d","placement":"queued","message":{}}'
+        + ']}'), 's');
+      const out: QueuedItem[] = projectQueuedItems(items);
+      expect(out.length).assertEqual(4);
+      expect(out[0].text).assertEqual('第一行\n第二行');
+      expect(out[1].text.indexOf('另有 1 个非文本块') > 0).assertTrue();
+      // 只有图片时不能显示空串：空行会让用户分不清"坏掉了"与"只有附件"
+      expect(out[2].text.indexOf('非文本块') > 0).assertTrue();
+      expect(out[2].text.length > 0).assertTrue();
+      expect(out[3].text).assertEqual('（无可显示内容）');
+      // placement 原样带上（UI 据此说明"什么时候会被处理"）
+      expect(out[2].placement).assertEqual('context');
+    });
+
+    it('sessionUpdateQueuePayload：三个动作的 kind 与编辑内容', 0, () => {
+      const edit: Object | undefined =
+        sessionUpdateQueuePayload('s-1', 'm-1', queueEditAction(['改后的文本']));
+      const eb: Record<string, Object> = edit as Record<string, Object>;
+      const er: Record<string, Object> = eb['request'] as Record<string, Object>;
+      expect(er['sessionId'] as string).assertEqual('s-1');
+      expect(er['itemId'] as string).assertEqual('m-1');
+      const ea: Record<string, Object> = er['action'] as Record<string, Object>;
+      expect(ea['kind'] as string).assertEqual('edit');
+      const blocks: Object[] = ea['content'] as Object[];
+      expect((blocks[0] as Record<string, Object>)['text'] as string).assertEqual('改后的文本');
+
+      const del: Record<string, Object> =
+        sessionUpdateQueuePayload('s-1', 'm-2', queueRemoveAction()) as Record<string, Object>;
+      expect((((del['request'] as Record<string, Object>)['action']) as Record<string, Object>)['kind'] as string)
+        .assertEqual('remove');
+
+      const steer: Record<string, Object> =
+        sessionUpdateQueuePayload('s-1', 'm-3', queueSteerAction()) as Record<string, Object>;
+      expect((((steer['request'] as Record<string, Object>)['action']) as Record<string, Object>)['kind'] as string)
+        .assertEqual('steer');
     });
 
     it('textPart / filePart：判别字段与载荷', 0, () => {
