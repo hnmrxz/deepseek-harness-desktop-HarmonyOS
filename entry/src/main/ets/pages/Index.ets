@@ -84,6 +84,9 @@ import type {
   SettingsNamespaceState,
   SettingsWriteResult
 } from 'appstate';
+import { emitter } from '@kit.BasicServicesKit';
+import { extractToken } from 'connection';
+import { EVENT_HOST_CONNECTED, EVENT_KEY_HOST_TOKEN, EVENT_KEY_HOST_URL } from 'platform';
 import { ConnectPane } from '../view/ConnectPane';
 import { ConversationPane } from '../view/ConversationPane';
 import { DetailPane } from '../view/DetailPane';
@@ -92,6 +95,26 @@ import { PendingPane } from '../view/PendingPane';
 import { SessionListPane } from '../view/SessionListPane';
 import { SettingsPane } from '../view/SettingsPane';
 import { WorkspacePane } from '../view/WorkspacePane';
+
+/**
+ * 把「刚刚连上的 Host」报告给能力层，由它落盘（地址明文、token 加密）。
+ *
+ * 【为什么页面不自己存】页面拿不到 `UIAbilityContext`（`preferences` / Asset Store
+ * 都需要它），而且「零 UI 依赖」是本工程的纪律——视图层不该认识存储细节。
+ * 页面只报告事实，怎么记由能力层决定。
+ *
+ * 【为什么只报告成功的连接】失败的地址/token 不该被记住：否则下次启动会拿一个
+ * 已知无效的 token 去自动重连，用户看到「自动重连失败」；而正确行为是回到「添加 Host」。
+ */
+function reportConnectedHost(baseUrl: string, token: string): void {
+  if (baseUrl.length === 0) {
+    return;
+  }
+  const payload: Record<string, Object> = {};
+  payload[EVENT_KEY_HOST_URL] = baseUrl;
+  payload[EVENT_KEY_HOST_TOKEN] = token;
+  emitter.emit({ eventId: EVENT_HOST_CONNECTED }, { data: payload });
+}
 
 /** 单栏下的页面栈 */
 enum StackPage {
@@ -202,6 +225,22 @@ struct Index {
    * 「连上了但事件流恰好断了」的时刻又退回桩数据，等于给用户看假会话。
    */
   @State hubConnected: boolean = false;
+  /**
+   * 上次连上的 Host（能力层从存储读出来后经 AppStorage 发布）。
+   *
+   * 三个键对应三种**不同**的处置，不能合成一个：
+   *   - `rememberedUrl` 非空且可自动重连 → 直接连；
+   *   - `rememberedTokenState === 'absent'` → 首次使用，显示「添加 Host」；
+   *   - `rememberedTokenState === 'unavailable'` → **有记录但读不到**
+   *     （锁屏策略变化 / 存储故障）。此时提示「请重新粘贴 token」是错的：
+   *     token 还在，只是这次读不出来。两种情况的文案必须不同。
+   */
+  @StorageProp('dshLastHostUrl') rememberedUrl: string = '';
+  @StorageProp('dshLastHostToken') rememberedToken: string = '';
+  @StorageProp('dshLastHostTokenState') rememberedTokenState: string = 'pending';
+  @StorageProp('dshHostAutoConnect') shouldAutoConnect: boolean = false;
+  /** 自动重连只跑一次（StorageProp 变化会触发，重复跑会反复认证） */
+  private autoConnectAttempted: boolean = false;
   /** 未识别的上游事件类型数量（真机跑一次即可据此回填事件表） */
   @State hubUnknownEvents: number = 0;
   /** 协议旁路日志（取尾部若干行展示，用于区分「列表为空」与「调用失败」） */
@@ -296,8 +335,7 @@ struct Index {
     this.workspaces = stubWorkspaces();
     this.fileTree = stubFileTree();
     this.localSettings = stubSettings();
-    this.settings = this.localSettings;
-    this.credentials = stubCredentials();
+    this.settings = this.localSettings;    this.credentials = stubCredentials();
     this.plugins = stubPlugins();
     this.hosts = stubHosts();
     this.models = stubModels();
@@ -314,6 +352,98 @@ struct Index {
     };
     this.hubListener = listener;
     SessionHub.shared().subscribe(listener);
+
+    // 自动重连：能力层从（加密）存储里读「上次的 Host」是异步的，
+    // 可能晚于本页就绪。这里**轮询等待**而不是「读一次就下结论」——
+    // 读一次就下结论会让用户看到「请添加 Host」，而他上次明明连过。
+    this.waitForRememberedHost();
+  }
+
+  /**
+   * 等待并尝试自动重连（D1 §7.1：记住上次的 Host）。
+   *
+   * 【为什么轮询而不是订阅】`@StorageProp` 会在 AppStorage 变化时刷新界面，
+   * 但**不会通知一段命令式代码**（ArkTS 的 `@Watch` 不保证可用于 `@StorageProp`）。
+   * 与其依赖一个不确定的机制，不如用一个有界、可读的等待：
+   * 每 250 ms 看一次，最多等 4 秒（存储打开 + 解密读取的正常量级）。
+   * 超时后**不再自动重连**，但保留 UI 上的「添加 Host」——用户不会卡住。
+   *
+   * 【为什么只跑一次】`StorageProp` 的任何变化都会重进这个函数时，
+   * 多次认证会在 Host 侧产生多次 token 兑换，也会让界面反复闪「连接中」。
+   */
+  private waitForRememberedHost(): void {
+    if (this.autoConnectAttempted) {
+      return;
+    }
+    this.autoConnectAttempted = true;
+    let waited: number = 0;
+    const step: number = 250;
+    const limit: number = 4000;
+    const timer: number = setInterval(() => {
+      waited += step;
+      const state: string = this.rememberedTokenState;
+      if (state === 'pending' && waited < limit) {
+        return;
+      }
+      clearInterval(timer);
+      this.applyRememberedHostOutcome(state);
+    }, step);
+  }
+
+  /**
+   * 按 token 的读取结果决定下一步，并给出**如实的**说明。
+   *
+   * 三种状态对应三种不同的用户动作，绝不能用同一句「请重新粘贴 token」糊过去：
+   *   - `found`：直接重连；
+   *   - `absent`：首次使用（或用户清过数据），引导添加 Host；
+   *   - `unavailable`：**记录还在但这次读不到**（设备锁屏策略变化、存储系统故障）。
+   *     让用户重新粘贴 token 是错的建议——token 并没有丢。
+   */
+  private applyRememberedHostOutcome(state: string): void {
+    if (this.rememberedUrl.length === 0) {
+      return;
+    }
+    if (state === 'found' && this.rememberedToken.length > 0) {
+      const hub: SessionHub = SessionHub.shared();
+      // 【token 必须拼回 URL】`SessionHub.configure(address, name)` 的第二个参数是
+      // **显示名**，不是 token——token 是从地址串里解析出来的（`parseTarget`）。
+      // 只传裸 baseUrl 会让认证拿着空 token 去请求，Host 回
+      // 「未提供 token」而界面显示「连接失败（HTTP 0）」，看起来像网络问题。
+      // 实测踩到过。拼接后走同一条解析路径，与手动粘贴 URL 完全等价。
+      const connectUrl: string = composeHostUrl(this.rememberedUrl, this.rememberedToken);
+      if (!hub.configure(connectUrl, undefined)) {
+        return;
+      }
+      this.connectBusy = true;
+      this.connectResult = `正在自动重连 ${this.rememberedUrl}…`;
+      hub.connect().then((ok: boolean) => {
+        this.connectBusy = false;
+        const snap: HubSnapshot = hub.snapshot();
+        this.connectResult = ok
+          ? `已自动重连 ${snap.authority}，收到 ${snap.sessions.length} 个会话`
+          : '自动重连失败，请检查 Host 是否仍在运行。';
+        if (!ok) {
+          this.hubError = snap.lastError.length > 0
+            ? snap.lastError
+            : '自动重连失败。若 Host 已重启，它的 token 会重新生成，请重新粘贴启动链接。';
+        } else {
+          // 自动重连也报告一次：地址可能没变但 token 被轮换过（Host 重启），
+          // 报告让存储里始终是**最近一次真正有效的**token。
+          reportConnectedHost(this.rememberedUrl, this.rememberedToken);
+        }
+      });
+      return;
+    }
+    if (state === 'unavailable') {
+      // 关键区别：token 还在，只是这次取不出来
+      this.connectResult = `已记住 Host ${this.rememberedUrl}，但这次的访问令牌读不出来`
+        + '（通常是设备锁屏状态或存储策略变化导致的）。令牌没有被删除，'
+        + '解锁设备后重启应用通常即可恢复；也可以现在重新粘贴启动链接覆盖它。';
+      return;
+    }
+    // absent：首次使用
+    this.connectResult = `已记住 Host ${this.rememberedUrl}，但没有可用的访问令牌。`
+      + '请在 Host 上重新获取带 token 的启动链接并粘贴到下方。';
   }
 
   aboutToDisappear(): void {
@@ -917,6 +1047,16 @@ struct Index {
             this.connectAdvice = ok
               ? '真实数据已接管会话列表与待决；可在「连接诊断」页查看五项判定。'
               : '请确认 Host 已启动且令牌有效；模拟器/真机访问宿主回环需先做端口转发（hdc fport）。';
+            if (ok) {
+              // 只报告**成功的**连接：失败的地址/token 不该被记住，
+              // 否则下次启动会拿一个已知无效的 token 去自动重连，用户看到的是
+              // 「自动重连失败」——而正确行为是回到「添加 Host」。
+              //
+              // token 来自**解析后的 URL**，而不是 token 输入框：
+              // 用户用的是「① 粘贴启动 URL」这条路径，token 输入框是空的。
+              // 曾因此把空串当 token 存进去，表现为「保存失败 + 下次读不到 token」。
+              reportConnectedHost(storageBaseUrl(url), extractToken(url) ?? this.connectToken.trim());
+            }
           });
         },
         onSelectHost: (id: string) => {
@@ -1252,6 +1392,27 @@ function initialWidthVp(): number {
  *   2. 地址 + 令牌         → 合成 `http://地址/?token=令牌`
  *   3. 粘贴的完整启动链接   → 原样返回（已含 token，不重复拼接）
  */
+/**
+ * 从「启动 URL」里剥出可用于存储的 base URL（**去掉凭据部分**）。
+ *
+ * 【为什么必须剥掉 query / fragment】用户粘贴的是
+ * `http://127.0.0.1:3111/?token=xxxx`，而 `token=` 是**凭据**（D2 §2.1：
+ * 持有它就等于持有 Host 的完整会话权限）。把整串地址直接当 `baseUrl` 存进
+ * 明文 `preferences`，等于把 token 落到明文——D1 §6.4 明确禁止。
+ *
+ * 实测踩到过：真机连上后 `preferences` 里存的就是带 token 的整串。
+ * 这条路径上还有一个连环故障：token 别名是按 `baseUrl` 算的，存进去的
+ * 却是带 query 的地址，于是「保存 token」与「读取 token」用了**两个不同的别名**，
+ * 表现为下次启动读不到 token（状态 `absent`），自动重连永远不工作。
+ *
+ * 因此：**存储只保留 scheme://authority**，凭据一律不进这条路径
+ * （token 单独走加密存储）。
+ */
+function storageBaseUrl(url: string): string {
+  const cut: number = url.search(/[?#]/);
+  return cut < 0 ? url : url.substring(0, cut);
+}
+
 function composeHostUrl(address: string, token: string): string {
   let url: string = address.trim();
   if (url.length === 0) {

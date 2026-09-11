@@ -25,6 +25,15 @@ export type { KeepAliveFacts } from './notify/KeepAlive';
 export { clearClipboard, copyText, readText } from './system/Clipboard';
 export { shareText } from './system/ShareBoard';
 export type { ShareText } from './system/ShareBoard';
+export { SecretLoadState, SecretStore } from './system/SecretStore';
+export type { SecretLoadResult } from './system/SecretStore';
+export { HostStore } from './system/HostStore';
+export type { RememberedHost, RememberedToken } from './system/HostStore';
+export {
+  EVENT_HOST_CONNECTED,
+  EVENT_KEY_HOST_TOKEN,
+  EVENT_KEY_HOST_URL
+} from './system/HostEvents';
 export { FormFactor, readDeviceFacts } from './system/DeviceFacts';
 export type { DeviceFacts } from './system/DeviceFacts';
 

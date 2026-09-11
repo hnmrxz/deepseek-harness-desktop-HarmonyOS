@@ -34,17 +34,24 @@
 import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { emitter } from '@kit.BasicServicesKit';
 import { window } from '@kit.ArkUI';
 import {
+  EVENT_HOST_CONNECTED,
+  EVENT_KEY_HOST_TOKEN,
+  EVENT_KEY_HOST_URL,
+  HostStore,
   parseWindowParams,
   readDeviceFacts,
   registerWindow,
   relabelWindow,
+  SecretLoadState,
   unregisterWindow,
   WindowKind,
   WindowMemory,
   WindowParams
 } from 'platform';
+import type { RememberedHost, RememberedToken } from 'platform';
 
 const DOMAIN = 0x0000;
 /** 本文件新增日志的 tag；既有日志沿用 'testTag' 不动，避免无意义的 diff 噪音 */
@@ -62,6 +69,39 @@ const KEY_LAUNCH_KIND: string = 'dshLaunchKind';
 const KEY_LAUNCH_SESSION_ID: string = 'dshLaunchSessionId';
 const KEY_LAUNCH_TITLE: string = 'dshLaunchTitle';
 const KEY_LAUNCH_ROUTE_JSON: string = 'dshLaunchRouteJson';
+/**
+ * 「上次连上的 Host」经 AppStorage 交给页面的键。
+ *
+ * 为什么走这条通道而不是让页面自己去读存储：`HostStore` 需要
+ * `UIAbilityContext` 才能打开偏好库，而页面拿不到 context；
+ * 能力层本来就持有 context，顺手读完再交给页面是唯一不需要页面持有 context 的做法。
+ *
+ * 三个键对应三种**不同的**处置，不能合成一个字符串：
+ *   - `HOST_URL` 非空 → 可以自动重连；
+ *   - `HOST_TOKEN_STATE` = `'absent'` → 首次使用，提示粘贴 token；
+ *   - `HOST_TOKEN_STATE` = `'unavailable'` → **有记录但读不到**（锁屏策略/系统故障），
+ *     此时提示「重新粘贴 token」是错的——token 还在，只是这次读不出来。
+ *     D3 §4 要求文案指出「发生了什么 + 可以做什么」，这两种情况的可做之事不同。
+ */
+const KEY_HOST_URL: string = 'dshLastHostUrl';
+const KEY_HOST_TOKEN: string = 'dshLastHostToken';
+const KEY_HOST_TOKEN_STATE: string = 'dshLastHostTokenState';
+const KEY_HOST_AUTOCONNECT: string = 'dshHostAutoConnect';
+/**
+ * 页面 → 能力层：报告「刚刚连上了哪个 Host」的进程内事件。
+ *
+ * 【为什么用 emitter 而不是 AppStorage 订阅】`AppStorage` 没有变更订阅接口
+ * （只有 `link`/`prop` 这类声明式双向绑定，能力层用不上）。而这条通路的语义本就是
+ * 「一次通知」，不是「一份需要被订阅的状态」——事件总线才是对的工具。
+ *
+ * 【为什么不让页面直接调 `HostStore`】
+ *   1. 页面拿不到 `UIAbilityContext`，而 `HostStore` 需要它才能打开偏好库；
+ *   2. **零 UI 依赖**是本工程的架构纪律（`appstate` / `platform` 都不认识 UI），
+ *      让页面直接碰平台存储会把存储细节漏进视图层。
+ *   页面只报告「连上了哪个 Host」这个**事实**，由能力层决定怎么记。
+ *
+ * 事件 id 与载荷键来自 `platform`（唯一的契约定义处，见那里为何不能各写一份）。
+ */
 
 export default class EntryAbility extends UIAbility {
   /**
@@ -77,6 +117,8 @@ export default class EntryAbility extends UIAbility {
   private mainWindow: window.Window | undefined = undefined;
   /** 窗口记忆（preferences 句柄），onWindowStageCreate 时 attach */
   private memory: WindowMemory = new WindowMemory();
+  /** Host 连接记忆（地址走 preferences、token 走加密存储），onWindowStageCreate 时 attach */
+  private hostStore: HostStore = new HostStore();
   /** 窗口记忆就绪信号。几何恢复必须等它，否则会在 store 尚未打开时静默跳过。 */
   private memoryReady: Promise<void> = Promise.resolve();
   /** 节流定时器 id；-1 表示当前无待执行的落盘任务 */
@@ -135,6 +177,14 @@ export default class EntryAbility extends UIAbility {
       // attach 内部已兜底（失败时 store = undefined），这里只防御意外；不影响任何功能
       hilog.warn(DOMAIN, TAG, '窗口记忆 attach 异常，几何记忆降级');
     });
+
+    // Host 连接记忆：只在**主窗**上做自动重连的读取与发布。
+    // 会话窗（specified 启动、key = session:<id>）是「打开某个会话」，不是「启动应用」，
+    // 让它也去自动重连会造成多窗口同时发起认证竞争——而连接池本来就该是单例，
+    // 主窗做完之后其它窗口直接复用即可。
+    if (this.launchParams.kind === WindowKind.MAIN) {
+      this.publishRememberedHost();
+    }
 
     windowStage.loadContent('pages/Index', (err) => {
       if (err.code) {
@@ -265,6 +315,94 @@ export default class EntryAbility extends UIAbility {
     AppStorage.setOrCreate<string>(KEY_LAUNCH_SESSION_ID, parsed.sessionId);
     AppStorage.setOrCreate<string>(KEY_LAUNCH_TITLE, parsed.title);
     AppStorage.setOrCreate<string>(KEY_LAUNCH_ROUTE_JSON, parsed.routeJson);
+  }
+
+  /**
+   * 读取「上次连上的 Host」并发布给页面，供自动重连使用。
+   *
+   * 【为什么必须先发布 `autoConnect = false`】页面可能比这次异步读取更早就绪。
+   * 若只发布最终结果，页面在「还没读到」的那一刻会看到空 URL，从而显示
+   * 「请添加 Host」——用户明明上次连过，却被告知没有记录。
+   * 因此先立一个明确的「尚未就绪」标志，页面据此**等待**而不是**下结论**。
+   *
+   * 【为什么 token 读不到时不自动重连】读不到只有两种可能：本次使用（没记录）
+   * 或存储系统暂时不可用。后者的正确处置是**让用户看到真实原因**，
+   * 而不是拿空 token 去认证——那会得到 401，而 401 的文案会把用户引向
+   * 「token 无效」，与真实原因（读不出来）不符。
+   */
+  private publishRememberedHost(): void {
+    AppStorage.setOrCreate<string>(KEY_HOST_URL, '');
+    AppStorage.setOrCreate<string>(KEY_HOST_TOKEN, '');
+    AppStorage.setOrCreate<string>(KEY_HOST_TOKEN_STATE, 'pending');
+    AppStorage.setOrCreate<boolean>(KEY_HOST_AUTOCONNECT, false);
+
+    // 页面连上之后会发事件报告「刚连上的 Host」，这里订阅并落盘
+    // （地址走 preferences，token 走加密存储）。
+    emitter.on({ eventId: EVENT_HOST_CONNECTED }, (data: emitter.EventData) => {
+      const payload: Record<string, Object> = (data.data ?? {}) as Record<string, Object>;
+      const url: string = typeof payload[EVENT_KEY_HOST_URL] === 'string'
+        ? payload[EVENT_KEY_HOST_URL] as string : '';
+      const token: string = typeof payload[EVENT_KEY_HOST_TOKEN] === 'string'
+        ? payload[EVENT_KEY_HOST_TOKEN] as string : '';
+      this.persistConnectedHost(url, token);
+    });
+
+    const ready: Promise<void> = this.hostStore.attach(this.context);
+    ready.then(async () => {
+      const host: RememberedHost | undefined = await this.hostStore.loadHost();
+      if (host === undefined) {
+        AppStorage.setOrCreate<string>(KEY_HOST_TOKEN_STATE, 'absent');
+        return;
+      }
+      // 【修复早期版本留下的明文凭据】早期版本把用户粘贴的整串启动 URL
+      // （含 `?token=…`）当成 baseUrl 存进了明文 preferences。这里在读取时
+      // 剥掉 query 并回写，避免那份明文一直留在设备上。
+      // 剥掉之后 token 需要重新建立（旧记录的 token 没进加密存储），
+      // 因此这次会走到「没有可用的访问令牌」分支，请用户重贴一次——
+      // 这是**有意的**：宁可让用户重贴一次，也不留一份明文凭据在设备上。
+      const cut: number = host.baseUrl.search(/[?#]/);
+      if (cut >= 0) {
+        const sanitized: string = host.baseUrl.substring(0, cut);
+        hilog.warn(DOMAIN, TAG, '检测到旧版明文 URL 记录，已剥离凭据并回写');
+        await this.hostStore.saveHost(sanitized, host.lastSessionId);
+        AppStorage.setOrCreate<string>(KEY_HOST_URL, sanitized);
+        AppStorage.setOrCreate<string>(KEY_HOST_TOKEN_STATE, 'absent');
+        return;
+      }
+      const token: RememberedToken = await this.hostStore.loadToken(host.baseUrl);
+      AppStorage.setOrCreate<string>(KEY_HOST_URL, host.baseUrl);
+      AppStorage.setOrCreate<string>(KEY_HOST_TOKEN_STATE, token.state as string);
+      if (token.state === SecretLoadState.FOUND) {
+        AppStorage.setOrCreate<string>(KEY_HOST_TOKEN, token.value);
+        AppStorage.setOrCreate<boolean>(KEY_HOST_AUTOCONNECT, true);
+      }
+      hilog.info(DOMAIN, TAG, '记住的 Host=%{public}s token 状态=%{public}s',
+        host.baseUrl, token.state as string);
+    }).catch((_error: Object) => {
+      // attach 内部已兜底；这里只把状态标成「读不到」，页面会给出对应文案
+      AppStorage.setOrCreate<string>(KEY_HOST_TOKEN_STATE, 'unavailable');
+      hilog.warn(DOMAIN, TAG, 'Host 连接记忆读取异常，本次不自动重连');
+    });
+  }
+
+  /** 把页面报告的「刚连上的 Host」落盘（地址明文、token 加密） */
+  private persistConnectedHost(url: string, token: string): void {
+    if (url.length === 0) {
+      return;
+    }
+    this.hostStore.saveHost(url, '').then(() => {
+      if (token.length > 0) {
+        return this.hostStore.saveToken(url, token);
+      }
+      return false;
+    }).then((saved: boolean) => {
+      // token 保存失败**不是**连接失败：只影响「下次能否自动重连」。
+      // 如实记日志，不弹错误——用户这次已经连上了，报错只会制造困惑。
+      hilog.info(DOMAIN, TAG, 'Host 已记住 url=%{public}s tokenLen=%{public}d tokenSaved=%{public}s',
+        url, token.length, saved ? 'true' : 'false');
+    }).catch((_error: Object) => {
+      hilog.warn(DOMAIN, TAG, 'Host 落盘异常（不影响本次连接）');
+    });
   }
 
   /** 台账标签：主窗固定；会话窗带标题，方便在诊断页与任务栏之间对号入座。 */
