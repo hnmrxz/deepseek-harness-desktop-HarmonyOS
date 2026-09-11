@@ -30,7 +30,7 @@
  */
 
 import { Connection } from 'connection';
-import type { DiagnosticReport, EventSink, HostFacts, RpcResult, StreamSink } from 'connection';
+import type { DiagnosticReport, EventSink, HostFacts, RemoteFailure, RpcResult, StreamSink } from 'connection';
 import { EVENTS_RESULT_ENDPOINT, getArray, getBoolean, getNumber, getRecord, getString, readPath } from 'connection';
 import {
   APPROVAL_ALLOWED_ONCE,
@@ -54,6 +54,9 @@ import {
   PLUGIN_INVENTORY_ENDPOINT,
   PROJECTION_TITLE,
   SETTINGS_DESCRIBE_ENDPOINT,
+  SETTINGS_CONFLICT,
+  SETTINGS_MUTATE_ENDPOINT,
+  SETTINGS_REJECTED,
   RemoteEventFrameType,
   SESSION_CANCEL_ENDPOINT,
   SESSION_CONTROL_ENDPOINT,
@@ -85,18 +88,25 @@ import {
 import type { PendingChoice, PendingItem, TrajectoryItem } from '../model/Trajectory';
 import {
   projectCredentials,
-  projectCredentialRefs,
+  projectSettingsEntries,
   projectDefaultSelection,
   projectModelCatalog,
   projectPluginInventory,
-  projectSettingsGroups
+  projectCredentialRefs,
+  settingsMutateArgs,
+  SettingsWriteOutcome,
+  splitSettingKey
 } from '../model/Settings';
 import type {
   CredentialItem,
   ModelOption,
   ModelSelection,
   PluginItem,
-  SettingGroup
+  SettingGroup,
+  SettingsGroupEntry,
+  SettingsKeyParts,
+  SettingsNamespaceState,
+  SettingsWriteResult
 } from '../model/Settings';
 
 /** 中枢运行阶段 */
@@ -162,6 +172,15 @@ export interface HubSnapshot {
   credentials: CredentialItem[];
   /** Host 设置分组（来自 `settings/describe`，每个命名空间一组） */
   settings: SettingGroup[];
+  /**
+   * 每个设置命名空间的**写状态**（`revision` 是并发令牌）。
+   *
+   * 为什么要暴露给界面：它是「界面上的值到底对应 Host 的哪一版」的唯一依据。
+   * 写操作后 revision 必然 +1；若界面显示的 revision 没变，
+   * 就说明**界面拿的是旧视图**——这类不一致不看 revision 无法察觉
+   * （值恰好相同的时候尤其如此）。
+   */
+  settingsStates: SettingsNamespaceState[];
 }
 
 /**
@@ -244,6 +263,17 @@ export class SessionHub {
    * 而不是为了「干净」再拉一次。
    */
   private settingsGroups: SettingGroup[] = [];
+  /**
+   * 每个 Host 设置命名空间的写状态（**并发令牌 `revision` 的唯一副本**）。
+   *
+   * 为什么不能放进 `SettingItem`：revision 属于命名空间而不属于某个字段。
+   * 存多份副本必然不同步——改完 A 字段后改 B 字段会带着过期 revision，恒被 Host 拒绝。
+   */
+  private namespaceStates: SettingsNamespaceState[] = [];
+  /** `settings/describe` 的顶层 `writable`（Host 是否整体接受写） */
+  private describeWritable: boolean = false;
+  /** 从 `settings/describe` 取到的凭据引用（`credentials/describe` 的入参） */
+  private credentialRefs: string[] = [];
 
   /** waterfall 待答项：eventId → 呈现项 id（应答时必须原样带回 eventId） */
   private waterfallEventIds: Map<string, string> = new Map();
@@ -412,7 +442,8 @@ export class SessionHub {
       defaultSelection: this.defaultSelection,
       plugins: this.plugins,
       credentials: this.credentials,
-      settings: this.settingsGroups
+      settings: this.settingsGroups,
+      settingsStates: this.namespaceStates
     };
   }
 
@@ -733,10 +764,10 @@ export class SessionHub {
     if (settingsArgs !== undefined) {
       const described: RpcResult = await this.conn.call(SETTINGS_DESCRIBE_ENDPOINT, settingsArgs);
       if (described.ok) {
-        const refs: string[] = projectCredentialRefs(described.value);
-        // 同一次回复也喂设置页：设置分组与凭据引用都来自 settings/describe，
+        // 同一次回复同时喂设置页与凭据页：两者都来自 settings/describe，
         // 再拉一次只为了「一个函数做一件事」是浪费一次 RPC。
-        this.settingsGroups = projectSettingsGroups(described.value);
+        this.applySettingsDescribe(described.value);
+        const refs: string[] = this.credentialRefs;
         let itemCount: number = 0;
         for (let i = 0; i < this.settingsGroups.length; i++) {
           itemCount += this.settingsGroups[i].items.length;
@@ -764,6 +795,150 @@ export class SessionHub {
     }
 
     this.notify();
+  }
+
+  /**
+   * 写入一个 Host 设置项（`settings/mutate`，按路径 set 单个字段）。
+   *
+   * 【为什么必须带 `expectedRevision`】上游把「并发写」做成一种**独立结果**
+   * （`settings/conflict{expected, actual}`），而不是静默后写覆盖先写。
+   * 省略 revision 等于放弃这个保护：两个客户端同时改同一命名空间时，
+   * 后提交的人会**无声地抹掉**前一个人的改动。
+   *
+   * 冲突的处置是**重新读取后再改**，不是重试同一请求——重试必然再次失败，
+   * 用户看到的是「点了没反应」。因此冲突分支会主动刷新设置并给出这句建议。
+   *
+   * @param key - 设置项 key（`ns.field`）
+   * @param value - 新值（布尔 / 字符串 / 数字，按 schema 类型由调用方给对）
+   * @returns 面向界面的结果（含可执行建议）
+   */
+  async writeSetting(key: string, value: Object): Promise<SettingsWriteResult> {
+    const parts: SettingsKeyParts | undefined = splitSettingKey(key);
+    if (parts === undefined) {
+      return {
+        outcome: SettingsWriteOutcome.FAILED, actualRevision: -1,
+        message: `设置项标识「${key}」无法解析出命名空间，已拒绝写入（这属于本客户端的缺陷，请提交诊断报告）。`
+      };
+    }
+    const state: SettingsNamespaceState | undefined = this.namespaceState(parts.ns);
+    if (state === undefined) {
+      return {
+        outcome: SettingsWriteOutcome.FAILED, actualRevision: -1,
+        message: `Host 上没有名为「${parts.ns}」的设置命名空间，已拒绝写入。请重新连接以刷新设置清单。`
+      };
+    }
+    if (!state.writable) {
+      return {
+        outcome: SettingsWriteOutcome.REJECTED, actualRevision: state.revision,
+        message: 'Host 不接受对这项设置的写入（可能是只读来源，例如环境变量或文件基线）。'
+      };
+    }
+    if (!this.unaryReady) {
+      return {
+        outcome: SettingsWriteOutcome.FAILED, actualRevision: state.revision,
+        message: '尚未连接 Host，改动没有生效。请先完成连接后重试。'
+      };
+    }
+
+    const args: Object = settingsMutateArgs(parts.ns, parts.fieldPath, value, state.revision);
+    const result: RpcResult = await this.conn.call(SETTINGS_MUTATE_ENDPOINT, args);
+    if (result.ok) {
+      // 【为什么写成功后要整页重拉，而不是用回复里的视图局部替换】
+      //   局部替换只在「界面当前持有的视图确实来自 Host」时才安全。
+      //   而写操作前后可能已经被其它刷新（定时列表刷新、事件触发的重载）改过
+      //   `settingsGroups`，此时局部替换会把旧的分组原样保留下来——
+      //   表现就是「Host 说写入成功、界面值却没变」，而且**不报错**。
+      //   实测就踩到了：写了两次，第二次界面仍显示旧值。
+      //   整页重拉的代价是一次 RPC；换来的是「界面一定等于 Host 的当前状态」这个不变量。
+      await this.refreshSettings();
+      this.record(`settings/mutate ok ${key}`);
+      this.notify();
+      return {
+        outcome: SettingsWriteOutcome.OK, actualRevision: this.namespaceState(parts.ns) === undefined
+          ? state.revision : (this.namespaceState(parts.ns) as SettingsNamespaceState).revision,
+        message: `已写入 ${key}。`
+      };
+    }
+
+    const failure: RemoteFailure | undefined = result.error;
+    const code: string = failure === undefined ? 'unknown' : failure.code;
+    if (code === SETTINGS_CONFLICT) {
+      const actual: number = this.conflictActualRevision(failure);
+      this.record(`settings/mutate conflict ${key} expected=${state.revision} actual=${actual}`);
+      // 冲突后必须刷新：用户手上的界面已经过期，让他们在旧值上继续改只会连撞冲突
+      await this.refreshSettings();
+      return {
+        outcome: SettingsWriteOutcome.CONFLICT, actualRevision: actual,
+        message: '这项设置已被其他客户端改过，你的界面是旧的。已为你重新读取最新值，请确认后再改一次。'
+      };
+    }
+    if (code === SETTINGS_REJECTED) {
+      this.record(`settings/mutate rejected ${key}`);
+      await this.refreshSettings();
+      return {
+        outcome: SettingsWriteOutcome.REJECTED, actualRevision: state.revision,
+        message: 'Host 拒绝了这个值（可能不符合该设置的类型或取值范围）。已重新读取最新值，请检查后重试。'
+      };
+    }
+    this.record(`settings/mutate fail ${key} ${code}`);
+    return {
+      outcome: SettingsWriteOutcome.FAILED, actualRevision: state.revision,
+      message: `写入未生效：${friendlyFailure(code, failure === undefined ? '' : failure.message)}`
+    };
+  }
+
+  /** 重新拉一次 `settings/describe`（只刷新设置页与凭据，不做其它副作用） */
+  async refreshSettings(): Promise<void> {
+    const empty: Record<string, Object> = {};
+    const args: Object | undefined = argsFor(SETTINGS_DESCRIBE_ENDPOINT, empty as Object);
+    if (args === undefined) {
+      return;
+    }
+    const described: RpcResult = await this.conn.call(SETTINGS_DESCRIBE_ENDPOINT, args);
+    if (!described.ok) {
+      return;
+    }
+    this.applySettingsDescribe(described.value);
+    this.notify();
+  }
+
+  /** 在命名空间台账里找写状态 */
+  private namespaceState(ns: string): SettingsNamespaceState | undefined {
+    for (let i = 0; i < this.namespaceStates.length; i++) {
+      if (this.namespaceStates[i].ns === ns) {
+        return this.namespaceStates[i];
+      }
+    }
+    return undefined;
+  }
+
+
+  /** 从冲突错误的 details 里取实际 revision（取不到返回 -1，不猜） */
+  private conflictActualRevision(failure: RemoteFailure | undefined): number {
+    if (failure === undefined) {
+      return -1;
+    }
+    const details: Object | undefined = failure.details;
+    if (details === undefined) {
+      return -1;
+    }
+    return getNumber(details, 'actual') ?? -1;
+  }
+
+  /** 把一次 `settings/describe` 回复应用到设置页与凭据页 */
+  private applySettingsDescribe(value: Object | undefined): void {
+    const entries: SettingsGroupEntry[] = projectSettingsEntries(value);
+    const groups: SettingGroup[] = [];
+    const states: SettingsNamespaceState[] = [];
+    for (let i = 0; i < entries.length; i++) {
+      groups.push(entries[i].group);
+      states.push(entries[i].state);
+    }
+    this.settingsGroups = groups;
+    this.namespaceStates = states;
+    this.describeWritable = value === undefined ? false : getBoolean(value, 'writable') === true;
+    const refs: string[] = projectCredentialRefs(value);
+    this.credentialRefs = refs;
   }
 
   /**

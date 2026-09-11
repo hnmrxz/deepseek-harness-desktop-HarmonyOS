@@ -91,6 +91,52 @@ export interface SettingGroup {
   items: SettingItem[];
 }
 
+/**
+ * 一个命名空间的**写状态**（与 `SettingItem` 分开保存）。
+ *
+ * 为什么必须单独存：`revision` 是**写操作的并发令牌**（实测 `SettingsNamespaceView.revision`，
+ * 见 D3b §2 第 3 条）。它属于「命名空间」而不属于「某个设置项」——
+ * 同一个命名空间下改哪个字段都要带同一个 revision，且一次成功写会让它 +1。
+ * 把它塞进每个 `SettingItem` 会立刻产生**同一份数据的多个副本**，
+ * 而副本不同步的后果是：改完 A 字段后改 B 字段带着**过期 revision** → 恒被拒。
+ */
+export interface SettingsNamespaceState {
+  ns: string;
+  /** 最近一次读取/写入后的 revision */
+  revision: number;
+  /** Host 是否接受对该命名空间的写 */
+  writable: boolean;
+  /** `'live'`（立即生效）或 `'restart'`（需重启 Host） */
+  applies: string;
+}
+
+/** 设置分组 + 它的命名空间写状态 */
+export interface SettingsGroupEntry {
+  group: SettingGroup;
+  state: SettingsNamespaceState;
+}
+
+/** 写操作的结果（用于界面给出**可执行**的提示，而不是笼统的「失败」） */
+export enum SettingsWriteOutcome {
+  /** 写入成功，Host 已接受 */
+  OK = 'ok',
+  /** 版本冲突：别的客户端改过，需要重新读取后再改（重试同一请求永远失败） */
+  CONFLICT = 'conflict',
+  /** Host 拒绝（只读提供方 / schema 校验 / 未注册命名空间） */
+  REJECTED = 'rejected',
+  /** 载体或其它失败（网络、未连接、端点不存在） */
+  FAILED = 'failed'
+}
+
+/** 写操作的详细结果 */
+export interface SettingsWriteResult {
+  outcome: SettingsWriteOutcome;
+  /** 用户可读的一句话（含发生了什么事 + 可以做什么） */
+  message: string;
+  /** 冲突时的实际 revision（若 Host 给出） */
+  actualRevision: number;
+}
+
 // ───────────────── 从 Host 的 settings/describe 生成设置项 ─────────────────
 
 /**
@@ -388,7 +434,21 @@ export function projectSettingsNamespace(view: Object, writable: boolean): Setti
  * 未知命名空间同样展示——只是没有友好标题。
  */
 export function projectSettingsGroups(value: Object | undefined): SettingGroup[] {
+  const entries: SettingsGroupEntry[] = projectSettingsEntries(value);
   const out: SettingGroup[] = [];
+  for (let i = 0; i < entries.length; i++) {
+    out.push(entries[i].group);
+  }
+  return out;
+}
+
+/**
+ * 与 `projectSettingsGroups` 相同，但**带上每个命名空间的写状态**（revision 等）。
+ *
+ * 中枢用它保存并发令牌；纯展示路径用上面那个（UI 不需要看见 revision）。
+ */
+export function projectSettingsEntries(value: Object | undefined): SettingsGroupEntry[] {
+  const out: SettingsGroupEntry[] = [];
   if (value === undefined) {
     return out;
   }
@@ -398,13 +458,76 @@ export function projectSettingsGroups(value: Object | undefined): SettingGroup[]
     return out;
   }
   for (let i = 0; i < namespaces.length; i++) {
-    const projected: SettingsNamespaceItems = projectSettingsNamespace(namespaces[i], writable);
+    const view: Object = namespaces[i];
+    const projected: SettingsNamespaceItems = projectSettingsNamespace(view, writable);
     if (projected.items.length === 0) {
       continue;
     }
-    out.push({ title: projected.ns, items: projected.items });
+    const state: SettingsNamespaceState = {
+      ns: projected.ns,
+      revision: getNumber(view, 'revision') ?? 0,
+      writable: writable,
+      applies: getString(view, 'applies') ?? 'live'
+    };
+    out.push({ group: { title: projected.ns, items: projected.items }, state: state });
   }
   return out;
+}
+
+/**
+ * 构造 `settings/mutate` 的实参：设置项的 key → 有序路径操作。
+ *
+ * 设置项的 key 形如 `ns.field`。**只切第一个点**：命名空间名不含点（实测 14 个
+ * 全部如此，如 `llm-deepseek`），而字段名可能含点（上游 `dict` 的键名无限制），
+ * 所以其余点留给字段路径。
+ *
+ * `expectedRevision` **不能省略**：省略等于放弃乐观并发检查，两个客户端同时改
+ * 会互相覆盖（D2b §4）。
+ */
+export function settingsMutateArgs(ns: string, fieldPath: string, value: Object,
+  expectedRevision: number): Object {
+  const segments: string[] = [];
+  let start: number = 0;
+  while (start <= fieldPath.length) {
+    const dot: number = fieldPath.indexOf('.', start);
+    const end: number = dot < 0 ? fieldPath.length : dot;
+    const segment: string = fieldPath.substring(start, end);
+    if (segment.length > 0) {
+      segments.push(segment);
+    }
+    if (dot < 0) {
+      break;
+    }
+    start = dot + 1;
+  }
+  const op: Record<string, Object> = {};
+  op['op'] = 'set';
+  op['path'] = segments;
+  op['value'] = value;
+  const ops: Object[] = [op as Object];
+  const args: Record<string, Object> = {};
+  args['ns'] = ns;
+  args['ops'] = ops;
+  args['expectedRevision'] = expectedRevision;
+  return args as Object;
+}
+
+/**
+ * 把设置项的 key 拆成「命名空间 + 字段路径」（第一个点之前是命名空间）。
+ * 拆不开时返回 undefined——调用方应**拒绝**这次写，而不是猜一个命名空间出来。
+ */
+export function splitSettingKey(key: string): SettingsKeyParts | undefined {
+  const dot: number = key.indexOf('.');
+  if (dot <= 0 || dot >= key.length - 1) {
+    return undefined;
+  }
+  return { ns: key.substring(0, dot), fieldPath: key.substring(dot + 1) };
+}
+
+/** 设置项 key 的拆分结果 */
+export interface SettingsKeyParts {
+  ns: string;
+  fieldPath: string;
 }
 
 /**

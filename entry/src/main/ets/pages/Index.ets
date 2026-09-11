@@ -45,6 +45,7 @@ import {
   ReferenceCandidate,
   SessionListItem,
   SettingGroup,
+  SettingsWriteOutcome,
   Sp,
   aboutInfo,
   mergeSettingsGroups,
@@ -75,7 +76,14 @@ import {
  * 原因：`HubSnapshot` / `HubSubscriber` 在 appstate 里是 `export type` 导出的类型，
  * 与值导入分开写更贴近 ArkTS 的类型/值导入区分。
  */
-import type { HubSnapshot, HubSubscriber } from 'appstate';
+import type {
+  HubSnapshot,
+  HubSubscriber,
+  SettingChoice,
+  SettingItem,
+  SettingsNamespaceState,
+  SettingsWriteResult
+} from 'appstate';
 import { ConnectPane } from '../view/ConnectPane';
 import { ConversationPane } from '../view/ConversationPane';
 import { DetailPane } from '../view/DetailPane';
@@ -126,6 +134,21 @@ struct Index {
    * 见 `mergeSettingsGroups` 的说明。
    */
   @State localSettings: SettingGroup[] = [];
+  /** 设置命名空间的写状态（含 revision）；用于诊断「界面值与 Host 版本是否一致」 */
+  @State settingsStates: SettingsNamespaceState[] = [];
+  /** 设置写入的结果回显（成功/失败/冲突都如实显示，不做乐观更新） */
+  @State settingWriteNote: string = '';
+  /**
+   * 正在选择的枚举设置项。
+   *
+   * 【为什么用浮层而不是「点一下轮换到下一个值」】枚举可能有 3–4 个取值，
+   * 轮换要求用户记住顺序并反复点击才能到达目标值，而且**每一跳都会写一次 Host**——
+   * 中途的每一次都是真实副作用。浮层让用户一次选中目标值，只写一次。
+   */
+  @State choosing: SettingChoice[] | undefined = undefined;
+  @State choosingKey: string = '';
+  @State choosingLabel: string = '';
+  @State choosingCurrent: string = '';
   @State credentials: CredentialItem[] = [];
   @State plugins: PluginItem[] = [];
   @State hosts: HostRecord[] = [];
@@ -235,6 +258,7 @@ struct Index {
     // Host 设置在前、本地偏好在后。**已连上就以真实结果为准**（哪怕为空），
     // 不再保留桩数据里的「Host 设置」——那会让用户改到并不存在的项。
     this.settings = mergeSettingsGroups(s.settings, this.localSettings);
+    this.settingsStates = s.settingsStates;
     if (s.defaultSelection !== undefined) {
       this.selection = s.defaultSelection;
     }
@@ -247,19 +271,22 @@ struct Index {
   }
 
   /**
-   * 设置页当前**只读**：改动 Host 设置需要 `settings/set` 写路径（带 `expectedRevision`
-   * 的并发令牌），本客户端尚未实现。
+   * 在当前设置分组里找一项。
    *
-   * 【为什么必须显式提示，而不是让点击无声无息】
-   *   控件是**启用**的（`writable: true`、本客户端也做了这个形态的编辑器），
-   *   用户点下去开关会动、看起来像改成功了，但 Host 上的值没有变——
-   *   这是最坏的一种失败：**界面撒了谎，而且用户下次打开才发现**。
-   *   要么禁用控件，要么如实说明。这里选择如实说明，因为读值是真的、
-   *   把整页禁用会让用户以为连读取也坏了。
+   * 返回 `undefined` 说明这个 key 不属于 Host 设置——即**本机偏好**。
+   * 两条路径的处置完全不同（Host 项可以写、本机项没有上游写路径），
+   * 所以必须先分清，而不是一律当 Host 项去写（那会对不存在的命名空间发起 RPC）。
    */
-  private noteHostSettingWriteUnavailable(key: string): void {
-    this.hubError = `「${key}」当前只读：本客户端还未实现写回 Host 的路径（settings/set 需要并发令牌）。`
-      + 'Host 上的值没有变化。';
+  private settingItemOf(key: string): SettingItem | undefined {
+    for (let i = 0; i < this.settings.length; i++) {
+      const items: SettingItem[] = this.settings[i].items;
+      for (let j = 0; j < items.length; j++) {
+        if (items[j].key === key) {
+          return items[j];
+        }
+      }
+    }
+    return undefined;
   }
 
   aboutToAppear(): void {
@@ -427,13 +454,107 @@ struct Index {
   }
 
   build() {
-    if (this.mode === LayoutMode.SINGLE) {
-      this.buildSingle()
-    } else if (this.mode === LayoutMode.DOUBLE) {
-      this.buildDouble()
-    } else {
-      this.buildTriple()
+    // 用 `Stack` 承载「主内容 + 选项浮层」：枚举选择的浮层必须能盖在任意一栏之上，
+    // 所以放在三形态**之外**，而不是在每个 build* 里各写一遍（写三遍必然走样）。
+    Stack() {
+      if (this.mode === LayoutMode.SINGLE) {
+        this.buildSingle()
+      } else if (this.mode === LayoutMode.DOUBLE) {
+        this.buildDouble()
+      } else {
+        this.buildTriple()
+      }
+      if (this.choosing !== undefined) {
+        this.choiceSheet()
+      }
     }
+    .width('100%')
+    .height('100%')
+  }
+
+  // ───────────────────── 枚举选择浮层 ─────────────────────
+
+  @Builder
+  choiceSheet() {
+    Column() {
+      Column({ space: Sp.S }) {
+        Text(`选择「${this.choosingLabel}」`)
+          .fontSize(Fs.BODY)
+          .width('100%')
+        Text(`上游设置项 ${this.choosingKey}`)
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.font_tertiary'))
+          .width('100%')
+        ForEach(this.choosing, (choice: SettingChoice) => {
+          Row() {
+            Text(choice.label)
+              .fontSize(Fs.BODY)
+              .fontColor(choice.value === this.choosingCurrent
+                ? $r('sys.color.brand') : $r('sys.color.font_primary'))
+              .layoutWeight(1)
+            if (choice.value === this.choosingCurrent) {
+              Text('当前')
+                .fontSize(Fs.CAPTION)
+                .fontColor($r('sys.color.brand'))
+            }
+          }
+          .width('100%')
+          .padding(Sp.M)
+          .borderRadius(Radius.M)
+          .backgroundColor(choice.value === this.choosingCurrent
+            ? $r('sys.color.background_primary') : $r('sys.color.background_secondary'))
+          .onClick(() => {
+            this.applyChoice(choice.value);
+          })
+        }, (choice: SettingChoice) => choice.value)
+        Button('取消')
+          .width('100%')
+          .backgroundColor($r('sys.color.background_secondary'))
+          .fontColor($r('sys.color.font_primary'))
+          .onClick(() => {
+            this.choosing = undefined;
+          })
+      }
+      .width('86%')
+      .padding(Sp.L)
+      .borderRadius(Radius.L)
+      .backgroundColor($r('sys.color.background_secondary'))
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    // 半透明遮罩：明确这是模态，点击空白处不关闭（避免误触丢失选择上下文）
+    .backgroundColor('rgba(0,0,0,0.35)')
+  }
+
+  /**
+   * 写入一个 Host 设置项并把结果如实告诉用户。
+   *
+   * 【为什么必须把结果回显，而不是乐观更新界面】
+   *   乐观更新在这里特别危险：设置项的值会影响**后续所有请求**（模型、超时、重试策略）。
+   *   界面显示「已改」而 Host 没改，用户会基于一个假状态继续工作，
+   *   而且下次打开设置页才发现值回去了——那时已经很难判断是哪一步出的问题。
+   *   所以这里一律等 Host 答复，并按结果给出**可执行**的一句话。
+   */
+  private async writeSetting(key: string, value: Object, label: string): Promise<void> {
+    this.settingWriteNote = `正在写入 ${key}…`;
+    const hub: SessionHub = SessionHub.shared();
+    const result: SettingsWriteResult = await hub.writeSetting(key, value);
+    this.settingWriteNote = result.message;
+    // 【不要在这里再套一层 applyHubSnapshot(hub.snapshot())】
+    //   中枢在写成功/冲突/被拒时都已经 `notify()` 过，订阅回调会带着
+    //   **已与本地偏好合并**的视图刷新界面。手动再套一次快照不但多余，
+    //   还会在「快照比 notify 更旧」时把刚刷新的值盖回旧值——
+    //   那正是「Host 说写入成功、界面却没变」的成因（实测踩到过）。
+    if (result.outcome !== SettingsWriteOutcome.OK) {
+      this.hubError = result.message;
+    }
+  }
+
+  private applyChoice(value: string): void {
+    const key: string = this.choosingKey;
+    this.choosing = undefined;
+    this.writeSetting(key, value as Object, this.choosingLabel);
   }
 
   // ───────────────────── 单栏（手机） ─────────────────────
@@ -1046,11 +1167,34 @@ struct Index {
         models: this.models,
         selection: this.selection,
         about: aboutInfo(),
+        writeNote: this.settingWriteNote,
+        states: this.settingsStates,
         onToggleSetting: (key: string, value: boolean) => {
-          this.noteHostSettingWriteUnavailable(key);
+          if (this.settingItemOf(key) === undefined) {
+            // 本地偏好：本客户端自己的开关，没有上游写路径。
+            // 如实说明它只在本机生效，而不是假装写成功了。
+            this.settingWriteNote = `「${key}」是本机偏好，只在本次运行内生效（尚未做持久化）。`;
+            return;
+          }
+          this.writeSetting(key, value as Object, key);
         },
         onPickChoice: (key: string, current: string) => {
-          this.noteHostSettingWriteUnavailable(key);
+          const item: SettingItem | undefined = this.settingItemOf(key);
+          if (item === undefined) {
+            this.settingWriteNote = `「${key}」是本机偏好，只在本次运行内生效（尚未做持久化）。`;
+            return;
+          }
+          if (item.choices.length === 0) {
+            // 没有枚举分支的字段（如自由文本 / 数字）：不猜一个编辑器，
+            // 而是说明当前能力边界，避免用户以为点了没反应
+            this.settingWriteNote = `「${item.label}」需要输入值，本客户端暂未提供该编辑器；`
+              + `可在 Host 的设置文档里直接修改 ${key}。`;
+            return;
+          }
+          this.choosingKey = key;
+          this.choosingLabel = item.label;
+          this.choosingCurrent = current;
+          this.choosing = item.choices;
         },
         onPickModel: () => {
         },

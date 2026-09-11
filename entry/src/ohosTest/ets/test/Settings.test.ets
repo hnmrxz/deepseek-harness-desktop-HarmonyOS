@@ -14,10 +14,13 @@ import { parseJson } from 'connection';
 import {
   humanizeKey,
   mergeSettingsGroups,
+  projectSettingsEntries,
   projectSettingsGroups,
   projectSettingsNamespace,
   SettingKind,
-  SettingOrigin
+  SettingOrigin,
+  settingsMutateArgs,
+  splitSettingKey
 } from 'appstate';
 import type { SettingGroup } from 'appstate';
 
@@ -185,6 +188,84 @@ export default function settingsProjectionTest() {
       expect(projectSettingsGroups(undefined).length).assertEqual(0);
       expect(projectSettingsGroups(parseJson('{}')).length).assertEqual(0);
       expect(projectSettingsNamespace(parseJson('{"ns":"x"}')!, true).items.length).assertEqual(0);
+    });
+  });
+
+  describe('SettingsWrite', () => {
+    /**
+     * `settings/mutate` 的实参构造：`path` 是**分段数组**，`op` 是 `set`。
+     *
+     * 这三条断言背后是上游三个写端点的语义差异（D2b §4）：
+     * `update` 的 patch 是浅覆盖、`replace` 会**删掉未出现的键**——
+     * 只有 `mutate` 能只改一个字段而不动其它。选错会静默删掉用户的其他设置。
+     */
+    it('builds a path-addressed mutate operation', 0, () => {
+      const args = settingsMutateArgs('ui-theme', 'fontSize', 16 as Object, 3) as Record<string, Object>;
+      expect(args['ns'] as string).assertEqual('ui-theme');
+      expect(args['expectedRevision'] as number).assertEqual(3);
+      const ops = args['ops'] as Object[];
+      expect(ops.length).assertEqual(1);
+      const op = ops[0] as Record<string, Object>;
+      expect(op['op'] as string).assertEqual('set');
+      expect(op['value'] as number).assertEqual(16);
+      const path = op['path'] as Object[];
+      expect(path.length).assertEqual(1);
+      expect(path[0] as string).assertEqual('fontSize');
+    });
+
+    /**
+     * `expectedRevision` **必须带上**：省略等于放弃乐观并发检查，
+     * 两个客户端同时改会互相覆盖（Host 把并发冲突做成了独立结果
+     * `settings/conflict`，不传令牌就永远不会触发它）。
+     */
+    it('always carries the concurrency token', 0, () => {
+      const args = settingsMutateArgs('ui-theme', 'preference', 'dark' as Object, 0) as Record<string, Object>;
+      expect(args['expectedRevision'] !== undefined).assertTrue();
+      expect(args['expectedRevision'] as number).assertEqual(0);
+    });
+
+    /** 字段名可能含点（上游 `dict` 键名无限制）：路径必须逐段切 */
+    it('splits a dotted field path into segments', 0, () => {
+      const args = settingsMutateArgs('ns', 'a.b.c', 'v' as Object, 1) as Record<string, Object>;
+      const path = (args['ops'] as Object[])[0] as Record<string, Object>;
+      const segs = path['path'] as Object[];
+      expect(segs.length).assertEqual(3);
+      expect(segs[2] as string).assertEqual('c');
+    });
+
+    /**
+     * **只切第一个点**：命名空间名不含点（实测 14 个皆如此），字段名可能含点。
+     * 若按最后一个点切，`llm-deepseek.retryPolicy.mode` 会被拆成
+     * 命名空间 `llm-deepseek.retryPolicy`（不存在）——写必然被拒。
+     */
+    it('splits the setting key at the first dot only', 0, () => {
+      const parts = splitSettingKey('llm-deepseek.retryPolicy.mode');
+      expect(parts !== undefined).assertTrue();
+      expect(parts!.ns).assertEqual('llm-deepseek');
+      expect(parts!.fieldPath).assertEqual('retryPolicy.mode');
+    });
+
+    /** 拆不开的 key 必须返回 undefined（调用方据此拒绝写，而不是猜命名空间） */
+    it('refuses a key it cannot split', 0, () => {
+      expect(splitSettingKey('nodot') === undefined).assertTrue();
+      expect(splitSettingKey('.leading') === undefined).assertTrue();
+      expect(splitSettingKey('trailing.') === undefined).assertTrue();
+      expect(splitSettingKey('') === undefined).assertTrue();
+    });
+
+    /** 写状态（revision 是并发令牌）跟着命名空间走，投影时必须一并取出 */
+    it('carries the namespace write state alongside the group', 0, () => {
+      const describe = '{"writable":true,"hasDocument":true,"namespaces":['
+        + UI_THEME.replace('"revision":0', '"revision":7')
+        + ']}';
+      const entries = projectSettingsEntries(parseJson(describe));
+      expect(entries.length).assertEqual(1);
+      expect(entries[0].state.ns).assertEqual('ui-theme');
+      expect(entries[0].state.revision).assertEqual(7);
+      expect(entries[0].state.writable).assertTrue();
+      expect(entries[0].state.applies).assertEqual('live');
+      // 纯展示路径不暴露 revision
+      expect(projectSettingsGroups(parseJson(describe)).length).assertEqual(1);
     });
   });
 

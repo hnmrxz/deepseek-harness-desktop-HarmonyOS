@@ -81,6 +81,28 @@ export const SESSION_FOLLOW_ENDPOINT: string = 'session/follow';
 export const SESSION_CONTROL_ENDPOINT: string = 'session/control';
 /** 设置描述（无参数） */
 export const SETTINGS_DESCRIBE_ENDPOINT: string = 'settings/describe';
+
+/**
+ * 设置写入（有序路径操作）。
+ *
+ * 【为什么选 `mutate` 而不是 `update` / `replace`】上游三个写端点语义不同（D2b §4）：
+ *   - `update` 的 `patch` 是**浅覆盖**：改 `retryPolicy.maxRetries` 会整块替换 `retryPolicy`；
+ *   - `replace` **整体替换**用户 section：未出现的键被删除，用它改一个开关会误删其他设置；
+ *   - `mutate` 是**按路径**的 `set`/`unset`，正合「改一个具体字段」这个唯一用例。
+ * 本客户端只做单字段编辑，所以选 `mutate`；选错会导致**静默删掉用户的其他设置**。
+ */
+export const SETTINGS_MUTATE_ENDPOINT: string = 'settings/mutate';
+/** 设置写入被拒（未注册/畸形命名空间、只读提供方、schema 校验、存储失败） */
+export const SETTINGS_REJECTED = 'settings/rejected';
+/**
+ * 设置写入的版本冲突：`{ns, expected, actual}`。
+ *
+ * 这是**独立的一种结果**（不是「非法请求」）：调用方必须重新读取后再写，
+ * 而不是重试同一个请求——重试永远失败，用户会看到「点了没反应」。
+ */
+export const SETTINGS_CONFLICT = 'settings/conflict';
+/** 凭据写入被拒：`{ref}`（详情只给引用名，永不含值） */
+export const CREDENTIAL_REJECTED = 'credential/rejected';
 /** 模型目录（无参数，只读，适合作连通性探测） */
 export const MODEL_CATALOG_ENDPOINT: string = 'session/modelCatalog';
 /** 插件清单（无参数，只读） */

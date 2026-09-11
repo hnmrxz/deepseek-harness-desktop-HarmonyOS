@@ -70,10 +70,14 @@ export {
   projectDefaultSelection,
   projectModelCatalog,
   projectPluginInventory,
+  projectSettingsEntries,
   projectSettingsGroups,
   projectSettingsNamespace,
   SettingKind,
-  SettingOrigin
+  SettingOrigin,
+  SettingsWriteOutcome,
+  settingsMutateArgs,
+  splitSettingKey
 } from './model/Settings';
 export type {
   AboutInfo,
@@ -88,7 +92,11 @@ export type {
   SettingChoice,
   SettingGroup,
   SettingItem,
-  SettingsNamespaceItems
+  SettingsGroupEntry,
+  SettingsKeyParts,
+  SettingsNamespaceItems,
+  SettingsNamespaceState,
+  SettingsWriteResult
 } from './model/Settings';
 
 // ── 桩数据源（设备到位前驱动 UI；接入真实数据后只替换数据来源） ──

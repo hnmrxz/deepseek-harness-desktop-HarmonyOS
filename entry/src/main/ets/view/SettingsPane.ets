@@ -28,6 +28,7 @@ import {
   Sp,
   Sz
 } from 'appstate';
+import type { SettingsNamespaceState } from 'appstate';
 
 /**
  * 选择项的显示文案：优先用选项自带的显示名，找不到就回退到取值本身。
@@ -56,6 +57,10 @@ export struct SettingsPane {
   @Prop about: AboutInfo = {
     appVersion: '', supportedUpstream: '', compatCapturedAt: '', endpointStats: ''
   };
+  /** 最近一次设置写入的结果回显（由页面注入；空串表示不显示） */
+  @Prop writeNote: string = '';
+  /** 各命名空间的写状态（仅用于诊断显示 revision） */
+  @Prop states: SettingsNamespaceState[] = [];
 
   onToggleSetting: (key: string, value: boolean) => void = () => {
   };
@@ -84,6 +89,17 @@ export struct SettingsPane {
     Column() {
       this.tabBar()
       Divider().color($r('sys.color.comp_divider'))
+
+      // 写入结果回显：成功 / 冲突 / 被拒 / 本机偏好都走这里。
+      // 不做乐观更新，所以这里是用户唯一能看到「Host 到底接受了没有」的地方。
+      if (this.writeNote.length > 0) {
+        Text(this.writeNote)
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.font_secondary'))
+          .width('100%')
+          .padding({ left: Sp.M, right: Sp.M, top: Sp.S, bottom: Sp.S })
+          .backgroundColor($r('sys.color.background_secondary'))
+      }
 
       Scroll() {
         Column({ space: Sp.L }) {
@@ -250,8 +266,7 @@ export struct SettingsPane {
   }
 
   @Builder
-  diagnosticsEntry() {
-    Row({ space: Sp.S }) {
+  diagnosticsEntry() {    Row({ space: Sp.S }) {
       SymbolGlyph($r('sys.symbol.bell')).fontSize(16)
         .fontColor([$r('sys.color.brand')])
       Column({ space: 2 }) {
