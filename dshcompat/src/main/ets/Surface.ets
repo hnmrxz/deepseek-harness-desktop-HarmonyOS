@@ -23,5 +23,7 @@ export const SURFACE: ProtocolSurface = {
   eventsEndpoint: '$events',
   eventsPayloadJson: '{"args":{}}',
   eventsResultEndpoint: '$events/result',
+  // 连接级探活用：无副作用、必然应答、参数可重复（`{"args":{}}`）
+  probeEndpoint: 'settings/describe',
   idLength: 32
 };

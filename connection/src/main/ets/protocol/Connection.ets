@@ -148,6 +148,33 @@ export class Connection {
     }
   }
 
+  /**
+   * 底层物理连接失效时的收尾。
+   *
+   * 【做三件事】记下原因、把状态降级、并把事件流标记为失效
+   * （物理连接没了，事件流不可能还活着——不标记的话诊断页会显示
+   * 「事件流 live」，而那与事实相反）。
+   *
+   * **不做**重连本身：重连策略集中在 `ReconnectController`，
+   * 这里再开一条重连路径会与它打架。
+   *
+   * 这条链路存在的理由见 `setOnSocketDead` 的注册处：socket 静默失效时
+   * `close` 可能不来，此前 `Connection` 会一直停在 CONNECTED，
+   * 诊断页因此显示「连接 live」而底层早已判死（D2 §8.7.13）。
+   */
+  private handleMuxDead(reason: string): void {
+    this.lastError = reason;
+    const stream: EventStream | undefined = this.eventStream;
+    if (stream !== undefined) {
+      stream.markLost();
+    }
+    // 用 CONNECTING 而不是 DISCONNECTED：**重连即将开始**，这条连接的语义是
+    // 「正在（重新）建立」而不是「已放弃」。DISCONNECTED 的文案是
+    // 「重试耗尽或凭证失效，需人工干预」——那是另一种结论，这里用它会误导用户
+    // 去手工处理一个正在自动恢复的问题。
+    this.setState(ConnectionState.CONNECTING, `连接失效，正在重连：${reason}`);
+  }
+
   /** 注入 cookie 持久化实现并立即恢复已保存的 cookie */
   attachPersistence(persistence: CookiePersistence): void {
     this.persistence = persistence;
@@ -250,6 +277,15 @@ export class Connection {
     }
     if (this.mux === undefined) {
       this.mux = new RemoteMux(address.wsBaseUrl, () => this.jar.headerFor(address.authority), this.surface);
+      // 底层（RemoteMux）判定物理连接失效时，把事实传上来。
+      // 【为什么必须有这条链路】实测：socket 静默失效时 WebSocket 的 `close`
+      // **可能不来**，只有探活超时/send 失败能发现（见 D2 §8.7.13）。
+      // 若不通知，Connection 会一直停在 CONNECTED —— 诊断页显示「连接 live」
+      // 而底层早已判死，用户看到的是「数据不更新」而不是「掉线」。
+      const mux: RemoteMux = this.mux;
+      mux.setOnSocketDead((reason: string) => {
+        this.handleMuxDead(reason);
+      });
     }
     this.setState(ConnectionState.CONNECTING, '正在连接…');
     const opened: boolean = await this.mux.connectOnce(this.options.muxConnectTimeoutMs);

@@ -20,6 +20,14 @@ export interface ProtocolSurface {
   eventsPayloadJson: string;
   /** 事件 waterfall 结果回送端点（如 `$events/result`） */
   eventsResultEndpoint: string;
+  /**
+   * **连接级探活**用的逻辑端点。
+   *
+   * 要求：无副作用、必然应答、参数可重复。由兼容面注入而不是在 connection 里写死——
+   * 它是**上游端点名**，属于 `dshcompat` 的事实；connection 只管
+   * 「怎么发一帧并等回帧」这个机制（D5 §1 分层纪律）。
+   */
+  probeEndpoint: string;
   /** 生成 rpcId / streamId 用的随机串长度 */
   idLength: number;
 }
@@ -36,5 +44,7 @@ export const FALLBACK_SURFACE: ProtocolSurface = {
   eventsEndpoint: '$events',
   eventsPayloadJson: '{"args":{}}',
   eventsResultEndpoint: '$events/result',
+  // 与 dshcompat 的 `SETTINGS_DESCRIBE_ENDPOINT` 一致；这里只是兜底值
+  probeEndpoint: 'settings/describe',
   idLength: 32
 };

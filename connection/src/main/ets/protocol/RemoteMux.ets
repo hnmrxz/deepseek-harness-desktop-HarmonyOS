@@ -63,6 +63,28 @@ export enum MuxState {
  * **不要把「数据帧静默」当判据**——有些流本来就是静默的。
  */
 
+/**
+ * **连接级**存活探活间隔与判死阈值（毫秒）。
+ *
+ * 【为什么必须有这道探活】实测（D2 §8.7.13）：ArkTS 的 socket 静默失效时
+ * **可能不触发 `close`**。于是 `state` 停在 `OPEN`、`isOpen()` 恒真，
+ * 上层在死 socket 上开流才会因 `send` 失败而察觉——也就是说
+ * **应用没有写操作时根本不知道自己已经掉线**（只读浏览时表现为
+ * 「数据不更新」而不是「掉线」，对用户仍是误导）。
+ *
+ * 【为什么判据是「主动发的应用级探针」而不是「有没有收到数据帧」】
+ * 服务端每 2 s 发的是 **WebSocket 协议级 Ping 控制帧**，它**不会**作为
+ * `message` 事件交给应用，因此「最近收到数据帧的时刻」在静默期恒为很旧——
+ * 用它判死会把**空闲但健康**的连接全部误杀。这正是 §8.7.10 那版中间修法
+ * 翻车的原因（用流级/数据帧证据判定连接级健康）。
+ *
+ * 所以这里主动发一帧并等回帧：**回帧才证明链路双向可用**。
+ * 时间参数依据服务端 2 s Ping 的节奏取，给它 3 个周期多一点。
+ */
+const PROBE_INTERVAL_MS: number = 6000;
+/** 探活发出后等待回帧的上限；超时即判连接失效 */
+const PROBE_TIMEOUT_MS: number = 8000;
+
 export class RemoteMux {
   private baseUrl: string;
   private cookieProvider: () => string | undefined;
@@ -74,6 +96,23 @@ export class RemoteMux {
   private disposed: boolean = false;
   private openWaiters: Array<(ok: boolean, reason?: string) => void> = [];
   private lastError?: string;
+  /**
+   * 物理连接失效时的通知回调（由 `Connection` 注册）。
+   *
+   * 【为什么必须有它】实测（D2 §8.7.13）：socket 静默失效时 `close` **可能不来**，
+   * 于是 `RemoteMux` 只能靠自己（探活超时 / send 失败）判定失效。但它把
+   * `state` 置为 `CLOSED` 之后，**`Connection` 无从得知**——后者只在需要时
+   * 调 `isOpen()`，而诊断页读的是 `Connection` 自己的状态。
+   * 结果就是：底层已经判死，界面仍显示「连接 live」。
+   * 这条回调把底部事实向上传递，是「静默失效」能被上层看见的唯一通道。
+   */
+  private onSocketDead?: (reason: string) => void;
+  /** 探活计时器（-1 = 未启用） */
+  private probeTimer: number = -1;
+  /** 已发出探活、正在等待回帧（避免重复发） */
+  private probePending: boolean = false;
+  /** 探活专用的应答等待者：收到**任何**帧都视为链路活着 */
+  private probeWaiter?: () => void;
 
   constructor(baseUrl: string, cookieProvider: () => string | undefined,
     surface: ProtocolSurface = FALLBACK_SURFACE) {
@@ -100,6 +139,11 @@ export class RemoteMux {
     return this.state === MuxState.OPEN && !this.disposed;
   }
 
+  /** 注册「物理连接失效」的回调（见 `onSocketDead` 字段的说明） */
+  setOnSocketDead(handler: (reason: string) => void): void {
+    this.onSocketDead = handler;
+  }
+
   /**
    * 执行一次物理连接尝试。成功返回 true。
    * 若已有开启的连接，直接返回 true（幂等）。
@@ -124,8 +168,9 @@ export class RemoteMux {
       if (err !== undefined && err !== null && err.code !== 0) {
         return;
       }
-      // 收到帧 = 链路活着的**证据**：撤销 error 引入的宽限期
+      // 收到帧 = 链路活着的**证据**：撤销 error 记录，并让探活成功
       this.clearLivenessGrace();
+      this.settleProbe();
       if (typeof data === 'string') {
         this.handleFrame(data as string);
       }
@@ -190,6 +235,7 @@ export class RemoteMux {
       }
       this.state = MuxState.OPEN;
       this.resolveOpenWaiters(true);
+      this.startLivenessProbe();
       return true;
     } catch (error) {
       const businessError: BusinessError = error as BusinessError;
@@ -229,6 +275,89 @@ export class RemoteMux {
    */
   // 常量在文件末尾声明（ArkTS 要求先声明后用，这里用类静态字段规避顺序问题）
 
+  /**
+   * 启动**连接级**探活。
+   *
+   * 每次探活发一个上游必然应答的最小请求（`session/list`，带唯一 cursor），
+   * 并等**任何**回帧：
+   *   - 收到帧 → 链路双向可用，桥接等待者让它立刻返回；
+   *   - `PROBE_TIMEOUT_MS` 内没有帧 → 判为静默失效，主动收尾并让重连介入。
+   *
+   * 为什么带一个唯一 `cursor`：让这次应答在旁路日志里**可辨认**，
+   * 排查时能一眼看出「探针发了、应答来没来」，而不是混在普通列表刷新里。
+   */
+  private startLivenessProbe(): void {
+    this.stopLivenessProbe();
+    this.probeTimer = setInterval(() => {
+      this.probeOnce();
+    }, PROBE_INTERVAL_MS);
+  }
+
+  private stopLivenessProbe(): void {
+    if (this.probeTimer !== -1) {
+      clearInterval(this.probeTimer);
+      this.probeTimer = -1;
+    }
+    this.probePending = false;
+    this.probeWaiter = undefined;
+  }
+
+  /** 发一次探活并设超时 */
+  private probeOnce(): void {
+    if (this.state !== MuxState.OPEN || this.probePending) {
+      // 上一发还没回来就跳过这一轮，而不是叠加发送
+      return;
+    }
+    const socket: webSocket.WebSocket | undefined = this.socket;
+    if (socket === undefined) {
+      return;
+    }
+    this.probePending = true;
+    const probeId: string = randomId();
+    // 空对象与嵌套字面量都要有声明类型（arkts-no-untyped-obj-literals）
+    const probeArgs: Record<string, Object> = {};
+    probeArgs['cursor'] = `probe-${probeId}`;
+    const probePayload: Record<string, Object> = {};
+    probePayload['args'] = probeArgs as Object;
+    const frame: Record<string, Object> = {
+      'type': 'open',
+      'streamId': `probe-${probeId}`,
+      'endpoint': this.surface.probeEndpoint,
+      'payload': probePayload as Object
+    };
+    const text: string | undefined = stringifyJson(frame as Object);
+    if (text === undefined) {
+      this.probePending = false;
+      return;
+    }
+    const settled: Promise<void> = new Promise<void>((resolve) => {
+      this.probeWaiter = resolve;
+    });
+    socket.send(text).catch((error: BusinessError) => {
+      this.probePending = false;
+      this.onSocketClosed(`探活发送失败 code=${error.code}`);
+    });
+    const timer: number = setTimeout(() => {
+      // 超时仍无任何回帧 → 静默失效（`close` 不会来，所以必须**主动**收尾）
+      this.probeWaiter = undefined;
+      this.probePending = false;
+      this.onSocketClosed('探活超时（连接级）：在阈值内未收到任何回帧');
+    }, PROBE_TIMEOUT_MS);
+    settled.then(() => {
+      clearTimeout(timer);
+    });
+  }
+
+  /** 收到任何帧：探活成功 */
+  private settleProbe(): void {
+    this.probePending = false;
+    const waiter: (() => void) | undefined = this.probeWaiter;
+    this.probeWaiter = undefined;
+    if (waiter !== undefined) {
+      waiter();
+    }
+  }
+
   /** 收到任何服务端帧：清掉上一次的 error 记录（链路已被证明是活的） */
   private clearLivenessGrace(): void {
     if (this.lastError !== undefined) {
@@ -259,6 +388,13 @@ export class RemoteMux {
       return;
     }
     this.state = MuxState.CLOSED;
+    // 连接已死：停掉探活，否则计时器会在 CLOSED 之后继续跑并重复收尾
+    this.stopLivenessProbe();
+    // 把「底层已判死」这件事**向上传递**，否则上层会一直以为自己是 live
+    const notify: ((reason: string) => void) | undefined = this.onSocketDead;
+    if (notify !== undefined) {
+      notify(reason);
+    }
     this.resolveOpenWaiters(false, reason);
     const ids: string[] = [];
     this.streams.forEach((_value: LogicalStream, key: string) => {
