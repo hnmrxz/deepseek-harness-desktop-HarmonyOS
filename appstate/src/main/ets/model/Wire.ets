@@ -38,6 +38,7 @@ import {
   SESSION_REFERENCE_CANDIDATES_ENDPOINT,
   SESSION_RENAME_ENDPOINT,
   WORKSPACE_FILES_LIST_ENDPOINT,
+  WORKSPACE_FILES_READ_ALL_ENDPOINT,
   WORKSPACE_FILES_READ_ENDPOINT
 } from 'dshcompat';
 import {
@@ -1507,15 +1508,24 @@ export interface FileUploadValue {
  * 构造 `fileUploads/upload` 的 args 载荷。
  *
  * 返回 `Object | undefined`（endpoint 不在上表时为 undefined，调用方降级）。
- * 该端点具名参数是 `agent` + `request`，因此 body 直接给出这两个键，
- * 由 `argsFor()` 按上表判定形态（NAMED ⇒ 原样透传）。
+ *
+ * 【线上参数名是 `agentId`，不是 `agent`】
+ *   本函数此处曾经写成 `agent`（依据是上游 `.d.ts` 里的**形参名**）。
+ *   生成上表里这个端点的 `params` 是 `['agentId', 'request']`，也就是线上名。
+ *   按形参名发会被拒：`gateway/arguments-invalid: missing "agentId"`。
+ *   这与 `commands/execute` 的 `images` → `submittedAttachments` 是同一类陷阱
+ *   （见 `Aliases.PARAM_ALIASES` 的长注释）：**形参名 ≠ 线上名**。
+ *   这个端点在客户端里此前从未被真正调用过，所以错误一直没暴露——
+ *   只在第一次点「附件」时才会以一条 `arguments-invalid` 出现。
+ *   注意：这里**不能**靠 `PARAM_ALIASES` 兜底，因为那张表只覆盖「改名过」的端点，
+ *   而本端点是「一直叫 agentId，是我们写错了」。
  */
-export function fileUploadPayload(agent: Object, data: string, name: string): Object | undefined {
+export function fileUploadPayload(agentId: string, data: string, name: string): Object | undefined {
   const request: FileUploadRequest = { data: data };
   if (name.length > 0) {
     request.name = name;
   }
-  const body: Record<string, Object> = { 'agent': agent, 'request': request };
+  const body: Record<string, Object> = { 'agentId': agentId, 'request': request };
   return argsFor(FILE_UPLOAD_ENDPOINT, body as Object);
 }
 
@@ -1677,6 +1687,62 @@ export function workspaceReadPayload(sessionId: string, path: string, maxLines: 
 /** `workspaceFiles/read` 的端点。 */
 export function workspaceReadEndpoint(): string {
   return WORKSPACE_FILES_READ_ENDPOINT;
+}
+
+/**
+ * `workspaceFiles/readAll` 的 args 载荷（**整文件 base64，无 `range`**）。
+ *
+ * 用于「把 Host 侧的工作区文件投喂给 agent」：`readAll` 直接给出
+ * `WorkspaceFileBytes.data`（完整 base64），正好是 `fileUploads/upload` 的输入。
+ * 用 `read` 做不到这件事——它只返回文本，且非文本直接拒绝。
+ *
+ * 【根目录的那条坑在这里不存在】`path` 是**文件**路径，没有「根」这种调用形态，
+ * 因此不需要 `WORKSPACE_ROOT_REQUEST_PATH` 之类的约定。
+ */
+export function workspaceReadAllPayload(sessionId: string, path: string): Object | undefined {
+  const body: Record<string, Object> = { 'workspaceFileScopeId': sessionId, 'path': path };
+  return argsFor(WORKSPACE_FILES_READ_ALL_ENDPOINT, body as Object);
+}
+
+/** `workspaceFiles/readAll` 的端点。 */
+export function workspaceReadAllEndpoint(): string {
+  return WORKSPACE_FILES_READ_ALL_ENDPOINT;
+}
+
+/**
+ * 投影整文件字节读取结果。
+ *
+ * 返回 `undefined` 表示**取不到可用的 base64**（缺 `data` 或为空）：
+ * 调用方必须据此放弃这次上传，而不是拿空串去上传（那会产生一个 0 字节的附件，
+ * 而用户以为文件带上了）。
+ */
+export interface WorkspaceBytesWire {
+  absolutePath: string;
+  version: string;
+  bytes: number;
+  offset: number;
+  /** 完整文件字节的 base64 */
+  data: string;
+  eof: boolean;
+}
+
+/** 取出 `readAll` 返回的 base64（缺失即 undefined）。 */
+export function projectWorkspaceBytes(value: Object | undefined): WorkspaceBytesWire | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const data: string = readString(value, 'data');
+  if (data.length === 0) {
+    return undefined;
+  }
+  return {
+    absolutePath: readString(value, 'absolutePath'),
+    version: readString(value, 'version'),
+    bytes: readNumber(value, 'bytes'),
+    offset: readNumber(value, 'offset'),
+    data: data,
+    eof: getField(value, 'eof') === true
+  };
 }
 
 /** `workspaceFiles/read` 的 `range`（行号/行数，不是字节偏移/长度）。 */

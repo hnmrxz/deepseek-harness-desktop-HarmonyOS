@@ -129,7 +129,14 @@ export {
 export { Breakpoint, Dur, Fs, Lh, Radius, SemanticColor, Sp, Sz } from './ui/Tokens';
 
 // ── 会话中枢（D1 §7.7.5b：全应用单一连接池 + 单一会话状态机 + 单一待发队列） ──
-export { HubPhase, projectWireRecord, SessionHub } from './store/SessionHub';export type { HubSnapshot, HubSubscriber, OutboxEntry } from './store/SessionHub';
+export { HubPhase, projectWireRecord, SessionHub } from './store/SessionHub';
+export type {
+  AttachOutcome,
+  HubSnapshot,
+  HubSubscriber,
+  OutboxEntry,
+  PendingAttachment
+} from './store/SessionHub';
 
 // ── 通知策略（D3 §6：六类通知的标题/正文/优先级/点击目标 + 内容纪律 + 去重键） ──
 export {
@@ -246,6 +253,9 @@ export {
   USER_QUESTIONS_REQUEST_EVENT,
   workspaceListEndpoint,
   workspaceListPayload,
+  workspaceReadAllEndpoint,
+  workspaceReadAllPayload,
+  projectWorkspaceBytes,
   workspaceReadEndpoint,
   workspaceReadPayload,
   WORKSPACE_ROOT_REQUEST_PATH
@@ -304,6 +314,7 @@ export type {
   WaterfallFrame,
   WireError,
   WorkspaceEntryWire,
+  WorkspaceBytesWire,
   WorkspaceFileRange,
   WorkspaceListingProjection,
   WorkspaceListingWire,

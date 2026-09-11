@@ -130,6 +130,15 @@ export const WORKSPACE_FILES_LIST_ENDPOINT: string = 'workspaceFiles/list';
 export const WORKSPACE_FILES_STAT_ENDPOINT: string = 'workspaceFiles/stat';
 /** 工作区文件读取（文本） */
 export const WORKSPACE_FILES_READ_ENDPOINT: string = 'workspaceFiles/read';
+/**
+ * 工作区文件读取（**整文件，base64**，无 `range`）。
+ *
+ * 【为什么要单独有这个常量】「投喂 Host 侧文件」需要的是**字节**而不是文本：
+ * `read` 只返回 UTF-8 文本（且非文本直接拒绝），拿不到可上传的 base64。
+ * `readAll` 返回 `WorkspaceFileBytes`（`{offset:0, data:<base64>, eof:true, ...}`），
+ * 正是 `fileUploads/upload` 需要的输入。两者不可互相替代。
+ */
+export const WORKSPACE_FILES_READ_ALL_ENDPOINT: string = 'workspaceFiles/readAll';
 /** 工作区文件变更流（**流式**） */
 export const WORKSPACE_FILES_CHANGES_ENDPOINT: string = 'workspaceFiles/changes';
 /** 附件上传（返回的引用随后放入 prompt/命令的附件字段） */

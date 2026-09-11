@@ -17,6 +17,7 @@ import {
   Lh,
   ModelOption,
   ModelSelection,
+  PendingAttachment,
   previewOutput,
   Radius,
   ReferenceCandidate,
@@ -38,7 +39,7 @@ export struct ConversationPane {
   @Prop offline: boolean = false;
   @Prop queuedCount: number = 0;
   @Prop draft: string = '';
-  @Prop attachments: string[] = [];
+  @Prop attachments: PendingAttachment[] = [];
   @Prop models: ModelOption[] = [];
   @Prop selection: ModelSelection = { provider: '', modelId: '', effort: '' };
   @Prop references: ReferenceCandidate[] = [];
@@ -54,7 +55,8 @@ export struct ConversationPane {
   };
   onAddAttachment: () => void = () => {
   };
-  onRemoveAttachment: (name: string) => void = () => {
+  /** 移除附件（参数是上传回执 id，见 `Composer` 的说明） */
+  onRemoveAttachment: (receiptId: string) => void = () => {
   };
   onPickModel: () => void = () => {
   };

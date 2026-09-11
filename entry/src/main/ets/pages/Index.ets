@@ -27,7 +27,9 @@ import {
 } from 'dshcompat';
 import type { VersionCheck } from 'dshcompat';
 import type { DiagnosticItem, DiagnosticReport } from 'connection';
-import { copyText } from 'platform';
+import { copyText, PickOutcome, pickDocument } from 'platform';
+import type { PickedFile } from 'platform';
+import { common } from '@kit.AbilityKit';
 import {
   APPROVAL_CHOICE_ALLOW_ALWAYS,
   APPROVAL_CHOICE_DENY,
@@ -50,6 +52,7 @@ import {
   navTabLabel,
   navTabSymbol,
   PendingItem,
+  PendingAttachment,
   PluginItem,
   Radius,
   ReferenceCandidate,
@@ -79,6 +82,7 @@ import {
  * 与值导入分开写更贴近 ArkTS 的类型/值导入区分。
  */
 import type {
+  AttachOutcome,
   CredentialWriteResult,
   HubSnapshot,
   HubSubscriber,
@@ -307,7 +311,7 @@ struct Index {
 
   // ── 交互状态 ──
   @State draft: string = '';
-  @State attachments: string[] = [];
+  @State attachments: PendingAttachment[] = [];
   @State running: boolean = false;
   @State offline: boolean = false;
   @State queuedCount: number = 0;
@@ -400,6 +404,8 @@ struct Index {
     this.hubTrace = s.trace;
     this.hubConnected = s.connected;
     this.queuedCount = s.outbox;
+    // 附件列表由中枢拥有（回执是会话作用域的），这里只跟随
+    this.attachments = s.attachments;
     this.offline = s.phase === HubPhase.DEGRADED;
     if (!s.connected) {
       // 断开后**清空**上一段连接的数据，而不是留着当「缓存」：
@@ -419,6 +425,7 @@ struct Index {
       this.commands = [];
       this.references = [];
       this.preview = undefined;
+      this.attachments = [];
       this.updateHosts();
       this.recomputeDerived();
       return;
@@ -770,6 +777,56 @@ struct Index {
   private openPoc(): void {
     router.pushUrl({ url: 'pages/Poc1' }).catch(() => {
     });
+  }
+
+  /**
+   * 把工作区里的一个文件投喂成附件（读整文件字节 → 上传 → 拿回执）。
+   *
+   * 投喂后**跳回会话页**：附件是「下一条消息的附件」，用户需要看到它挂在输入区上。
+   * 停在文件树页会让人以为投喂没发生（那条上传成功的 trace 只有诊断页能看到）。
+   */
+  private async attachWorkspaceFileToComposer(node: FileNode): Promise<void> {
+    if (!this.hubConnected) {
+      this.attachNotice = '当前离线：无法读取与上传 Host 侧文件。';
+      return;
+    }
+    this.attachNotice = `正在读取并上传「${node.name}」…`;
+    const outcome: AttachOutcome = await SessionHub.shared()
+      .attachWorkspaceFile(node.path, node.name, node.size);
+    this.attachNotice = outcome.ok ? '' : `投喂「${node.name}」失败：${outcome.reason}`;
+    if (outcome.ok) {
+      this.selectTab(NavTab.SESSIONS);
+    }
+  }
+
+  /**
+   * 抬起系统文件选择器，并把选中的文件上传成附件回执。
+   *
+   * 三种非成功结果**必须分开提示**（见 `platform.PickOutcome`）：
+   *   - 用户取消 → **什么都不提示**（提示「失败」会让人以为操作出错了）；
+   *   - 文件过大 → 说明大小与上限（这是可修复的选择）；
+   *   - 选择/读取失败 → 给出原因与建议。
+   * 合并成一句「附件添加失败」会让用户重试同一个动作。
+   */
+  private async pickAndAttach(): Promise<void> {
+    const picked: PickedFile = await pickDocument(getContext(this) as common.Context);
+    if (picked.outcome === PickOutcome.CANCELLED) {
+      return;
+    }
+    if (picked.outcome === PickOutcome.TOO_LARGE) {
+      this.attachNotice = picked.reason;
+      return;
+    }
+    if (picked.outcome === PickOutcome.FAILED) {
+      this.attachNotice = picked.reason;
+      return;
+    }
+    this.attachNotice = '正在上传附件…';
+    const outcome: AttachOutcome =
+      await SessionHub.shared().attachLocalFile(picked.name, picked.base64, picked.bytes, picked.mediaType);
+    // 上传结果必须覆盖掉「正在上传」——否则失败时界面会一直停在「正在上传…」，
+    // 而用户以为它还在传（实际早就失败了）。
+    this.attachNotice = outcome.ok ? '' : `附件「${picked.name}」添加失败：${outcome.reason}`;
   }
 
   /**
@@ -1827,20 +1884,10 @@ struct Index {
           this.running = false;
         },
         onAddAttachment: () => {
-          // 附件上传的**协议侧已经接好**（`fileUploadPayload` / `projectFileUpload` / `filePart`），
-          // 缺的是端侧文件选择能力（相册/文件选择器）——`platform` 目前没有这一项。
-          // 因此这里如实说明，而不是塞一个假附件名进列表：
-          // 假附件会出现在待发内容里，用户以为已经带上文件，实际什么都没发。
-          this.attachNotice = '附件上传尚未接线：还缺端侧文件选择能力（协议侧与 fileUploads/upload 的载荷已就绪）。';
+          this.pickAndAttach();
         },
-        onRemoveAttachment: (name: string) => {
-          const next: string[] = [];
-          for (let i = 0; i < this.attachments.length; i++) {
-            if (this.attachments[i] !== name) {
-              next.push(this.attachments[i]);
-            }
-          }
-          this.attachments = next;
+        onRemoveAttachment: (receiptId: string) => {
+          SessionHub.shared().removeAttachment(receiptId);
         },
         onPickModel: () => {
           this.selectTab(NavTab.SETTINGS);
@@ -1906,7 +1953,9 @@ struct Index {
       return;
     }
     this.draft = '';
-    this.attachments = [];
+    // 【附件列表**不在这里**清空】它由中枢拥有：回执只在 Host 确认接受这次提示词后
+    // 才会被回收，那时中枢清空并广播。在这里乐观清空会让「发送失败」时
+    // 附件条目凭空消失——用户既发不出去，也看不到自己加过什么。
     if (this.hubConnected) {
       SessionHub.shared().sendPrompt(text);
     }
@@ -2051,10 +2100,7 @@ struct Index {
           this.openFile(node);
         },
         onAttachFile: (node: FileNode) => {
-          // 与输入区的附件按钮同因：协议侧就绪、端侧缺「把字节读出来并上传」这一步。
-          // 不把文件名塞进附件列表——那会让用户以为已经把它带给 agent 了。
-          this.attachNotice = `「${node.name}」投喂尚未接线：还缺端侧读取与 fileUploads/upload 的调用点。`;
-          this.selectTab(NavTab.SESSIONS);
+          this.attachWorkspaceFileToComposer(node);
         },
         onBack: () => {
           this.wsDrill = this.wsDrill > 0 ? this.wsDrill - 1 : 0;

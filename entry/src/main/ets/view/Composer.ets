@@ -11,14 +11,27 @@
 import {
   CommandCandidate,
   Fs,
+  formatBytes,
   ModelSelection,
   modelSelectionLabel,
   ModelOption,
+  PendingAttachment,
   Radius,
   ReferenceCandidate,
   Sp,
   Sz
 } from 'appstate';
+
+/**
+ * 附件条目的展示文本：`名字 · 大小`。
+ *
+ * 【为什么必须带大小】附件是「先上传、后随消息发出」两步。
+ * 只显示文件名时，用户无法确认选中的到底是哪个文件（同名文件很常见），
+ * 也无法察觉自己选错了版本。大小是最便宜的可辨识信息。
+ */
+function attachmentLabel(item: PendingAttachment): string {
+  return item.bytes > 0 ? `${item.name} · ${formatBytes(item.bytes)}` : item.name;
+}
 
 @Component
 export struct Composer {
@@ -26,7 +39,7 @@ export struct Composer {
   @Prop running: boolean = false;
   @Prop offline: boolean = false;
   @Prop queuedCount: number = 0;
-  @Prop attachments: string[] = [];
+  @Prop attachments: PendingAttachment[] = [];
   @Prop models: ModelOption[] = [];
   @Prop selection: ModelSelection = { provider: '', modelId: '', effort: '' };
   @Prop references: ReferenceCandidate[] = [];
@@ -52,8 +65,13 @@ export struct Composer {
   /** 添加附件（宿主负责拉起相册/文件选择器） */
   onAddAttachment: () => void = () => {
   };
-  /** 移除附件 */
-  onRemoveAttachment: (name: string) => void = () => {
+  /**
+   * 移除附件（参数是**回执 id**，不是文件名）。
+   *
+   * 为什么用回执而不是文件名：同名文件可以加两次，按名字移除会一次删掉两个，
+   * 而用户只点了一个「×」。回执是这次上传的唯一身份。
+   */
+  onRemoveAttachment: (receiptId: string) => void = () => {
   };
   /** 切换模型（宿主弹出选择器） */
   onPickModel: () => void = () => {
@@ -156,25 +174,27 @@ export struct Composer {
   attachmentRow() {
     Scroll() {
       Row({ space: Sp.S }) {
-        ForEach(this.attachments, (name: string) => {
+        ForEach(this.attachments, (item: PendingAttachment) => {
           Row({ space: Sp.XS }) {
             SymbolGlyph($r('sys.symbol.paperclip')).fontSize(12)
               .fontColor([$r('sys.color.font_secondary')])
-            Text(name)
+            Text(attachmentLabel(item))
               .fontSize(Fs.CAPTION)
               .maxLines(1)
-              .constraintSize({ maxWidth: 140 })
+              .constraintSize({ maxWidth: 160 })
             Text('×')
               .fontSize(Fs.CAPTION)
               .fontColor($r('sys.color.alert'))
               .onClick(() => {
-                this.onRemoveAttachment(name);
+                // 以**回执**为键移除，而不是文件名：同名文件可以加两次，
+                // 按名字移除会一次删掉两个（用户以为只删了一个）。
+                this.onRemoveAttachment(item.receiptId);
               })
           }
           .padding({ left: Sp.S, right: Sp.S, top: Sp.XS, bottom: Sp.XS })
           .borderRadius(Radius.S)
           .backgroundColor($r('sys.color.background_secondary'))
-        }, (name: string) => name)
+        }, (item: PendingAttachment) => item.receiptId)
       }
     }
     .scrollable(ScrollDirection.Horizontal)

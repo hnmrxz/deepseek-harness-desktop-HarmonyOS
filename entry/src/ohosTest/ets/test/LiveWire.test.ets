@@ -35,7 +35,12 @@ import {
   NodeKind,
   PreviewKind,
   Speaker,
+  filePart,
+  fileUploadPayload,
+  projectWorkspaceBytes,
+  textPart,
   workspaceListPayload,
+  workspaceReadAllPayload,
   WORKSPACE_ROOT_REQUEST_PATH
 } from 'appstate';
 import type {
@@ -44,6 +49,7 @@ import type {
   FilePreview,
   HostRecord,
   CommandCandidate,
+  PromptContentPart,
   ReferenceCandidate,
   SessionListItem,
   TrajectoryItem,
@@ -309,6 +315,62 @@ export default function liveWireTest() {
       const bag: Record<string, Object> = args as Record<string, Object>;
       expect(bag['path'] as string).assertEqual('.');
       expect(bag['workspaceFileScopeId'] as string).assertEqual('s-1');
+    });
+
+    // ───────────────── 附件（上传回执 + 提示词片段） ─────────────────
+
+    it('fileUploadPayload：线上参数名是 agentId，不是 agent', 0, () => {
+      // 这条钉的是一个曾经真实存在的缺陷：按上游 **.d.ts 的形参名** 写成了 `agent`，
+      // 而生成上表里的线上名是 `agentId`。发 `agent` 会被拒：
+      //   gateway/arguments-invalid: missing "agentId"
+      // 该端点在客户端此前从未被调用过，所以错误一直没暴露。
+      const args: Object | undefined = fileUploadPayload('session-abc', 'AAEC', 'a.txt');
+      const bag: Record<string, Object> = args as Record<string, Object>;
+      expect(bag['agentId'] as string).assertEqual('session-abc');
+      expect(bag['agent'] === undefined).assertTrue();
+      const request: Record<string, Object> = bag['request'] as Record<string, Object>;
+      expect(request['data'] as string).assertEqual('AAEC');
+      expect(request['name'] as string).assertEqual('a.txt');
+    });
+
+    it('fileUploadPayload：空文件名不带 name 键（上游 name 可选）', 0, () => {
+      const args: Object | undefined = fileUploadPayload('s', 'AA', '');
+      const bag: Record<string, Object> = args as Record<string, Object>;
+      const request: Record<string, Object> = bag['request'] as Record<string, Object>;
+      expect(request['name'] === undefined).assertTrue();
+    });
+
+    it('workspaceReadAllPayload：无 range，只有 scope + path', 0, () => {
+      const args: Object | undefined = workspaceReadAllPayload('s-1', 'docs/a.md');
+      const bag: Record<string, Object> = args as Record<string, Object>;
+      expect(bag['workspaceFileScopeId'] as string).assertEqual('s-1');
+      expect(bag['path'] as string).assertEqual('docs/a.md');
+      expect(bag['range'] === undefined).assertTrue();
+    });
+
+    it('projectWorkspaceBytes：无 data 或空 data 一律 undefined', 0, () => {
+      // 「拿不到字节」必须与「字节是空串」一样被拒绝：用空 base64 去上传
+      // 会产生一个 0 字节附件，而用户以为文件带上了。
+      expect(projectWorkspaceBytes(undefined) === undefined).assertTrue();
+      expect(projectWorkspaceBytes(parseJson('{"bytes":10}')) === undefined).assertTrue();
+      expect(projectWorkspaceBytes(parseJson('{"bytes":10,"data":""}')) === undefined).assertTrue();
+      const ok = projectWorkspaceBytes(parseJson('{"bytes":3,"data":"AAEC","eof":true,"offset":0}'));
+      expect(ok === undefined).assertFalse();
+      expect(ok!.bytes).assertEqual(3);
+      expect(ok!.data).assertEqual('AAEC');
+      expect(ok!.eof).assertTrue();
+    });
+
+    it('textPart / filePart：判别字段与载荷', 0, () => {
+      const t: PromptContentPart = textPart('你好');
+      expect(t.type).assertEqual('text');
+      expect(t.text).assertEqual('你好');
+      const f: PromptContentPart = filePart('r-1');
+      expect(f.type).assertEqual('file');
+      expect(f.receiptId).assertEqual('r-1');
+      // 文件片段**不得**带 text/data：多带字段会让上游的联合类型判别变得含糊
+      expect(f.text === undefined).assertTrue();
+      expect(f.data === undefined).assertTrue();
     });
   });
 }

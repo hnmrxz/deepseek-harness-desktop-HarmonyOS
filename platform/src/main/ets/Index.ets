@@ -36,6 +36,8 @@ export {
 } from './system/HostEvents';
 export { FormFactor, readDeviceFacts } from './system/DeviceFacts';
 export type { DeviceFacts } from './system/DeviceFacts';
+export { MAX_ATTACHMENT_BYTES, PickOutcome, pickDocument } from './system/FilePicker';
+export type { PickedFile } from './system/FilePicker';
 
 // ── 窗口与形态 ──
 export {

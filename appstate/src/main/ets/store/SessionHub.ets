@@ -31,6 +31,7 @@
 
 import { Connection } from 'connection';
 import { ConnectionState } from 'connection';
+import { MAX_ATTACHMENT_BYTES } from 'platform';
 import type { DiagnosticReport, EventSink, HostFacts, RemoteFailure, RpcResult, StreamSink } from 'connection';
 import { EVENTS_RESULT_ENDPOINT, getArray, getBoolean, getNumber, getRecord, getString, readPath } from 'connection';
 import {
@@ -120,23 +121,40 @@ import type {
 import {
   commandsListEndpoint,
   commandsListPayload,
+  filePart,
   fileReferencesEndpoint,
   fileReferencesPayload,
+  fileUploadEndpoint,
+  fileUploadPayload,
   projectCommands,
   projectFileReferences,
+  projectFileUpload,
+  projectSessionPrompt,
   projectSessionReferences,
   projectWorkspaceFailure,
   projectWorkspaceListing,
   projectWorkspaceText,
+  projectWorkspaceBytes,
+  promptPayload,
+  PromptMode,
   sessionReferencesEndpoint,
   sessionReferencesPayload,
+  textPart,
   workspaceListEndpoint,
   workspaceListPayload,
+  workspaceReadAllEndpoint,
+  workspaceReadAllPayload,
   workspaceReadEndpoint,
   workspaceReadPayload,
   WORKSPACE_ROOT_REQUEST_PATH
 } from '../model/Wire';
-import type { CommandCandidate, ReferenceCandidate } from '../model/Wire';
+import type {
+  CommandCandidate,
+  FileUploadValue,
+  PromptContentPart,
+  ReferenceCandidate,
+  WorkspaceBytesWire
+} from '../model/Wire';
 import type { FileNode, FilePreview } from '../model/Workspace';
 
 /** 中枢运行阶段 */
@@ -158,6 +176,31 @@ export interface OutboxEntry {
   sessionId: string;
   text: string;
   at: number;
+}
+
+/**
+ * 已上传、等待随下一条提示词发出的附件。
+ *
+ * 只保留**回执**与展示信息：字节内容上传后不再需要留在端侧
+ * （Host 已按内容寻址保存），留在内存里只会让大附件长期占内存。
+ */
+export interface PendingAttachment {
+  /** 不透明回执（**会话作用域**；只对当前选中会话有效） */
+  receiptId: string;
+  /** 展示名（Host 消毒后的名字） */
+  name: string;
+  /** 精确字节数 */
+  bytes: number;
+  /** 推断出的 MIME（仅展示） */
+  mediaType: string;
+}
+
+/** 一次添加附件的结果（UI 据此决定提示什么） */
+export interface AttachOutcome {
+  ok: boolean;
+  name: string;
+  /** 失败原因（可直接展示；成功时为空串） */
+  reason: string;
 }
 
 /** 中枢快照：UI 只读它，不直接碰连接 */
@@ -221,6 +264,13 @@ export interface HubSnapshot {
   fileTruncated: boolean;
   /** 当前预览的文件（未打开时为 undefined） */
   filePreview: FilePreview | undefined;
+  /**
+   * 已上传、等待随下一条提示词发出的附件。
+   *
+   * 暴露给界面而不是留在中枢内部：用户必须能看到「这条消息会带哪些附件」，
+   * 否则他无法判断附件到底加上了没有——而这正是历史上那个假附件名造成的困惑。
+   */
+  attachments: PendingAttachment[];
 }
 
 /**
@@ -338,6 +388,8 @@ export class SessionHub {
   private fileTreeFor: string = '';
   /** 当前预览的文件（未打开时为 undefined） */
   private filePreview: FilePreview | undefined = undefined;
+  /** 待发附件（回执 + 展示信息；字节不留在端侧） */
+  private attachmentList: PendingAttachment[] = [];
 
   /** waterfall 待答项：eventId → 呈现项 id（应答时必须原样带回 eventId） */
   private waterfallEventIds: Map<string, string> = new Map();
@@ -575,7 +627,8 @@ export class SessionHub {
       references: this.references,
       fileNodes: this.fileNodes,
       fileTruncated: this.fileTruncated,
-      filePreview: this.filePreview
+      filePreview: this.filePreview,
+      attachments: this.attachmentList
     };
   }
 
@@ -1407,6 +1460,9 @@ export class SessionHub {
     this.selectedSessionId = sessionId;
     this.trajectoryList = [];
     this.running = false;
+    // 附件回执是**上一个会话的** Agent 作用域内的东西，切会话后一律失效。
+    // 不清理会让用户以为附件还挂着，实际发送时被 Host 判为未知回执。
+    this.attachmentList = [];
     this.notify();
     if (sessionId.length === 0) {
       return;
@@ -1870,6 +1926,132 @@ export class SessionHub {
     this.record(`control open ${cancel === undefined ? 'failed' : 'ok'}`);
   }
 
+  // ───────────────────────── 附件（投喂本机文件） ─────────────────────────
+
+  /**
+   * 上传一个本机文件并把得到的**回执**挂到待发附件上。
+   *
+   * 为什么回执必须存在中枢而不是视图里：回执是 **Agent 作用域**的
+   * （上游注释：只在接收它的 Agent 作用域内有效），因此它天然绑定
+   * 「当前会话」这份状态——而那是中枢独占的。放在视图里会在多窗口下
+   * 出现「两个窗口各持一份回执、其中一份已经因会话切换而失效」。
+   *
+   * @param name 展示名（Host 会再消毒一次）
+   * @param base64 文件字节的规范 base64（由 `platform.pickDocument` 产出）
+   * @param bytes 精确字节数（仅用于界面展示）
+   */
+  async attachLocalFile(name: string, base64: string, bytes: number,
+    mediaType: string): Promise<AttachOutcome> {
+    const agentId: string = this.selectedSessionId;
+    if (agentId.length === 0) {
+      return { ok: false, name: name, reason: '请先选择一个会话：附件回执绑定在会话作用域上。' };
+    }
+    if (!this.unaryReady) {
+      return { ok: false, name: name, reason: '当前离线，无法上传附件。连接恢复后请重新选择文件。' };
+    }
+    const payload: Object | undefined = fileUploadPayload(agentId, base64, name);
+    if (payload === undefined) {
+      return { ok: false, name: name, reason: '该 Host 不提供附件上传端点（兼容面上表里没有它）。' };
+    }
+    const result: RpcResult = await this.conn.call(fileUploadEndpoint(), payload);
+    if (!result.ok) {
+      const failure = result.error;
+      const code: string = failure === undefined ? 'unknown' : failure.code;
+      const message: string = failure === undefined ? '' : failure.message;
+      this.record(`upload fail ${code}`);
+      return { ok: false, name: name, reason: friendlyFailure(code, message) };
+    }
+    const uploaded: FileUploadValue | undefined = projectFileUpload(result.value);
+    if (uploaded === undefined) {
+      // 没有回执就没法构造 `filePart()`。**不能**乐观地认为「上传成功」：
+      // 那样用户会看到一个附件条目，而它发出去时会被 Host 判为未知回执。
+      this.record('upload ok 但缺 receiptId');
+      return { ok: false, name: name, reason: '上传已返回，但没有回执 id（上游回复缺 receiptId）。' };
+    }
+    const next: PendingAttachment[] = this.attachmentList.slice();
+    next.push({
+      receiptId: uploaded.receiptId,
+      name: uploaded.file.name.length > 0 ? uploaded.file.name : name,
+      bytes: uploaded.file.bytes > 0 ? uploaded.file.bytes : bytes,
+      mediaType: mediaType
+    });
+    this.attachmentList = next;
+    this.record(`upload ok ${uploaded.file.name} ${uploaded.file.bytes}B`);
+    this.notify();
+    return { ok: true, name: uploaded.file.name, reason: '' };
+  }
+
+  /**
+   * 把 Host 侧的工作区文件投喂成附件。
+   *
+   * 路径是「读整文件字节 → 上传拿回执」，而不是「把路径塞进提示词」：
+   * 上游的提示词里附件只有两种载体（内联 base64 图片 / 上传回执），
+   * **没有**「引用一个 Host 路径」这种形式。发一个路径字符串只会变成普通文本，
+   * 用户以为把文件给了 agent，实际只给了一个文件名。
+   *
+   * 用 `readAll` 而不是 `read`：后者只返回 UTF-8 文本（非文本直接拒绝），
+   * 拿不到可上传的字节；`readAll` 返回完整 base64。
+   */
+  async attachWorkspaceFile(path: string, name: string, bytes: number): Promise<AttachOutcome> {
+    const scope: string = this.fileTreeFor.length > 0 ? this.fileTreeFor : this.selectedSessionId;
+    if (scope.length === 0) {
+      return { ok: false, name: name, reason: '尚未确定文件浏览的作用域（请先选一个工作区）。' };
+    }
+    if (!this.unaryReady) {
+      return { ok: false, name: name, reason: '当前离线，无法读取与上传文件。' };
+    }
+    if (bytes > MAX_ATTACHMENT_BYTES) {
+      return {
+        ok: false, name: name,
+        reason: `文件超过端侧附件上限（${bytes} 字节 > ${MAX_ATTACHMENT_BYTES} 字节），请改用更小的文件。`
+      };
+    }
+    const payload: Object | undefined = workspaceReadAllPayload(scope, path);
+    if (payload === undefined) {
+      return { ok: false, name: name, reason: '该 Host 不提供整文件读取端点（兼容面上表里没有它）。' };
+    }
+    const result: RpcResult = await this.conn.call(workspaceReadAllEndpoint(), payload);
+    if (!result.ok) {
+      const code: string = result.error === undefined ? 'unknown' : result.error.code;
+      this.record(`ws readAll fail ${code}`);
+      return { ok: false, name: name, reason: friendlyWorkspaceFailure(code, result.error === undefined ? '' : result.error.message) };
+    }
+    const content: WorkspaceBytesWire | undefined = projectWorkspaceBytes(result.value);
+    if (content === undefined) {
+      // 没有字节就不能上传。**不能**用一个空 base64 顶上：
+      // 那会产生一个 0 字节的附件，而用户以为文件已经带上。
+      this.record('ws readAll ok 但无 data');
+      return { ok: false, name: name, reason: 'Host 未返回文件内容（回复里没有 data）。' };
+    }
+    return await this.attachLocalFile(name, content.data, content.bytes, '');
+  }
+
+  /** 移除一个待发附件（只影响本地列表；Host 侧的回执会自然过期） */
+  removeAttachment(receiptId: string): void {
+    const next: PendingAttachment[] = [];
+    for (let i = 0; i < this.attachmentList.length; i++) {
+      if (this.attachmentList[i].receiptId !== receiptId) {
+        next.push(this.attachmentList[i]);
+      }
+    }
+    this.attachmentList = next;
+    this.notify();
+  }
+
+  /**
+   * 清空待发附件。
+   *
+   * 切会话时必须调用：回执是 Agent 作用域的，带着上一个会话的回执去发
+   * 会被 Host 判为未知回执（`session/attachment-invalid` / `FILE_NOT_STAGED`）。
+   */
+  clearAttachments(): void {
+    if (this.attachmentList.length === 0) {
+      return;
+    }
+    this.attachmentList = [];
+    this.notify();
+  }
+
   // ───────────────────────── 发送与取消 ─────────────────────────
 
   /**
@@ -1892,8 +2074,16 @@ export class SessionHub {
     }
     const requestId: string = mintRequestId();
     if (!this.unaryReady) {
+      // 【离线时**不**排队附件】回执是会话作用域的、且有生命周期
+      // （进入某个 prompt 的收件箱后 Host 就回收它）。排队一条「等会儿再发」的
+      // 附件消息，几乎注定在补发时因回执已失效而失败，而用户以为它会发出去。
+      // 因此离线时只排文本，并明确告知附件不会跟着走。
+      if (this.attachmentList.length > 0) {
+        this.lastError = '当前离线：已加入待发队列，但**附件不会随队列发送**，请恢复连接后重新添加附件。';
+      } else {
+        this.lastError = '当前离线：已加入待发队列，连接恢复后自动发送';
+      }
       this.outboxList.push({ requestId: requestId, sessionId: sessionId, text: trimmed, at: Date.now() });
-      this.lastError = '当前离线：已加入待发队列，连接恢复后自动发送';
       this.notify();
       return false;
     }
@@ -1901,29 +2091,36 @@ export class SessionHub {
   }
 
   private async sendPromptNow(requestId: string, sessionId: string, text: string): Promise<boolean> {
-    const part: Record<string, Object> = {};
-    part['type'] = 'text';
-    part['text'] = text;
-    const content: Object[] = [part as Object];
-    const request: Record<string, Object> = {};
-    request['requestId'] = requestId;
-    request['sessionId'] = sessionId;
-    request['mode'] = 'queue';
-    request['content'] = content;
-    const body: Record<string, Object> = {};
-    body['request'] = request as Object;
-    const args: Object | undefined = argsFor(SESSION_PROMPT_ENDPOINT, body as Object);
+    // 只把「属于本次会话」的附件带上：会话可能在入队后切换过，
+    // 而回执绑定会话——带上别的会话的回执会被 Host 判为未知回执。
+    const content: PromptContentPart[] = [textPart(text)];
+    for (let i = 0; i < this.attachmentList.length; i++) {
+      content.push(filePart(this.attachmentList[i].receiptId));
+    }
+    const args: Object | undefined =
+      promptPayload(requestId, sessionId, PromptMode.QUEUE, content, '');
     if (args === undefined) {
       this.lastError = '兼容面缺少提示词端点的参数契约';
       this.notify();
       return false;
     }
     const result: RpcResult = await this.conn.call(SESSION_PROMPT_ENDPOINT, args);
-    if (result.ok) {
+    if (result.ok && projectSessionPrompt(result.value).accepted) {
       this.running = true;
+      // 回执「成功进入收件箱」后即被 Host 回收，因此本地列表必须同时清空：
+      // 留着它下次再发会被判为未知回执，而用户以为附件还在。
+      this.attachmentList = [];
       this.record(`prompt accepted ${requestId.substring(0, 8)}`);
       this.notify();
       return true;
+    }
+    if (result.ok) {
+      // `ok` 但没被接受（上游回复缺 `accepted`）——**不当作成功**：
+      // 乐观清空附件会让用户丢失一次上传，而失败的原因被掩盖。
+      this.lastError = '发送未获确认：Host 没有明确接受这次提示词。';
+      this.record('prompt ok 但未 accepted');
+      this.notify();
+      return false;
     }
     const failure = result.error;
     this.lastError = `发送失败：${friendlyFailure(failure === undefined ? 'unknown' : failure.code, failure === undefined ? '' : failure.message)}`;
