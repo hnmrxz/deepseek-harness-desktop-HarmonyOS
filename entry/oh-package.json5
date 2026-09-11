@@ -1,7 +1,7 @@
 {
   "name": "entry",
   "version": "1.0.0",
-  "description": "DeepSeek Harness 鸿蒙客户端入口模块",
+  "description": "HDSH 入口模块（DeepSeek Harness 鸿蒙客户端）",
   "main": "",
   "author": "",
   "license": "MIT",

@@ -190,6 +190,19 @@ function projectDiagnostics(report: DiagnosticReport): DiagReport {
   };
 }
 
+/**
+ * 应用名（**唯一来源**）。
+ *
+ * 【为什么要有这个常量】应用名此前散落在四处：`AppScope` 的 `app_name`、
+ * `entry` 的三个 string 资源、以及本文件里的一处字面量。它们各不相同
+ * （「DSH 鸿蒙端」「DeepSeek Harness 鸿蒙客户端」），于是桌面图标、任务卡片、
+ * 侧栏标题**互相不一致**——用户会以为是两个应用。
+ *
+ * 资源文件里的 `app_name`/`EntryAbility_label` 是系统读取的（改名要同步改资源），
+ * 这里的常量供**应用内**渲染使用；两处必须字面一致，改名时一起改。
+ */
+const APP_NAME: string = 'HDSH';
+
 /** 单栏下的页面栈 */
 enum StackPage {
   MAIN = 'main',
@@ -650,7 +663,7 @@ struct Index {
    */
   private exportDiagnostics(): void {
     const lines: string[] = [];
-    lines.push(`# DSH 鸿蒙端诊断报告（${new Date().toISOString()}）`);
+    lines.push(`# ${APP_NAME} 诊断报告（${new Date().toISOString()}）`);
     lines.push(`Host: ${this.hubAuthority.length > 0 ? this.hubAuthority : '未配置'}`);
     lines.push(`阶段: ${this.hubPhase} · 连接=${this.hubConnected}`);
     lines.push('');
@@ -1655,7 +1668,7 @@ struct Index {
   @Builder
   navPanel() {
     Column({ space: Sp.XS }) {
-      Text('DSH 鸿蒙端')
+      Text(APP_NAME)
         .fontSize(Fs.TITLE_S)
         .fontWeight(FontWeight.Bold)
         .width('100%')

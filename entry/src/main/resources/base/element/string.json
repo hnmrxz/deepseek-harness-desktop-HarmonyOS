@@ -2,15 +2,15 @@
   "string": [
     {
       "name": "module_desc",
-      "value": "DeepSeek Harness 鸿蒙客户端"
+      "value": "HDSH"
     },
     {
       "name": "EntryAbility_desc",
-      "value": "DeepSeek Harness 鸿蒙客户端"
+      "value": "HDSH"
     },
     {
       "name": "EntryAbility_label",
-      "value": "DSH 鸿蒙端"
+      "value": "HDSH"
     },
     {
       "name": "perm_internet_reason",

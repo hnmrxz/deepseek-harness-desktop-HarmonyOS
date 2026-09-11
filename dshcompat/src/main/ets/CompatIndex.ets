@@ -48,9 +48,14 @@ export interface VersionCheck {
  *   0.1.5-rc.1 —— 跨 0.1.3 / 0.1.5 两条线后的新基线（84 端点）。
  *                 差异：新增 workspaceFiles/*（7）、fileUploads/upload、goals/get、
  *                 sessionFeedback/record；commands/execute 的 images → submittedAttachments。
- *                 同时保留 0.1.2-rc.1：老 Host 仍可用，缺的端点由能力探测降级为入口置灰。
+ *   0.1.5-rc.2 —— **零协议漂移**（84 端点、参数、流式标记逐条一致；
+ *                 调用描述符提取结果与 rc.1 **逐字节相同**，1336 个 `.d.ts` 里只有
+ *                 8 个 message-feedback 的文件有差异，与我们消费的面无关）。
+ *                 因此这里直接纳入矩阵，不需要任何代码或能力映射改动。
+ *                 证据：D2 §8.7.18。
+ *   同时保留 0.1.2-rc.1：老 Host 仍可用，缺的端点由能力探测降级为入口置灰。
  */
-const SUPPORTED_VERSIONS: string[] = ['0.1.5-rc.1', '0.1.2-rc.1'];
+const SUPPORTED_VERSIONS: string[] = ['0.1.5-rc.2', '0.1.5-rc.1', '0.1.2-rc.1'];
 
 /** 协议骨架端点：缺任一个即视为不兼容（连基本会话都做不了） */
 const PROTOCOL_SKELETON: string[] = ['session/list', 'session/create', 'session/prompt'];

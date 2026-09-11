@@ -1,6 +1,14 @@
-# DeepSeek Harness 鸿蒙客户端
+# HDSH —— DeepSeek Harness 鸿蒙客户端
 
-面向 HarmonyOS（手机 / 折叠屏 / 平板 / 2in1 PC）的 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）一等客户端，**ArkTS + ArkUI 原生实现**。
+<img src="docs/brand/hdsh-icon.png" alt="HDSH 应用图标" width="128" align="right" />
+
+面向 HarmonyOS（手机 / 折叠屏 / 平板 / 2in1 PC）的 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）一等客户端，**ArkTS + ArkUI 原生实现**。应用名统一为 **HDSH**（HarmonyOS + DSH）。
+
+> **图标**：字母 **H** 为主体，横杠是一道**斜向开口的链环**（产品名 `harness` 就是"挂具"，
+> 而客户端做的事正是挂接到 Host）；下腔内三道波纹是"海"的几何暗示——
+> 与 DeepSeek 的鲸鱼属于同一血缘，但**不是**同一个符号。
+> 配色取深靛紫 → 青绿的对角渐变，与官方偏亮的蓝处于不同色相区间。
+> 资源由 `node tools/make-brand-assets.mjs` 生成（形状即代码，可 diff、可复现）。
 
 > **当前进度**：**全部界面开发完成**（M1/M2/M3 界面部分）+ **设备能力层** + **真实数据接线核心** + **上游基线已升级到 `0.1.5-rc.1`** + **全部桩数据已清除**。
 >
@@ -18,7 +26,9 @@
 >   伪装成「功能正常」——详见提交 `85e44be`。
 > - **上游兼容面**：基线由 `0.1.2-rc.1`（74 端点）升级到 **`0.1.5-rc.1`（84 端点）**，
 >   新增 `workspaceFiles/*`、`fileUploads/upload`、`goals/get`、`sessionFeedback/record` 四个能力域；
->   漂移门禁绿、负测试通过。
+>   漂移门禁绿、负测试通过。**已对齐 `0.1.5-rc.2`**——三层证据表明它是**零协议漂移**
+>   （调用描述符逐字节相同；1336 个 `.d.ts` 里只有 8 个与我们无关的文件有差异；
+>   另起 rc.2 Host 复跑关键探测结果逐字相同），因此只更新了版本矩阵，未改任何代码。
 >
 > **验证状态**：主构建与 `entry@ohosTest` 目标编译通过；三道门禁为绿
 > （漂移门禁 + 架构回归门禁 + hostkit 的 295 项测试）；**设备内 `ohosTest` 139/139 通过**；

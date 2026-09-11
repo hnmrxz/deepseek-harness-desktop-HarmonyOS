@@ -438,7 +438,7 @@ export default function connectionTest() {
       + '"projections":{"asOfSeq":2,"values":{"title":null,"agentPreset":"standard"}}},'
       + '{"sessionId":"session-2","updatedAt":1789051283088,"running":true,"blank":false,'
       + '"cwd":"/home/u/other-project",'
-      + '"projections":{"asOfSeq":9,"values":{"title":"给 DSH 鸿蒙端写协议兼容层"}}}'
+      + '"projections":{"asOfSeq":9,"values":{"title":"给 HDSH 写协议兼容层"}}}'
       + ']}';
 
     it('projects the real wire shape into list items', 0, () => {
@@ -463,7 +463,7 @@ export default function connectionTest() {
           titled = page.items[i].title;
         }
       }
-      expect(titled).assertEqual('给 DSH 鸿蒙端写协议兼容层');
+      expect(titled).assertEqual('给 HDSH 写协议兼容层');
     });
 
     /**
