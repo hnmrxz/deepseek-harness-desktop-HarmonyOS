@@ -42,6 +42,7 @@ import {
   eventShapeOf,
   EventFamily,
   EVENT_CREDENTIALS_REFERENCE_UPDATED,
+  EVENT_COMMANDS_CHANGE,
   EVENT_SETTINGS_DOCUMENT_UPDATED,
   GATEWAY_ARGUMENTS_INVALID,
   GATEWAY_INPUT_INVALID,
@@ -116,6 +117,26 @@ import type {
   SettingsNamespaceState,
   SettingsWriteResult
 } from '../model/Settings';
+import {
+  commandsListEndpoint,
+  commandsListPayload,
+  fileReferencesEndpoint,
+  fileReferencesPayload,
+  projectCommands,
+  projectFileReferences,
+  projectSessionReferences,
+  projectWorkspaceFailure,
+  projectWorkspaceListing,
+  projectWorkspaceText,
+  sessionReferencesEndpoint,
+  sessionReferencesPayload,
+  workspaceListEndpoint,
+  workspaceListPayload,
+  workspaceReadEndpoint,
+  workspaceReadPayload
+} from '../model/Wire';
+import type { CommandCandidate, ReferenceCandidate } from '../model/Wire';
+import type { FileNode, FilePreview } from '../model/Workspace';
 
 /** 中枢运行阶段 */
 export enum HubPhase {
@@ -189,6 +210,16 @@ export interface HubSnapshot {
    * （值恰好相同的时候尤其如此）。
    */
   settingsStates: SettingsNamespaceState[];
+  /** 斜杠命令目录（**全部来自 Host**；未连接或未拉到时为空数组） */
+  commands: CommandCandidate[];
+  /** `@` 引用候选（来自 Host 的两个候选端点；只对应当前查询串） */
+  references: ReferenceCandidate[];
+  /** 当前会话工作区的根层文件节点（子层挂在 `children` 上，按需加载） */
+  fileNodes: FileNode[];
+  /** 根层是否被上游条目上限截断 */
+  fileTruncated: boolean;
+  /** 当前预览的文件（未打开时为 undefined） */
+  filePreview: FilePreview | undefined;
 }
 
 /**
@@ -290,6 +321,22 @@ export class SessionHub {
   private describeWritable: boolean = false;
   /** 从 `settings/describe` 取到的凭据引用（`credentials/describe` 的入参） */
   private credentialRefs: string[] = [];
+  /** 斜杠命令目录（来自 `commands/list`，按当前会话的 agentId） */
+  private commands: CommandCandidate[] = [];
+  /** 命令目录是为哪个会话拉的（切会话后必须重拉，否则命令集是别人的） */
+  private commandsFor: string = '';
+  /** `@` 引用候选（来自 `fileReferences/list` + `sessionReferenceResolver/candidates`） */
+  private references: ReferenceCandidate[] = [];
+  /** 引用候选对应的查询串（回包只对得上这个查询，用于丢弃过期回包） */
+  private referencesFor: string = '';
+  /** 当前工作区文件树的**根层**节点（子层挂在各自的 `children` 上） */
+  private fileNodes: FileNode[] = [];
+  /** 根层是否被上游截断 */
+  private fileTruncated: boolean = false;
+  /** 文件树对应的会话（切会话后必须重列，否则看到的是别的会话的工作区） */
+  private fileTreeFor: string = '';
+  /** 当前预览的文件（未打开时为 undefined） */
+  private filePreview: FilePreview | undefined = undefined;
 
   /** waterfall 待答项：eventId → 呈现项 id（应答时必须原样带回 eventId） */
   private waterfallEventIds: Map<string, string> = new Map();
@@ -502,7 +549,12 @@ export class SessionHub {
       plugins: this.plugins,
       credentials: this.credentials,
       settings: this.settingsGroups,
-      settingsStates: this.namespaceStates
+      settingsStates: this.namespaceStates,
+      commands: this.commands,
+      references: this.references,
+      fileNodes: this.fileNodes,
+      fileTruncated: this.fileTruncated,
+      filePreview: this.filePreview
     };
   }
 
@@ -580,6 +632,11 @@ export class SessionHub {
       // 白白多打一次 RPC。节流让一串连改合并成一次读取。
       if (name === EVENT_SETTINGS_DOCUMENT_UPDATED || name === EVENT_CREDENTIALS_REFERENCE_UPDATED) {
         this.scheduleSettingsRefresh();
+      }
+      // 命令目录是插件装的：插件启用/禁用后命令集会变。上游为此发了
+      // `commands/change`。不接它，用户会一直看到一批已经失效的命令。
+      if (name === EVENT_COMMANDS_CHANGE) {
+        this.refreshCommands();
       }
       return;
     }
@@ -1378,6 +1435,268 @@ export class SessionHub {
     this.followCancel = cancel;
     this.record(`follow open ${sessionId.substring(0, 12)}`);
     this.notify();
+    // 命令目录与文件树都是**会话作用域**的（`commands/list` 要 agentId，
+    // `workspaceFiles/*` 要 workspaceFileScopeId = sessionId）。
+    // 因此切会话必须重拉：不重拉的话新会话会用着上一个会话的命令集与目录树。
+    this.refreshSessionScoped();
+  }
+
+  /**
+   * 拉取与「当前选中会话」绑定的三类数据：命令目录、文件树根、`@` 引用候选。
+   *
+   * 三个调用都是只读的，且互不依赖，所以顺序发起即可，不需要并发原语。
+   */
+  private refreshSessionScoped(): void {
+    this.refreshCommands();
+    this.openWorkspace(this.selectedSessionId);
+    this.refreshReferences('');
+  }
+
+  // ─────────────────── 斜杠命令（commands/list） ───────────────────
+
+  /**
+   * 拉取当前会话的斜杠命令目录。
+   *
+   * 【为什么按会话拉，而不是拉一次全局共用】上游 `commands/list` 的第一个参数是
+   * `agentId`——命令集是**每个 agent 的**（插件可对单个会话禁用命令）。
+   * 用别人的结果会让界面显示一批发出去必然失败的命令。
+   */
+  async refreshCommands(): Promise<void> {
+    const agentId: string = this.selectedSessionId;
+    if (!this.unaryReady || agentId.length === 0) {
+      this.commands = [];
+      this.commandsFor = '';
+      this.notify();
+      return;
+    }
+    const payload: Object | undefined = commandsListPayload(agentId);
+    if (payload === undefined) {
+      // 能力缺失（老 Host 没有这个端点）：**清空而不是保留旧值**，
+      // 否则界面上会留着一份来自上一个会话/上一个 Host 的命令集。
+      this.commands = [];
+      this.commandsFor = '';
+      this.record('commands 端点不在兼容上表');
+      this.notify();
+      return;
+    }
+    const result: RpcResult = await this.conn.call(commandsListEndpoint(), payload);
+    if (!result.ok) {
+      const failure = result.error;
+      const code: string = failure === undefined ? 'unknown' : failure.code;
+      this.commands = [];
+      this.commandsFor = '';
+      this.record(`commands fail ${code}`);
+      this.notify();
+      return;
+    }
+    const list: CommandCandidate[] = projectCommands(result.value);
+    // 回包可能晚于一次切会话：只接受仍然对应当前会话的结果。
+    if (this.selectedSessionId !== agentId) {
+      return;
+    }
+    this.commands = list;
+    this.commandsFor = agentId;
+    this.record(`commands ok ${list.length} 条`);
+    this.notify();
+  }
+
+  // ─────────────────── @ 引用候选（两个候选端点） ───────────────────
+
+  /**
+   * 拉取 `@` 引用候选。
+   *
+   * 【两个端点都发，合并结果】文件候选与会话候选是**两个不同端点**
+   * （`fileReferences/list` / `sessionReferenceResolver/candidates`），
+   * 没有哪一个能替代另一个。任一失败都只用另一个的结果，
+   * 不用「失败的那个」的旧数据充数。
+   *
+   * `query` 是用户在输入框里已经打出的前缀：上游按它做**服务端筛选**，
+   * 因此本地不再二次筛选（本地筛会与 Host 的排序/匹配规则不一致）。
+   */
+  async refreshReferences(query: string): Promise<void> {
+    const agentId: string = this.selectedSessionId;
+    this.referencesFor = query;
+    if (!this.unaryReady || agentId.length === 0) {
+      this.references = [];
+      this.notify();
+      return;
+    }
+    const filePayload: Object | undefined = fileReferencesPayload(agentId, query);
+    const sessionPayload: Object | undefined = sessionReferencesPayload(agentId, query);
+    const merged: ReferenceCandidate[] = [];
+    if (filePayload !== undefined) {
+      const files: RpcResult = await this.conn.call(fileReferencesEndpoint(), filePayload);
+      if (files.ok) {
+        const list: ReferenceCandidate[] = projectFileReferences(files.value);
+        for (let i = 0; i < list.length; i++) {
+          merged.push(list[i]);
+        }
+      } else {
+        this.record(`refs(file) fail ${files.error === undefined ? 'unknown' : files.error.code}`);
+      }
+    }
+    if (sessionPayload !== undefined) {
+      const sessions: RpcResult = await this.conn.call(sessionReferencesEndpoint(), sessionPayload);
+      if (sessions.ok) {
+        const list: ReferenceCandidate[] = projectSessionReferences(sessions.value);
+        for (let i = 0; i < list.length; i++) {
+          merged.push(list[i]);
+        }
+      } else {
+        this.record(`refs(session) fail ${sessions.error === undefined ? 'unknown' : sessions.error.code}`);
+      }
+    }
+    // 丢弃过期回包：用户已经又敲了一个字符，这批候选对应的不是当前查询。
+    if (this.referencesFor !== query || this.selectedSessionId !== agentId) {
+      return;
+    }
+    this.references = merged;
+    this.notify();
+  }
+
+  // ─────────────────── 工作区文件（workspaceFiles/*） ───────────────────
+
+  /**
+   * 打开某个会话的工作区根目录（设置文件浏览的**作用域**）。
+   *
+   * 【为什么文件浏览的作用域必须显式设置，而不能「跟着当前会话」】
+   *   文件端点的作用域参数是 `workspaceFileScopeId`，而它**就是会话 id**（D2b §2.0）。
+   *   用户在「工作区」页选的是一个**目录**，此时并没有「当前会话」——
+   *   靠当前会话会让工作区页永远显示空目录（没有任何会话作用域），
+   *   而空目录看起来只是「这个目录是空的」，是个看不见的缺陷。
+   *   所以这里把作用域与会话选择**解耦**：会话是「在看哪个对话」，
+   *   作用域是「在浏览哪个目录」，两者可以不同。
+   */
+  async openWorkspace(sessionId: string): Promise<void> {
+    this.filePreview = undefined;
+    this.fileTruncated = false;
+    if (!this.unaryReady || sessionId.length === 0) {
+      this.fileNodes = [];
+      this.fileTreeFor = '';
+      this.notify();
+      return;
+    }
+    this.fileTreeFor = sessionId;
+    const listing: FileNode[] | undefined = await this.listDirectory('', sessionId);
+    if (listing === undefined) {
+      this.fileNodes = [];
+      this.fileTreeFor = '';
+      this.notify();
+      return;
+    }
+    // 期间用户又换了一个工作区：这次回包作废（否则文件树会串到别的工作区）
+    if (this.fileTreeFor !== sessionId) {
+      return;
+    }
+    this.fileNodes = listing;
+    this.notify();
+  }
+
+  /**
+   * 列出一层目录。
+   *
+   * 返回 `undefined` 表示**调用失败**（与「目录为空」严格区分）：
+   * 把失败当成空目录会让用户以为目录里没有文件。
+   */
+  private async listDirectory(path: string, scope: string): Promise<FileNode[] | undefined> {
+    const payload: Object | undefined = workspaceListPayload(scope, path);
+    if (payload === undefined) {
+      this.record('workspaceFiles 端点不在兼容上表');
+      return undefined;
+    }
+    const result: RpcResult = await this.conn.call(workspaceListEndpoint(), payload);
+    if (!result.ok) {
+      const code: string = result.error === undefined ? 'unknown' : result.error.code;
+      this.record(`ws list fail ${code}`);
+      return undefined;
+    }
+    const projection = projectWorkspaceListing(result.value, path, this.deliverablePaths());
+    if (projection.truncated) {
+      this.fileTruncated = true;
+    }
+    return projection.nodes;
+  }
+
+  /** 交付物相对路径（来自当前轨迹的 `deliverables/presented`），用于给文件树打标。 */
+  private deliverablePaths(): string[] {
+    const out: string[] = [];
+    for (let i = 0; i < this.trajectoryList.length; i++) {
+      const item: TrajectoryItem = this.trajectoryList[i];
+      if (item.kind === TrajectoryKind.DELIVERABLE && item.fileName.length > 0) {
+        out.push(item.fileName);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * 展开/折叠一个目录。
+   *
+   * **懒加载**：首次展开才发 `workspaceFiles/list`。上游没有「整棵树」端点
+   * （D2b §2.1：只有某一层的直接子项），预先递归会在大仓库上打出成百上千次 RPC。
+   */
+  async toggleDirectory(path: string): Promise<void> {
+    const scope: string = this.fileTreeFor.length > 0 ? this.fileTreeFor : this.selectedSessionId;
+    if (scope.length === 0) {
+      return;
+    }
+    const node: FileNode | undefined = findNode(this.fileNodes, path);
+    if (node === undefined) {
+      return;
+    }
+    if (node.loaded) {
+      this.fileNodes = replaceNode(this.fileNodes, path, collapseNode(node));
+      this.notify();
+      return;
+    }
+    const children: FileNode[] | undefined = await this.listDirectory(path, scope);
+    if (children === undefined) {
+      this.lastError = `目录「${path}」列表获取失败（详见诊断页旁路日志）`;
+      this.notify();
+      return;
+    }
+    this.fileNodes = replaceNode(this.fileNodes, path, expandNode(node, children));
+    this.notify();
+  }
+
+  /**
+   * 打开一个文件并取回文本。
+   *
+   * 失败时给出**上游的拒绝理由**（如 `workspace-file/not-text`），
+   * 而不是一个空白预览：静默空白会被读成「文件是空的」。
+   */
+  async openFile(path: string, name: string): Promise<void> {
+    const scope: string = this.fileTreeFor.length > 0 ? this.fileTreeFor : this.selectedSessionId;
+    if (!this.unaryReady || scope.length === 0) {
+      this.filePreview = undefined;
+      this.notify();
+      return;
+    }
+    const payload: Object | undefined = workspaceReadPayload(scope, path, 0);
+    if (payload === undefined) {
+      this.filePreview = projectWorkspaceFailure(path, name, '该 Host 不提供文件读取端点');
+      this.notify();
+      return;
+    }
+    const result: RpcResult = await this.conn.call(workspaceReadEndpoint(), payload);
+    if (!result.ok) {
+      const failure = result.error;
+      const code: string = failure === undefined ? 'unknown' : failure.code;
+      const message: string = failure === undefined ? '' : failure.message;
+      this.record(`ws read fail ${code}`);
+      this.filePreview = projectWorkspaceFailure(path, name, friendlyWorkspaceFailure(code, message));
+      this.notify();
+      return;
+    }
+    this.filePreview = projectWorkspaceText(result.value, path, name, 0);
+    this.record(`ws read ok ${path}`);
+    this.notify();
+  }
+
+  /** 关闭当前预览。 */
+  closeFilePreview(): void {
+    this.filePreview = undefined;
+    this.notify();
   }
 
   /** 处理 `session/follow` 的一帧：snapshot / event / assistant-stream */
@@ -1844,6 +2163,95 @@ function appendOrMerge(items: TrajectoryItem[], incoming: TrajectoryItem): void 
     return;
   }
   items[at] = mergeTrajectoryItem(items[at], incoming);
+}
+
+/**
+ * 在文件树里找一个节点（深度优先）。
+ *
+ * 为什么按路径找而不是持有节点引用：ArkUI 的 `@State` 在更新时**复制数组**
+ * （`this.fileNodes = next`），旧引用会指向被替换掉的旧树。
+ * 按路径查找与「树被重建过几次」无关，因此不会拿到失效引用。
+ */
+function findNode(nodes: FileNode[], path: string): FileNode | undefined {
+  for (let i = 0; i < nodes.length; i++) {
+    if (nodes[i].path === path) {
+      return nodes[i];
+    }
+    const hit: FileNode | undefined = findNode(nodes[i].children, path);
+    if (hit !== undefined) {
+      return hit;
+    }
+  }
+  return undefined;
+}
+
+/** 不可变替换：返回一棵把 `path` 处节点换成 `next` 的新树。 */
+function replaceNode(nodes: FileNode[], path: string, next: FileNode): FileNode[] {
+  const out: FileNode[] = [];
+  for (let i = 0; i < nodes.length; i++) {
+    const node: FileNode = nodes[i];
+    if (node.path === path) {
+      out.push(next);
+      continue;
+    }
+    if (node.children.length === 0) {
+      out.push(node);
+      continue;
+    }
+    out.push({
+      name: node.name, path: node.path, kind: node.kind, size: node.size,
+      modifiedAt: node.modifiedAt, loaded: node.loaded,
+      children: replaceNode(node.children, path, next), deliverable: node.deliverable
+    });
+  }
+  return out;
+}
+
+/** 展开：挂上子节点并标记已加载。 */
+function expandNode(node: FileNode, children: FileNode[]): FileNode {
+  return {
+    name: node.name, path: node.path, kind: node.kind, size: node.size,
+    modifiedAt: node.modifiedAt, loaded: true, children: children, deliverable: node.deliverable
+  };
+}
+
+/**
+ * 折叠：**保留**已加载的子节点。
+ *
+ * 保留的理由：折叠只是视觉状态，丢弃子节点会让再次展开又打一次 RPC；
+ * 而 `loaded` 已经表达了「拉过了」，清空它等于把一次成功的结果扔掉。
+ */
+function collapseNode(node: FileNode): FileNode {
+  return {
+    name: node.name, path: node.path, kind: node.kind, size: node.size,
+    modifiedAt: node.modifiedAt, loaded: node.loaded, children: node.children,
+    deliverable: node.deliverable
+  };
+}
+
+/**
+ * 文件读取失败的上游错误码 → 用户可读理由。
+ *
+ * 上游对不可预览的文件是**明确拒绝**（D2b §2.3），拒绝理由本身就是给用户的信息；
+ * 但要翻译成「发生了什么 + 可以做什么」，而不是把错误码抛到界面上（D3 §4 文案纪律）。
+ */
+function friendlyWorkspaceFailure(code: string, message: string): string {
+  if (code === 'workspace-file/not-text') {
+    return '二进制文件（非 UTF-8 文本），端侧不预览。可在 Host 侧用工具读取。';
+  }
+  if (code === 'workspace-file/too-large') {
+    return '文件超过 Host 的单页上限，端侧不预览。可在 Host 侧用工具分段读取。';
+  }
+  if (code === 'workspace-file/not-regular-file') {
+    return '不是一个普通文件（可能是目录或符号链接），无法预览。';
+  }
+  if (code === 'workspace-file/not-found') {
+    return '文件不存在或已被移动。';
+  }
+  if (code === 'workspace-file/outside-workspace') {
+    return '该路径在会话工作区之外，Host 拒绝访问。';
+  }
+  return message.length > 0 ? `读取失败：${message}（${code}）` : `读取失败：${code}`;
 }
 
 /** 形状表里一个槽位的解析结果 */

@@ -31,6 +31,14 @@ export struct Composer {
   @Prop selection: ModelSelection = { provider: '', modelId: '', effort: '' };
   @Prop references: ReferenceCandidate[] = [];
   @Prop commands: CommandCandidate[] = [];
+  /**
+   * 一次性提示（能力缺失说明等）。
+   *
+   * 【为什么需要它】D3 §4 要求「能力缺失时对应的入口置灰 + 说明原因（不隐藏）」。
+   * 隐藏入口会让用户以为客户端没有这个功能；而入口点了没反应是**静默失败**，
+   * 用户只会反复点。两者都劣于「点了之后明确告诉你为什么现在不能用」。
+   */
+  @Prop notice: string = '';
 
   /** 文本变化 */
   onDraftChange: (text: string) => void = () => {
@@ -50,6 +58,17 @@ export struct Composer {
   /** 切换模型（宿主弹出选择器） */
   onPickModel: () => void = () => {
   };
+  /**
+   * `@` 引用的查询词变化（宿主据此**向 Host 拉候选**）。
+   *
+   * 【为什么候选必须问 Host，而不是本地过滤一份固定清单】
+   *   文件候选是「这个会话的工作区里有哪些路径」，只有 Host 知道；
+   *   本地过滤一份固定清单只能给出编造的候选，用户选中一个不存在的路径后
+   *   提示词会在 Host 侧静静失败（或退化成一个普通文本 `@xxx`）。
+   *   因此这里把**查询串**交给宿主，由宿主去问 Host。
+   */
+  onReferenceQuery: (query: string) => void = () => {
+  };
 
   /** 当前激活的弹层：'' / 'ref' / 'cmd'（避免与 ArkUI 基类属性重名，故用 panel） */
   @State panel: string = '';
@@ -60,6 +79,10 @@ export struct Composer {
     Column({ space: Sp.S }) {
       if (this.offline) {
         this.offlineNotice()
+      }
+
+      if (this.notice.length > 0) {
+        this.capabilityNotice()
       }
 
       if (this.attachments.length > 0) {
@@ -109,6 +132,24 @@ export struct Composer {
     .padding(Sp.S)
     .borderRadius(Radius.S)
     .backgroundColor($r('sys.color.background_secondary'))
+  }
+
+  @Builder
+  capabilityNotice() {
+    Row({ space: Sp.S }) {
+      SymbolGlyph($r('sys.symbol.exclamationmark_circle'))
+        .fontSize(14)
+        .fontColor([$r('sys.color.font_secondary')])
+      Text(this.notice)
+        .fontSize(Fs.CAPTION)
+        .fontColor($r('sys.color.font_secondary'))
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .padding(Sp.S)
+    .borderRadius(Radius.S)
+    .backgroundColor($r('sys.color.background_secondary'))
+    .accessibilityText(this.notice)
   }
 
   @Builder
@@ -308,25 +349,28 @@ export struct Composer {
     if (atTail) {
       this.panel = 'ref';
       const tail: string = trimmed.substring(lastAt + 1);
-      this.filter = tail.indexOf(' ') < 0 && tail.indexOf('\n') < 0 ? tail : '';
+      const next: string = tail.indexOf(' ') < 0 && tail.indexOf('\n') < 0 ? tail : '';
+      const changed: boolean = next !== this.filter;
+      this.filter = next;
+      // 只有查询词真的变了才去问 Host：每次按键都发一次会在长查询上打出成串 RPC，
+      // 而 Host 的候选端点本身就是**按 query 过滤**的（服务端筛选），本地不再二次筛。
+      if (changed) {
+        this.onReferenceQuery(this.filter);
+      }
       return;
     }
     this.filter = '';
   }
 
+  /**
+   * 引用候选。
+   *
+   * **不再本地过滤**：候选由 Host 按查询词返回（见 `onReferenceQuery` 的说明），
+   * 本地再筛一遍会与 Host 的匹配/排序规则不一致——表现为「Host 明明返回了 3 条，
+   * 界面只显示 1 条」，而且这种分歧只在特定字符上出现，极难复现。
+   */
   private filteredReferences(): ReferenceCandidate[] {
-    if (this.filter.length === 0) {
-      return this.references;
-    }
-    const q: string = this.filter.toLowerCase();
-    const out: ReferenceCandidate[] = [];
-    for (let i = 0; i < this.references.length; i++) {
-      const c: ReferenceCandidate = this.references[i];
-      if (c.label.toLowerCase().indexOf(q) >= 0 || c.kind.toLowerCase().indexOf(q) >= 0) {
-        out.push(c);
-      }
-    }
-    return out;
+    return this.references;
   }
 
   private filteredCommands(): CommandCandidate[] {

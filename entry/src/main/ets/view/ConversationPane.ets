@@ -43,6 +43,8 @@ export struct ConversationPane {
   @Prop selection: ModelSelection = { provider: '', modelId: '', effort: '' };
   @Prop references: ReferenceCandidate[] = [];
   @Prop commands: CommandCandidate[] = [];
+  /** 能力缺失的一次性提示（透传给输入区） */
+  @Prop notice: string = '';
 
   onDraftChange: (text: string) => void = () => {
   };
@@ -55,6 +57,9 @@ export struct ConversationPane {
   onRemoveAttachment: (name: string) => void = () => {
   };
   onPickModel: () => void = () => {
+  };
+  /** `@` 引用查询词变化（转发给宿主去问 Host） */
+  onReferenceQuery: (query: string) => void = () => {
   };
   /** 打开详情栏（单栏/双栏下没有并排详情栏时使用） */
   onOpenDetail: () => void = () => {
@@ -89,12 +94,14 @@ export struct ConversationPane {
         selection: this.selection,
         references: this.references,
         commands: this.commands,
+        notice: this.notice,
         onDraftChange: this.onDraftChange,
         onSend: this.onSend,
         onStop: this.onStop,
         onAddAttachment: this.onAddAttachment,
         onRemoveAttachment: this.onRemoveAttachment,
-        onPickModel: this.onPickModel
+        onPickModel: this.onPickModel,
+        onReferenceQuery: this.onReferenceQuery
       })
     }
     .width('100%')

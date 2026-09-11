@@ -27,13 +27,18 @@
 
 import {
   argsFor,
+  COMMANDS_LIST_ENDPOINT,
+  FILE_REFERENCES_LIST_ENDPOINT,
   FILE_UPLOAD_ENDPOINT,
   SESSION_CANCEL_ENDPOINT,
   SESSION_CREATE_ENDPOINT,
   SESSION_FOLLOW_ENDPOINT,
   SESSION_LIST_ENDPOINT,
   SESSION_PROMPT_ENDPOINT,
-  SESSION_RENAME_ENDPOINT
+  SESSION_REFERENCE_CANDIDATES_ENDPOINT,
+  SESSION_RENAME_ENDPOINT,
+  WORKSPACE_FILES_LIST_ENDPOINT,
+  WORKSPACE_FILES_READ_ENDPOINT
 } from 'dshcompat';
 import {
   EVENTS_RESULT_ENDPOINT,
@@ -44,6 +49,9 @@ import {
   getString,
   isRecord
 } from 'connection';
+import { SessionListItem } from './SessionList';
+import { HostRecord } from './Settings';
+import { FileNode, FilePreview, languageOf, NodeKind, PreviewKind, previewKindOf, WorkspaceItem } from './Workspace';
 
 /** JSON 安全值的读法：一律经 `connection` 的取值工具收窄，不做无检查下标访问。 */
 type JsonBag = Record<string, Object>;
@@ -1534,7 +1542,572 @@ export function projectFileUpload(value: Object | undefined): FileUploadValue | 
   return { receiptId: receiptId, file: ref };
 }
 
-// ═════════════════════════ 10. 取值助手 ═════════════════════════
+// ═════════════════════════ 11. 工作区与文件（workspaceFiles/*） ═════════════════════════
+
+/**
+ * `workspaceFiles/list` 的 args 载荷。
+ *
+ * 【`workspaceFileScopeId` 填什么】就是当前会话 id，**不是**工作区 id，
+ * 也**不需要**额外端点去「取得」它（D2b §2.0 有确证）。
+ * 上游按这个 id 解析出 `workspaceRoot`（会话 header 的 cwd）后再做包含性校验。
+ */
+export function workspaceListPayload(sessionId: string, path: string): Object | undefined {
+  const body: Record<string, Object> = { 'workspaceFileScopeId': sessionId, 'path': path };
+  return argsFor(WORKSPACE_FILES_LIST_ENDPOINT, body as Object);
+}
+
+/** `workspaceFiles/list` 的端点（供连接层发起调用，UI 不写字面量）。 */
+export function workspaceListEndpoint(): string {
+  return WORKSPACE_FILES_LIST_ENDPOINT;
+}
+
+/** `workspaceFiles/list` 的逐项线形（**判别字段是 `type`，不是 `kind`/`isDirectory`**）。 */
+export interface WorkspaceEntryWire {
+  name: string;
+  /** `file` / `directory` / `other`；未知取值按 `other` 处置（不猜成文件） */
+  type: string;
+  /** 仅常规文件且后端报告时存在 */
+  size: number;
+}
+
+/** `workspaceFiles/list` 的回复线形。 */
+export interface WorkspaceListingWire {
+  /** 被列举目录的**工作区相对路径**；工作区根为空串 */
+  path: string;
+  entries: WorkspaceEntryWire[];
+  /** 是否因条目上限（默认 2000）被截断 */
+  truncated: boolean;
+}
+
+/** 把 `entry.type` 收窄成枚举；未知取值 ⇒ `other`（**不能默认成 file**）。 */
+function entryKindOf(type: string): NodeKind {
+  return type === 'directory' ? NodeKind.DIRECTORY : NodeKind.FILE;
+}
+
+/**
+ * 投影一层目录列表为 `FileNode[]`。
+ *
+ * 【为什么不建树】上游 `workspaceFiles/list` 只返回**某一层**的直接子项
+ * （D2b §2.1），要建树必须逐层调用。因此这里只把「一层」转成节点，
+ * `loaded=false` 的目录在用户点开时才去拉下一层——这也是唯一不会
+ * 在大型仓库上打出成百上千次 RPC 的做法。
+ *
+ * @param value 回复值（`{path, entries, truncated}`）
+ * @param parentPath 被列举目录的工作区相对路径（根为空串）
+ * @param deliverables 当前会话的交付物相对路径（`deliverables/presented` 事件）
+ * @param truncatedOut 出参：是否被上游截断（调用方据此提示「只显示了前 N 项」）
+ */
+export function projectWorkspaceListing(value: Object | undefined, parentPath: string,
+  deliverables: string[]): WorkspaceListingProjection {
+  const nodes: FileNode[] = [];
+  const result: WorkspaceListingProjection = { nodes: nodes, truncated: false };
+  if (value === undefined) {
+    return result;
+  }
+  const entries: Object[] | undefined = getArray(value, 'entries');
+  if (entries === undefined) {
+    return result;
+  }
+  if (getField(value, 'truncated') === true) {
+    result.truncated = true;
+  }
+  for (let i = 0; i < entries.length; i++) {
+    const entry: Object | undefined = entries[i];
+    const name: string = readString(entry, 'name');
+    if (name.length === 0) {
+      continue;
+    }
+    const childPath: string = parentPath.length === 0 ? name : `${parentPath}/${name}`;
+    nodes.push({
+      name: name,
+      path: childPath,
+      kind: entryKindOf(readString(entry, 'type')),
+      size: readNumber(entry, 'size'),
+      // 上游不提供 mtime（D2b §2.1 明列），因此**只能**是 0（未知），
+      // 不能拿列表拉取时刻冒充文件修改时刻。
+      modifiedAt: 0,
+      loaded: false,
+      children: emptyFileNodes(),
+      deliverable: containsPath(deliverables, childPath)
+    });
+  }
+  return result;
+}
+
+/** 一层目录的投影结果（节点 + 上游是否截断）。 */
+export interface WorkspaceListingProjection {
+  nodes: FileNode[];
+  /** 上游是否因条目上限丢弃了部分条目 */
+  truncated: boolean;
+}
+
+/**
+ * `workspaceFiles/read` 的 args 载荷。
+ *
+ * `range` 是**必填**的（可为 `{}`）；`offset` 是**行号（1-based）**不是字节偏移，
+ * 默认 1；`limit` 是行数上限。这里的参数名必须按上表，不能按方法名猜。
+ */
+export function workspaceReadPayload(sessionId: string, path: string, maxLines: number): Object | undefined {
+  const range: WorkspaceFileRange = {};
+  if (maxLines > 0) {
+    range.limit = maxLines;
+  }
+  const body: Record<string, Object> = {
+    'workspaceFileScopeId': sessionId, 'path': path, 'range': range
+  };
+  return argsFor(WORKSPACE_FILES_READ_ENDPOINT, body as Object);
+}
+
+/** `workspaceFiles/read` 的端点。 */
+export function workspaceReadEndpoint(): string {
+  return WORKSPACE_FILES_READ_ENDPOINT;
+}
+
+/** `workspaceFiles/read` 的 `range`（行号/行数，不是字节偏移/长度）。 */
+export interface WorkspaceFileRange {
+  /** 起始**行号**，1-based；缺省 = 1 */
+  offset?: number;
+  /** 行数上限；缺省 = Host 的 `maxLines` */
+  limit?: number;
+}
+
+/** `workspaceFiles/read` 的回复线形（`WorkspaceFileText`）。 */
+export interface WorkspaceTextWire {
+  path: string;
+  bytes: number;
+  offset: number;
+  text: string;
+  lines: number;
+  /** 本页是否包含文件最后一行 */
+  eof: boolean;
+}
+
+/**
+ * 投影文本读取结果。
+ *
+ * 【为什么 `IMAGE` 在这里会被降级为 `CODE`】`read` 只返回**文本**
+ * （非 UTF-8 或含 NUL ⇒ `workspace-file/not-text`），所以能走到这里的
+ * 「图片扩展名」只有 SVG——而 SVG 本来就是 XML 文本。光栅图片永远走不到这，
+ * 它会在错误分支里被投影成 `BINARY` 并带上上游的拒绝理由。
+ */
+export function projectWorkspaceText(value: Object | undefined, path: string, name: string,
+  maxBytes: number): FilePreview {
+  const text: string = readString(value, 'text');
+  const bytes: number = readNumber(value, 'bytes');
+  const eof: boolean = getField(value, 'eof') === true;
+  let kind: PreviewKind = previewKindOf(name, 0);
+  if (kind === PreviewKind.IMAGE) {
+    kind = PreviewKind.CODE;
+  }
+  if (kind === PreviewKind.TOO_LARGE) {
+    kind = PreviewKind.TEXT;
+  }
+  return {
+    path: path,
+    name: name,
+    kind: kind,
+    text: text,
+    language: kind === PreviewKind.CODE ? languageOf(name) : '',
+    size: bytes,
+    // 「截断」= 本页不含文件末尾。用 `eof` 判定，**不能用** `text.length` 与
+    // `bytes` 比大小：多字节字符下两者本来就不相等，会把完整文件误报成截断。
+    truncated: !eof,
+    note: maxBytes > 0 && bytes > maxBytes
+      ? `文件 ${bytes} 字节，超过端侧单页上限 ${maxBytes} 字节，仅显示首页`
+      : ''
+  };
+}
+
+/**
+ * 投影文件读取**失败**。
+ *
+ * 上游对不可预览的文件是**明确拒绝**（`workspace-file/not-text` /
+ * `too-large` / `not-regular-file`），不是返回空内容。把拒绝理由原样带到界面上，
+ * 用户才知道「为什么打不开」；静默显示空白会被误读成「文件是空的」。
+ */
+export function projectWorkspaceFailure(path: string, name: string, reason: string): FilePreview {
+  return {
+    path: path, name: name, kind: PreviewKind.BINARY, text: '', language: '',
+    size: 0, truncated: false, note: reason
+  };
+}
+
+/** 空文件节点数组（规避无类型数组字面量）。 */
+function emptyFileNodes(): FileNode[] {
+  const list: FileNode[] = [];
+  return list;
+}
+
+// ═════════════════════════ 12. 工作区列表（从会话派生） ═════════════════════════
+
+/**
+ * 路径分组键：把连续的分隔符折叠成一个，并把 `\` 统一成 `/`。
+ *
+ * 【为什么分组必须归一化】实测真实 Host 上存在两个 cwd——`D:\dev\proj` 与
+ * `D:\\dev\\proj`（多一个转义层，来自某次用 API 建会话时多转义了一次）。
+ * 它们是**同一个目录**，但字符串不等。不归一化就会在界面上出现两个同名工作区、
+ * 各带一部分会话，用户会以为有两个不同的项目目录。
+ *
+ * 归一化**只用于比较与分组**，不用于展示：展示仍用 Host 给的原字符串，
+ * 因为那才是 Host 侧的事实（我们不该悄悄替它改写路径）。
+ */
+export function normalizePathKey(path: string): string {
+  const slashed: string = path.replace(/\\/g, '/');
+  let out: string = '';
+  let prevSlash: boolean = false;
+  for (let i = 0; i < slashed.length; i++) {
+    const ch: string = slashed.charAt(i);
+    const isSlash: boolean = ch === '/';
+    if (isSlash && prevSlash) {
+      continue;
+    }
+    out += ch;
+    prevSlash = isSlash;
+  }
+  // 去掉尾部分隔符（`D:/a/` 与 `D:/a` 是同一个目录）
+  while (out.length > 1 && out.endsWith('/')) {
+    out = out.substring(0, out.length - 1);
+  }
+  return out;
+}
+
+/**
+ * 从会话列表派生工作区列表。
+ *
+ * 【为什么从会话派生，而不是内置一份工作区清单】上游**没有**「工作区目录」端点：
+ * 工作区的唯一定义就是「某个会话的 cwd」（`workspaceFiles` 的作用域也是会话级，
+ * D2b §2.0）。凭空的「工作区列表」在 Host 上并不存在，写死一份就是编数据。
+ * 因此这里按 `cwd` 分组：路径 = 工作区，会话数 = 该路径下的会话数。
+ * 分组键经过 `normalizePathKey` 归一化（见其说明），展示值取先出现的那条。
+ *
+ * @param sessions 真实会话列表（未连接时应传空数组，而不是桩数据）
+ */
+export function projectWorkspaces(sessions: SessionListItem[]): WorkspaceItem[] {
+  const keys: string[] = [];
+  const paths: string[] = [];
+  const counts: number[] = [];
+  const latest: number[] = [];
+  for (let i = 0; i < sessions.length; i++) {
+    const item: SessionListItem = sessions[i];
+    if (item.cwd.length === 0) {
+      continue;
+    }
+    const key: string = normalizePathKey(item.cwd);
+    const at: number = keys.indexOf(key);
+    if (at < 0) {
+      keys.push(key);
+      paths.push(item.cwd);
+      counts.push(1);
+      latest.push(item.updatedAt);
+    } else {
+      counts[at] = counts[at] + 1;
+      if (item.updatedAt > latest[at]) {
+        latest[at] = item.updatedAt;
+      }
+    }
+  }
+  // 主工作区 = 会话最多者；同数取最近活动者。两者都相同则取先出现的（稳定）。
+  let primary: number = -1;
+  for (let i = 0; i < paths.length; i++) {
+    if (primary < 0 || counts[i] > counts[primary]
+      || (counts[i] === counts[primary] && latest[i] > latest[primary])) {
+      primary = i;
+    }
+  }
+  const out: WorkspaceItem[] = [];
+  for (let i = 0; i < paths.length; i++) {
+    out.push({
+      // id 用归一化键：它是**稳定身份**，用于「选中的是哪个工作区」的比较；
+      // path 用 Host 的原字符串，用于展示与向用户陈述事实。
+      id: keys[i],
+      name: basenameOf(paths[i]),
+      path: paths[i],
+      sessionCount: counts[i],
+      primary: i === primary
+    });
+  }
+  // `home` 刻意不参与：没有任何会话的目录**无法**浏览——文件端点的作用域是
+  // 会话级（`workspaceFileScopeId` = sessionId），列出它只会给用户一个点开就报错的入口。
+  return out;
+}
+
+/** 取路径末段（容忍 `\\` 与 `/` 两种分隔符）。 */
+export function basenameOf(path: string): string {
+  let end: number = path.length;
+  while (end > 0) {
+    const ch: string = path.charAt(end - 1);
+    if (ch !== '/' && ch !== '\\') {
+      break;
+    }
+    end--;
+  }
+  let start: number = end;
+  while (start > 0) {
+    const ch: string = path.charAt(start - 1);
+    if (ch === '/' || ch === '\\') {
+      break;
+    }
+    start--;
+  }
+  const name: string = path.substring(start, end);
+  return name.length > 0 ? name : path;
+}
+
+/** 列表里是否含该路径（精确匹配；交付物路径是工作区相对路径）。 */
+function containsPath(list: string[], path: string): boolean {
+  for (let i = 0; i < list.length; i++) {
+    if (list[i] === path) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// ═════════════════════════ 13. 斜杠命令与 @ 引用 ═════════════════════════
+
+/** 输入区斜杠命令候选（**全部来自 Host 的 `commands/list`**） */
+export interface CommandCandidate {
+  /** 命令名（含前导 `/`，与用户输入一致） */
+  name: string;
+  /** 参数提示（Host 未提供时为空串） */
+  args: string;
+  /** 说明（Host 未提供时为空串） */
+  detail: string;
+}
+
+/** 输入区 `@` 引用候选 */
+export interface ReferenceCandidate {
+  /** 引用类型：file / session */
+  kind: string;
+  /** 显示文本 */
+  label: string;
+  /** 插入到输入框的引用文本（**直接取上游给的 mention/path，不自行拼装**） */
+  insert: string;
+  /** 次要说明 */
+  detail: string;
+}
+
+/** `commands/list` 的 args 载荷（具名参数 `agentId`）。 */
+export function commandsListPayload(agentId: string): Object | undefined {
+  const body: Record<string, Object> = { 'agentId': agentId };
+  return argsFor(COMMANDS_LIST_ENDPOINT, body as Object);
+}
+
+/** `commands/list` 的端点。 */
+export function commandsListEndpoint(): string {
+  return COMMANDS_LIST_ENDPOINT;
+}
+
+/**
+ * 投影命令目录。
+ *
+ * 【必须用 Host 的名字，不能自己补 `/`】上游 `CommandDescriptor.name`
+ * 是否带前导 `/` 决定了插入文本是否可用。这里**检查**而不是假设：
+ * 有前导 `/` 就原样用，没有才补——补错会让用户发出的行变成未知命令
+ * （`commands/execute` 对未注册的命令返回 `undefined`，静默无反应）。
+ */
+export function projectCommands(value: Object | undefined): CommandCandidate[] {
+  const out: CommandCandidate[] = [];
+  if (value === undefined) {
+    return out;
+  }
+  const list: Object[] | undefined = Array.isArray(value) ? value as Object[] : getArray(value, 'items');
+  if (list === undefined) {
+    return out;
+  }
+  for (let i = 0; i < list.length; i++) {
+    const item: Object | undefined = list[i];
+    const raw: string = readString(item, 'name');
+    if (raw.length === 0) {
+      continue;
+    }
+    const name: string = raw.startsWith('/') ? raw : `/${raw}`;
+    const input: Object | undefined = getRecord(item, 'input');
+    out.push({
+      name: name,
+      args: input !== undefined ? readString(input, 'hint') : '',
+      detail: readString(item, 'description')
+    });
+  }
+  return out;
+}
+
+/** `fileReferences/list` 的 args 载荷（具名参数 `agentId` + `query`）。 */
+export function fileReferencesPayload(agentId: string, query: string): Object | undefined {
+  const body: Record<string, Object> = { 'agentId': agentId, 'query': query };
+  return argsFor(FILE_REFERENCES_LIST_ENDPOINT, body as Object);
+}
+
+/** `fileReferences/list` 的端点。 */
+export function fileReferencesEndpoint(): string {
+  return FILE_REFERENCES_LIST_ENDPOINT;
+}
+
+/** `sessionReferenceResolver/candidates` 的 args 载荷。 */
+export function sessionReferencesPayload(agentId: string, query: string): Object | undefined {
+  const body: Record<string, Object> = { 'agentId': agentId, 'query': query };
+  return argsFor(SESSION_REFERENCE_CANDIDATES_ENDPOINT, body as Object);
+}
+
+/** `sessionReferenceResolver/candidates` 的端点。 */
+export function sessionReferencesEndpoint(): string {
+  return SESSION_REFERENCE_CANDIDATES_ENDPOINT;
+}
+
+/**
+ * 投影文件候选（`FileReferenceCandidate[]` = `{path, kind}`）。
+ *
+ * 插入文本就是 `path`：上游的 `@` 提及语法对文件用的就是工作区相对路径。
+ */
+export function projectFileReferences(value: Object | undefined): ReferenceCandidate[] {
+  const out: ReferenceCandidate[] = [];
+  if (value === undefined) {
+    return out;
+  }
+  const list: Object[] | undefined = Array.isArray(value) ? value as Object[] : getArray(value, 'items');
+  if (list === undefined) {
+    return out;
+  }
+  for (let i = 0; i < list.length; i++) {
+    const item: Object | undefined = list[i];
+    const path: string = readString(item, 'path');
+    if (path.length === 0) {
+      continue;
+    }
+    const isDir: boolean = readString(item, 'kind') === 'directory';
+    out.push({
+      kind: isDir ? 'directory' : 'file',
+      label: path,
+      insert: isDir ? `@${path}/` : `@${path}`,
+      detail: '工作区文件'
+    });
+  }
+  return out;
+}
+
+/**
+ * 投影会话候选（`SessionReferenceMentionCandidate`）。
+ *
+ * 【必须用上游给的 `mention`，不能自己拼 `@session:<id>`】
+ * `mention` 是「可直接插入输入框」的文本，其语法由 Host 决定；
+ * 自行拼装会在上游改语法时产出无法解析的提及（而错误只在发送后才暴露）。
+ */
+export function projectSessionReferences(value: Object | undefined): ReferenceCandidate[] {
+  const out: ReferenceCandidate[] = [];
+  if (value === undefined) {
+    return out;
+  }
+  const list: Object[] | undefined = Array.isArray(value) ? value as Object[] : getArray(value, 'items');
+  if (list === undefined) {
+    return out;
+  }
+  for (let i = 0; i < list.length; i++) {
+    const item: Object | undefined = list[i];
+    const mention: string = readString(item, 'mention');
+    if (mention.length === 0) {
+      continue;
+    }
+    out.push({
+      kind: 'session',
+      label: readString(item, 'label'),
+      insert: mention,
+      detail: readString(item, 'cwd')
+    });
+  }
+  return out;
+}
+
+// ═════════════════════════ 14. Host 记录（从「记住的 Host」派生） ═════════════════════════
+
+/** 派生 Host 记录所需的输入（全部是已经发生过的事实，不含任何猜测）。 */
+export interface HostProjectionInput {
+  /** 上次记住的 Host 地址（**已剔除 token 的裸 URL**；空串 = 从未配置） */
+  url: string;
+  /** 当前是否连着 */
+  connected: boolean;
+  /** 已连接时 Host 的 authority（`host:port`）；未连接时传空串 */
+  authority: string;
+  /** 是否持有会话 cookie（= 已授权） */
+  authorized: boolean;
+  /** Host 核心包版本（读不到时传空串） */
+  version: string;
+}
+
+/**
+ * 派生「已配置 Host」列表。
+ *
+ * 【为什么最多一条，而且不是编的】本客户端只保存**一个**上次连接的 Host
+ * （`HostStore`：地址 + 加密 token）。多 Host 管理（D1 §7.1）尚未落地，
+ * 所以真实事实最多一条。旧实现在这里放了两条写死的示例 Host
+ * （其中一条还标着「已授权」），那是**纯虚构**：用户会以为设备已配对，
+ * 而实际根本没连过——这比空列表危险得多。
+ *
+ * 未配置时返回空数组，由 `ConnectPane`/`SettingsPane` 的空态文案接手。
+ */
+export function projectHosts(input: HostProjectionInput): HostRecord[] {
+  const out: HostRecord[] = [];
+  if (input.url.length === 0) {
+    return out;
+  }
+  const isLoopback: boolean = isLoopbackUrl(input.url);
+  const authority: string = input.authority.length > 0 ? input.authority : authorityOfUrl(input.url);
+  return out.concat([{
+    id: input.url,
+    name: isLoopback ? '本机 Host' : basenameOf(authority),
+    authority: authority,
+    isLoopback: isLoopback,
+    level: isLoopback ? 'L0 · 直连 loopback' : 'L1 · 跨设备（需配对）',
+    authorized: input.authorized,
+    version: input.version
+  }]);
+}
+
+/**
+ * 是否为 loopback 地址。
+ *
+ * 只认 `127.0.0.1` / `localhost` / `::1` / `[::1]`：
+ * **不能**用「以 127. 开头」之类的宽松匹配，那会把 `127.0.0.1.evil.com` 判成 loopback，
+ * 从而在界面上把一个远端 Host 标成「直连 loopback」——这是安全性陈述，必须精确。
+ */
+export function isLoopbackUrl(url: string): boolean {
+  const host: string = hostOfUrl(url).toLowerCase();
+  return host === '127.0.0.1' || host === 'localhost' || host === '::1' || host === '[::1]';
+}
+
+/** 从 URL 里取 authority（`host:port`）；解析不出时返回空串。 */
+export function authorityOfUrl(url: string): string {
+  const start: number = url.indexOf('://');
+  const rest: string = start < 0 ? url : url.substring(start + 3);
+  const slash: number = firstIndexOfAny(rest, ['/', '?', '#']);
+  const authority: string = slash < 0 ? rest : rest.substring(0, slash);
+  const at: number = authority.lastIndexOf('@');
+  return at >= 0 ? authority.substring(at + 1) : authority;
+}
+
+/** 从 URL 里取主机名（去掉端口与 IPv6 方括号）。 */
+export function hostOfUrl(url: string): string {
+  let authority: string = authorityOfUrl(url);
+  if (authority.startsWith('[')) {
+    const close: number = authority.indexOf(']');
+    return close < 0 ? authority : authority.substring(0, close + 1);
+  }
+  const colon: number = authority.lastIndexOf(':');
+  return colon < 0 ? authority : authority.substring(0, colon);
+}
+
+/** 取最早出现的分隔符位置；都不存在返回 -1。 */
+function firstIndexOfAny(text: string, marks: string[]): number {
+  let best: number = -1;
+  for (let i = 0; i < marks.length; i++) {
+    const at: number = text.indexOf(marks[i]);
+    if (at >= 0 && (best < 0 || at < best)) {
+      best = at;
+    }
+  }
+  return best;
+}
+
+// ═════════════════════════ 15. 取值助手 ═════════════════════════
 
 /** 读字符串，缺失返回空串（用于「总是要有值」的展示字段）。 */
 function readString(source: Object | null | undefined, key: string): string {

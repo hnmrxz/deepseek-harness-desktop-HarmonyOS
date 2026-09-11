@@ -34,6 +34,19 @@ export struct WorkspacePane {
   /** 窄屏：是否处于「已下钻」状态（由宿主控制栈式导航） */
   @Prop compact: boolean = false;
   @Prop drillLevel: number = 0;
+  /**
+   * 文件树空态的标题与说明。
+   *
+   * 【为什么由宿主提供而不是写死】「空」有好几种完全不同的原因，
+   * 而对用户的处置建议各不相同：
+   *   - 还没选工作区 → 让他选；
+   *   - 选了但该目录下没有会话 → 文件端点的作用域是会话级，他需要先在该目录建会话；
+   *   - 列目录调用失败 → 让他去看诊断。
+   * 写死一句「在 Host 侧确认目录可读」会把前两种都误诊成第三种——
+   * 用户按错误的方向去查，而真正的动作（选工作区/建会话）就在眼前。
+   */
+  @Prop treeEmptyTitle: string = '该工作区暂无文件';
+  @Prop treeEmptyHint: string = '选择其他工作区，或在 Host 侧确认目录可读';
 
   onSelectWorkspace: (id: string) => void = () => {
   };
@@ -221,12 +234,14 @@ export struct WorkspacePane {
         Column({ space: Sp.S }) {
           SymbolGlyph($r('sys.symbol.folder')).fontSize(32)
             .fontColor([$r('sys.color.font_tertiary')])
-          Text('该工作区暂无文件')
+          Text(this.treeEmptyTitle)
             .fontSize(Fs.SECONDARY)
             .fontColor($r('sys.color.font_secondary'))
-          Text('选择其他工作区，或在 Host 侧确认目录可读')
+          Text(this.treeEmptyHint)
             .fontSize(Fs.CAPTION)
             .fontColor($r('sys.color.font_tertiary'))
+            .textAlign(TextAlign.Center)
+            .padding({ left: Sp.L, right: Sp.L })
         }
         .width('100%')
         .layoutWeight(1)

@@ -13,17 +13,19 @@
  *   待决 / 会话（+轨迹+输入区+详情栏）/ 工作区（工作区→文件树→预览）/
  *   设置（通用·模型·凭据·插件·设备）/ 连接诊断 / 添加 Host
  *
- * 数据当前全部来自 appstate 的桩数据源（方案 2）。接入真实连接时，
- * 只需把这里的赋值换成连接层的结果，所有视图组件无需改动。
+ * 数据全部来自 `SessionHub`（真实连接）或**空态**。这里**不再有任何桩数据**：
+ * 桩数据曾把「功能没接上」伪装成「功能正常」，也曾在设备页编造一条
+ * 「本机 Host · 已授权」——那是安全陈述，编造它比空列表危险得多。
  */
 
 import { display, router, window } from '@kit.ArkUI';
 import {
-  demoTraceLines,
-  supportedVersionsText,
-  tableStats,
-  upstreamIdentity
+  checkVersion,
+  emptyProbeTable,
+  SURFACE,
+  tableStats
 } from 'dshcompat';
+import type { VersionCheck } from 'dshcompat';
 import type { DiagnosticItem, DiagnosticReport } from 'connection';
 import { copyText } from 'platform';
 import {
@@ -59,23 +61,12 @@ import {
   parseStructInput,
   Sp,
   aboutInfo,
+  emptyDiagReport,
   mergeSettingsGroups,
-  stubCommands,
-  stubCredentials,
-  stubDetailSections,
-  stubDiagnostics,
-  stubFileTree,
-  stubHosts,
-  stubModelSelection,
-  stubModels,
-  stubPlugins,
-  stubPreview,
-  stubReferences,
-  stubSettings,
-  stubTrajectory,
-  stubWorkspaces,
-  stubSessions,
-  stubPending,
+  normalizePathKey,
+  projectDetailSections,
+  projectHosts,
+  projectWorkspaces,
   SessionHub,
   Sz,
   TrajectoryItem,
@@ -172,15 +163,26 @@ function projectDiagnostics(report: DiagnosticReport): DiagReport {
     });
   }
   const stats = tableStats();
+  // 版本判定走 `dshcompat.checkVersion`，**不能**把「受支持矩阵」当成判定结论：
+  // 诊断页按 `versionVerdict` 的三态（supported/unverified/incompatible）分支渲染，
+  // 塞进一个版本号字符串会让三个分支**全部落空**——界面既没有图标也没有文案，
+  // 而它看起来只是「这里没内容」，比报错更难发现。
+  //
+  // 这里传空版本号是**如实**的：上游没有任何端点或帧给出 Host 核心包版本
+  // （`$events` 的 ready 帧实测只有 clientId 与 host.home，D2 §8.7.12），
+  // 所以结论必然是 unverified，且必须把原因写清楚。
+  const verdict: VersionCheck = checkVersion('', emptyProbeTable());
   return {
     entries: entries,
     healthy: report.healthy,
     generatedAt: report.generatedAt,
-    versionVerdict: supportedVersionsText(),
-    versionMessage: `本客户端支持的 Host 核心包版本：${supportedVersionsText()}`,
-    versionAdvice: '若 Host 版本不在矩阵内，请按「上游升级手册」的流程升级兼容面。',
+    versionVerdict: verdict.verdict,
+    versionMessage: verdict.message,
+    versionAdvice: verdict.advice,
     tableStats: `${stats.endpoints} 个端点 / ${stats.streamEndpoints} 个流式 / ${stats.capabilities} 个能力`,
-    surface: upstreamIdentity()
+    // 接口面必须来自载体常量：写死字符串会在上游改路径后继续显示旧路径，
+    // 而这一行正是用来判断「是不是漏注入/走错路由」的。
+    surface: `${SURFACE.apiChannel} · ${SURFACE.muxPath} · ${SURFACE.eventsEndpoint}`
   };
 }
 
@@ -295,6 +297,13 @@ struct Index {
   };
   @State references: ReferenceCandidate[] = [];
   @State commands: CommandCandidate[] = [];
+  /** 能力缺失的一次性提示（透传给输入区；如附件上传尚未接线） */
+  @State attachNotice: string = '';
+  /** 用户是否已经点过一个工作区（决定文件树空态该说哪一句） */
+  @State pendingWorkspacePick: boolean = false;
+  /** 文件树空态标题与说明（由交互状态算出，见 `updateTreeEmptyText`） */
+  @State treeEmptyTitle: string = '该工作区暂无文件';
+  @State treeEmptyHint: string = '选择一个工作区以浏览它的文件';
 
   // ── 交互状态 ──
   @State draft: string = '';
@@ -375,11 +384,10 @@ struct Index {
   /**
    * 把中枢快照落到页面状态。
    *
-   * 设计取舍：**只在「已连上」时覆盖桩数据**（判据是 `s.connected`，不是 `s.phase`）。
-   * 未连接时保留桩数据，是为了让「没有 Host」的新用户也能看到完整的界面结构
-   * （D3 §4 要求空态有说明）；一旦连上，列表与待决就以 Host 为准——
-   * 此时若 Host 上确实没有会话，界面就应当显示空列表，而不是继续显示桩数据
-   * （否则用户会以为连上了却看到不存在的会话，是更糟的误导）。
+   * 判据是 `s.connected`（认证与载体就绪），**不是** `s.phase`：
+   * `phase` 会因事件流终止而降级为 `DEGRADED`，那时一元调用仍然可用，
+   * 用 `phase` 会让「连上了但事件流恰好断了」的时刻退回空态，
+   * 等于把已经拿到的真实数据丢掉。
    */
   private applyHubSnapshot(s: HubSnapshot): void {
     this.hubPhase = s.phase;
@@ -392,24 +400,42 @@ struct Index {
     this.hubTrace = s.trace;
     this.hubConnected = s.connected;
     this.queuedCount = s.outbox;
+    this.offline = s.phase === HubPhase.DEGRADED;
     if (!s.connected) {
-      this.offline = s.phase === HubPhase.DEGRADED;
+      // 断开后**清空**上一段连接的数据，而不是留着当「缓存」：
+      // 留着的会话列表会让用户以为还能点开会话，点下去全是失败。
+      this.sessions = [];
+      this.pending = [];
+      this.trajectoryItems = [];
+      this.workspaces = [];
+      this.fileTree = [];
+      this.detailSections = [];
+      this.models = [];
+      this.plugins = [];
+      this.credentials = [];
+      this.settings = this.localSettings;
+      this.settingsStates = [];
+      this.hosts = [];
+      this.commands = [];
+      this.references = [];
+      this.preview = undefined;
+      this.updateHosts();
+      this.recomputeDerived();
       return;
     }
-    // 已连上但事件流断了：数据是真的，只是实时性降级，如实标注为离线提示
-    this.offline = s.phase === HubPhase.DEGRADED;
     this.sessions = s.sessions;
     this.pending = s.pending;
-    // 模型目录与插件清单是「静态事实」：连上后由中枢拉一次。
-    // 只在非空时覆盖桩数据——能力缺失（老 Host 没有这些端点）时保留桩数据会让用户
-    // 以为 Host 真有这些模型，所以这里反过来：**已连上就以真实结果为准，哪怕为空**。
     this.models = s.models;
     this.plugins = s.plugins;
     this.credentials = s.credentials;
-    // Host 设置在前、本地偏好在后。**已连上就以真实结果为准**（哪怕为空），
-    // 不再保留桩数据里的「Host 设置」——那会让用户改到并不存在的项。
     this.settings = mergeSettingsGroups(s.settings, this.localSettings);
     this.settingsStates = s.settingsStates;
+    this.commands = s.commands;
+    this.references = s.references;
+    // 文件树与预览由中枢持有（它们与会话绑定），这里只跟随：
+    // 中枢换了会话就会清空并重列，视图不做任何缓存，避免两边各存一份而后不一致。
+    this.fileTree = s.fileNodes;
+    this.preview = s.filePreview;
     if (s.defaultSelection !== undefined) {
       this.selection = s.defaultSelection;
     }
@@ -418,7 +444,31 @@ struct Index {
       this.trajectoryItems = s.trajectory;
       this.running = s.running;
     }
+    // 工作区与详情分区是**派生量**：从真实会话与真实轨迹算出来，
+    // 因此只要底料变了就重算，不需要 Host 另发一份。
+    this.workspaces = projectWorkspaces(this.sessions);
+    this.detailSections = projectDetailSections(this.trajectoryItems);
+    this.updateHosts();
     this.recomputeDerived();
+  }
+
+  /**
+   * 刷新「已配置 Host」列表。
+   *
+   * 数据源只有两个真实事实：**上次记住的地址**（能力层存储）与**当前连接状态**。
+   * 这里绝不编造条目——这个列表上的「已授权」是一条安全陈述。
+   */
+  private updateHosts(): void {
+    this.hosts = projectHosts({
+      url: this.rememberedUrl,
+      connected: this.hubConnected,
+      authority: this.hubAuthority,
+      authorized: this.hubConnected || this.rememberedTokenState === 'present',
+      // 上游**没有**任何端点或帧给出 Host 核心包版本（`$events` 的 ready 帧
+      // 实测只有 `clientId` 与 `host.home`，见 D2 §8.7.12），因此这里只能诚实留空，
+      // 设备页显示「核心包版本 未知」。不能拿「受支持版本矩阵」冒充 Host 的版本。
+      version: ''
+    });
   }
 
   /**
@@ -441,20 +491,10 @@ struct Index {
   }
 
   aboutToAppear(): void {
-    this.sessions = stubSessions();
-    this.pending = stubPending();
-    this.detailSections = stubDetailSections();
-    this.workspaces = stubWorkspaces();
-    this.fileTree = stubFileTree();
-    this.localSettings = stubSettings();
-    this.settings = this.localSettings;    this.credentials = stubCredentials();
-    this.plugins = stubPlugins();
-    this.hosts = stubHosts();
-    this.models = stubModels();
-    this.selection = stubModelSelection();
-    this.diag = stubDiagnostics();
-    this.references = stubReferences();
-    this.commands = stubCommands();
+    // 初始值 = 空态。所有真实数据都在 `applyHubSnapshot` 到达时落地；
+    // 连接建立前界面显示的是各视图自己的空态文案（D3 §4），而不是编造的示例数据。
+    this.diag = emptyDiagReport();
+    this.updateHosts();
     this.recomputeDerived();
     this.applyWidth(initialWidthVp());
     this.watchWindowSize();
@@ -702,12 +742,12 @@ struct Index {
   private openSession(id: string): void {
     this.selectedSessionId = id;
     this.selectedSessionTitle = this.titleOf(id);
-    const live: boolean = this.hubConnected;
-    // 未连接时用桩轨迹让界面可读；连上后清空并由中枢的 session/follow 推真实轨迹
-    // （若不清空，真实轨迹会追加在桩数据后面，看起来像「会话里混进了别人的内容」）
-    this.trajectoryItems = live ? [] : stubTrajectory();
-    this.running = live ? false : true;
-    if (live) {
+    // 先清空再由中枢的 `session/follow` 推真实轨迹。
+    // 不清空会让新会话的轨迹追加在旧会话后面（看起来像「会话里混进了别人的内容」）。
+    this.trajectoryItems = [];
+    this.running = false;
+    if (this.hubConnected) {
+      // 中枢会在切会话后重拉命令目录、文件树与引用候选（三者都是会话作用域的）
       SessionHub.shared().selectSession(id);
     }
     if (this.mode === LayoutMode.SINGLE) {
@@ -732,23 +772,37 @@ struct Index {
     });
   }
 
-  private toggleDirectory(path: string): void {
-    const next: FileNode[] = [];
-    for (let i = 0; i < this.fileTree.length; i++) {
-      const node: FileNode = this.fileTree[i];
-      next.push(node.path === path
-        ? {
-          name: node.name, path: node.path, kind: node.kind, size: node.size,
-          modifiedAt: node.modifiedAt, loaded: !node.loaded, children: node.children,
-          deliverable: node.deliverable
-        }
-        : node);
+  /**
+   * 取一个 cwd 属于该工作区的会话 id，作为文件浏览的作用域。
+   *
+   * 文件端点的作用域是会话级（`workspaceFileScopeId` = sessionId，D2b §2.0），
+   * 而工作区只是一个目录，本身不是端点参数。因此「浏览某个工作区」必须落实到
+   * 「用某个 cwd 落在该目录里的会话去列目录」。没有这样的会话时返回空串，
+   * 由调用方保持空态并说明原因（而不是拿别的会话去列，那会列出**错误目录**的内容）。
+   */
+  private sessionForWorkspace(workspaceId: string): string {
+    for (let i = 0; i < this.sessions.length; i++) {
+      const item: SessionListItem = this.sessions[i];
+      if (item.cwd.length > 0 && normalizePathKey(item.cwd) === workspaceId) {
+        return item.id;
+      }
     }
-    this.fileTree = next;
+    return '';
+  }
+
+  /**
+   * 展开/折叠文件树节点。
+   *
+   * 真实数据在枢纽里（目录内容要发 `workspaceFiles/list`），因此这里只转发。
+   * 文件树**没有本地副本**——两份必然不同步，而「展开了一个不存在的子节点」
+   * 这种不一致在界面上看起来完全正常。
+   */
+  private toggleDirectory(path: string): void {
+    SessionHub.shared().toggleDirectory(path);
   }
 
   private openFile(node: FileNode): void {
-    this.preview = stubPreview(node.path, node.name);
+    SessionHub.shared().openFile(node.path, node.name);
     if (this.mode === LayoutMode.SINGLE) {
       this.wsDrill = 2;
     }
@@ -1758,6 +1812,7 @@ struct Index {
         selection: this.selection,
         references: this.references,
         commands: this.commands,
+        notice: this.attachNotice,
         onDraftChange: (text: string) => {
           this.draft = text;
         },
@@ -1772,7 +1827,11 @@ struct Index {
           this.running = false;
         },
         onAddAttachment: () => {
-          this.attachments = this.attachments.concat(['screenshot.png']);
+          // 附件上传的**协议侧已经接好**（`fileUploadPayload` / `projectFileUpload` / `filePart`），
+          // 缺的是端侧文件选择能力（相册/文件选择器）——`platform` 目前没有这一项。
+          // 因此这里如实说明，而不是塞一个假附件名进列表：
+          // 假附件会出现在待发内容里，用户以为已经带上文件，实际什么都没发。
+          this.attachNotice = '附件上传尚未接线：还缺端侧文件选择能力（协议侧与 fileUploads/upload 的载荷已就绪）。';
         },
         onRemoveAttachment: (name: string) => {
           const next: string[] = [];
@@ -1785,6 +1844,11 @@ struct Index {
         },
         onPickModel: () => {
           this.selectTab(NavTab.SETTINGS);
+        },
+        onReferenceQuery: (query: string) => {
+          if (this.hubConnected) {
+            SessionHub.shared().refreshReferences(query);
+          }
         },
         onOpenDetail: () => {
           this.stackPage = StackPage.DETAIL;
@@ -1946,7 +2010,22 @@ struct Index {
         preview: this.preview,
         compact: compact && this.mode === LayoutMode.SINGLE,
         drillLevel: this.wsDrill,
+        treeEmptyTitle: this.treeEmptyTitle,
+        treeEmptyHint: this.treeEmptyHint,
         onSelectWorkspace: (id: string) => {
+          const scope: string = this.sessionForWorkspace(id);
+          // 空态文案按「为什么空」分档（D3 §4：空态要说明可以做什么）
+          this.pendingWorkspacePick = true;
+          if (scope.length === 0) {
+            this.treeEmptyTitle = '该工作区下还没有会话';
+            this.treeEmptyHint = '文件浏览的作用域是会话级（workspaceFileScopeId = 会话 id），请先在这个目录里新建一个会话。';
+          } else {
+            this.treeEmptyTitle = '该目录暂无文件';
+            this.treeEmptyHint = '目录确实为空，或 Host 拒绝列出它的内容（详见连接诊断）。';
+            if (this.hubConnected) {
+              SessionHub.shared().openWorkspace(scope);
+            }
+          }
           if (this.mode === LayoutMode.SINGLE) {
             this.wsDrill = 1;
           }
@@ -1958,7 +2037,9 @@ struct Index {
           this.openFile(node);
         },
         onAttachFile: (node: FileNode) => {
-          this.attachments = this.attachments.concat([node.name]);
+          // 与输入区的附件按钮同因：协议侧就绪、端侧缺「把字节读出来并上传」这一步。
+          // 不把文件名塞进附件列表——那会让用户以为已经把它带给 agent 了。
+          this.attachNotice = `「${node.name}」投喂尚未接线：还缺端侧读取与 fileUploads/upload 的调用点。`;
           this.selectTab(NavTab.SESSIONS);
         },
         onBack: () => {

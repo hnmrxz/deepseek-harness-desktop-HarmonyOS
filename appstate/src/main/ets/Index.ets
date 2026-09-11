@@ -105,30 +105,13 @@ export type {
   SettingsWriteResult
 } from './model/Settings';
 
-// ── 桩数据源（设备到位前驱动 UI；接入真实数据后只替换数据来源） ──
-export { stubHost, stubPending, stubSessions, stubTrajectory } from './model/StubData';
-export type { StubHostInfo } from './model/StubData';
-export {
-  aboutInfo,
-  stubCommands,
-  stubCredentials,
-  stubDetailSections,
-  stubDiagnostics,
-  stubFileTree,
-  stubHosts,
-  stubModelSelection,
-  stubModels,
-  stubPlugins,
-  stubPreview,
-  stubReferences,
-  stubSettings,
-  stubWorkspaces
-} from './model/StubData2';
-export type {
-  CommandCandidate,
-  DetailSection,
-  ReferenceCandidate
-} from './model/StubData2';
+// ── 「关于」与诊断空态（**不是桩数据**：全部从 dshcompat 实时派生） ──
+export { aboutInfo } from './model/StubData2';
+export { emptyDiagReport } from './model/Diag';
+
+// ── 详情栏分区（从真实轨迹派生，D3 §3.6） ──
+export { projectDetailSections } from './model/Detail';
+export type { DetailSection } from './model/Detail';
 
 // ── 断点与导航模型 ──
 export {
@@ -194,31 +177,48 @@ export {
   ApprovalOutcome,
   approvalOutcomeFor,
   APPROVAL_REQUEST_EVENT,
+  authorityOfUrl,
+  basenameOf,
+  commandsListEndpoint,
+  commandsListPayload,
   ControlFrameType,
   cwdBasename,
   decisionIsClientSideOnly,
   eventResultArgs,
   eventResultEndpoint,
   filePart,
+  fileReferencesEndpoint,
+  fileReferencesPayload,
   fileUploadEndpoint,
   fileUploadPayload,
   FollowFrameType,
   followSessionAddress,
   followSubagentAddress,
+  hostOfUrl,
   imagePart,
   isKnownProjectionKey,
+  isLoopbackUrl,
   isWaterfallFrame,
+  normalizePathKey,
   outcomeNext,
   outcomeRejected,
   outcomeResult,
   projectApprovalRequest,
   projectAskUserQuestionRequest,
+  projectCommands,
+  projectFileReferences,
   projectFileUpload,
+  projectHosts,
   projectSessionCreate,
   projectSessionFork,
   projectSessionListWire,
   projectSessionPrompt,
+  projectSessionReferences,
   projectSessionRename,
+  projectWorkspaceListing,
+  projectWorkspaces,
+  projectWorkspaceText,
+  projectWorkspaceFailure,
   promptPayload,
   PromptMode,
   queueEditAction,
@@ -235,13 +235,19 @@ export {
   sessionFollowPayload,
   sessionForkPayload,
   sessionListWirePayload,
+  sessionReferencesEndpoint,
+  sessionReferencesPayload,
   sessionRenamePayload,
   sessionUpdateQueuePayload,
   textPart,
   TitleSource,
   titleOfSummary,
   UNTITLED_SESSION as WIRE_UNTITLED_SESSION,
-  USER_QUESTIONS_REQUEST_EVENT
+  USER_QUESTIONS_REQUEST_EVENT,
+  workspaceListEndpoint,
+  workspaceListPayload,
+  workspaceReadEndpoint,
+  workspaceReadPayload
 } from './model/Wire';
 export type {
   AskUserQuestionAnswer,
@@ -252,6 +258,7 @@ export type {
   AskUserQuestionRequest,
   ApprovalAnswerValue,
   ApprovalRequestPayload,
+  CommandCandidate,
   ControlBaseline,
   ControlFrame,
   EventResultArgs,
@@ -264,12 +271,14 @@ export type {
   FileAttachmentRefValue,
   FileUploadRequest,
   FileUploadValue,
+  HostProjectionInput,
   OutcomeRejected,
   OutcomeResult,
   ProjectionHints,
   PromptContentPart,
   QueueActionBody,
   QueueTextBlock,
+  ReferenceCandidate,
   SessionCancelRequest,
   SessionCancelValue,
   SessionCreateRequest,
@@ -292,5 +301,10 @@ export type {
   SessionWireHeader,
   TitleResolution,
   WaterfallFrame,
-  WireError
+  WireError,
+  WorkspaceEntryWire,
+  WorkspaceFileRange,
+  WorkspaceListingProjection,
+  WorkspaceListingWire,
+  WorkspaceTextWire
 } from './model/Wire';

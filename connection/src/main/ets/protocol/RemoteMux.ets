@@ -288,6 +288,16 @@ export class RemoteMux {
    */
   private startLivenessProbe(): void {
     this.stopLivenessProbe();
+    // 兜底 surface 的 `probeEndpoint` 是空串（= 未注入真实接口面）。
+    // 此时**明确不探活**并留下一条 trace：含糊地「探了但用假端点」会让
+    // 装配漏注入的构建把缺陷藏在「一切正常」的外表下。
+    if (this.surface.probeEndpoint.length === 0) {
+      // 兜底 surface 的 `probeEndpoint` 是空串（= 未注入真实接口面）。
+      // 此时**明确不探活**：含糊地「探了但用假端点」会让装配漏注入的构建
+      // 把缺陷藏在「一切正常」的外表下。本类刻意不持日志通道，因此
+      // 「没探活」只能由诊断页的探活计数反映——那也正是它该被记的地方。
+      return;
+    }
     this.probeTimer = setInterval(() => {
       this.probeOnce();
     }, PROBE_INTERVAL_MS);
@@ -313,15 +323,23 @@ export class RemoteMux {
       return;
     }
     this.probePending = true;
-    const probeId: string = randomId();
-    // 空对象与嵌套字面量都要有声明类型（arkts-no-untyped-obj-literals）
-    const probeArgs: Record<string, Object> = {};
-    probeArgs['cursor'] = `probe-${probeId}`;
+    // 【探活帧必须用**合法**实参——这里踩过一个很隐蔽的坑】
+    // 初版为了让探针在旁路日志里可辨认，给它塞了一个唯一 `cursor`。
+    // 但 `settings/describe` **不接受任何实参**，服务端回：
+    //   `gateway/arguments-invalid: unexpected "cursor"`
+    // 而那一帧是 `type:"error"`，被 `handleFrame` 当作**这条流的终结**处理
+    // → 探活反而把**健康的连接**判死（症状与「socket 静默失效」几乎一样，
+    //   查错方向会完全跑偏）。
+    //
+    // 所以：探活帧只能用该端点**本来就接受**的实参（`settings/describe` 是空对象）。
+    // 代价是旁路日志里辨认不出探针——但那条日志并非必需：
+    // 连接状态变化（`connection degraded/disconnected`）已经落进 trace。
+    const emptyArgs: Record<string, Object> = {};
     const probePayload: Record<string, Object> = {};
-    probePayload['args'] = probeArgs as Object;
+    probePayload['args'] = emptyArgs as Object;
     const frame: Record<string, Object> = {
       'type': 'open',
-      'streamId': `probe-${probeId}`,
+      'streamId': `probe-${randomId()}`,
       'endpoint': this.surface.probeEndpoint,
       'payload': probePayload as Object
     };

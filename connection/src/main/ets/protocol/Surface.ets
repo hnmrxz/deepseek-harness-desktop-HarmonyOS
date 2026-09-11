@@ -23,9 +23,17 @@ export interface ProtocolSurface {
   /**
    * **连接级探活**用的逻辑端点。
    *
-   * 要求：无副作用、必然应答、参数可重复。由兼容面注入而不是在 connection 里写死——
-   * 它是**上游端点名**，属于 `dshcompat` 的事实；connection 只管
-   * 「怎么发一帧并等回帧」这个机制（D5 §1 分层纪律）。
+   * 三条硬要求（都踩过坑，别改动）：
+   *   1. **无副作用**——它会被周期性调用；
+   *   2. **必然应答**——不应答就无法区分「链路死了」与「这个端点本来就不回」；
+   *   3. **实参必须是该端点本来就接受的形态**。`settings/describe` 不接受任何实参，
+   *      因此探活帧用**空 args**。曾为了让探针在日志里可辨认而塞一个 `cursor`，
+   *      结果服务端回 `gateway/arguments-invalid`，而那一帧是 `type:"error"`、
+   *      被当作**该流的终结** → **探活反而把健康的连接判死**。
+   *      症状与「socket 静默失效」几乎一样，排查方向会完全跑偏。
+   *
+   * 由兼容面注入而不是在 connection 里写死：它是**上游端点名**，
+   * 属于 `dshcompat` 的事实；connection 只管「怎么发一帧并等回帧」这个机制。
    */
   probeEndpoint: string;
   /** 生成 rpcId / streamId 用的随机串长度 */
@@ -44,7 +52,18 @@ export const FALLBACK_SURFACE: ProtocolSurface = {
   eventsEndpoint: '$events',
   eventsPayloadJson: '{"args":{}}',
   eventsResultEndpoint: '$events/result',
-  // 与 dshcompat 的 `SETTINGS_DESCRIBE_ENDPOINT` 一致；这里只是兜底值
-  probeEndpoint: 'settings/describe',
+  /**
+   * **空串 = 不可探活**。
+   *
+   * 这里刻意**不**填一个真实端点名。理由有两条，都很实在：
+   *   1. 兜底值只有测试与「装配漏注入」两种路径会走到。填一个真实端点名会让
+   *      漏注入的构建**看起来也能探活**，把装配缺陷掩盖成「跑得好好的」；
+   *   2. 端点名是上游事实，只允许出现在 `dshcompat`（架构门禁会拦）。
+   *      为绕开门禁而把名字拆开拼接是更坏的做法——那会训练出「门禁可以绕」的习惯。
+   *
+   * 探活逻辑对空串的处置是**跳过探活并记一条 trace**（见 `RemoteMux.startLivenessProbe`）：
+   * 明确地「没做」比含糊地「做了但用了假端点」安全。
+   */
+  probeEndpoint: '',
   idLength: 32
 };

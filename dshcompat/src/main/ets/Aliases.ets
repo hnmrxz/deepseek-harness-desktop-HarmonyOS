@@ -141,6 +141,20 @@ export const SESSION_FEEDBACK_RECORD_ENDPOINT: string = 'sessionFeedback/record'
 
 /** 斜杠命令执行（参数名在上游发生过改名，见 `PARAM_ALIASES`） */
 export const COMMANDS_EXECUTE_ENDPOINT: string = 'commands/execute';
+/**
+ * 斜杠命令目录。
+ *
+ * 【为什么必须拉真实目录而不是内置一份命令表】
+ *   命令由 Host 侧的插件注册（上游 `dsh-commands`），**客户端无法预知全集**：
+ *   内置一份「常见命令」会在 Host 装了别的插件时漏掉真实命令，
+ *   又会在插件被禁用后继续展示不存在的命令。两种错误都让用户按下一个必然失败的命令。
+ *   实测回复是 `CommandDescriptor[]`（D2b §6.1），`description` 之外还有可选 `input.hint`。
+ */
+export const COMMANDS_LIST_ENDPOINT: string = 'commands/list';
+/** 工作区内文件路径候选（`@` 文件的真实来源） */
+export const FILE_REFERENCES_LIST_ENDPOINT: string = 'fileReferences/list';
+/** 可 `@` 提及的会话候选（与文件候选是两个不同端点，不能互相替代） */
+export const SESSION_REFERENCE_CANDIDATES_ENDPOINT: string = 'sessionReferenceResolver/candidates';
 
 /** 只读探测端点（用于连通性与能力探测；均为无副作用调用） */
 export const READONLY_PROBE_ENDPOINTS: string[] = [
