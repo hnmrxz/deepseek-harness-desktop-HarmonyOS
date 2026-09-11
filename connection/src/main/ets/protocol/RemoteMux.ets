@@ -44,6 +44,15 @@ export enum MuxState {
   OPEN = 'open'
 }
 
+/**
+ * `error` 事件之后的**活性宽限期**（毫秒）。
+ *
+ * 依据：服务端每 2 s 发一次 Ping（文件头的「心跳事实」），所以 6 s 内至少应有一个
+ * 周期到达。取 6 s 是在「真断了要尽快恢复」与「不要被一个含义含糊的事件误判」
+ * 之间折中——实测这个误判会让全部逻辑流被杀掉（见 `socket.on('error')` 的说明）。
+ */
+const LIVENESS_GRACE_MS: number = 6000;
+
 export class RemoteMux {
   private baseUrl: string;
   private cookieProvider: () => string | undefined;
@@ -55,6 +64,8 @@ export class RemoteMux {
   private disposed: boolean = false;
   private openWaiters: Array<(ok: boolean, reason?: string) => void> = [];
   private lastError?: string;
+  /** 活性宽限期计时器（-1 = 未在宽限期内），见 `startLivenessGrace` */
+  private livenessTimer: number = -1;
 
   constructor(baseUrl: string, cookieProvider: () => string | undefined,
     surface: ProtocolSurface = FALLBACK_SURFACE) {
@@ -105,6 +116,8 @@ export class RemoteMux {
       if (err !== undefined && err !== null && err.code !== 0) {
         return;
       }
+      // 收到帧 = 链路活着的**证据**：撤销 error 引入的宽限期
+      this.clearLivenessGrace();
       if (typeof data === 'string') {
         this.handleFrame(data as string);
       }
@@ -116,7 +129,22 @@ export class RemoteMux {
     });
     socket.on('error', (err: BusinessError) => {
       this.lastError = `ws error code=${err.code} message=${err.message}`;
-      this.onSocketClosed(this.lastError);
+      // 【不要把 error 事件当成连接已死】实测（`entry/src/ohosTest/.../MuxProbe.test.ets`，
+      // 在设备内部连同一个 mux 地址）：ArkTS 会在**连接仍然健康**时抛出
+      // `code=200 message=undefined` 的 error 事件——实测该事件在 73–198 ms 到达，
+      // 而**没有任何 close 事件**，连接随后稳定存活整个 8 s 观察窗口
+      // （无心跳与带心跳两种配置都一样）。
+      //
+      // 旧实现一见 error 就 `onSocketClosed()`，于是：
+      //   - 全部逻辑流被以 `carrier/closed` 终止（症状就是「open 后 ~27 ms 就 closed」）；
+      //   - 上层看到「连接失效」，而物理链路其实是好的。
+      // 表现为审批/提问推送、通知、设置页外部改动刷新全部失效，且错误文案指向
+      // 「载体断了」这个**错误的方向**。
+      //
+      // 改为：记下错误并给一段**宽限期**，让后续到达的帧来证明链路仍然活着；
+      // 只有宽限期内**一个帧都没来**，才判定为真的断开。
+      // 「谁说了算」这样才落在证据（收到帧）上，而不是落在一个含义含糊的事件上。
+      this.startLivenessGrace();
     });
 
     const header: Record<string, string> = {};
@@ -168,6 +196,44 @@ export class RemoteMux {
     this.openWaiters = [];
     for (let i = 0; i < waiters.length; i++) {
       waiters[i](ok, reason);
+    }
+  }
+
+  /**
+   * 收到 `error` 后给链路的**宽限期**（毫秒）。
+   *
+   * 取值依据：服务端每 2 s 发一次 Ping（见文件头心跳事实），
+   * 因此 6 s 内至少应有一个周期到达。取 6 s 是为了在
+   * 「真断了要尽快恢复」与「不要被一个含糊事件误判」之间折中。
+   */
+  // 常量在文件末尾声明（ArkTS 要求先声明后用，这里用类静态字段规避顺序问题）
+
+  /**
+   * 进入活性宽限期：等一个**真实的帧**来证明链路还活着。
+   *
+   * 为什么不是直接判死：实测 `error` 事件会在链路健康时到来（见 `socket.on('error')`
+   * 的说明）。只有「宽限期内一个帧都没收到」才是可靠证据。
+   */
+  private startLivenessGrace(): void {
+    if (this.livenessTimer !== -1) {
+      // 已在宽限期内：重复的 error 不重置计时（否则持续的错误会让宽限期永不结束）
+      return;
+    }
+    this.livenessTimer = setTimeout(() => {
+      this.livenessTimer = -1;
+      // 宽限期内没有任何帧到达 → 这次是真的断了
+      this.onSocketClosed(this.lastError ?? 'wss 活性宽限期超时（未收到任何帧）');
+    }, LIVENESS_GRACE_MS);
+  }
+
+  /** 收到任何服务端帧：链路被证明是活的，撤销宽限期并清掉错误 */
+  private clearLivenessGrace(): void {
+    if (this.livenessTimer !== -1) {
+      clearTimeout(this.livenessTimer);
+      this.livenessTimer = -1;
+    }
+    if (this.lastError !== undefined) {
+      this.lastError = undefined;
     }
   }
 
