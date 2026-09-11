@@ -18,6 +18,7 @@
  */
 
 import { NotificationDraft, NotifyPriority, NotifyRoute, NotifySlot } from 'platform';
+import { PendingItem, PendingKind } from './Trajectory';
 
 /**
  * 通知类型（D3 §6 的六行一一对应）。
@@ -448,4 +449,79 @@ export function assertNoSensitiveContent(draft: NotificationDraft): boolean {
     return true;
   }
   return false;
+}
+
+// ───────────────────────── 「何时发」的入参构造 ─────────────────────────
+
+/**
+ * 待决项 → 通知入参。
+ *
+ * 【为什么"何时发"要单独有函数，而不是让调用方自己拼 `NotifyInput`】
+ *   拼一个 `NotifyInput` 需要同时知道三件事：待决项的类型、政策层要求哪个 `kind`、
+ *   以及"摘要用哪段文本"。把这三件事留给每个调用点，就会出现"审批通知用了提问的 kind"
+ *   或"把整段问题正文塞进摘要"这类错误——而它们**只在锁屏上才看得出来**。
+ *   收成一个函数后，"待决项长什么样"与"通知怎么发"之间只有一条通路。
+ */
+export function notifyInputForPending(item: PendingItem, sessionTitle: string,
+  hostId: string): NotifyInput {
+  const kind: NotifyKind = item.kind === PendingKind.APPROVAL
+    ? NotifyKind.APPROVAL : NotifyKind.QUESTION;
+  return {
+    kind: kind,
+    sessionId: item.sessionId,
+    sessionTitle: sessionTitle,
+    // 摘要用**动作名/问题标题**（短、已由待决投影给出），不是 `detail`：
+    // 正文只允许「标题：摘要」两段，塞长文本会被 `assertNoSensitiveContent` 判违规。
+    detailText: item.title,
+    pendingId: item.id,
+    hostId: hostId
+  };
+}
+
+/** 待决项被处理后应当撤回的通知键（按它的 kind 计算，不能按"当前所有 kind"撤）。 */
+export function withdrawalKeysForPending(item: PendingItem): string[] {
+  const kind: NotifyKind = item.kind === PendingKind.APPROVAL
+    ? NotifyKind.APPROVAL : NotifyKind.QUESTION;
+  return withdrawalKeysFor(kind, item.sessionId, item.id);
+}
+
+/**
+ * 轮次结束 → 通知入参。
+ *
+ * @param failed 这一轮是否以失败/中断收场（决定 `FAILURE` 还是 `TURN_DONE`）
+ *
+ * 两者的正文规范都**只有会话标题**，因此 `detailText` 传空串——
+ * 传了也会被 `notificationFor` 按政策忽略，但显式传空能让"这里不参与正文"一眼可见。
+ */
+export function notifyInputForTurn(sessionId: string, sessionTitle: string, hostId: string,
+  failed: boolean): NotifyInput {
+  return {
+    kind: failed ? NotifyKind.FAILURE : NotifyKind.TURN_DONE,
+    sessionId: sessionId,
+    sessionTitle: sessionTitle,
+    detailText: '',
+    pendingId: '',
+    hostId: hostId
+  };
+}
+
+/**
+ * 连接状态变化 → 通知入参。
+ *
+ * 【为什么目前**不**接线】D3 §6 把「连接断开」定为低优先级且**默认关闭**，
+ * 而本客户端尚未实现本机偏好（没有那个开关）。更关键的是实测现实：
+ * 这台设备上长连接约 5 秒就断一次（见 D2 §8.7.19），
+ * 按默认开启发布会让用户每 5 秒收一条"连接断开"——比不发更糟。
+ * 因此这里只保留入参构造，等"本机偏好"落地后再由偏好决定是否发布。
+ */
+export function notifyInputForConnection(hostName: string, hostId: string): NotifyInput {
+  return {
+    kind: NotifyKind.DISCONNECTED,
+    sessionId: '',
+    // 连接通知的"标题"位置放 Host 名（D3 §6 该行正文只有 Host 名）
+    sessionTitle: hostName,
+    detailText: '',
+    pendingId: '',
+    hostId: hostId
+  };
 }

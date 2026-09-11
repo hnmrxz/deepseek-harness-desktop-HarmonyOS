@@ -112,6 +112,15 @@ export const EVENT_GOAL_ACTIVATION_CHANGED: string = 'goal/activation-changed';
 
 /** 轮次事件前缀（轮次状态变化会影响运行态与列表） */
 export const EVENT_PREFIX_TURN: string = 'turn/';
+/**
+ * 轮次结束。
+ *
+ * 这是**唯一可靠的"这一轮跑完了"信号**（`running` 投影读不到，见 D2 §8.7.2 的
+ * `session/follow` 快照形状：`header`/`cursor`/`records`/`hasMore`/`projections` 里没有 `running`）。
+ * 失败与否在 `data.reason.kind`：实测失败轮次是
+ * `turn/end {turn, reason:{kind:'error', error:{message}}}`。
+ */
+export const EVENT_TURN_END: string = 'turn/end';
 /** 会话标题事件前缀（标题变化需要刷新列表） */
 export const EVENT_PREFIX_SESSION_TITLE: string = 'session/title';
 

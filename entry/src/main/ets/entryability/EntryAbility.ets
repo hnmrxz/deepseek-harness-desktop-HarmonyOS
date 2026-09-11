@@ -41,6 +41,7 @@ import {
   EVENT_KEY_HOST_TOKEN,
   EVENT_KEY_HOST_URL,
   HostStore,
+  NotificationCenter,
   parseWindowParams,
   readDeviceFacts,
   registerWindow,
@@ -51,7 +52,9 @@ import {
   WindowMemory,
   WindowParams
 } from 'platform';
-import type { RememberedHost, RememberedToken } from 'platform';
+import type { NotificationDraft, RememberedHost, RememberedToken } from 'platform';
+import { assertNoSensitiveContent, notificationFor, SessionHub } from 'appstate';
+import type { NotifyHooks, NotifyInput } from 'appstate';
 
 const DOMAIN = 0x0000;
 /** 本文件新增日志的 tag；既有日志沿用 'testTag' 不动，避免无意义的 diff 噪音 */
@@ -136,6 +139,11 @@ export default class EntryAbility extends UIAbility {
    * 送进来的地址/令牌——症状是「用启动参数连上了，几秒后又跳回上一个 Host」。
    */
   private launchHostProvided: boolean = false;
+  /** 系统通知机制（能力层持有 context，故在此装配） */
+  private notifier: NotificationCenter = new NotificationCenter();
+  /** 通知授权是否已查过（只查/只弹一次） */
+  private notifyChecked: boolean = false;
+  private notifyReady: boolean = false;
   /** 窗口记忆就绪信号。几何恢复必须等它，否则会在 store 尚未打开时静默跳过。 */
   private memoryReady: Promise<void> = Promise.resolve();
   /** 节流定时器 id；-1 表示当前无待执行的落盘任务 */
@@ -201,6 +209,9 @@ export default class EntryAbility extends UIAbility {
     // 主窗做完之后其它窗口直接复用即可。
     if (this.launchParams.kind === WindowKind.MAIN) {
       this.publishRememberedHost();
+      // 通知也只在主窗注册：`SessionHub` 的钩子只有一个槽位，
+      // 若每个窗口都注册，多窗口下会出现"发 N 条同样的通知"。
+      this.setupNotifications();
     }
 
     windowStage.loadContent('pages/Index', (err) => {
@@ -380,6 +391,70 @@ export default class EntryAbility extends UIAbility {
   private stripTokenQuery(url: string): string {
     const cut: number = url.search(/[?#]/);
     return (cut >= 0 ? url.substring(0, cut) : url).trim();
+  }
+
+  /**
+   * 把「发生了什么」接到「发一条系统通知」上（D3 §6）。
+   *
+   * 【为什么这段接线放在能力层，而不是 `appstate`】发通知需要 `UIAbilityContext`
+   *   （授权申请、渠道创建都要它），只有能力层持有。策略（正文怎么写、什么优先级、
+   *   去重键是什么）仍然在 `appstate/model/Notify.ets`；能力层只做两件事：
+   *   把中枢的事件转成 `notificationFor()` 的入参，以及调用平台机制发布/撤回。
+   *
+   * 【为什么授权不在启动时就申请】首启就弹权限框，对一个用户可能一直用不到的功能
+   *   是打扰。这里改为**第一次真的要发通知时**才申请（`prepareNotify` 里做一次并记住结果）——
+   *   拒绝也只是降级：待决项在应用内照旧可见（`NotificationCenter` 的契约）。
+   */
+  private setupNotifications(): void {
+    this.notifier.attach(this.context);
+    const hooks: NotifyHooks = {
+      onPending: (input: NotifyInput) => {
+        this.publishNotice(input);
+      },
+      onPendingResolved: (keys: string[]) => {
+        for (let i = 0; i < keys.length; i++) {
+          this.notifier.withdraw(keys[i]).then(() => {
+          }).catch((_error: Object) => {
+          });
+        }
+      },
+      onTurn: (input: NotifyInput) => {
+        this.publishNotice(input);
+      }
+    };
+    SessionHub.shared().setNotifyHooks(hooks);
+  }
+
+  /** 申请一次授权并发布；失败或未授权时**什么都不做**（不是错误） */
+  private publishNotice(input: NotifyInput): void {
+    this.prepareNotify().then((ok: boolean) => {
+      if (!ok) {
+        return;
+      }
+      const draft: NotificationDraft = notificationFor(input);
+      if (assertNoSensitiveContent(draft)) {
+        // 内容纪律自检不过就不发：宁可少一条通知，也不把可能含凭据/正文的文本送上锁屏。
+        hilog.warn(DOMAIN, TAG, '通知内容未通过纪律自检，已丢弃（kind=%{public}s）', input.kind as string);
+        return;
+      }
+      this.notifier.publish(draft).then(() => {
+      }).catch((_error: Object) => {
+      });
+    }).catch((_error: Object) => {
+    });
+  }
+
+  /** 惰性申请授权（只查/只弹一次） */
+  private async prepareNotify(): Promise<boolean> {
+    if (this.notifyChecked) {
+      return this.notifyReady;
+    }
+    this.notifyChecked = true;
+    this.notifyReady = await this.notifier.ensureEnabled();
+    if (this.notifyReady) {
+      await this.notifier.ensureSlots();
+    }
+    return this.notifyReady;
   }
 
   /**

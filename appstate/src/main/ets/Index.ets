@@ -134,6 +134,7 @@ export type {
   AttachOutcome,
   HubSnapshot,
   HubSubscriber,
+  NotifyHooks,
   OutboxEntry,
   PendingAttachment
 } from './store/SessionHub';
@@ -150,6 +151,9 @@ export {
   NOTIFY_POLICIES,
   NotifyKind,
   notificationFor,
+  notifyInputForConnection,
+  notifyInputForPending,
+  notifyInputForTurn,
   NotifyTarget,
   policyOf,
   QUESTION_DETAIL_LIMIT,
@@ -159,6 +163,7 @@ export {
   scrubCredentials,
   UNTITLED_SESSION,
   withdrawalKeysFor,
+  withdrawalKeysForPending,
   withdrawalKeysForSession
 } from './model/Notify';
 export type { InAppNotice, NotifyInput, NotifyPolicy } from './model/Notify';

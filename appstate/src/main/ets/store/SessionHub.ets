@@ -45,6 +45,7 @@ import {
   EVENT_CREDENTIALS_REFERENCE_UPDATED,
   EVENT_COMMANDS_CHANGE,
   EVENT_SETTINGS_DOCUMENT_UPDATED,
+  EVENT_TURN_END,
   GATEWAY_ARGUMENTS_INVALID,
   GATEWAY_INPUT_INVALID,
   GATEWAY_SIGNATURE_INVALID,
@@ -80,6 +81,12 @@ import {
 } from 'dshcompat';
 import type { SessionEventShape, SlotBinding } from 'dshcompat';
 import { projectSessionList } from '../model/SessionList';
+import {
+  notifyInputForPending,
+  notifyInputForTurn,
+  withdrawalKeysForPending
+} from '../model/Notify';
+import type { NotifyInput } from '../model/Notify';
 import type { SessionListItem } from '../model/SessionList';
 import {
   APPROVAL_CHOICE_ALLOW,
@@ -214,6 +221,34 @@ export interface AttachOutcome {
   name: string;
   /** 失败原因（可直接展示；成功时为空串） */
   reason: string;
+}
+
+/**
+ * 通知发布钩子。
+ *
+ * 【为什么由**能力层**实现而不是中枢直接发通知】
+ *   发系统通知需要一个 `UIAbilityContext`（授权申请、渠道创建都要它），
+ *   而那只有 `EntryAbility` 持有。中枢若自己去拿 context，就会把"UI 生命周期"
+ *   拖进状态层；反过来，中枢把**发生了什么**告诉能力层、由后者决定怎么发，
+ *   两侧都只做自己知道的事。
+ *
+ * 【为什么用钩子而不是让能力层轮询快照】通知的时机是**事件**（待决项出现、
+ * 轮次结束），不是状态；轮询快照需要上层自己 diff，而 diff 一旦写错就会
+ * 漏通知或重复通知——都是只在锁屏上才看得见的错误。
+ */
+export interface NotifyHooks {
+  /**
+   * 出现一个待决项（审批/提问）：应立即发布一条决策类通知
+   *
+   * 【为什么成员写成"函数类型属性"而不是方法语法】`arkts-no-untyped-obj-literals`
+   * 会拒绝把对象字面量赋给**方法语法**声明的接口（即使标注完全正确），
+   * 而"函数类型属性"可以——这正是本仓库 `EventSink`/`StreamSink` 能写字面量的原因。
+   */
+  onPending: (input: NotifyInput) => void;
+  /** 待决项已处理：撤回对应通知（按待决项自己的 kind 算键，不能按"全部 kind"撤） */
+  onPendingResolved: (keys: string[]) => void;
+  /** 轮次结束（完成或失败） */
+  onTurn: (input: NotifyInput) => void;
 }
 
 /** 中枢快照：UI 只读它，不直接碰连接 */
@@ -415,6 +450,8 @@ export class SessionHub {
   private attachmentList: PendingAttachment[] = [];
   /** 当前会话的排队项（由 `session/control` 的 baseline 与 queue 帧驱动） */
   private queuedItems: QueuedItem[] = [];
+  /** 通知发布钩子（由 `EntryAbility` 注入；未注入时一切照常，只是不发通知） */
+  private notifyHooks?: NotifyHooks;
 
   /** waterfall 待答项：eventId → 呈现项 id（应答时必须原样带回 eventId） */
   private waterfallEventIds: Map<string, string> = new Map();
@@ -1891,6 +1928,20 @@ export class SessionHub {
         if (mayChangeTurnState(eventType) || mayChangeSessionTitle(eventType)) {
           this.scheduleSessionRefresh();
         }
+        if (eventType === EVENT_TURN_END) {
+          /**
+           * 轮次结束是**唯一**可靠的"跑完了"信号，而在此之前中枢从没处理过它：
+           * `running` 只在「发送被接受」时置真、「取消」时置假，
+           * 因此正常跑完一轮之后，界面会一直显示"运行中"（停止按钮再也变不回发送按钮）。
+           *
+           * 失败与否从 `data.reason.kind` 判定：实测失败轮次的形状是
+           * `turn/end {turn, reason:{kind:'error', error:{message}}}`。
+           * **判据只认 `kind === 'error'`**：其它取值（含未知的新取值）一律按"正常完成"，
+           * 因为把一次正常完成误报成失败会让用户白查一场。
+           */
+          this.running = false;
+          this.publishTurnNotice(event);
+        }
       }
       this.notify();
       return;
@@ -2345,6 +2396,10 @@ export class SessionHub {
     }
     if (!replaced) {
       next.push(item);
+      // 【只对新出现的项发通知】重复的 `upsert` 来自快照重放与断线重连，
+      // 每次都发会让同一个待决项在锁屏上刷屏；而 `upsert` 的语义是"同一 id 覆盖"，
+      // 只有 `!replaced` 才是"这是一件新事情"。
+      this.publishPendingNotice(item);
     }
     this.pendingList = next;
     this.notify();
@@ -2367,13 +2422,49 @@ export class SessionHub {
 
   private removePending(pendingId: string): void {
     const next: PendingItem[] = [];
+    let removed: PendingItem | undefined = undefined;
     for (let i = 0; i < this.pendingList.length; i++) {
       if (this.pendingList[i].id !== pendingId) {
         next.push(this.pendingList[i]);
+      } else {
+        removed = this.pendingList[i];
       }
     }
     this.pendingList = next;
+    // 待决项处理完就撤回它的通知：留着会让用户在一个已经答复过的问题上继续点。
+    const hooks: NotifyHooks | undefined = this.notifyHooks;
+    if (removed !== undefined && hooks !== undefined) {
+      hooks.onPendingResolved(withdrawalKeysForPending(removed));
+    }
     this.notify();
+  }
+
+  /** 发布一条待决项通知（未注入钩子时静默跳过——没有通知不等于丢事件） */
+  private publishPendingNotice(item: PendingItem): void {
+    const hooks: NotifyHooks | undefined = this.notifyHooks;
+    if (hooks === undefined) {
+      return;
+    }
+    hooks.onPending(notifyInputForPending(item, this.titleOf(item.sessionId), this.hostName));
+  }
+
+  /** 注入通知钩子（由持有 `UIAbilityContext` 的能力层调用；传 undefined 可撤销） */
+  setNotifyHooks(hooks: NotifyHooks | undefined): void {
+    this.notifyHooks = hooks;
+  }
+
+  /** 轮次结束 → 一条完成或失败的通知（失败判据见调用处） */
+  private publishTurnNotice(turnEndEvent: Object): void {
+    const hooks: NotifyHooks | undefined = this.notifyHooks;
+    if (hooks === undefined) {
+      return;
+    }
+    const data: Object | undefined = getRecord(turnEndEvent, 'data');
+    const reason: Object | undefined = data === undefined ? undefined : getRecord(data, 'reason');
+    const kind: string = reason === undefined ? '' : (getString(reason, 'kind') ?? '');
+    const failed: boolean = kind === 'error';
+    const sessionId: string = this.selectedSessionId;
+    hooks.onTurn(notifyInputForTurn(sessionId, this.titleOf(sessionId), this.hostName, failed));
   }
 
   private record(line: string): void {

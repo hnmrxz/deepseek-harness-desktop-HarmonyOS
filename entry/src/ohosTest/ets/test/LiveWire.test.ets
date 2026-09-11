@@ -20,11 +20,20 @@ import { parseJson } from 'connection';
 import { hitOfKeyEvent } from '../../../main/ets/view/ShortcutKeys';
 import type { ShortcutHit } from '../../../main/ets/view/ShortcutKeys';
 import {
+  assertNoSensitiveContent,
   authorityOfUrl,
   basenameOf,
+  dedupeKeyOf,
   hostOfUrl,
   isLoopbackUrl,
+  notificationFor,
+  notifyInputForPending,
+  notifyInputForTurn,
+  NotifyKind,
+  PendingKind,
   projectCommands,
+  RiskLevel,
+  withdrawalKeysForPending,
   projectDetailSections,
   projectFileReferences,
   projectHosts,
@@ -61,6 +70,8 @@ import type {
   FilePreview,
   HostRecord,
   CommandCandidate,
+  NotifyInput,
+  PendingItem,
   PromptContentPart,
   QueuedItem,
   ReferenceCandidate,
@@ -70,6 +81,7 @@ import type {
   WorkspaceItem,
   WorkspaceListingProjection
 } from 'appstate';
+import type { NotificationDraft } from 'platform';
 
 /** 造一个最小会话项 */
 function session(id: string, cwd: string, updatedAt: number): SessionListItem {
@@ -84,6 +96,17 @@ function session(id: string, cwd: string, updatedAt: number): SessionListItem {
 function item(id: string, kind: TrajectoryKind, at: number): TrajectoryItem {
   const out: TrajectoryItem = makeItem(id, kind, at);
   return out;
+}
+
+/** 造一个最小待决项（通知入参构造的输入） */
+function makePending(id: string, kind: PendingKind, sessionId: string, title: string,
+  detail: string): PendingItem {
+  const raw: Record<string, Object> = {};
+  return {
+    id: id, kind: kind, sessionId: sessionId, sessionTitle: '', title: title, detail: detail,
+    raw: JSON.stringify(raw), risk: RiskLevel.NORMAL, choices: [], multiSelect: false,
+    allowFreeText: false, at: 0
+  };
 }
 
 export default function liveWireTest() {
@@ -501,6 +524,60 @@ export default function liveWireTest() {
       expect(functionKeys).assertEqual(1);                     // F5
       expect(specs.length).assertEqual(3);                     // Enter / Esc / Alt+↑↓
       expect(keyboardShortcutSpecs().length + specs.length).assertEqual(SHORTCUTS.length);
+    });
+
+    // ───────────────── 通知：入参构造 + 内容纪律 ─────────────────
+
+    it('notifyInputForPending：审批/提问各自的 kind，摘要取短标题而非 detail', 0, () => {
+      const approval: PendingItem = makePending('p-1', PendingKind.APPROVAL, 's-1', 'Bash', 'rm -rf / 的完整参数……');
+      const qi: NotifyInput = notifyInputForPending(approval, '会话甲', 'h-1');
+      expect(qi.kind).assertEqual(NotifyKind.APPROVAL);
+      expect(qi.sessionId).assertEqual('s-1');
+      expect(qi.pendingId).assertEqual('p-1');
+      // 摘要必须是**短标题**：正文只允许「标题：摘要」两段，塞长文本会被纪律自检拦下
+      expect(qi.detailText).assertEqual('Bash');
+
+      const q: PendingItem = makePending('p-2', PendingKind.QUESTION, 's-2', '选哪个？', '三个选项的详细解释…');
+      expect(notifyInputForPending(q, '会话乙', 'h-1').kind).assertEqual(NotifyKind.QUESTION);
+    });
+
+    it('notifyInputForTurn：失败用 FAILURE，否则 TURN_DONE；正文不含摘要', 0, () => {
+      const ok: NotifyInput = notifyInputForTurn('s-1', '会话甲', 'h-1', false);
+      expect(ok.kind).assertEqual(NotifyKind.TURN_DONE);
+      expect(ok.detailText).assertEqual('');
+      expect(ok.pendingId).assertEqual('');
+      expect(notifyInputForTurn('s-1', '会话甲', 'h-1', true).kind).assertEqual(NotifyKind.FAILURE);
+    });
+
+    it('withdrawalKeysForPending：按待决项自己的 kind 算键（撤错 kind 等于没撤）', 0, () => {
+      const approval: PendingItem = makePending('p-9', PendingKind.APPROVAL, 's-1', 'Bash', '');
+      const keys: string[] = withdrawalKeysForPending(approval);
+      expect(keys.length).assertEqual(1);
+      expect(keys[0]).assertEqual(dedupeKeyOf(NotifyKind.APPROVAL, 's-1', 'p-9'));
+      const question: PendingItem = makePending('p-9', PendingKind.QUESTION, 's-1', '？', '');
+      expect(withdrawalKeysForPending(question)[0])
+        .assertEqual(dedupeKeyOf(NotifyKind.QUESTION, 's-1', 'p-9'));
+    });
+
+    it('内容纪律：疑似凭据不得原样出现在通知草稿里', 0, () => {
+      // 这条守的是"通知会把敏感内容送上锁屏"这个安全边界。判据刻意不写成
+      // "assertNoSensitiveContent 必须为真"——那是在断言**哪一层**做的脱敏；
+      // 而真正要保证的性质是"草稿里没有原始凭据"。策略层先脱敏是更好的实现
+      // （草稿本身就干净），两种情况都必须满足下面两条断言。
+      const leaky: NotifyInput = notifyInputForPending(
+        makePending('p-3', PendingKind.APPROVAL, 's-1', 'sk-abcdefghijklmnopqrstuvwxyz012345', ''), '会话甲', 'h-1');
+      const draft: NotificationDraft = notificationFor(leaky);
+      expect(draft.body.indexOf('sk-abcdefghijklmnop') < 0).assertTrue();
+      expect(draft.title.indexOf('sk-abcdefghijklmnop') < 0).assertTrue();
+      // 若某一层没脱敏，纪律自检必须把它拦下（两道防线都要在）
+      if (draft.body.indexOf('sk-abcdefghijklmnop') >= 0) {
+        expect(assertNoSensitiveContent(draft)).assertTrue();
+      }
+      // 正常标题不应被误拦（误拦会让所有通知都发不出去，而界面看不出原因）
+      const normal: NotifyInput = notifyInputForPending(
+        makePending('p-4', PendingKind.APPROVAL, 's-1', 'Bash', ''), '会话甲', 'h-1');
+      expect(assertNoSensitiveContent(notificationFor(normal))).assertFalse();
+      expect(notificationFor(normal).body.indexOf('Bash') >= 0).assertTrue();
     });
 
     it('textPart / filePart：判别字段与载荷', 0, () => {
