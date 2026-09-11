@@ -37,6 +37,7 @@ import {
   SESSION_PROMPT_ENDPOINT,
   SESSION_REFERENCE_CANDIDATES_ENDPOINT,
   SESSION_RENAME_ENDPOINT,
+  SESSION_UPDATE_QUEUE_ENDPOINT,
   WORKSPACE_FILES_LIST_ENDPOINT,
   WORKSPACE_FILES_READ_ALL_ENDPOINT,
   WORKSPACE_FILES_READ_ENDPOINT
@@ -680,11 +681,80 @@ export function queueSteerAction(): QueueActionBody {
   return { kind: 'steer' };
 }
 
-/** 构造 `session/updateQueue` 的 args 载荷（endpoint 由调用方从 dshcompat 提供）。 */
-export function sessionUpdateQueuePayload(endpoint: string, sessionId: string, itemId: string,
+/** 构造 `session/updateQueue` 的 args 载荷。 */
+export function sessionUpdateQueuePayload(sessionId: string, itemId: string,
   action: QueueActionBody): Object | undefined {
   const body: SessionUpdateQueueRequest = { sessionId: sessionId, itemId: itemId, action: action };
-  return payloadFor(endpoint, body);
+  return payloadFor(SESSION_UPDATE_QUEUE_ENDPOINT, body);
+}
+
+// ═════════════════════════ 6b. 排队项的呈现投影 ═════════════════════════
+
+/**
+ * 排队项（呈现层契约）。
+ *
+ * 【为什么要单独投影，而不是把 `SessionQueuedItem` 直接给 UI】
+ *   `SessionQueuedItem.message` 是**原始消息对象**（含 content 块数组、角色等协议细节）。
+ *   直接把原始对象交给视图，等于让每个视图各写一遍"从 message 里抠文本"的逻辑——
+ *   而这类重复实现迟早会出现两处不一致（一处显示文本、一处显示 `[object Object]`）。
+ */
+export interface QueuedItem {
+  /** 队列项 id（`session/updateQueue` 的 `itemId`） */
+  id: string;
+  /** 位置：`queued` / `steering` / `context`（原样带上，UI 据此标注） */
+  placement: string;
+  /** 正文（纯文本部分拼接；没有文本时给出一句如实的说明，不给空串） */
+  text: string;
+}
+
+/** 从基线里的 `queues`（sessionId → 条目数组）取某个会话的排队项。 */
+export function queuedItemsOf(queues: Object | undefined, sessionId: string): SessionQueuedItem[] {
+  const raw: Object[] | undefined = getArray(queues, sessionId);
+  return raw === undefined ? emptyQueuedItems() : readQueuedArray(raw);
+}
+
+/** 投影成呈现层条目。 */
+export function projectQueuedItems(items: SessionQueuedItem[]): QueuedItem[] {
+  const out: QueuedItem[] = [];
+  for (let i = 0; i < items.length; i++) {
+    out.push({
+      id: items[i].id,
+      placement: items[i].placement,
+      text: queuedTextOf(items[i].message)
+    });
+  }
+  return out;
+}
+
+/**
+ * 从排队项的消息里取正文。
+ *
+ * 【为什么"没有文本"要给一句话而不是空串】排队项可能只带附件（合法的用户消息）。
+ * 显示空串会让用户看到一行**空白的待发条目**，无法判断它是"坏掉了"还是"只有附件"。
+ * 因此这里如实说出块数与类型，用户才知道该不该把它取回来补文字。
+ */
+function queuedTextOf(message: Object): string {
+  const parts: Object[] | undefined = getArray(message, 'content');
+  if (parts === undefined || parts.length === 0) {
+    return '（无可显示内容）';
+  }
+  let text: string = '';
+  let nonText: number = 0;
+  for (let i = 0; i < parts.length; i++) {
+    const part: Object | undefined = parts[i];
+    const kind: string = readString(part, 'type');
+    if (kind === 'text') {
+      const piece: string = readString(part, 'text');
+      text += text.length > 0 && piece.length > 0 ? '\n' : '';
+      text += piece;
+    } else {
+      nonText++;
+    }
+  }
+  if (text.length > 0) {
+    return nonText > 0 ? `${text}\n（另有 ${nonText} 个非文本块）` : text;
+  }
+  return `（${nonText} 个非文本块，如附件/图片）`;
 }
 
 // ═════════════════════════ 5. session/follow（流式） ═════════════════════════
@@ -1052,11 +1122,13 @@ export function readControlFrame(value: Object): ControlFrame {
 }
 
 function readQueuedItems(value: Object): SessionQueuedItem[] {
-  const out: SessionQueuedItem[] = [];
   const raw: Object[] | undefined = getArray(value, 'items');
-  if (raw === undefined) {
-    return out;
-  }
+  return raw === undefined ? emptyQueuedItems() : readQueuedArray(raw);
+}
+
+/** 把一个**已经取出的**排队项数组投影成条目（基线里的 `queues[sessionId]` 是这种形态）。 */
+function readQueuedArray(raw: Object[]): SessionQueuedItem[] {
+  const out: SessionQueuedItem[] = [];
   for (let i = 0; i < raw.length; i++) {
     const item: Object = raw[i];
     if (!isRecord(item)) {

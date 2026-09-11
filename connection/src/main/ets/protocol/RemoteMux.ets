@@ -218,11 +218,24 @@ export class RemoteMux {
     if (cookie !== undefined) {
       header['cookie'] = cookie;
     }
+    /**
+     * 连接选项：**刻意不设客户端心跳**。
+     *
+     * 【为什么把 `pingInterval: 5000, pongTimeout: 4000` 去掉】
+     *   实测（`.research/protocol/probe-probe-harm.mjs`，对真实 Host）：
+     *     - 客户端**回 Pong** → 连接在 15 s 观察窗内保持；
+     *     - 客户端**不回 Pong** → 服务端在 **5.4 s** 关闭连接。
+     *   即：**服务端的心跳是硬要求**（每 2 s 发 Ping，漏两次就 terminate）。
+     *   而带这两个选项时，设备上稳定复现「连上约 6 秒后 `control error carrier/closed`、
+     *   下一次 `send()` 以 `code=-1` 失败」——且**换到不经 hdc 的稳定通道
+     *   （`10.0.2.2:3115`，slirp 直连）后症状完全相同**，因此根因在客户端而不在转发通道
+     *   （这条推翻了 D2 §8.7.15 把责任归给 `hdc rport` 的结论）。
+     *   最可能的是这两个选项让库把「没在 pongTimeout 内收到**数据帧**」当成失活
+     *   （`session/control` 空闲时本来就不推数据帧），于是它自己把健康的连接关掉。
+     *   先做这个最小改动验证；若仍失效，再考虑「应用级保活帧」或库层替代方案。
+     */
     const options: webSocket.WebSocketRequestOptions = {
-      header: header,
-      // 见文件头「心跳事实」：显式开启双向心跳，避免 2 s Ping 语义下被判静默
-      pingInterval: 5000,
-      pongTimeout: 4000
+      header: header
     };
 
     try {

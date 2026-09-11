@@ -16,6 +16,7 @@ import {
   modelSelectionLabel,
   ModelOption,
   PendingAttachment,
+  QueuedItem,
   Radius,
   ReferenceCandidate,
   Sp,
@@ -33,6 +34,28 @@ function attachmentLabel(item: PendingAttachment): string {
   return item.bytes > 0 ? `${item.name} · ${formatBytes(item.bytes)}` : item.name;
 }
 
+/**
+ * 排队项位置的展示文本。
+ *
+ * 【为什么未知位置要原样显示，而不是归到某一类】`placement` 的取值
+ * （`queued` / `steering` / `context`）决定这条消息**会在什么时候**被处理：
+ * 普通排队要等当前轮次结束，插话会打断当前轮次，context 是补充上下文。
+ * 猜错会让用户以为点下"插话"才生效，而它其实已经会插话了。
+ * 因此未知取值一律**原样带上**，让用户与日志都能看到真实值。
+ */
+function placementLabel(placement: string): string {
+  if (placement === 'queued') {
+    return '轮次结束后发送';
+  }
+  if (placement === 'steering') {
+    return '插话（已在打断中）';
+  }
+  if (placement === 'context') {
+    return '作为上下文';
+  }
+  return placement.length > 0 ? placement : '位置未知';
+}
+
 @Component
 export struct Composer {
   @Prop draft: string = '';
@@ -40,6 +63,8 @@ export struct Composer {
   @Prop offline: boolean = false;
   @Prop queuedCount: number = 0;
   @Prop attachments: PendingAttachment[] = [];
+  /** 当前会话在 Host 侧的排队项（`session/control` 驱动；与会话一一对应） */
+  @Prop queued: QueuedItem[] = [];
   @Prop models: ModelOption[] = [];
   @Prop selection: ModelSelection = { provider: '', modelId: '', effort: '' };
   @Prop references: ReferenceCandidate[] = [];
@@ -77,6 +102,22 @@ export struct Composer {
   onPickModel: () => void = () => {
   };
   /**
+   * 把排队项**取回输入框**编辑（宿主实现为：移除该队列项 + 把正文填进草稿）。
+   *
+   * 【为什么不做"就地编辑"】就地编辑需要一个行内输入框 + 提交按钮，
+   * 在手机上会与软键盘、弹层、滚动位置互相干扰；而"取回草稿"复用了已有的输入区，
+   * 用户还能顺带改附件、改引用。代价是多一步（取回后要再点发送），
+   * 换来的是**一条**编辑路径而不是两条各自有边界情况的路径。
+   */
+  onPullQueued: (itemId: string, text: string) => void = () => {
+  };
+  /** 移除一个排队项 */
+  onRemoveQueued: (itemId: string) => void = () => {
+  };
+  /** 把排队项提前为插话（打断当前轮次立即处理） */
+  onSteerQueued: (itemId: string) => void = () => {
+  };
+  /**
    * `@` 引用的查询词变化（宿主据此**向 Host 拉候选**）。
    *
    * 【为什么候选必须问 Host，而不是本地过滤一份固定清单】
@@ -101,6 +142,10 @@ export struct Composer {
 
       if (this.notice.length > 0) {
         this.capabilityNotice()
+      }
+
+      if (this.queued.length > 0) {
+        this.queuePanel()
       }
 
       if (this.attachments.length > 0) {
@@ -150,6 +195,63 @@ export struct Composer {
     .padding(Sp.S)
     .borderRadius(Radius.S)
     .backgroundColor($r('sys.color.background_secondary'))
+  }
+
+  @Builder
+  queuePanel() {
+    Column({ space: Sp.XS }) {
+      Row({ space: Sp.S }) {
+        Text(`待发队列 ${this.queued.length} 条`)
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.font_tertiary'))
+          .layoutWeight(1)
+        Text('由 Host 维护')
+          .fontSize(10)
+          .fontColor($r('sys.color.font_tertiary'))
+      }
+      .width('100%')
+
+      ForEach(this.queued, (item: QueuedItem) => {
+        Column({ space: Sp.XS }) {
+          Text(item.text)
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.font_primary'))
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+          Row({ space: Sp.L }) {
+            Text('取回编辑')
+              .fontSize(10)
+              .fontColor($r('sys.color.brand'))
+              .onClick(() => {
+                this.onPullQueued(item.id, item.text);
+              })
+            Text(placementLabel(item.placement))
+              .fontSize(10)
+              .fontColor($r('sys.color.font_tertiary'))
+            Blank()
+            Text('插话')
+              .fontSize(10)
+              .fontColor($r('sys.color.brand'))
+              .onClick(() => {
+                this.onSteerQueued(item.id);
+              })
+            Text('移除')
+              .fontSize(10)
+              .fontColor($r('sys.color.alert'))
+              .onClick(() => {
+                this.onRemoveQueued(item.id);
+              })
+          }
+          .width('100%')
+        }
+        .width('100%')
+        .padding(Sp.S)
+        .borderRadius(Radius.S)
+        .backgroundColor($r('sys.color.background_secondary'))
+      }, (item: QueuedItem) => item.id)
+    }
+    .width('100%')
   }
 
   @Builder

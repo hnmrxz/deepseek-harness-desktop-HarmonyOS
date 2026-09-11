@@ -72,6 +72,7 @@ import {
   SESSION_FOLLOW_ENDPOINT,
   SESSION_LIST_ENDPOINT,
   SESSION_PROMPT_ENDPOINT,
+  SESSION_UPDATE_QUEUE_ENDPOINT,
   slotBinding,
   SURFACE,
   WATERFALL_APPROVAL,
@@ -121,6 +122,7 @@ import type {
 import {
   commandsListEndpoint,
   commandsListPayload,
+  ControlFrameType,
   filePart,
   fileReferencesEndpoint,
   fileReferencesPayload,
@@ -129,6 +131,7 @@ import {
   projectCommands,
   projectFileReferences,
   projectFileUpload,
+  projectQueuedItems,
   projectSessionPrompt,
   projectSessionReferences,
   projectWorkspaceFailure,
@@ -137,8 +140,14 @@ import {
   projectWorkspaceBytes,
   promptPayload,
   PromptMode,
+  queueEditAction,
+  queueRemoveAction,
+  queueSteerAction,
+  readControlFrame,
+  queuedItemsOf,
   sessionReferencesEndpoint,
   sessionReferencesPayload,
+  sessionUpdateQueuePayload,
   textPart,
   workspaceListEndpoint,
   workspaceListPayload,
@@ -150,9 +159,13 @@ import {
 } from '../model/Wire';
 import type {
   CommandCandidate,
+  ControlFrame,
   FileUploadValue,
   PromptContentPart,
+  QueuedItem,
+  QueueActionBody,
   ReferenceCandidate,
+  SessionQueuedItem,
   WorkspaceBytesWire
 } from '../model/Wire';
 import type { FileNode, FilePreview } from '../model/Workspace';
@@ -271,6 +284,16 @@ export interface HubSnapshot {
    * 否则他无法判断附件到底加上了没有——而这正是历史上那个假附件名造成的困惑。
    */
   attachments: PendingAttachment[];
+  /**
+   * 当前会话的**排队项**（已提交、尚未进入轮次的用户消息）。
+   *
+   * 与 `outbox`（离线待发队列）是**两回事**，不要合并：
+   *   - `queued` 是 **Host 侧**的真实队列，用户可以对它编辑/移除/插话；
+   *   - `outbox` 是**端侧**因离线而暂存的提示词，只在连接恢复后自动补发。
+   * 把两者混在一个列表里会让用户对着一条"端侧暂存"的消息点"插话"，
+   * 而那条消息 Host 根本还没见过。
+   */
+  queued: QueuedItem[];
 }
 
 /**
@@ -390,6 +413,8 @@ export class SessionHub {
   private filePreview: FilePreview | undefined = undefined;
   /** 待发附件（回执 + 展示信息；字节不留在端侧） */
   private attachmentList: PendingAttachment[] = [];
+  /** 当前会话的排队项（由 `session/control` 的 baseline 与 queue 帧驱动） */
+  private queuedItems: QueuedItem[] = [];
 
   /** waterfall 待答项：eventId → 呈现项 id（应答时必须原样带回 eventId） */
   private waterfallEventIds: Map<string, string> = new Map();
@@ -628,7 +653,8 @@ export class SessionHub {
       fileNodes: this.fileNodes,
       fileTruncated: this.fileTruncated,
       filePreview: this.filePreview,
-      attachments: this.attachmentList
+      attachments: this.attachmentList,
+      queued: this.queuedItems
     };
   }
 
@@ -1463,6 +1489,9 @@ export class SessionHub {
     // 附件回执是**上一个会话的** Agent 作用域内的东西，切会话后一律失效。
     // 不清理会让用户以为附件还挂着，实际发送时被 Host 判为未知回执。
     this.attachmentList = [];
+    // 排队项同理：它是**每个会话各自**的队列。切会话后旧列表必须清空，
+    // 否则用户会对着 A 会话的队列项在 B 会话上点"插话"。
+    this.queuedItems = [];
     this.notify();
     if (sessionId.length === 0) {
       return;
@@ -1886,19 +1915,33 @@ export class SessionHub {
     this.cancelControl();
     const sink: StreamSink = {
       onItem: (value: Object) => {
-        const type: string = getString(value, 'type') ?? '';
-        if (type === 'baseline') {
+        const frame: ControlFrame = readControlFrame(value);
+        if (frame.type === ControlFrameType.BASELINE) {
           this.controlReady = true;
+          // 基线里就带着**当前会话**的排队项（`queues` 是 sessionId → 条目数组）。
+          // 不在这里取一次的话，用户在"轮次进行中排队了两条"之后切走再切回来，
+          // 队列会显示为空——直到下一次 queue 帧到达才恢复。
+          this.queuedItems = projectQueuedItems(frame.baseline === undefined
+            ? emptyQueued() : queuedItemsOf(frame.baseline.queues, this.selectedSessionId));
           this.record('control baseline');
           this.notify();
           return;
         }
-        if (type === 'queue' || type === 'jobs' || type === 'projection') {
-          // 队列与作业属于会话内视图，由对应页面按需读取；中枢只确认流是活的
-          this.record(`control ${type}`);
+        if (frame.type === ControlFrameType.QUEUE) {
+          // 队列帧是**整份替换**（不是增量），因此直接整体覆盖。
+          // 只接受当前会话的帧：别的会话的队列与正在看的这一屏无关。
+          if (frame.sessionId === this.selectedSessionId) {
+            this.queuedItems = projectQueuedItems(frame.items);
+            this.record(`control queue ${frame.items.length} 条`);
+            this.notify();
+          }
           return;
         }
-        this.noteUnknown(`control:${type}`);
+        if (frame.type === ControlFrameType.JOBS || frame.type === ControlFrameType.PROJECTION) {
+          this.record(`control ${frame.type}`);
+          return;
+        }
+        this.noteUnknown(`control:${frame.type}`);
       },
       onError: (code: string, message: string) => {
         this.controlCancel = undefined;
@@ -2050,6 +2093,74 @@ export class SessionHub {
     }
     this.attachmentList = [];
     this.notify();
+  }
+
+  // ───────────────────────── 排队项（已提交但未进入轮次） ─────────────────────────
+
+  /**
+   * 修改一个排队项的动作。
+   *
+   * 三个动作都走同一个端点（`session/updateQueue`），Host 处理完会推一份**整份**的
+   * `queue` 帧回来，因此这里**不做乐观更新**：本地改一份、Host 再推一份，
+   * 两份一旦不一致（例如 Host 拒绝了这次编辑），界面就会停在错误的状态上，
+   * 而用户以为自己改成功了。等 Host 的回帧是唯一不会说谎的做法。
+   */
+  private async updateQueue(action: QueueActionBody, itemId: string): Promise<boolean> {
+    const sessionId: string = this.selectedSessionId;
+    if (sessionId.length === 0 || itemId.length === 0) {
+      return false;
+    }
+    if (!this.unaryReady) {
+      this.lastError = '当前离线，无法修改待发队列。';
+      this.notify();
+      return false;
+    }
+    const payload: Object | undefined = sessionUpdateQueuePayload(sessionId, itemId, action);
+    if (payload === undefined) {
+      this.lastError = '兼容面缺少队列更新端点的参数契约';
+      this.notify();
+      return false;
+    }
+    const result: RpcResult = await this.conn.call(SESSION_UPDATE_QUEUE_ENDPOINT, payload);
+    if (!result.ok) {
+      const failure = result.error;
+      const code: string = failure === undefined ? 'unknown' : failure.code;
+      this.lastError = `修改待发队列失败：${friendlyFailure(code, failure === undefined ? '' : failure.message)}`;
+      this.record(`updateQueue fail ${code}`);
+      this.notify();
+      return false;
+    }
+    this.record(`updateQueue ok ${action.kind}`);
+    return true;
+  }
+
+  /** 移除一个排队项。 */
+  async removeQueuedItem(itemId: string): Promise<boolean> {
+    return await this.updateQueue(queueRemoveAction(), itemId);
+  }
+
+  /** 把排队项提前为**插话**（打断当前轮次，立即处理）。 */
+  async steerQueuedItem(itemId: string): Promise<boolean> {
+    return await this.updateQueue(queueSteerAction(), itemId);
+  }
+
+  /**
+   * 改写排队项的正文。
+   *
+   * 「取回编辑」的实现方式（先移除、再把文本放进输入框）**不用**这个函数：
+   * 那是一次本地动作 + 一次移除，不需要把文本回传 Host。
+   * 本函数留给"就地改一行、直接提交"的路径（当前 UI 未使用，但契约在此，
+   * 避免将来有人绕开 `queueEditAction` 自己拼块）。
+   */
+  async editQueuedItem(itemId: string, text: string): Promise<boolean> {
+    const trimmed: string = text.trim();
+    if (trimmed.length === 0) {
+      // 上游要求 `content` 非空（D2b）：发空内容必然被拒，不如提前说清楚
+      this.lastError = '排队项内容不能为空（Host 拒绝空内容的编辑）。';
+      this.notify();
+      return false;
+    }
+    return await this.updateQueue(queueEditAction([trimmed]), itemId);
   }
 
   // ───────────────────────── 发送与取消 ─────────────────────────
@@ -2481,6 +2592,12 @@ function friendlyWorkspaceFailure(code: string, message: string): string {
     return '该路径在会话工作区之外，Host 拒绝访问。';
   }
   return message.length > 0 ? `读取失败：${message}（${code}）` : `读取失败：${code}`;
+}
+
+/** 空的排队项数组（规避无类型数组字面量）。 */
+function emptyQueued(): SessionQueuedItem[] {
+  const list: SessionQueuedItem[] = [];
+  return list;
 }
 
 /** 形状表里一个槽位的解析结果 */

@@ -70,6 +70,15 @@ const KEY_LAUNCH_SESSION_ID: string = 'dshLaunchSessionId';
 const KEY_LAUNCH_TITLE: string = 'dshLaunchTitle';
 const KEY_LAUNCH_ROUTE_JSON: string = 'dshLaunchRouteJson';
 /**
+ * 「由启动参数直接提供 Host」的两个键（`aa start --ps dshHost … --ps dshToken …`）。
+ *
+ * 用途：**开发期与自动化验收不需要手填地址与令牌**。
+ * `tools/dev-host.mjs` 在自己这里起 dsh 核心（本项目持有该进程），
+ * 拿到它打印的地址与令牌后随 `aa start` 一起传进来。
+ */
+const KEY_LAUNCH_HOST: string = 'dshHost';
+const KEY_LAUNCH_TOKEN: string = 'dshToken';
+/**
  * 「上次连上的 Host」经 AppStorage 交给页面的键。
  *
  * 为什么走这条通道而不是让页面自己去读存储：`HostStore` 需要
@@ -119,6 +128,14 @@ export default class EntryAbility extends UIAbility {
   private memory: WindowMemory = new WindowMemory();
   /** Host 连接记忆（地址走 preferences、token 走加密存储），onWindowStageCreate 时 attach */
   private hostStore: HostStore = new HostStore();
+  /**
+   * 本次启动是否由启动参数直接提供了 Host。
+   *
+   * 存在的理由：`publishRememberedHost()` 是**异步**读存储的，可能晚于
+   * `applyLaunchParams` 完成。若不做标记，它读到的旧记录会**覆盖**刚由启动参数
+   * 送进来的地址/令牌——症状是「用启动参数连上了，几秒后又跳回上一个 Host」。
+   */
+  private launchHostProvided: boolean = false;
   /** 窗口记忆就绪信号。几何恢复必须等它，否则会在 store 尚未打开时静默跳过。 */
   private memoryReady: Promise<void> = Promise.resolve();
   /** 节流定时器 id；-1 表示当前无待执行的落盘任务 */
@@ -315,6 +332,54 @@ export default class EntryAbility extends UIAbility {
     AppStorage.setOrCreate<string>(KEY_LAUNCH_SESSION_ID, parsed.sessionId);
     AppStorage.setOrCreate<string>(KEY_LAUNCH_TITLE, parsed.title);
     AppStorage.setOrCreate<string>(KEY_LAUNCH_ROUTE_JSON, parsed.routeJson);
+    this.applyHostLaunchParams(want.parameters);
+  }
+
+  /**
+   * 从启动参数里取「本次要连的 Host」——**开发期零手填**的入口。
+   *
+   * 【为什么需要它】dsh 是 Host/Client 分离的：客户端必须知道一个地址和一个令牌。
+   * 手工在界面上粘贴 `http://…/?token=…` 每换一次 Host（重启、换端口、换机器）
+   * 就要重复一次，而**这些东西本来就在启动它的人手里**。
+   * `tools/dev-host.mjs` 起核心后把这两项通过
+   * `aa start --ps dshHost <url> --ps dshToken <token>` 直接带进来，
+   * 客户端因此不需要任何手工输入。
+   *
+   * 【为什么还要落盘】启动参数只在这一次启动有效。把它交给 `persistConnectedHost`
+   * 之后，下次冷启动会走已有的「记住上次 Host」自动重连路径——
+   * 否则用户每启动一次应用都要重新提供一次地址。
+   *
+   * 【为什么不校验 token 形态】token 是 Host 生成的**不透明**字符串（长度/字符集都可能变），
+   * 客户端只做「非空」判断；任何形态校验都可能在 Host 升级后误拒一个合法令牌。
+   */
+  private applyHostLaunchParams(params: Record<string, Object> | undefined): void {
+    if (params === undefined) {
+      return;
+    }
+    const rawUrl: Object | undefined = params[KEY_LAUNCH_HOST];
+    const rawToken: Object | undefined = params[KEY_LAUNCH_TOKEN];
+    if (typeof rawUrl !== 'string' || typeof rawToken !== 'string') {
+      return;
+    }
+    const url: string = this.stripTokenQuery(rawUrl as string);
+    const token: string = rawToken as string;
+    if (url.length === 0 || token.length === 0) {
+      return;
+    }
+    this.launchHostProvided = true;
+    AppStorage.setOrCreate<string>(KEY_HOST_URL, url);
+    AppStorage.setOrCreate<string>(KEY_HOST_TOKEN, token);
+    AppStorage.setOrCreate<string>(KEY_HOST_TOKEN_STATE, 'found');
+    AppStorage.setOrCreate<boolean>(KEY_HOST_AUTOCONNECT, true);
+    // 落盘：地址进 preferences、token 进加密存储（与界面粘贴那条路径共用同一实现）
+    this.persistConnectedHost(url, token);
+    hilog.info(DOMAIN, TAG, '启动参数提供了 Host=%{public}s（已发布并落盘）', url);
+  }
+
+  /** 去掉 URL 上的 `?token=…`（令牌只经 `KEY_HOST_TOKEN` 传递，绝不留在 URL 里）。 */
+  private stripTokenQuery(url: string): string {
+    const cut: number = url.search(/[?#]/);
+    return (cut >= 0 ? url.substring(0, cut) : url).trim();
   }
 
   /**
@@ -331,10 +396,20 @@ export default class EntryAbility extends UIAbility {
    * 「token 无效」，与真实原因（读不出来）不符。
    */
   private publishRememberedHost(): void {
-    AppStorage.setOrCreate<string>(KEY_HOST_URL, '');
-    AppStorage.setOrCreate<string>(KEY_HOST_TOKEN, '');
-    AppStorage.setOrCreate<string>(KEY_HOST_TOKEN_STATE, 'pending');
-    AppStorage.setOrCreate<boolean>(KEY_HOST_AUTOCONNECT, false);
+    /**
+     * 【为什么由启动参数提供 Host 时不能清空这两个键】
+     *   生命周期顺序是 `onCreate`（`applyLaunchParams` 发布启动参数）→
+     *   `onWindowStageCreate`（本函数）。两者用的是**同一批 AppStorage 键**，
+     *   因此这里无条件的「先立一个空的未就绪值」会把刚带进来的地址与令牌直接抹掉——
+     *   实测症状正是「用 `--ps dshHost/dshToken` 启动，界面却说『未配置 Host 地址』」。
+     *   这类"两条写入路径争同一个键"的顺序缺陷不会报错，只会让功能悄悄不生效。
+     */
+    if (!this.launchHostProvided) {
+      AppStorage.setOrCreate<string>(KEY_HOST_URL, '');
+      AppStorage.setOrCreate<string>(KEY_HOST_TOKEN, '');
+      AppStorage.setOrCreate<string>(KEY_HOST_TOKEN_STATE, 'pending');
+      AppStorage.setOrCreate<boolean>(KEY_HOST_AUTOCONNECT, false);
+    }
 
     // 页面连上之后会发事件报告「刚连上的 Host」，这里订阅并落盘
     // （地址走 preferences，token 走加密存储）。
@@ -349,6 +424,11 @@ export default class EntryAbility extends UIAbility {
 
     const ready: Promise<void> = this.hostStore.attach(this.context);
     ready.then(async () => {
+      if (this.launchHostProvided) {
+        // 启动参数已经给出本次要连的 Host，且已落盘；这里**不能**再用旧记录覆盖它
+        hilog.info(DOMAIN, TAG, '跳过「记住的 Host」读取：本次由启动参数提供');
+        return;
+      }
       const host: RememberedHost | undefined = await this.hostStore.loadHost();
       if (host === undefined) {
         AppStorage.setOrCreate<string>(KEY_HOST_TOKEN_STATE, 'absent');

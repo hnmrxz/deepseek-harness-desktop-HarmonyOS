@@ -18,6 +18,7 @@ import {
   ModelOption,
   ModelSelection,
   PendingAttachment,
+  QueuedItem,
   previewOutput,
   Radius,
   ReferenceCandidate,
@@ -40,6 +41,8 @@ export struct ConversationPane {
   @Prop queuedCount: number = 0;
   @Prop draft: string = '';
   @Prop attachments: PendingAttachment[] = [];
+  /** 当前会话在 Host 侧的排队项 */
+  @Prop queued: QueuedItem[] = [];
   @Prop models: ModelOption[] = [];
   @Prop selection: ModelSelection = { provider: '', modelId: '', effort: '' };
   @Prop references: ReferenceCandidate[] = [];
@@ -62,6 +65,13 @@ export struct ConversationPane {
   };
   /** `@` 引用查询词变化（转发给宿主去问 Host） */
   onReferenceQuery: (query: string) => void = () => {
+  };
+  /** 排队项：取回编辑 / 移除 / 插话（三者都转发给宿主的真实调用） */
+  onPullQueued: (itemId: string, text: string) => void = () => {
+  };
+  onRemoveQueued: (itemId: string) => void = () => {
+  };
+  onSteerQueued: (itemId: string) => void = () => {
   };
   /** 打开详情栏（单栏/双栏下没有并排详情栏时使用） */
   onOpenDetail: () => void = () => {
@@ -92,6 +102,7 @@ export struct ConversationPane {
         offline: this.offline,
         queuedCount: this.queuedCount,
         attachments: this.attachments,
+        queued: this.queued,
         models: this.models,
         selection: this.selection,
         references: this.references,
@@ -103,7 +114,10 @@ export struct ConversationPane {
         onAddAttachment: this.onAddAttachment,
         onRemoveAttachment: this.onRemoveAttachment,
         onPickModel: this.onPickModel,
-        onReferenceQuery: this.onReferenceQuery
+        onReferenceQuery: this.onReferenceQuery,
+        onPullQueued: this.onPullQueued,
+        onRemoveQueued: this.onRemoveQueued,
+        onSteerQueued: this.onSteerQueued
       })
     }
     .width('100%')

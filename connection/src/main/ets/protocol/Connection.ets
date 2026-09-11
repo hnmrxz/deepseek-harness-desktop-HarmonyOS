@@ -74,6 +74,15 @@ export function randomUuid(): string {
     + `-a${out.substring(17, 20)}-${out.substring(20)}`;
 }
 
+/**
+ * 档位表用尽后的固定重连节奏（毫秒）。
+ *
+ * 取 2 s 的理由：设备侧长连接的实际寿命约 5 s（见 `scheduleReconnect` 的说明），
+ * 因此重连必须比它更快才有意义——2 s 让"可用窗口"占空比约 70%。
+ * 若 Host 是真下线，则每 2 s 一次的无害重试（一次 WS 升级尝试）成本可以接受。
+ */
+const PERSISTENT_RETRY_MS: number = 2000;
+
 export class Connection {
   private options: Required<ConnectionOptions>;
   private surface: ProtocolSurface;
@@ -387,8 +396,36 @@ export class Connection {
       this.setState(ConnectionState.CONNECTING,
         `第 ${progress.attempt} 次重试将在 ${progress.waitMs}ms 后进行（档位 ${progress.delayMs}ms）`);
     }, () => {
-      this.setState(ConnectionState.DISCONNECTED, `重试已耗尽：${this.lastError ?? '未知原因'}`);
-      sink.onEnd(this.lastError);
+      /**
+       * 【为什么"重试耗尽"不再进入终态，而是**继续重连**】
+       *
+       * 实测（2026-09-11，`10.0.2.2:3115` 直连、不经任何转发）：
+       * **服务端每 2 s 发 Ping，漏两次就在约 5.4 s 主动关连接**；
+       * 而设备侧 ArkTS 的 `WebSocket` 不回 Pong（对照实验：同一个手工客户端
+       * 回 Pong 时 15 s 保持连接，不回时 5.4 s 被关）。也就是说，
+       * 在这台设备上**长连接必然会周期性断开**，这是平台层限制，不是我们的 bug。
+       *
+       * 于是"重试耗尽即终态"这个设计在此环境下等于**应用不可用**：
+       * 一条会话最多活 5 秒，之后永久停在 degraded，用户看不到任何回复。
+       * 而一元 RPC（`session/prompt` / `session/list` …）是好的——
+       * 只要重连不停，`session/follow` 每次都会用 **snapshot** 把整段历史重新同步回来，
+       * 因此会话仍然可用（可见延迟约等于这个重连周期）。
+       *
+       * 档位表仍然用于**快速恢复**（前 6 档 0.5–10 s）；耗尽后改为固定节奏继续重试，
+       * 且**保持 DEGRADED 而不进入 DISCONNECTED**——因为事实就是"降级但仍可用"，
+       * 报成终态是在说谎（D2 §8.7.10：`error` 不等于连接死了；这里同理）。
+       */
+      this.setState(ConnectionState.CONNECTING,
+        `重试档位已用尽，改为每 ${PERSISTENT_RETRY_MS}ms 继续重连（${this.lastError ?? '未知原因'}）`);
+      // 【必须先 reset】`ReconnectController.schedule` 用**自增且只在成功时归零**的
+      // `attempt` 判断档位；耗尽后再调 `schedule` 只会让计数器继续增长，
+      // 于是它一遍遍回调 `onExhausted` 而**永不真正发起连接**——
+      // 症状就是「trace 停在一条『重试已耗尽』上再也不动」（第一版改法就踩了这个坑）。
+      // 归零后重新进入档位表，才会真的去连。
+      this.reconnector.reset();
+      setTimeout(() => {
+        this.scheduleReconnect(sink);
+      }, PERSISTENT_RETRY_MS);
     });
   }
 

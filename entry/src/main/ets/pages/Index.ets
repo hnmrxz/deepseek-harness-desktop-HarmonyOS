@@ -54,6 +54,7 @@ import {
   PendingItem,
   PendingAttachment,
   PluginItem,
+  QueuedItem,
   Radius,
   ReferenceCandidate,
   SessionListItem,
@@ -325,6 +326,8 @@ struct Index {
   // ── 交互状态 ──
   @State draft: string = '';
   @State attachments: PendingAttachment[] = [];
+  /** Host 侧待发队列（与会话一一对应，由 `session/control` 驱动） */
+  @State queued: QueuedItem[] = [];
   @State running: boolean = false;
   @State offline: boolean = false;
   @State queuedCount: number = 0;
@@ -419,6 +422,7 @@ struct Index {
     this.queuedCount = s.outbox;
     // 附件列表由中枢拥有（回执是会话作用域的），这里只跟随
     this.attachments = s.attachments;
+    this.queued = s.queued;
     this.offline = s.phase === HubPhase.DEGRADED;
     if (!s.connected) {
       // 断开后**清空**上一段连接的数据，而不是留着当「缓存」：
@@ -439,6 +443,7 @@ struct Index {
       this.references = [];
       this.preview = undefined;
       this.attachments = [];
+      this.queued = [];
       this.updateHosts();
       this.recomputeDerived();
       return;
@@ -1909,6 +1914,24 @@ struct Index {
           if (this.hubConnected) {
             SessionHub.shared().refreshReferences(query);
           }
+        },
+        onPullQueued: (itemId: string, text: string) => {
+          // 「取回编辑」= 移除该队列项 + 把正文放回草稿。
+          // 移除走 Host（否则用户会在界面上看不到它、而它仍会被发送），
+          // 放回草稿是本地动作。**先放回再移除**：即使移除失败，
+          // 用户也已经拿回了文本，不会丢内容。
+          this.draft = text;
+          SessionHub.shared().removeQueuedItem(itemId).then((ok: boolean) => {
+            if (!ok) {
+              this.attachNotice = '已把内容取回输入框，但队列项移除失败——它仍可能被 Host 发送，请检查诊断页。';
+            }
+          });
+        },
+        onRemoveQueued: (itemId: string) => {
+          SessionHub.shared().removeQueuedItem(itemId);
+        },
+        onSteerQueued: (itemId: string) => {
+          SessionHub.shared().steerQueuedItem(itemId);
         },
         onOpenDetail: () => {
           this.stackPage = StackPage.DETAIL;
