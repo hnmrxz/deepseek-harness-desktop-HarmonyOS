@@ -78,13 +78,55 @@ function log(msg) {
   console.log('[hdsh-host] ' + msg);
 }
 
-function fail(msg) {
-  console.error('[hdsh-host] FATAL ' + msg);
-  process.exit(1);
+/**
+ * 阻止 Electron 的"无窗口即退出"默认行为。
+ *
+ * 【为什么必须有这一段】Electron 的语义是：若**没有订阅** `window-all-closed`，
+ * 且所有窗口都关闭，则默认 **quit**。我们是一个**永不建窗**的 Node 宿主
+ * （D6 §4.1.2：只跑 Node，不 new BrowserWindow），所以在它眼里"所有窗口都已关闭"，
+ * 于是启动后立刻退出。真机实测到的正是这个：
+ *   `APPSPAWN: Unexpected call: exit(1)`  —— 应用进程被自己的运行时结束掉。
+ * 订阅一个空监听即可跳过默认行为（Electron 文档明示：订阅了就不执行默认动作）。
+ */
+function keepAliveWithoutWindows() {
+  try {
+    const electron = require('electron');
+    if (electron && electron.app && typeof electron.app.on === 'function') {
+      electron.app.on('window-all-closed', () => {
+        log('window-all-closed：按无窗口宿主语义保持存活（不退出）');
+      });
+      log('已注册 window-all-closed 保活监听');
+    }
+  } catch (e) {
+    log('注册保活监听失败（非 Electron 环境？）：' + e.message);
+  }
 }
 
-if (CORE_DIR.length === 0 || HOME_DIR.length === 0) {
-  fail('HDSH_CORE_DIR / HDSH_HOME 未设置，无法启动');
+keepAliveWithoutWindows();
+
+function fail(msg) {
+  // 【绝不能调 process.exit()】libelectron.so 是**同进程**跑的：
+  // 这里的 exit 会连同宿主 ArkUI 应用一起杀掉。
+  // 真机实测症状：启动后窗口被销毁、进程消失、hilog 里既没有 JS 异常也没有崩溃记录——
+  // 看起来像"莫名其妙退出"，实际是我们自己把进程结束了。
+  // 正确做法：把原因打出来、把失败状态留在全局，让进程活着（上层/诊断页据此如实展示）。
+  console.error('[hdsh-host] FATAL ' + msg);
+  globalThis.__hdshHostError = msg;
+  throw new Error('HDSH host fatal: ' + msg);
+}
+
+// 【为什么这里不校验、也不 throw】顶层抛异常同样会掀掉整个宿主应用
+// （这些行在 process.on('uncaughtException') 注册之前执行）。
+// 校验一律放进被 .catch() 包住的 start() 里。
+function reportConfigError() {
+  const missing = [];
+  if (CORE_DIR.length === 0) {
+    missing.push('HDSH_CORE_DIR（当前版本的核心树目录）');
+  }
+  if (HOME_DIR.length === 0) {
+    missing.push('HDSH_HOME（$DSH_HOME，跨版本共享的用户数据目录）');
+  }
+  return missing;
 }
 
 // ── 1. 沙箱 HOME ────────────────────────────────────────────────────────
@@ -193,6 +235,14 @@ function ensureProfile() {
 }
 
 async function start() {
+  const missing = reportConfigError();
+  if (missing.length > 0) {
+    // 不 throw、不 exit：只如实记录。核心还没装好时这就是正常状态，
+    // 上层（核心页）据此显示"尚未安装核心"，而不是让应用消失。
+    console.error('[hdsh-host] 缺少：' + missing.join('；') + '。核心尚未就绪，Host 不启动。');
+    globalThis.__hdshHostError = 'missing-config: ' + missing.join(';');
+    return;
+  }
   const cliLibDir = path.join(CORE_DIR, 'node_modules', '@deepseek-ai', 'dsh', 'lib');
   if (!fs.existsSync(cliLibDir)) {
     fail('核心树里找不到 dsh CLI：' + cliLibDir);
