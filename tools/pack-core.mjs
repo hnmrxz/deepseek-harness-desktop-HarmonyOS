@@ -39,8 +39,10 @@ function arg(name, fallback) {
   return i >= 0 && i + 1 < process.argv.length ? process.argv[i + 1] : fallback;
 }
 const RECIPE_PATH = resolve(ROOT, arg('--recipe', 'hostcore/core-recipe.json'));
-const OUT_DIR = resolve(ROOT, arg('--out', 'build/core'));
-const WORK_ROOT = resolve(ROOT, arg('--work', 'build/core/work'));
+// 输出**不能**放根 `build/`：那是 HarmonyOS 构建自己的目录，`devecocli build` 会把它清掉
+// （实测踩过：node_modules 被清空后 `--skip-install` 直接失败）。因此统一放 `dist/`。
+const OUT_DIR = resolve(ROOT, arg('--out', 'dist/core'));
+const WORK_ROOT = resolve(ROOT, arg('--work', 'dist/core/work'));
 const SKIP_INSTALL = process.argv.includes('--skip-install');
 
 const recipe = JSON.parse(readFileSync(RECIPE_PATH, 'utf8'));

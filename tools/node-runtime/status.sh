@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
-# 查看 WSL 侧构建进展（避免在 PowerShell 里嵌套引号）
+# 查看 WSL 侧「自建 Node 运行时」的进展。
+# 输出保持 ASCII：本仓库被 PowerShell 的 ANSI/UTF-8 往返坑过，脚本输出用 ASCII 以免日志乱码。
 ROOT="${HOME}/ohos"
-echo "=== 相关进程 ==="
-pgrep -af '02-build-node|01-fetch-sdk|curl -fL|configure|make -j' | head -10 || echo none
+echo "=== processes ==="
+pgrep -af 'build-node-ohos|fetch-ohos-sdk|curl -fsSL|configure|make -j' | head -10 || echo none
 echo
-echo "=== SDK 下载/解包 ==="
-ls -la "${ROOT}"/*.tar.gz 2>/dev/null || echo "no tarball"
-ls -1 "${ROOT}/sdk" 2>/dev/null || echo "sdk 未解出"
+echo "=== sdk ==="
+if [ -d "${ROOT}/sdk" ]; then ls -1 "${ROOT}/sdk"; else echo "sdk not extracted"; fi
 echo
-echo "=== Node 源码 ==="
-ls -d "${HOME}"/node-v* 2>/dev/null || echo "未开始"
+echo "=== node source ==="
+ls -d "${ROOT}"/node-v* 2>/dev/null || echo "no source yet"
 echo
-echo "=== 构建日志尾部 ==="
-tail -n 8 "${ROOT}/build-node.out" 2>/dev/null || echo "尚无"
+echo "=== build log tail ==="
+tail -n 12 "${ROOT}/build-node.log" 2>/dev/null || echo "no log yet"
 echo
-echo "=== 构建产物 ==="
-ls -la "${HOME}"/node-v*/out/Release/libnode.so* "${HOME}"/node-v*/out/Release/node 2>/dev/null || echo "尚未产出"
+echo "=== artifacts ==="
+ls -la "${ROOT}"/node-v*/out/Release/libnode.so* "${ROOT}"/node-v*/out/Release/node 2>/dev/null || echo "no artifacts yet"
+echo
+echo "=== out/Release listing (if any) ==="
+ls -1 "${ROOT}"/node-v*/out/Release 2>/dev/null | head -20 || true

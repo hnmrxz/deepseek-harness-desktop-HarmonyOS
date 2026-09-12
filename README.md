@@ -112,8 +112,10 @@ devecocli run                          # 构建 + 安装 + 启动（需设备）
 
 ```sh
 node tools/pack-core.mjs               # 物化 → 裁剪 → 校验签名 → 打包（首次约 5 分钟）
-node tools/pack-core.mjs --skip-install # 复用已有 node_modules，秒级重打包
-# 产物：build/core/dsh-core-<ver>-openharmony-arm64.zip + .manifest.json
+node tools/pack-core.mjs --skip-install        # 复用已有 node_modules，秒级重打包
+node tools/pack-core.mjs --place-in-app        # 额外把核心 zip 放进 entry 的 resfile（随 HAP 分发）
+# 产物：dist/core/dsh-core-<ver>-openharmony-arm64.zip + .manifest.json
+# （放 dist/ 而不是 build/：根 build/ 属于 HarmonyOS 构建，devecocli build 会清掉它）
 ```
 
 **自建 Node 运行时**（阶段二关键路径，在 WSL2/Linux 里跑）：

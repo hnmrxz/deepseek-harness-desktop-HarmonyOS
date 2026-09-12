@@ -19,8 +19,9 @@ cd "${ROOT}"
 
 if [ ! -s "${TGZ}" ] || [ "$(stat -c%s "${TGZ}")" -lt 1000000000 ]; then
   echo "[sdk] 下载 ${BASE}/ohos-sdk-windows_linux-public.tar.gz"
-  # -C - 断点续传；--retry 抗抖
-  curl -fL --retry 5 --retry-delay 5 -C - -o "${TGZ}" \
+  # -C - 断点续传；--retry 抗抖；-sS 不打印进度条
+  # （进度条走 stderr 会让 PowerShell 侧报 NativeCommandError，把任务判成失败）
+  curl -fsSL --retry 5 --retry-delay 5 -C - -o "${TGZ}" \
     "${BASE}/ohos-sdk-windows_linux-public.tar.gz"
 else
   echo "[sdk] 已有 ${TGZ}（$(du -h "${TGZ}" | cut -f1)），跳过下载"

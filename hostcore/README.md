@@ -21,8 +21,12 @@ node tools/pack-core.mjs
 node tools/pack-core.mjs --skip-install
 
 # 产物
-#   build/core/dsh-core-<ver>-openharmony-arm64.zip     ← 随应用分发的容器（zip，见 D6 §4.2 R5）
-#   build/core/dsh-core-<ver>.manifest.json             ← 版本/体积/条目数/sha256/原生签名清单
+# 产物（放 dist/ 而不是根 build/：根 build/ 属于 HarmonyOS 构建，devecocli build 会清掉它）
+#   dist/core/dsh-core-<ver>-openharmony-arm64.zip     ← 随应用分发的容器（zip，见 D6 §4.2 R5）
+#   dist/core/dsh-core-<ver>.manifest.json             ← 版本/体积/条目数/sha256/原生签名清单
+#
+# 加 --place-in-app 会把 zip 复制到 entry/src/main/resources/resfile/（随 HAP 分发；该文件不入库）
+node tools/pack-core.mjs --place-in-app
 ```
 
 `build/` 已被 `.gitignore` 忽略：**分发产物不进版本库**，进版本库的是"如何生产它"。

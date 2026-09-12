@@ -22,8 +22,10 @@ SDK="${ROOT}/sdk"
 CLANG_DIR="${SDK}/native/llvm/bin"
 CLANG="${CLANG_DIR}/aarch64-unknown-linux-ohos-clang"
 SYSROOT="${SDK}/native/sysroot"
-SRC_DIR="${HOME}/node-${NODE_VER}"
+SRC_DIR="${ROOT}/node-${NODE_VER}"
 BUILD_LOG="${ROOT}/build-node.log"
+# 说明：SRC_DIR 必须在 ${ROOT} 下——解包发生在 ${ROOT}（见下），
+# 曾经写成 ${HOME}/node-<ver> 导致 cd 到不存在的目录（实测踩过）
 
 echo "[node] 等待 SDK 就绪（${CLANG}）"
 for i in $(seq 1 240); do
@@ -43,9 +45,11 @@ if [ ! -d "${SRC_DIR}" ]; then
   TARBALL="node-${NODE_VER}.tar.xz"
   if [ ! -s "${TARBALL}" ]; then
     echo "[node] 下载源码 ${NODE_VER}"
-    curl -fL --retry 5 -o "${TARBALL}" "https://nodejs.org/dist/${NODE_VER}/node-${NODE_VER}.tar.xz"
+    # -sS：不打印进度条。进度条走 stderr 会让调用方（PowerShell）报 NativeCommandError，
+    # 把整个任务判成失败，从而掩盖真实结果（实测踩过）
+    curl -fsSL --retry 5 -o "${TARBALL}" "https://nodejs.org/dist/${NODE_VER}/node-${NODE_VER}.tar.xz"
   fi
-  echo "[node] 解包源码"
+  echo "[node] 解包源码 → ${ROOT}"
   tar -xf "${TARBALL}"
 fi
 cd "${SRC_DIR}"

@@ -3,6 +3,9 @@
 
 # DevEco / Hvigor 构建产物
 build/
+# 本项目自己的产物（核心包等）。**刻意与根 build/ 分开**：
+# 根 build/ 属于 HarmonyOS 构建，`devecocli build` 会清掉它（实测踩过）
+dist/
 .hvigor/
 .idea/
 oh_modules/
