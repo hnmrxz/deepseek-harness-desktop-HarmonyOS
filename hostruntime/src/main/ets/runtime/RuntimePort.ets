@@ -115,6 +115,16 @@ export function buildHostArgv(entryScript: string): string[] {
     // **必须**：这是"不申请 ALLOW_WRITABLE_CODE_MEMORY"能成立的前提。
     // 少了它，V8 会在初始化时申请可写可执行内存而被系统拦（D6 §4.4）。
     // 它必须排在脚本路径**之前**：Node 把第一个非选项参数当脚本。
+    //
+    // 【它是真实选项，不是碰运气透传】D6 E19：Node 自己在
+    // `src/node_options.cc` 注册了 `--jitless`（一等 CLI 选项）；V8 侧
+    // `flag-definitions.h` 用 `DEFINE_NEG_IMPLICATION(jitless, …)` 关掉
+    // turbofan / sparkplug / always_sparkplug / maglev —— 整条 JIT 链。
+    //
+    // 【代价要写清，别当成免费】同处还隐含 `--no-expose-wasm`：**WebAssembly 会是
+    // `undefined`**。因此任何依赖 WASM 的 npm 依赖（纯 JS 包里并不罕见）在端侧会直接
+    // 不可用，而且报错形式往往是"某个东西是 undefined"而不是"缺了 WASM"。
+    // 这是 jitless 路线已知且接受的代价（换的是不申请特殊权限、可正常上架）。
     '--jitless',
     entryScript,
   ];
