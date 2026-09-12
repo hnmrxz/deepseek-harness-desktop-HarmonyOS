@@ -141,6 +141,10 @@ import {
   projectQueuedItems,
   projectSessionPrompt,
   projectSessionReferences,
+  projectSessionPage,
+  sessionCursorOf,
+  sessionPageEndpoint,
+  sessionPagePayload,
   projectWorkspaceFailure,
   projectWorkspaceListing,
   projectWorkspaceText,
@@ -172,6 +176,7 @@ import type {
   QueuedItem,
   QueueActionBody,
   ReferenceCandidate,
+  SessionPageValue,
   SessionQueuedItem,
   WorkspaceBytesWire
 } from '../model/Wire';
@@ -354,6 +359,16 @@ const SESSION_REFRESH_THROTTLE_MS: number = 800;
  * 重拉叠在一起，白白多打一次 RPC。
  */
 const SETTINGS_REFRESH_THROTTLE_MS: number = 1200;
+/**
+ * 一元读回历史的兜底节奏与单页上限。
+ *
+ * 3 秒：比长连接的断线周期（约 5 秒）短，因此即使每次开流都失败，
+ * 用户也能在几秒内看到内容；又不至于把一元通道打满。
+ * 200 条：`session/page` 的默认单页是 50，实测传 200 也能整段取回（19 条的会话一次拿完）；
+ * 去掉"翻页"这条分支能让兜底通路保持简单——它本来就是应急用的。
+ */
+const PAGE_FALLBACK_INTERVAL_MS: number = 3000;
+const PAGE_MAX_MESSAGES: number = 200;
 
 export class SessionHub {
   private static instance: SessionHub | undefined;
@@ -452,6 +467,8 @@ export class SessionHub {
   private queuedItems: QueuedItem[] = [];
   /** 通知发布钩子（由 `EntryAbility` 注入；未注入时一切照常，只是不发通知） */
   private notifyHooks?: NotifyHooks;
+  /** 一元读回历史的兜底轮询计时器（-1 = 未启用） */
+  private pageTimer: number = -1;
 
   /** waterfall 待答项：eventId → 呈现项 id（应答时必须原样带回 eventId） */
   private waterfallEventIds: Map<string, string> = new Map();
@@ -646,6 +663,8 @@ export class SessionHub {
     if (cancel !== undefined) {
       cancel();
     }
+    // 取消之后若仍选中着会话，一元兜底应当接管（否则切会话会留下一个空白的会话页）
+    this.ensurePageFallback();
   }
 
   private cancelControl(): void {
@@ -1584,24 +1603,35 @@ export class SessionHub {
         this.followCancel = undefined;
         this.lastError = `轨迹流失败：${code} ${message}`;
         this.record(`follow error ${code}`);
+        // 流没了 ⇒ 立刻接管：这是设备上最常见的一条路径（开流帧发出后 ~40ms 就撞上载体死亡）
+        this.ensurePageFallback();
         this.notify();
       },
       onEnd: () => {
         // 正常结束（上游会显式发 `end` 帧）：不是错误，不触发重连
         this.followCancel = undefined;
         this.record('follow end');
+        this.ensurePageFallback();
         this.notify();
       }
     };
     const cancel = this.conn.openStream(SESSION_FOLLOW_ENDPOINT, args, sink);
     if (cancel === undefined) {
       this.lastError = '无法打开轨迹流：连接尚未就绪';
+      // 流开不起来 ⇒ 交给一元兜底（否则会话页会永远空白）
+      this.ensurePageFallback();
       this.notify();
       return;
     }
     this.followCancel = cancel;
     this.record(`follow open ${sessionId.substring(0, 12)}`);
+    // 流开起来了 ⇒ 停掉一元兜底轮询（它只是"流开不起来时"的替代通路）
+    this.ensurePageFallback();
     this.notify();
+    // 【先一元读一次历史】不能等流的第一帧：在这台设备上流往往开不起来（§8.7.19），
+    // 而用户已经把会话点开了——一元的这一次读回能立刻把内容显示出来。
+    // 失败也无所谓（能力缺失 / 老 Host 没有 session/page），流式通路照旧。
+    this.refreshTrajectoryByPage();
     // 命令目录与文件树都是**会话作用域**的（`commands/list` 要 agentId，
     // `workspaceFiles/*` 要 workspaceFileScopeId = sessionId）。因此切会话必须重拉。
     //
@@ -1626,6 +1656,108 @@ export class SessionHub {
     this.refreshCommands();
     this.openWorkspace(this.selectedSessionId);
     this.refreshReferences('');
+  }
+
+  // ─────────────────── 一元读回历史（长连接开不起来时的兜底） ───────────────────
+
+  /**
+   * 一元读回当前会话的历史（`session/list` 取游标 → `session/page` 读记录）。
+   *
+   * ───────────────────── 为什么必须有这条兜底 ─────────────────────
+   *   实测（D2 §8.7.19）：设备侧 ArkTS 的 WebSocket 不回 Pong，服务端每 2 s Ping、
+   *   漏两次即关，因此 `session/follow` 经常连不上（诊断页显示
+   *   「WebSocket 已建立；事件流 opening」）。而**一元 HTTP 一直是好的**
+   *   （`session/list` / `settings/describe` / `commands/list` 都能成功）。
+   *   没有这条兜底，用户看到的是一个**永远空白的会话**：明明能列出会话、能发消息，
+   *   却读不出任何内容——这是"看起来完全不能用"的最直接来源。
+   *
+   * ───────────────────── 为什么能复用 follow 的投影 ─────────────────────
+   *   `session/page` 的 `records` 与 `session/follow` 快照的 `records` **同形**
+   *   （都是 `{type:'event', event:{type,seq,time,data}}`），因此同一条
+   *   `projectWireRecord()` 直接可用——这条通路的实现成本因此很低。
+   *
+   * 返回是否读到了内容（`false` 表示能力缺失/调用失败，调用方据此保持现状）。
+   */
+  async refreshTrajectoryByPage(): Promise<boolean> {
+    const sessionId: string = this.selectedSessionId;
+    if (!this.unaryReady || sessionId.length === 0) {
+      return false;
+    }
+    // 游标从**已有的会话列表**里取（`projections.asOfSeq`），不额外打一次 list：
+    // 列表本来就在快照里；而没有真实游标时 `session/page` 只会读回空页（见 D2 §8.7.23）。
+    const cursor: number = this.cursorOfSession(sessionId);
+    if (cursor < 0) {
+      this.record('page skip：取不到游标（projections.asOfSeq）');
+      return false;
+    }
+    const payload: Object | undefined = sessionPagePayload(sessionId, cursor, PAGE_MAX_MESSAGES);
+    if (payload === undefined) {
+      return false;
+    }
+    const result: RpcResult = await this.conn.call(sessionPageEndpoint(), payload);
+    if (!result.ok) {
+      const code: string = result.error === undefined ? 'unknown' : result.error.code;
+      this.record(`page fail ${code}`);
+      return false;
+    }
+    const page: SessionPageValue = projectSessionPage(result.value);
+    // 用这一页**整体替换**轨迹：它是"到 cursor 为止的完整历史"，
+    // 追加会与流式通路已写入的内容重复（用户会看到每条消息两遍）。
+    const items: TrajectoryItem[] = [];
+    for (let i = 0; i < page.records.length; i++) {
+      const projected: TrajectoryItem | undefined = projectWireRecord(page.records[i]);
+      if (projected !== undefined) {
+        appendOrMerge(items, projected);
+      }
+    }
+    // 期间用户切走了会话：这批记录不属于当前视图，丢弃（否则会把别人的内容显示在他的会话里）
+    if (this.selectedSessionId !== sessionId) {
+      return false;
+    }
+    this.trajectoryList = items;
+    this.record(`page ok ${items.length} 条（cursor=${cursor}）`);
+    this.notify();
+    return items.length > 0;
+  }
+
+  /** 取某个会话的日志游标（列表摘要的 `projections.asOfSeq`）；取不到返回 -1 */
+  private cursorOfSession(sessionId: string): number {
+    for (let i = 0; i < this.sessions.length; i++) {
+      if (this.sessions[i].id === sessionId) {
+        return sessionCursorOf(this.sessions[i].raw);
+      }
+    }
+    return -1;
+  }
+
+  /**
+   * 兜底轮询的启停：**只在当前会话的轨迹流没开着时**启用。
+   *
+   * 【为什么按需而不是常开】长连接正常时轮询是纯浪费（每轮一次一元调用），
+   * 而它要救的恰恰是"长连接开不起来"这一种情况。判据用 `followCancel === undefined`
+   * ——它精确表示"这条流不在"，比任何阶段标志都直接。
+   */
+  private ensurePageFallback(): void {
+    const need: boolean = this.selectedSessionId.length > 0
+      && this.unaryReady && this.followCancel === undefined;
+    if (!need) {
+      if (this.pageTimer !== -1) {
+        clearInterval(this.pageTimer);
+        this.pageTimer = -1;
+      }
+      return;
+    }
+    if (this.pageTimer !== -1) {
+      return;
+    }
+    this.pageTimer = setInterval(() => {
+      if (this.selectedSessionId.length === 0 || this.followCancel !== undefined) {
+        // 流又开了（或被切了会话）：停掉轮询并交还给流式通路
+        this.ensurePageFallback();
+        return;
+      }
+      this.refreshTrajectoryByPage();
+    }, PAGE_FALLBACK_INTERVAL_MS);
   }
 
   // ─────────────────── 斜杠命令（commands/list） ───────────────────

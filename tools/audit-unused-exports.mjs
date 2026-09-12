@@ -62,29 +62,50 @@ function exportedNames(barrelPath) {
 }
 
 const entryText = collect('entry/src/main/ets');
+/**
+ * 全工程源码（用于区分"完全没人用"与"只被上游模块内部用"）。
+ *
+ * 【为什么要分这两类】只看"entry 有没有引用"会把两类完全不同的东西混在一起：
+ *   - 只被 `appstate`/`connection` 内部用的工具函数：**正常**，不该出现在清单里；
+ *   - 全工程零引用的导出：要么是**死代码**（该删），要么是**没接完的功能**（该接）。
+ * 前者是噪声，后者才是这份清单存在的理由。
+ */
+const allSourceText = collect('appstate/src') + collect('connection/src')
+  + collect('platform/src') + entryText;
+
 const targets = [
   ['appstate', 'appstate/src/main/ets/Index.ets'],
   ['dshcompat', 'dshcompat/src/main/ets/Index.ets']
 ];
 
 let total = 0;
+let deadTotal = 0;
 for (const [label, barrel] of targets) {
   const names = exportedNames(barrel);
   const unused = [];
+  const dead = [];
   for (const n of names) {
     // 用词边界匹配，避免 `queue` 命中 `queued`
     const re = new RegExp(`\\b${n.replace(/\$/g, '\\$')}\\b`);
     if (!re.test(entryText)) {
       unused.push(n);
     }
+    // 零引用要排除"声明处自己"：导出名必然出现在 barrel 与源文件里，
+    // 因此这里只统计**除 barrel 之外**的引用数——由下面这个更严格的正则近似达成：
+    // 出现次数 <= 2（barrel 一次 + 源文件一次）即视为"只在声明处出现"。
+    const count = (allSourceText.match(new RegExp(`\\b${n.replace(/\$/g, '\\$')}\\b`, 'g')) ?? []).length;
+    if (count <= 2) {
+      dead.push(`${n}(${count})`);
+    }
   }
   unused.sort();
-  console.log(`\n=== ${label}：导出 ${names.size} 个，entry 未引用 ${unused.length} 个 ===`);
-  // 分组打印，便于逐条判断
-  for (let i = 0; i < unused.length; i += 4) {
-    console.log('  ' + unused.slice(i, i + 4).join('  '));
+  dead.sort();
+  console.log(`\n=== ${label}：导出 ${names.size} 个；entry 未引用 ${unused.length} 个；**全工程近零引用** ${dead.length} 个 ===`);
+  console.log('  「近零引用」= 除声明处外几乎没人用 ⇒ 死代码或没接完的功能：');
+  for (let i = 0; i < dead.length; i += 3) {
+    console.log('    ' + dead.slice(i, i + 3).join('  '));
   }
   total += unused.length;
+  deadTotal += dead.length;
 }
-console.log(`\n合计未引用 ${total} 个。注意：这是**怀疑清单**，不是缺陷清单——`);
-console.log('测试专用/预留的符号也会落在这里，判断标准是"用户能不能触达该功能"。');
+console.log(`\n合计：entry 未引用 ${total} 个（含类型与内部消费，属正常）；近零引用 ${deadTotal} 个（**这才是要处理的**）。`);

@@ -34,6 +34,7 @@ import {
   SESSION_CREATE_ENDPOINT,
   SESSION_FOLLOW_ENDPOINT,
   SESSION_LIST_ENDPOINT,
+  SESSION_PAGE_ENDPOINT,
   SESSION_PROMPT_ENDPOINT,
   SESSION_REFERENCE_CANDIDATES_ENDPOINT,
   SESSION_RENAME_ENDPOINT,
@@ -686,6 +687,100 @@ export function sessionUpdateQueuePayload(sessionId: string, itemId: string,
   action: QueueActionBody): Object | undefined {
   const body: SessionUpdateQueueRequest = { sessionId: sessionId, itemId: itemId, action: action };
   return payloadFor(SESSION_UPDATE_QUEUE_ENDPOINT, body);
+}
+
+// ═════════════════════════ 6c. 一元读回历史（session/page） ═════════════════════════
+
+/**
+ * `session/page` 的业务参数体。
+ *
+ * 【实测语义（D2 §8.7.23，与文档注释相反的那一条）】
+ *   - `throughSeq` 是**包含式**上界：`0 → 1 条`、`1 → 2 条`、`5 → 6 条`（含 seq 0）；
+ *   - 超过游标会被**明确拒绝**：`throughSeq: 19` → `gateway/bad-request:
+ *     session page through seq 19 is past cursor 18`；
+ *   - **`-1` 不是"到当前末尾"**：实测返回 `{ok:true, records:[]}`。
+ *     因此要读整段历史，必须拿到真实游标 ⇒ 用 `sessionCursorOf()` 从
+ *     `session/list` 的 `projections.asOfSeq` 取（实测它就是那个上界：18 → 19 条）。
+ */
+export interface SessionPageRequest {
+  address: SessionAddressWire;
+  /** 包含式日志切点；**必须是真实游标**，`-1` 读不到东西 */
+  throughSeq: number;
+  /** 向前分页游标（可选） */
+  beforeSeq?: number;
+  /** 单页最大条数（可选，默认 50） */
+  maxMessages?: number;
+}
+
+/** 会话地址（`session/follow` 与 `session/page` 共用同一形状）。 */
+export interface SessionAddressWire {
+  kind: string;
+  sessionId: string;
+}
+
+/**
+ * 构造 `session/page` 的 args 载荷。
+ *
+ * @param throughSeq 包含式上界；传 `sessionCursorOf()` 的结果即为"读到当前末尾"
+ */
+export function sessionPagePayload(sessionId: string, throughSeq: number,
+  maxMessages: number): Object | undefined {
+  const address: SessionAddressWire = { kind: 'session', sessionId: sessionId };
+  const request: SessionPageRequest = { address: address, throughSeq: throughSeq };
+  if (maxMessages > 0) {
+    request.maxMessages = maxMessages;
+  }
+  return payloadFor(SESSION_PAGE_ENDPOINT, request);
+}
+
+/** `session/page` 的端点。 */
+export function sessionPageEndpoint(): string {
+  return SESSION_PAGE_ENDPOINT;
+}
+
+/**
+ * 从 `session/list` 的会话摘要里取**日志游标**（`projections.asOfSeq`）。
+ *
+ * 返回 `-1` 表示取不到（老 Host 没有这个投影 / 形状变了）。调用方据此**放弃**一元读回，
+ * 而不是拿 `-1` 去请求——那只会得到一页空记录，把"读不到"伪装成"这个会话是空的"。
+ */
+export function sessionCursorOf(summary: Object | undefined): number {
+  const projections: Object | undefined = getRecord(summary, 'projections');
+  if (projections === undefined) {
+    return -1;
+  }
+  const asOf: number | undefined = getNumber(projections, 'asOfSeq');
+  if (asOf === undefined || asOf < 0) {
+    return -1;
+  }
+  return asOf;
+}
+
+/** `session/page` 的回复值：`{records, hasMore}`；`records` 与 `session/follow` 的**同形**。 */
+export interface SessionPageValue {
+  records: Object[];
+  hasMore: boolean;
+}
+
+/**
+ * 投影 `session/page` 的回复。
+ *
+ * **`records` 与 `session/follow` 快照里的 `records` 是同一形状**（都是
+ * `{type:'event', event:{type,seq,time,data}}`）——这是本项目能把同一条投影函数
+ * （`projectWireRecord`）用在两条通路上的原因，也是这条兜底通路实现成本低的原因。
+ */
+export function projectSessionPage(value: Object | undefined): SessionPageValue {
+  const records: Object[] | undefined = value === undefined ? undefined : getArray(value, 'records');
+  return {
+    records: records === undefined ? emptyObjectList() : records,
+    hasMore: value !== undefined && getField(value, 'hasMore') === true
+  };
+}
+
+/** 空的对象数组（规避无类型数组字面量）。 */
+function emptyObjectList(): Object[] {
+  const list: Object[] = [];
+  return list;
 }
 
 // ═════════════════════════ 6b. 排队项的呈现投影 ═════════════════════════

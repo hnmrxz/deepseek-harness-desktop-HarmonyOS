@@ -75,6 +75,14 @@ export const SESSION_RENAME_ENDPOINT: string = 'session/rename';
 export const SESSION_FORK_ENDPOINT: string = 'session/fork';
 /** 修改待发队列中的某一项（编辑 / 移除 / 转为插话） */
 export const SESSION_UPDATE_QUEUE_ENDPOINT: string = 'session/updateQueue';
+/**
+ * 按游标读取会话记录（**一元**）。
+ *
+ * 【为什么值得单独接出来】设备上 WebSocket 长连接约 5 秒必断、`$events` 常拿不到 `ready`
+ * （D2 §8.7.19），而一元 HTTP 是好的。实测这条端点能读出**整段历史**
+ * （D2 §8.7.23），因此它给"读会话内容"提供了一条不依赖长连接的兜底通路。
+ */
+export const SESSION_PAGE_ENDPOINT: string = 'session/page';
 /** 会话轨迹流（**流式**，必须走 mux 载体） */
 export const SESSION_FOLLOW_ENDPOINT: string = 'session/follow';
 /** 审批/提问控制流（**流式**） */
