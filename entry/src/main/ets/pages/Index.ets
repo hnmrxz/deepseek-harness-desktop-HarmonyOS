@@ -68,7 +68,14 @@ import {
   parseNotifyRoute,
   Sp,
   aboutInfo,
+  buildCoreView,
+  CoreFact,
+  CorePhase,
+  CoreViewState,
+  emptyCoreView,
   emptyDiagReport,
+  fact,
+  unknownFact,
   mergeSettingsGroups,
   normalizePathKey,
   projectDetailSections,
@@ -101,6 +108,7 @@ import { extractToken, parseJson } from 'connection';
 import { EVENT_HOST_CONNECTED, EVENT_KEY_HOST_TOKEN, EVENT_KEY_HOST_URL } from 'platform';
 import { ConnectPane } from '../view/ConnectPane';
 import { ConversationPane } from '../view/ConversationPane';
+import { CorePane } from '../view/CorePane';
 import { DetailPane } from '../view/DetailPane';
 import { DiagnosticsPane } from '../view/DiagnosticsPane';
 import { PendingPane } from '../view/PendingPane';
@@ -109,6 +117,9 @@ import { SettingsPane } from '../view/SettingsPane';
 import { WorkspacePane } from '../view/WorkspacePane';
 import { hitOfKeyEvent } from '../view/ShortcutKeys';
 import type { ShortcutHit } from '../view/ShortcutKeys';
+// 端侧核心运行层（D6）：核心版本仓库与激活事务。运行时载体尚未接线，
+// 因此这里现在只用它的"仓库/状态"部分，不声称任何"已启动"。
+import { CoreState, CoreStore } from 'hostruntime';
 
 /**
  * 把紧凑 JSON 美化以便人读写；失败时原样返回。
@@ -225,7 +236,8 @@ enum StackPage {
 }
 
 /** 一级导航顺序 */
-const TABS: NavTab[] = [NavTab.PENDING, NavTab.SESSIONS, NavTab.WORKSPACES, NavTab.SETTINGS];
+// 「核心」放在工作区与设置之间：它属于"能力/运维"一类，紧邻设置但不与设置混在一起
+const TABS: NavTab[] = [NavTab.PENDING, NavTab.SESSIONS, NavTab.WORKSPACES, NavTab.CORE, NavTab.SETTINGS];
 
 @Entry
 @Component
@@ -243,6 +255,10 @@ struct Index {
   @State selectedSessionTitle: string = '';
   @State trajectoryItems: TrajectoryItem[] = [];
   @State detailSections: DetailSection[] = [];
+  /** 端侧核心的呈现模型（D6）。初始为「运行时未接线」的如实状态，不含任何桩数据 */
+  @State coreView: CoreViewState = emptyCoreView();
+  /** 核心页的一次性提示（动作未接线/进行中等），显示后由用户下次操作覆盖 */
+  @State coreNotice: string = '';
   @State workspaces: WorkspaceItem[] = [];
   @State fileTree: FileNode[] = [];
   /** 文件预览结果；undefined = 未选择文件（@State 必须给默认值） */
@@ -560,6 +576,8 @@ struct Index {
     // 初始值 = 空态。所有真实数据都在 `applyHubSnapshot` 到达时落地；
     // 连接建立前界面显示的是各视图自己的空态文案（D3 §4），而不是编造的示例数据。
     this.diag = emptyDiagReport();
+    // 核心页先落地一次"未接线/仓库实况"的呈现（D6）。它不依赖连接，因此一开始就能读。
+    this.refreshCoreView();
     // 本机偏好是**端侧**的，与连接无关，因此一开始就要有（否则设置页会缺一组）。
     // 当前值来自能力层（它从 preferences 读出后发布到 AppStorage）。
     this.localSettings = this.localPreferenceGroup();
@@ -955,6 +973,12 @@ struct Index {
     if (tab !== NavTab.SESSIONS) {
       this.selectedSessionId = '';
       this.selectedSessionTitle = '';
+    }
+    // 核心页每次进入都重读仓库：解包/切换可能发生在别处（别的窗口、别的页面），
+    // 不该让用户看到一个过期的"当前版本"
+    if (tab === NavTab.CORE) {
+      this.coreNotice = '';
+      this.refreshCoreView();
     }
   }
 
@@ -2419,6 +2443,83 @@ struct Index {
     .backgroundColor($r('sys.color.background_secondary'))
   }
 
+  // ── 端侧核心页（D6）────────────────────────────────────────────────────
+  /**
+   * 刷新核心页的呈现模型。
+   *
+   * 【为什么现在只读"版本仓库"、不报任何"就绪"】运行时载体（阶段一的 Electron-on-鸿蒙
+   * 运行时 / 阶段二的 libnode.so）**尚未接线**，因此任何"已启动 / 就绪"的说法都是假的。
+   * 这里只做两件真实的事：
+   *   1. 读沙箱里的核心仓库（已经装了哪些版本、当前/上一版是谁）；
+   *   2. 把还没探测到的事实如实写成「未探测 + 探测条件」——而不是编一个值。
+   * 这条纪律与项目"界面不说谎"的要求一致（D3 §4）。
+   */
+  private refreshCoreView(): void {
+    let installed: string[] = [];
+    let current: string = '';
+    let previous: string = '';
+    let repoNote: string = '';
+    let repoOk: boolean = false;
+    try {
+      const ctx = getContext(this) as common.UIAbilityContext;
+      const store: CoreStore = new CoreStore(ctx.filesDir);
+      installed = store.listInstalled();
+      const state: CoreState = store.readState();
+      current = state.current;
+      previous = state.previous;
+      repoNote = `核心树目录：${store.coresDir()}`;
+      repoOk = true;
+    } catch (e) {
+      repoNote = '读取核心树目录失败（详见 hilog）';
+    }
+
+    const facts: CoreFact[] = [
+      unknownFact('Node 运行时', '运行时载体接线后显示实际版本（要求 ≥ 22.17.0）'),
+      unknownFact('zlib zstd 能力', '会话持久化依赖 node:zlib 的 zstd，接线后自动探测'),
+      unknownFact('JIT 状态', '本项目统一按 jitless 运行，不申请任何特殊权限'),
+      unknownFact('原生件加载', 'koffi / node-pty / sharp 三个鸿蒙移植件的加载结果'),
+      unknownFact('监听地址', '核心起来后应只监听 127.0.0.1'),
+      fact('核心仓库',
+        installed.length > 0 ? `已安装 ${installed.length} 个版本` : '空',
+        repoOk ? (installed.length > 0 ? 'ok' : 'warn') : 'warn',
+        repoNote)
+    ];
+
+    this.coreView = buildCoreView({
+      phase: CorePhase.UNWIRED,
+      title: '端侧核心尚未接线',
+      detail: '核心管理的骨架已经就位（版本仓库、激活事务、端侧 profile 与打包流水线），'
+        + '但运行时载体还没接上，所以现在还不能在设备上起 Host。',
+      busy: false,
+      installed: installed,
+      currentVersion: current,
+      previousVersion: previous,
+      profileName: 'ondevice',
+      facts: facts,
+      plugins: []
+    });
+  }
+
+  /** 核心页的动作。未接线的动作**必须**给出如实原因，不允许静默失败。 */
+  private onCoreAction(id: string): void {
+    if (id === 'diagnose') {
+      this.coreNotice = '诊断导出尚未接线：运行时接上后，这里会导出运行时事实与核心状态。';
+      return;
+    }
+    const label: string = id === 'start' ? '启动核心'
+      : (id === 'restart' ? '重启核心'
+        : (id === 'stop' ? '停止核心'
+          : (id === 'rollback' ? '回滚到上一版' : (id === 'import' ? '导入核心包' : id))));
+    this.coreNotice = `「${label}」尚未接线：运行时载体（阶段一的 Electron-on-鸿蒙 运行时 / `
+      + `阶段二的 libnode.so）还没接上，因此这一步现在无法执行。`;
+  }
+
+  /** 选择某个已安装版本作为切换目标。切换必须过健康检查，所以运行时未接线时做不了。 */
+  private onCoreSelectVersion(version: string): void {
+    this.coreNotice = `版本 ${version} 已在设备上，但「切换」需要先把它起一次做健康检查；`
+      + `运行时载体接线后这里才能真正切换（当前不会改动任何状态）。`;
+  }
+
   @Builder
   tabContent(compact: boolean) {
     if (this.tab === NavTab.PENDING) {
@@ -2497,6 +2598,31 @@ struct Index {
           this.wsDrill = this.wsDrill > 0 ? this.wsDrill - 1 : 0;
         }
       })
+    } else if (this.tab === NavTab.CORE) {
+      Column({ space: Sp.S }) {
+        if (this.coreNotice.length > 0) {
+          Text(this.coreNotice)
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.font_secondary'))
+            .width('100%')
+            .padding(Sp.S)
+            .borderRadius(Radius.S)
+            .backgroundColor($r('sys.color.background_secondary'))
+        }
+        CorePane({
+          view: this.coreView,
+          onAction: (id: string) => {
+            this.onCoreAction(id);
+          },
+          onSelectVersion: (version: string) => {
+            this.onCoreSelectVersion(version);
+          }
+        })
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .height('100%')
+      .padding({ left: Sp.M, right: Sp.M, top: Sp.S })
     } else {
       SettingsPane({
         groups: this.settings,

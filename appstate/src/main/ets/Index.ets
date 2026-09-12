@@ -116,6 +116,18 @@ export { matchCounterText, matchTrajectoryIndices, stepMatch } from './model/Sea
 export { projectDetailSections } from './model/Detail';
 export type { DetailSection } from './model/Detail';
 
+// ── 端侧核心的呈现契约（D6 §2/§6）：阶段、运行时事实、版本行、插件分类、动作可用性 ──
+export {
+  CorePhase,
+  buildCoreView,
+  classifyPlugin,
+  corePhaseLabel,
+  emptyCoreView,
+  fact,
+  unknownFact
+} from './model/Core';
+export type { CoreActionSpec, CoreFact, CoreVersionRow, CoreViewInput, CoreViewState, PluginRow } from './model/Core';
+
 // ── 断点与导航模型 ──
 export {
   detailPanelAvailable,

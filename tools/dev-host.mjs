@@ -59,7 +59,7 @@ const HOME = arg('--home',
     ? join(ROOT, '.research', 'dev-host-home')
     : (process.env.DSH_HOME ?? join(homedir(), '.dsh')));
 const STATE = join(ROOT, '.research', 'dev-host.json');
-const BUNDLE = arg('--bundle', 'com.deepseek.dshharmony');
+const BUNDLE = arg('--bundle', 'com.hnmrxz.hdsh');
 const ABILITY = arg('--ability', 'EntryAbility');
 const NO_LAUNCH = args.includes('--no-launch');
 const HDC = arg('--hdc', 'C:\\Program Files\\Huawei\\DevEco Studio\\sdk\\default\\openharmony\\toolchains\\hdc.exe');

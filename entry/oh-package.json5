@@ -9,6 +9,7 @@
     "connection": "file:../connection",
     "appstate": "file:../appstate",
     "dshcompat": "file:../dshcompat",
-    "platform": "file:../platform"
+    "platform": "file:../platform",
+    "hostruntime": "file:../hostruntime"
   }
 }

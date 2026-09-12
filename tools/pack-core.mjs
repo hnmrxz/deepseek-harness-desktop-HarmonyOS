@@ -260,6 +260,29 @@ function embedProfile() {
   log(`\n[pack-core] ④ 端侧 profile 已放入 ${STAGE_NAME}/profiles/${recipe.profile}/`);
 }
 
+/**
+ * 在**打包之前**把构建元数据写进树里（`<top>/hdsh-core.json`）。
+ *
+ * 为什么不能只留在外层清单里：外层清单在容器**外面**，端侧解包完只有树本身。
+ * 端侧要能回答"我装的这版是什么、哪个 profile、平台对不对"，就必须把答案放进树里。
+ * 因此这里只写不依赖产物哈希的字段——容器的 sha256 仍然只在外层清单（否则自指）。
+ */
+function embedTreeInfo() {
+  const info = {
+    coreVersion: recipe.coreVersion,
+    platform: `${recipe.platform.os}/${recipe.platform.cpu}`,
+    profile: recipe.profile,
+    builtAt: new Date().toISOString(),
+    // dsh 的两条硬约束的交集：OHOS 支持 >= 22.17.0，会话持久化 zstd 需要 >= 22.15
+    nodeFloor: '22.17.0',
+    overrides: recipe.overrides,
+    producer: 'tools/pack-core.mjs',
+  };
+  writeFileSync(join(STAGE, TREE_INFO_FILE), JSON.stringify(info, null, 2) + '\n', 'utf8');
+  log(`[pack-core]   树内元数据 ${TREE_INFO_FILE} 已写入（端侧解包后据此识别版本与 profile）`);
+}
+const TREE_INFO_FILE = 'hdsh-core.json';
+
 function sha256(file) {
   const h = createHash('sha256');
   h.update(readFileSync(file));
@@ -469,6 +492,7 @@ log(`[pack-core] 宿主 Node ${process.version} / ${process.platform}`);
 materialize();
 prune();
 const sig = verify();
+embedTreeInfo();
 embedProfile();
 const packed = pack();
 const manifest = writeManifest({ ...packed, ...sig });

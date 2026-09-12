@@ -1,7 +1,7 @@
 {
   "app": {
-    "bundleName": "com.deepseek.dshharmony",
-    "vendor": "example",
+    "bundleName": "com.hnmrxz.hdsh",
+    "vendor": "hnmrxz",
     "versionCode": 1000000,
     "versionName": "1.0.0",
     "icon": "$media:layered_image",

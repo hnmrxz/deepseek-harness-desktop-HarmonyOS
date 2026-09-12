@@ -355,7 +355,7 @@ node tools/dev-host.mjs --stop           # 停止本项目起的核心（按记�
    ```sh
    devecocli build --modules entry@ohosTest
    hdc install -r entry\build\default\outputs\ohosTest\entry-ohosTest-unsigned.hap
-   hdc shell aa test -b com.deepseek.dshharmony -m entry_test -s unittest OpenHarmonyTestRunner -s timeout 240000
+   hdc shell aa test -b com.hnmrxz.hdsh -m entry_test -s unittest OpenHarmonyTestRunner -s timeout 240000
    ```
 6. 要连真实 Host 时：`node tools/dev-host.mjs`（一条命令，见上）。
 

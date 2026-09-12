@@ -33,6 +33,8 @@ export enum NavTab {
   PENDING = 'pending',
   SESSIONS = 'sessions',
   WORKSPACES = 'workspaces',
+  /** 端侧 DSH 核心：运行状态、版本切换/回滚、插件、运行时诊断（D6 §2/§6） */
+  CORE = 'core',
   SETTINGS = 'settings'
 }
 
@@ -47,6 +49,9 @@ export function navTabLabel(tab: NavTab): string {
   if (tab === NavTab.WORKSPACES) {
     return '工作区';
   }
+  if (tab === NavTab.CORE) {
+    return '核心';
+  }
   return '设置';
 }
 
@@ -60,6 +65,11 @@ export function navTabSymbol(tab: NavTab): Resource {
   }
   if (tab === NavTab.WORKSPACES) {
     return $r('sys.symbol.folder');
+  }
+  // 核心：用"分层的方块堆"表达"多版本核心 + 运行时分层"
+  // 名字取自 SDK 符号清单（previewer/.../resources.txt，共 4027 个）中实存的一项
+  if (tab === NavTab.CORE) {
+    return $r('sys.symbol.square_stack_3d');
   }
   return $r('sys.symbol.gearshape');
 }
