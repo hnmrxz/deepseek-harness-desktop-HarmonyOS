@@ -21,5 +21,17 @@ if [ "$found" = "0" ]; then
   echo "so candidates:"; ls -1 "${SRC}/out/Release/" 2>/dev/null | grep -i 'libnode\|^node$' || echo "  (no libnode/node names in out/Release)"
 fi
 
+echo "--- object progress (host vs target) ---"
+if [ -d "${SRC}/out/Release" ]; then
+  h=$(find "${SRC}/out/Release/obj.host" -name '*.o' 2>/dev/null | wc -l)
+  t=$(find "${SRC}/out/Release/obj.target" -name '*.o' 2>/dev/null | wc -l)
+  echo "obj.host   .o files: ${h}"
+  echo "obj.target .o files: ${t}"
+  echo "host subtrees present:"
+  ls -1 "${SRC}/out/Release/obj.host" 2>/dev/null | head -20 | sed 's/^/  /'
+else
+  echo "(no out/Release yet)"
+fi
+
 echo "--- log tail (truncated) ---"
 tail -n 2 "${LOG}" 2>/dev/null | cut -c1-120
