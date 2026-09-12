@@ -7,6 +7,7 @@ import trajectoryProjectionTest from './Trajectory.test';
 import settingsProjectionTest from './Settings.test';
 import muxProbeTest from './MuxProbe.test';
 import liveWireTest from './LiveWire.test';
+import onDeviceProbeTest from './OnDeviceProbe.test';
 
 export default function testsuite() {
   connectionTest();
@@ -14,4 +15,6 @@ export default function testsuite() {
   settingsProjectionTest();
   muxProbeTest();
   liveWireTest();
+  // 设备侧架构探针（P5）：沙箱符号链接能力 + 同进程回环可达性。见 OnDeviceProbe.test.ets
+  onDeviceProbeTest();
 }
