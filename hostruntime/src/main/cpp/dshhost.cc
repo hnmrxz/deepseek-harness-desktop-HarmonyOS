@@ -150,6 +150,11 @@ napi_value StartHost(napi_env env, napi_callback_info info) {
     // 不在这里做任何恢复动作：静默重启会把"Host 崩了"伪装成"还好好的"。
     (void)rc;
   });
+  // **必须 detach**：全局 std::thread 若在进程退出时仍是 joinable，它的析构函数会调用
+  // std::terminate —— 表现为"退出时崩溃"。而 node::Start 是永不返回的阻塞调用
+  // （Host 正常运行时它就是一直跑），所以这个线程在退出时**一定**是 joinable 的。
+  // 不 join 的理由：join 会阻塞调用方直到 Host 结束，而 Host 按设计是要一直跑的。
+  g_nodeThread.detach();
 
   SetBool(env, out, "started", true);
   napi_value applied = nullptr;
