@@ -108,9 +108,23 @@ bash tools/node-runtime/build-dshhost.sh
 | 成员 | 语义 |
 |---|---|
 | `runtimeVersion(): string` | 编译进 libnode.so 的 Node 版本。**只要它返回非空就证明"模块加载成功且与 libnode 链接在一起了"**——这是"运行时可用"的第一条可观测证据 |
-| `startHost(argv: string[]): {started, note}` | 在独立线程里跑 `node::Start`（阻塞）。**同进程只允许起一次**：第二次返回 `started=false` 并说明原因，而不是偷偷再起一个（两个 Host 会抢同一个端口） |
+| `startHost(argv: string[], envPairs: string[]): {started, note, envApplied}` | 在独立线程里跑 `node::Start`（阻塞）。**同进程只允许起一次**：第二次返回 `started=false` 并说明原因，而不是偷偷再起一个（两个 Host 会抢同一个端口） |
 | `isHostRunning(): boolean` | Node 线程是否还活着 |
 | `stopHost(): {ok, note}` | **如实返回做不到**，理由见下 |
+
+**为什么 `startHost` 需要 `envPairs`（这是读入口脚本才发现的）**：端侧 Host 的配置通道
+**是环境变量，不是 argv**——`hostcore/app/main.js` 读 `HDSH_CORE_DIR` / `HDSH_HOME` /
+`HDSH_SANDBOX_HOME` / `HDSH_PORT` / `HDSH_PROFILE`，而 ArkTS 侧**没有任何办法设置原生进程的
+环境变量**。所以必须由引导层在 `node::Start` 之前 `setenv()`。
+
+于是"该传哪些键、argv 该带什么"成了两端之间最容易写错、且**写错了不会报错**的接口：
+键名拼错 → Host 用上默认目录，表面上起来了、实际指向了错的 `$DSH_HOME`。因此这两条契约在
+ArkTS 侧是**可单测的纯函数**（`hostruntime/.../RuntimePort.ets` 的 `buildHostArgv()` /
+`buildHostEnv()` / `isWellFormedEnvPair()`），而不是散在实现里的字符串拼接；
+`envPairs` 用 `KEY=VALUE` 字符串而非两个平行数组，少一类"键值错位"的错法。
+
+`HDSH_*` 的取值由 `buildHostEnv()` 给出；`--jitless` 由 `buildHostArgv()` 给出且必须排在
+脚本路径**之前**（Node 把第一个非选项参数当脚本，顺序反了就会去执行一个叫 `--jitless` 的东西）。
 
 **已知边界（写清，别当成已解决）**：
 

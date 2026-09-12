@@ -27,6 +27,7 @@
 #include <node_version.h>
 
 #include <atomic>
+#include <cstdlib>
 #include <string>
 #include <thread>
 #include <vector>
@@ -64,14 +65,21 @@ napi_value RuntimeVersion(napi_env env, napi_callback_info info) {
 }
 
 /**
- * startHost(argv: string[]): { started: boolean, note: string }
+ * startHost(argv: string[], envPairs: string[]): { started: boolean, note: string }
  *
  * 在独立线程里跑 node::Start（阻塞）。**同一个进程只能起一次**：第二次调用返回
  * started=false 并说明原因，而不是偷偷再起一个（那样会有两个 Host 抢同一个端口）。
+ *
+ * 【为什么需要 envPairs】端侧 Host 的配置通道**是环境变量，不是 argv**：
+ * hostcore/app/main.js 读的是 HDSH_CORE_DIR / HDSH_HOME / HDSH_SANDBOX_HOME /
+ * HDSH_PORT / HDSH_PROFILE，而 ArkTS 侧**没有任何办法设置原生进程的环境变量**。
+ * 所以必须由这里在 node::Start 之前 setenv()。
+ * 取"KEY=VALUE"字符串数组而不是两个平行数组：无需在两端各自维护下标对应关系，
+ * 少一类"键值错位"的错法（键值错位会静默把 Host 指向错误的目录）。
  */
 napi_value StartHost(napi_env env, napi_callback_info info) {
-  size_t argc = 1;
-  napi_value args[1] = {nullptr};
+  size_t argc = 2;
+  napi_value args[2] = {nullptr, nullptr};
   napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
 
   napi_value out = nullptr;
@@ -102,6 +110,32 @@ napi_value StartHost(napi_env env, napi_callback_info info) {
       g_argStore.push_back(s);
     }
   }
+
+  // 环境变量：必须在 node::Start 之前生效——Node 启动时就会读 process.env 初始化，
+  // 之后再 setenv 对已启动的 Host 没有任何作用。
+  uint32_t envCount = 0;
+  int envBad = 0;
+  if (argc >= 2 && napi_get_array_length(env, args[1], &envCount) == napi_ok) {
+    for (uint32_t i = 0; i < envCount; i++) {
+      napi_value el = nullptr;
+      if (napi_get_element(env, args[1], i, &el) != napi_ok) {
+        continue;
+      }
+      size_t n = 0;
+      if (napi_get_value_string_utf8(env, el, nullptr, 0, &n) != napi_ok) {
+        continue;
+      }
+      std::string pair(n, '\0');
+      napi_get_value_string_utf8(env, el, &pair[0], n + 1, &n);
+      const size_t eq = pair.find('=');
+      if (eq == std::string::npos || eq == 0) {
+        envBad++;  // 没有 "=" 或键为空：不猜，计数后如实报告
+        continue;
+      }
+      setenv(pair.substr(0, eq).c_str(), pair.substr(eq + 1).c_str(), 1);
+    }
+  }
+
   g_argv.clear();
   for (std::string& s : g_argStore) {
     g_argv.push_back(&s[0]);
@@ -118,7 +152,16 @@ napi_value StartHost(napi_env env, napi_callback_info info) {
   });
 
   SetBool(env, out, "started", true);
-  SetString(env, out, "note", "Node 线程已启动（node::Start 阻塞运行）");
+  napi_value applied = nullptr;
+  napi_create_uint32(env, envCount - static_cast<uint32_t>(envBad), &applied);
+  napi_set_named_property(env, out, "envApplied", applied);
+  // 环境变量格式不对必须说出来：静默忽略会让 Host 用上默认目录，
+  // 表面上"起来了"，实际指向了错的 $DSH_HOME。
+  SetString(env, out, "note",
+            envBad > 0
+                ? ("Node 线程已启动，但有 " + std::to_string(envBad) +
+                   " 条环境变量格式不合法（缺少 KEY=）已被忽略")
+                : "Node 线程已启动（node::Start 阻塞运行）");
   return out;
 }
 

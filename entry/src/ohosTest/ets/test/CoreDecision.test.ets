@@ -19,6 +19,9 @@ import {
   parseState,
   serializeState,
   topDirOf,
+  buildHostArgv,
+  buildHostEnv,
+  isWellFormedEnvPair,
   decideActivation,
   decideRollback
 } from 'hostruntime';
@@ -185,6 +188,37 @@ export default function coreDecisionTest() {
       // id 缺省时不得编造：空就是空
       expect(classifyPlugin('p', '', PluginNative.PURE_JS).id).assertEqual('');
       expect(classifyPlugin('p', '', PluginNative.PURE_JS).disabled).assertFalse();
+    });
+
+    // ── Host 启动契约：argv 与 env（两端接口，写错不会报错，只会指向错的目录）──
+    it('host_argv_pins_jitless_before_script', 0, () => {
+      const entry: string = '/data/app/resources/resfile/host/main.js';
+      const argv: string[] = buildHostArgv(entry);
+      // --jitless 是"不申请 ALLOW_WRITABLE_CODE_MEMORY"的前提，不允许被漏掉
+      expect(argv.includes('--jitless')).assertTrue();
+      // 且必须排在脚本路径**之前**：Node 把第一个非选项参数当脚本，
+      // 顺序反了就会去执行一个叫 "--jitless" 的东西
+      expect(argv[0]).assertEqual('--jitless');
+      expect(argv[argv.length - 1]).assertEqual(entry);
+    });
+
+    it('host_env_pairs_are_complete_and_wellformed', 0, () => {
+      const env: string[] = buildHostEnv('/cores/1', '/home', '/sandbox', 3120, 'ondevice');
+      // 这几项是 main.js 的实际入口契约；HDSH_HOME 缺失时它会直接 reportConfigError
+      expect(env.includes('HDSH_CORE_DIR=/cores/1')).assertTrue();
+      expect(env.includes('HDSH_HOME=/home')).assertTrue();
+      expect(env.includes('HDSH_SANDBOX_HOME=/sandbox')).assertTrue();
+      expect(env.includes('HDSH_PORT=3120')).assertTrue();
+      expect(env.includes('HDSH_PROFILE=ondevice')).assertTrue();
+      for (let i = 0; i < env.length; i++) {
+        expect(isWellFormedEnvPair(env[i])).assertTrue();
+      }
+      // 判据本身：缺 "=" 或键为空一律不合法 —— 引导层据此跳过**并计数**，
+      // 不允许静默忽略（被忽略的 HDSH_HOME 会让 Host 悄悄用上默认目录）
+      expect(isWellFormedEnvPair('HDSH_HOME')).assertFalse();
+      expect(isWellFormedEnvPair('=/x')).assertFalse();
+      expect(isWellFormedEnvPair('')).assertFalse();
+      expect(isWellFormedEnvPair('A=')).assertTrue();
     });
 
     // ── 诊断模式分流 ────────────────────────────────────────────────────

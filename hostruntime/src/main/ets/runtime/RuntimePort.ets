@@ -90,6 +90,65 @@ export function notWiredProbe(note: string): RuntimeProbe {
   };
 }
 
+// ── Host 启动契约：argv 与 env ──────────────────────────────────────────────
+//
+// 【为什么要在这里、以纯函数的形式定下来】端侧 Host 的配置通道**是环境变量而不是 argv**：
+// `hostcore/app/main.js` 读 HDSH_CORE_DIR / HDSH_HOME / HDSH_SANDBOX_HOME / HDSH_PORT /
+// HDSH_PROFILE，而 ArkTS 侧**没有任何办法设置原生进程的环境变量**——只能由引导层
+// （`hostruntime/src/main/cpp/dshhost.cc` 的 startHost）在 node::Start 之前 setenv()。
+// 于是"该传哪些键、argv 该带什么"就成了两端之间最容易写错、且写错了**不会报错**的接口：
+// 键名拼错 → Host 用上默认目录，表面上起来了、实际指向错的 $DSH_HOME。
+// 所以这两条契约必须是可单测的纯函数，而不是散在实现里的字符串拼接。
+
+/** 端侧 Host 的回环端口。与 main.js 的 HDSH_PORT 默认值一致，但**显式传**，不依赖默认值。 */
+export const HOST_DEFAULT_PORT: number = 3120;
+
+/**
+ * `startHost()` 的 argv（**不含 argv[0]**；引导层会补一个 "node"）。
+ *
+ * `entryScript` 是 Host 入口脚本（main.js）的绝对路径。它**不属于任何一版核心树**：
+ * 核心树是可切换/回滚的，而入口脚本随应用发版，两者生命周期不同，混在一起会导致
+ * "回滚核心版本把入口脚本也换掉了"。
+ */
+export function buildHostArgv(entryScript: string): string[] {
+  return [
+    // **必须**：这是"不申请 ALLOW_WRITABLE_CODE_MEMORY"能成立的前提。
+    // 少了它，V8 会在初始化时申请可写可执行内存而被系统拦（D6 §4.4）。
+    // 它必须排在脚本路径**之前**：Node 把第一个非选项参数当脚本。
+    '--jitless',
+    entryScript,
+  ];
+}
+
+/**
+ * `startHost()` 的环境变量，每项是 `KEY=VALUE`。
+ *
+ * 用"KEY=VALUE"字符串而不是两个平行数组：两端都不必维护下标对应关系，
+ * 少一类"键值错位"的错法。
+ */
+export function buildHostEnv(coreDir: string, homeDir: string, sandboxHome: string,
+  port: number, profile: string): string[] {
+  return [
+    `HDSH_CORE_DIR=${coreDir}`,
+    `HDSH_HOME=${homeDir}`,
+    `HDSH_SANDBOX_HOME=${sandboxHome}`,
+    `HDSH_PORT=${port}`,
+    `HDSH_PROFILE=${profile}`,
+  ];
+}
+
+/**
+ * 一条 `KEY=VALUE` 是否合法：必须有 `=`，且键非空。
+ *
+ * 【为什么要有这个判据】引导层据此决定"跳过并计数"。**不允许静默忽略**：
+ * 被忽略的 HDSH_HOME 会让 Host 悄悄用上默认目录，看上去一切正常却写错了地方。
+ * 规则只有这一份，C++ 侧（dshhost.cc 的 startHost）按同一规则处理并把条数回报给上层。
+ */
+export function isWellFormedEnvPair(pair: string): boolean {
+  const eq: number = pair.indexOf('=');
+  return eq > 0;
+}
+
 /**
  * 未接线载体的实现。
  *
