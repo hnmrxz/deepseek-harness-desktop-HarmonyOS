@@ -48,6 +48,7 @@
       ]
     }
   ],
+  "$comment_pruneCandidate_wasm32": "候选裁剪项（**尚未启用**）：@ohos-ports/img-sharp-wasm32 是 sharp 的 wasm32 平台回退包，在鸿蒙/arm64 上用不到；而且它是全树唯一的 .wasm（D6 E20），在 --jitless 下 WASM 为 undefined，这个回退**即使被选中也必然失败**。删掉它能少一份体积、并把 sharp 的失败语义从'走到 WASM 然后 undefined'变成'明确说没有可用原生二进制'。之所以先不启用：需要先确认 sharp 的加载器是不是**无条件** require 这个包——若是条件 require，删掉安全；若无条件，删掉会直接抛错。这一步要能跑一次 Node 才能验，别凭猜删。",
   "$comment_requiredNative": "打包后必须存在的原生产物；缺任何一个即失败（否则会在设备上以 boot 失败的形式暴露）",
   "requiredNative": [
     "koffi/build/koffi/openharmony_arm64/koffi.node",
