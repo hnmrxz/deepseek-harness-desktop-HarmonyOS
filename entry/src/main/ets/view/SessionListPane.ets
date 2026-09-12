@@ -29,6 +29,16 @@ export struct SessionListPane {
    */
   @Prop pending: PendingItem[] = [];
   @Prop selectedId: string = '';
+  /**
+   * 空态文案（标题 / 说明）。
+   *
+   * 【为什么要由宿主注入】新架构下"看不到会话"的最常见原因是**本机核心还没起来**
+   * （未安装 / 解包中 / 启动中 / 失败），而不是"Host 上没有会话"。
+   * 这四种情况必须给出不同的下一步，因此文案由宿主按核心阶段算好传进来
+   * （见 appstate 的 `sessionEmptyCopy`），组件不自己猜。
+   */
+  @Prop emptyTitle: string = '还没有会话';
+  @Prop emptyHint: string = '在本机核心上新建会话后会自动出现在这里。';
   onSelect: (id: string) => void = () => {
   };
   /**
@@ -104,12 +114,13 @@ export struct SessionListPane {
           SymbolGlyph($r('sys.symbol.message'))
             .fontSize(40)
             .fontColor([$r('sys.color.font_tertiary')])
-          Text('还没有会话')
+          Text(this.emptyTitle)
             .fontSize(Fs.BODY)
             .fontColor($r('sys.color.font_secondary'))
-          Text('在 Host 上新建会话后会自动出现在这里')
+          Text(this.emptyHint)
             .fontSize(Fs.CAPTION)
             .fontColor($r('sys.color.font_tertiary'))
+            .textAlign(TextAlign.Center)
         }
         .width('100%')
         .layoutWeight(1)

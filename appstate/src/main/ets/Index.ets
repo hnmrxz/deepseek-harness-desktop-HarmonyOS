@@ -124,9 +124,10 @@ export {
   corePhaseLabel,
   emptyCoreView,
   fact,
+  sessionEmptyCopy,
   unknownFact
 } from './model/Core';
-export type { CoreActionSpec, CoreFact, CoreVersionRow, CoreViewInput, CoreViewState, PluginRow } from './model/Core';
+export type { CoreActionSpec, CoreFact, CoreVersionRow, CoreViewInput, CoreViewState, EmptyCopy, PluginRow } from './model/Core';
 
 // ── 断点与导航模型 ──
 export {

@@ -209,8 +209,59 @@ export function classifyPlugin(name: string, version: string, hasNative: boolean
   return { name: name, version: version, hasNative: false, installable: true, reason: '' };
 }
 
-/** 初始（未接线）视图：用于运行时还没接上时的如实呈现。 */
-export function emptyCoreView(): CoreViewState {
+/** 空态文案（标题 + 说明）。 */
+export interface EmptyCopy {
+  title: string;
+  hint: string;
+}
+
+/**
+ * 会话页的空态文案**按核心阶段分档**（D7 §3 第 7 项）。
+ *
+ * 为什么不能只有一句"还没有会话"：新架构下"看不到会话"最常见的原因是
+ * **本机核心还没起来**（未安装 / 解包中 / 启动中 / 失败），而不是"Host 上没有会话"。
+ * 用同一句话覆盖这四种情况，会把用户引向错误的排查方向（去查地址，而问题在设备上）。
+ *
+ * 纯函数：不依赖网络、不依赖设备，可单测。
+ */
+export function sessionEmptyCopy(phase: CorePhase): EmptyCopy {
+  if (phase === CorePhase.UNWIRED) {
+    return {
+      title: '本机核心尚未接线',
+      hint: '运行时载体还没接上，会话暂时不可用。到「核心」页可以看到运行时与版本的真实状态。',
+    };
+  }
+  if (phase === CorePhase.EMPTY) {
+    return {
+      title: '还没有安装核心',
+      hint: '核心随应用内置，首次启动会自动解包；也可以在「核心」页导入核心包。',
+    };
+  }
+  if (phase === CorePhase.EXTRACTING) {
+    return {
+      title: '正在解包核心',
+      hint: '首次启动需要解包一次（约 63 MB 压缩包 / 2.5 万个文件），完成后这里会出现会话。',
+    };
+  }
+  if (phase === CorePhase.STARTING) {
+    return {
+      title: '正在启动本机核心',
+      hint: '核心起来后会自动连上本机回环地址，无需手填任何地址。',
+    };
+  }
+  if (phase === CorePhase.FAILED) {
+    return {
+      title: '本机核心启动失败',
+      hint: '到「核心」页看运行时事实与失败原因，那里给出的是可执行建议而不是一句"失败了"。',
+    };
+  }
+  return {
+    title: '还没有会话',
+    hint: '在本机核心上新建会话后会自动出现在这里。',
+  };
+}
+
+/** 初始（未接线）视图：用于运行时还没接上时的如实呈现。 */export function emptyCoreView(): CoreViewState {
   return buildCoreView({
     phase: CorePhase.UNWIRED,
     title: '端侧核心尚未接线',

@@ -75,6 +75,7 @@ import {
   emptyCoreView,
   emptyDiagReport,
   fact,
+  sessionEmptyCopy,
   unknownFact,
   mergeSettingsGroups,
   normalizePathKey,
@@ -2547,6 +2548,9 @@ struct Index {
           sessions: this.sessions,
           pending: this.pending,
           selectedId: this.selectedSessionId,
+          // 空态按核心阶段分档（D7 §3 第 7 项）：把"看不到会话"引向正确的排查方向
+          emptyTitle: sessionEmptyCopy(this.coreView.phase).title,
+          emptyHint: sessionEmptyCopy(this.coreView.phase).hint,
           onSelect: (id: string) => {
             this.openSession(id);
           },
