@@ -120,7 +120,7 @@ import { hitOfKeyEvent } from '../view/ShortcutKeys';
 import type { ShortcutHit } from '../view/ShortcutKeys';
 // 端侧核心运行层（D6）：核心版本仓库与激活事务。运行时载体尚未接线，
 // 因此这里现在只用它的"仓库/状态"部分，不声称任何"已启动"。
-import { DshHost, HostStatus, NotWiredRuntime, RuntimeProbe, hostStateIsTransient } from 'hostruntime';
+import { BundledInstallResult, DshHost, HostStatus, NotWiredRuntime, RuntimeProbe, hostStateIsTransient } from 'hostruntime';
 
 /**
  * 把紧凑 JSON 美化以便人读写；失败时原样返回。
@@ -2539,8 +2539,32 @@ struct Index {
     });
   }
 
-  /** 原生件加载事实。没有数据时如实写"未探测"，不写 0/N 这种看起来像结论的值。 */
-  private nativeFact(probe: RuntimeProbe): CoreFact {
+  /**
+   * 安装随应用内置的核心包（首启解包）。
+   *
+   * 与"启动核心"的区别：这一步**不需要运行时载体**，所以运行时还没接上时也能先把核心装好。
+   * 诚实性要求：解压 API 没有进度回调，因此这里**不编造百分比**，只说明"正在解包"与量级。
+   */
+  private installBundledCore(): void {
+    this.installBundledCoreAsync().catch(() => {
+    });
+  }
+
+  private async installBundledCoreAsync(): Promise<void> {
+    try {
+      const ctx = getContext(this) as common.UIAbilityContext;
+      const host: DshHost = this.coreHost(ctx.filesDir);
+      this.coreNotice = '正在安装内置核心：解包约 2.5 万个文件，请勿退出应用……';
+      const result: BundledInstallResult = await host.installBundled(ctx.resourceDir, ctx.cacheDir);
+      this.coreNotice = result.note;
+    } catch (e) {
+      const err = e as Error;
+      this.coreNotice = `安装内置核心失败：${err.message}`;
+    }
+    await this.refreshCoreViewAsync();
+  }
+
+  /** 原生件加载事实。没有数据时如实写"未探测"，不写 0/N 这种看起来像结论的值。 */  private nativeFact(probe: RuntimeProbe): CoreFact {
     if (probe.natives.length === 0) {
       return unknownFact('原生件加载', 'koffi / node-pty / sharp 三个鸿蒙移植件的加载结果');
     }
@@ -2558,6 +2582,10 @@ struct Index {
 
   /** 核心页的动作。未接线的动作**必须**给出如实原因，不允许静默失败。 */
   private onCoreAction(id: string): void {
+    if (id === 'install') {
+      this.installBundledCore();
+      return;
+    }
     if (id === 'diagnose') {
       this.coreNotice = '诊断导出尚未接线：运行时接上后，这里会导出运行时事实与核心状态。';
       return;

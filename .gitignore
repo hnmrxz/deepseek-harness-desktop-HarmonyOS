@@ -19,6 +19,10 @@ Thumbs.db
 # 模拟器/真机验收截图（体积大、可随时重截）
 screenshots/
 
+# 内置的端侧核心包（约 63 MB，由 `node tools/pack-core.mjs --place-in-app` 产出）
+# 不进版本库：进版本库的是"如何生产它"（tools/pack-core.mjs + hostcore/core-recipe.json）
+entry/src/main/resources/resfile/*.zip
+
 # hostkit（PC 侧搭桥服务）生成的状态与临时文件（身份私钥/设备白名单/审计/自签证书）
 hostkit/node_modules/
 hostkit/.hostkit/

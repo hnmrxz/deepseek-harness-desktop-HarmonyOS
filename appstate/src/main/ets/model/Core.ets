@@ -169,6 +169,16 @@ export function buildCoreView(input: CoreViewInput): CoreViewState {
     enabled: hasPrevious && !input.busy,
     reason: hasPrevious ? '' : '没有可回滚的上一版本',
   });
+  // 「安装内置核心」**不依赖运行时载体**（只是解包落位），因此未接线时也允许——
+  // 这样用户可以先把它装好，等载体接上就能直接起。
+  if (input.installed.length === 0) {
+    actions.push({
+      id: 'install',
+      label: '安装内置核心',
+      enabled: !input.busy,
+      reason: input.busy ? '正在进行中' : '',
+    });
+  }
   actions.push({ id: 'import', label: '导入核心包', enabled: !input.busy, reason: input.busy ? '正在进行中' : '' });
   actions.push({ id: 'diagnose', label: '导出诊断', enabled: true, reason: '' });
 

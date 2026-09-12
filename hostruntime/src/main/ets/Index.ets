@@ -5,6 +5,7 @@
  *   - Types      ：核心仓库的状态与**激活/回滚/清理判据**（纯函数）
  *   - Naming     ：容器名与版本目录名的规则与安全校验（纯函数）
  *   - CoreStore  ：解包落位、状态读写、激活事务、回滚、清理
+ *   - BundledCore：把 resfile 里内置的核心容器落地（首启安装；幂等）
  *   - RuntimePort：运行时载体接口 + 「未接线」实现（如实报告未接线，不伪装）
  *   - DshHost    ：运行状态机（未接线/未安装/待启动/就绪/失败…），起停核心
  *
@@ -18,5 +19,6 @@
 export * from './core/Types';
 export * from './core/Naming';
 export * from './core/CoreStore';
+export * from './core/BundledCore';
 export * from './runtime/RuntimePort';
 export * from './runtime/DshHost';

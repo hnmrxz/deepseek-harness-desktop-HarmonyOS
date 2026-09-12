@@ -439,6 +439,18 @@ function pack() {
       else log('[pack-core]   ⚠ tar 失败（非致命，zip 已产出）');
     }
   }
+
+  // 随应用分发：放进 entry 的 resfile（**不是 rawfile**，见 hostruntime/core/BundledCore.ets 的说明：
+  // resfile 安装后解压到沙箱、可按真实路径只读访问；rawfile 的 fd 不是文件系统 fd，copyFile 会拷坏）
+  if (process.argv.includes('--place-in-app')) {
+    const resDir = join(ROOT, 'entry', 'src', 'main', 'resources', 'resfile');
+    mkdirSync(resDir, { recursive: true });
+    const dest = join(resDir, `${base}.zip`);
+    cpSync(zipPath, dest, { force: true });
+    log(`[pack-core]   已放入应用内置资源：entry/src/main/resources/resfile/${base}.zip`);
+    log('[pack-core]   注意：该文件已在 .gitignore 中（体积大，不进版本库）');
+  }
+
   return { zipPath, bytes: z.bytes, entries: z.count, tarPath };
 }
 

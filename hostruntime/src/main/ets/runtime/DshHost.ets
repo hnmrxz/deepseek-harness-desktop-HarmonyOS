@@ -18,6 +18,7 @@
  */
 import { ActivationDecision, ActivationAction, CoreState, CoreVersionRecord } from '../core/Types';
 import { CoreStore, OpResult } from '../core/CoreStore';
+import { BundledInstallResult, installBundledCores } from '../core/BundledCore';
 import { HostHandle, RuntimePort, RuntimeProbe, RuntimeKind } from '../runtime/RuntimePort';
 
 /** 端侧 Host 的状态。字符串值与 appstate 的 CorePhase 一一对应（映射见 appstate）。 */
@@ -184,5 +185,30 @@ export class DshHost {
   /** 已安装版本的展示记录（转发仓库；核心页的"核心版本"分区用它）。 */
   records(): CoreVersionRecord[] {
     return this.store.installedRecords();
+  }
+
+  /**
+   * 安装**随应用内置**的核心包（首启解包；幂等）。
+   *
+   * 与 start() 的关键区别：这一步**不需要运行时载体**——它只是把 zip 解包落位。
+   * 因此运行时还没接线时也应当允许用户先装好（核心页据此把"安装内置核心"设为可用）。
+   */
+  async installBundled(resourceDir: string, workDir: string): Promise<BundledInstallResult> {
+    this.transient = HostState.EXTRACTING;
+    this.lastFailureNote = '';
+    try {
+      const result: BundledInstallResult = await installBundledCores(resourceDir, workDir, this.store);
+      if (result.failed.length > 0) {
+        this.lastFailureNote = result.note;
+      }
+      return result;
+    } catch (e) {
+      const err = e as Error;
+      const note: string = `安装内置核心失败：${err.message}`;
+      this.lastFailureNote = note;
+      return { installed: [], skipped: [], failed: [note], note: note };
+    } finally {
+      this.transient = null;
+    }
   }
 }
