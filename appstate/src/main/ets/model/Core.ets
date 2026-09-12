@@ -91,14 +91,71 @@ export interface CoreActionSpec {
   reason: string;
 }
 
-/** 插件分类（决定"能不能运行时安装"）。 */
+/**
+ * 插件是否含原生模块——**三态，不能是两态**。
+ *
+ * 【为什么必须有 UNKNOWN】能不能在运行时安装一个插件，取决于它是否含原生 `.node`。
+ * 但上游 `pluginInventory.list` 只给 `entryId / moduleName / enabled / fiberPhase`，
+ * **没有**原生信息。把"不知道"硬塞进 `hasNative: false` 就会把"未知"渲染成"可安装"——
+ * 用户点了才发现装不了，或者更糟：以为装上了。
+ * 因此这里显式保留 UNKNOWN，界面必须如实呈现并给出获取途径。
+ */
+export enum PluginNative {
+  /** 确认纯 JS：可在运行时安装/停用 */
+  PURE_JS = 'pure-js',
+  /** 确认含原生 .node：只能随应用发版提供（D6 §6.2 的硬约束） */
+  NATIVE = 'native',
+  /** 尚未判断：需要读取插件包清单 */
+  UNKNOWN = 'unknown',
+}
+
+/** 插件分类结果（决定"能不能运行时安装"）。 */
 export interface PluginRow {
   name: string;
   version: string;
-  /** 纯 JS 插件可在运行时安装/停用；含原生 .node 的必须随应用发版（D6 §6.2） */
-  hasNative: boolean;
+  /** `PluginNative` 的取值 */
+  nativeKind: string;
+  /** 是否允许运行时安装 */
   installable: boolean;
+  /** 徽标文案（可安装 / 需发版 / 待确认） */
+  badge: string;
+  /** 不可安装时的原因，会直接显示给用户 */
   reason: string;
+}
+
+/**
+ * 插件分类：只有"确认不含原生模块"的插件才允许运行时安装（D6 §6.2 的硬约束）。
+ * UNKNOWN **不**视为可安装——宁可让用户看到"待确认"，也不要给一个会失败的承诺。
+ */
+export function classifyPlugin(name: string, version: string, nativeKind: string): PluginRow {
+  if (nativeKind === PluginNative.PURE_JS) {
+    return {
+      name: name,
+      version: version,
+      nativeKind: PluginNative.PURE_JS,
+      installable: true,
+      badge: '可安装',
+      reason: '',
+    };
+  }
+  if (nativeKind === PluginNative.NATIVE) {
+    return {
+      name: name,
+      version: version,
+      nativeKind: PluginNative.NATIVE,
+      installable: false,
+      badge: '需发版',
+      reason: '含原生模块（.node）。鸿蒙只允许加载随 HAP 打包且已签名的原生库，无法在运行时安装——需随应用发版提供。',
+    };
+  }
+  return {
+    name: name,
+    version: version,
+    nativeKind: PluginNative.UNKNOWN,
+    installable: false,
+    badge: '待确认',
+    reason: '上游插件清单不含"是否含原生模块"的信息，因此无法判断能否运行时安装。需要读取该插件的包清单（package.json / 是否存在 .node）后才能确定。',
+  };
 }
 
 export interface CoreViewState {
@@ -210,19 +267,7 @@ export function buildCoreView(input: CoreViewInput): CoreViewState {
   };
 }
 
-/** 插件分类：只有"不含原生 .node"的插件才允许运行时安装（D6 §6.2 的硬约束）。 */
-export function classifyPlugin(name: string, version: string, hasNative: boolean): PluginRow {
-  if (hasNative) {
-    return {
-      name: name,
-      version: version,
-      hasNative: true,
-      installable: false,
-      reason: '含原生模块（.node）。鸿蒙只允许加载随 HAP 打包且已签名的原生库，无法在运行时安装——需随应用发版提供。',
-    };
-  }
-  return { name: name, version: version, hasNative: false, installable: true, reason: '' };
-}
+/** 插件分类见上方三态版本（PluginNative + classifyPlugin）。 */
 
 /** 空态文案（标题 + 说明）。 */
 export interface EmptyCopy {  title: string;

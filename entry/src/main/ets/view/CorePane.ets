@@ -246,7 +246,7 @@ export struct CorePane {
               Text(p.version)
                 .fontSize(Fs.CAPTION)
                 .fontColor($r('sys.color.font_tertiary'))
-              Text(p.installable ? '可安装' : '需发版')
+              Text(p.badge)
                 .fontSize(Fs.CAPTION)
                 .fontColor(p.installable ? $r('sys.color.brand') : $r('sys.color.font_tertiary'))
             }

@@ -121,6 +121,7 @@ export type { DetailSection } from './model/Detail';
 // ── 端侧核心的呈现契约（D6 §2/§6）：阶段、运行时事实、版本行、插件分类、动作可用性 ──
 export {
   CorePhase,
+  PluginNative,
   buildCoreView,
   classifyPlugin,
   corePhaseLabel,
