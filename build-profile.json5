@@ -82,6 +82,15 @@
           "name": "default"
         }
       ]
+    },
+    {
+      "name": "web_engine",
+      "srcPath": "./web_engine",
+      "targets": [
+        {
+          "name": "default"
+        }
+      ]
     }
   ]
 }
