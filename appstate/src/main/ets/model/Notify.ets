@@ -18,6 +18,7 @@
  */
 
 import { NotificationDraft, NotifyPriority, NotifyRoute, NotifySlot } from 'platform';
+import { getString, isRecord, parseJson } from 'connection';
 import { PendingItem, PendingKind } from './Trajectory';
 
 /**
@@ -430,6 +431,54 @@ export function inAppFallbackText(input: NotifyInput): InAppNotice {
     // route 在 notificationFor 里必然被赋值；这里的兜底只为满足类型收窄，不代表可发生。
     route: route !== undefined ? route : { page: 'sessions' }
   };
+}
+
+/**
+ * 路由里允许出现的页面名。
+ *
+ * 【为什么要白名单】路由是通过 Want 参数从**系统通知**回到应用的，
+ * 而通知参数在应用升级后可能是**旧版本**写下的（用户点了几天前的那条通知）。
+ * 不加校验就会把任意字符串当页面名去跳转——最坏情况是跳到一个不存在的页面，
+ * 表现是"点了通知什么都没发生"，而没有任何线索说明为什么。
+ */
+export const NOTIFY_PAGES: string[] = ['sessions', 'pending', 'diagnostics'];
+
+/**
+ * 解析通知点击携带的路由（`NotificationCenter.buildAgent` 写入的 `dshRoute` 参数）。
+ *
+ * 返回 `undefined` 表示**不该跳转**（JSON 坏、缺 `page`、或页面名不在白名单里）——
+ * 调用方据此保持当前页面，而不是猜一个目标。
+ *
+ * 实现说明：只做形状校验，不做"参数组合是否合理"的推断（例如 `pending` 页面
+ * 却带了 `pendingId` 之外的东西）。组合语义由 `routeOf()` 在**生产端**保证，
+ * 消费端重复推断一遍等于把同一条规则写两处。
+ */
+export function parseNotifyRoute(json: string): NotifyRoute | undefined {
+  if (json.length === 0) {
+    return undefined;
+  }
+  const parsed: Object | undefined = parseJson(json);
+  if (parsed === undefined || !isRecord(parsed)) {
+    return undefined;
+  }
+  const page: string | undefined = getString(parsed, 'page');
+  if (page === undefined || NOTIFY_PAGES.indexOf(page) < 0) {
+    return undefined;
+  }
+  const route: NotifyRoute = { page: page };
+  const hostId: string | undefined = getString(parsed, 'hostId');
+  if (hostId !== undefined && hostId.length > 0) {
+    route.hostId = hostId;
+  }
+  const sessionId: string | undefined = getString(parsed, 'sessionId');
+  if (sessionId !== undefined && sessionId.length > 0) {
+    route.sessionId = sessionId;
+  }
+  const pendingId: string | undefined = getString(parsed, 'pendingId');
+  if (pendingId !== undefined && pendingId.length > 0) {
+    route.pendingId = pendingId;
+  }
+  return route;
 }
 
 /**

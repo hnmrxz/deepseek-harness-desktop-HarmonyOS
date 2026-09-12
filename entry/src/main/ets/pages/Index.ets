@@ -28,7 +28,7 @@ import {
 import type { VersionCheck } from 'dshcompat';
 import type { DiagnosticItem, DiagnosticReport } from 'connection';
 import { copyText, PickOutcome, pickDocument } from 'platform';
-import type { PickedFile } from 'platform';
+import type { NotifyRoute, PickedFile } from 'platform';
 import { common } from '@kit.AbilityKit';
 import {
   APPROVAL_CHOICE_ALLOW_ALWAYS,
@@ -63,6 +63,7 @@ import {
   SettingsWriteOutcome,
   parseSettingInput,
   parseStructInput,
+  parseNotifyRoute,
   Sp,
   aboutInfo,
   emptyDiagReport,
@@ -382,6 +383,15 @@ struct Index {
   @StorageProp('dshLastHostToken') rememberedToken: string = '';
   @StorageProp('dshLastHostTokenState') rememberedTokenState: string = 'pending';
   @StorageProp('dshHostAutoConnect') shouldAutoConnect: boolean = false;
+  /**
+   * 启动参数里的**路由**（通知点击直达的那一半）。
+   *
+   * 【为什么必须有它】`NotificationCenter` 会给通知挂一个携带 `dshRoute` 的 WantAgent，
+   * 能力层把它解析后发布到 `dshLaunchRouteJson`；如果页面**不读**这个键，
+   * 用户点通知的结果就只是"应用到了前台"——而通知的全部价值恰恰是"点了就到那件事上"。
+   * 这条链路的平台半段早已就位（`buildAgent`），此前缺的就是这里的消费。
+   */
+  @StorageProp('dshLaunchRouteJson') launchRouteJson: string = '';
   /** 自动重连只跑一次（StorageProp 变化会触发，重复跑会反复认证） */
   private autoConnectAttempted: boolean = false;
   /** 未识别的上游事件类型数量（真机跑一次即可据此回填事件表） */
@@ -536,6 +546,57 @@ struct Index {
     // 可能晚于本页就绪。这里**轮询等待**而不是「读一次就下结论」——
     // 读一次就下结论会让用户看到「请添加 Host」，而他上次明明连过。
     this.waitForRememberedHost();
+    // 冷启动时也可能是"从通知进来"的（应用被杀后点通知 → onCreate 带参数）
+    this.applyLaunchRoute();
+  }
+
+  /**
+   * 页面每次变为可见时消费一次路由。
+   *
+   * 【为什么用 `onPageShow` 而不是 `@Watch`】`@StorageProp` 的 `@Watch` 在本项目里
+   * 不被信任（见 `waitForRememberedHost` 的说明）。而通知点击的场景是
+   * "应用被切到前台"，`onPageShow` 正是这个时刻——由生命周期驱动比轮询可靠，
+   * 也不会在页面已经可见时反复触发。
+   */
+  onPageShow(): void {
+    this.applyLaunchRoute();
+  }
+
+  /**
+   * 消费通知点击携带的路由。
+   *
+   * 【为什么消费后要清掉它】不清掉的话，用户此后每次把应用切到前台
+   * （甚至只是切回来）都会被重新导航一次——他正在看别的地方，界面却跳走。
+   * 清掉用的是 `AppStorage.setOrCreate`（`@StorageProp` 的赋值只改本地副本）。
+   */
+  private applyLaunchRoute(): void {
+    const json: string = this.launchRouteJson;
+    if (json.length === 0) {
+      return;
+    }
+    AppStorage.setOrCreate<string>('dshLaunchRouteJson', '');
+    const route: NotifyRoute | undefined = parseNotifyRoute(json);
+    if (route === undefined) {
+      // 解析不出来就**不跳转**：宁可停在当前页面，也不要跳到一个猜出来的位置。
+      // （能走到这里通常意味着通知是旧版本写下的，参数形状已经变了。）
+      return;
+    }
+    // `hostId` 目前不使用：本客户端只保存一个 Host（多 Host 管理未落地），
+    // 因此"切回正确连接"这一步无对象可切。等多 Host 落地后在这里接。
+    if (route.page === 'pending') {
+      this.selectTab(NavTab.PENDING);
+      return;
+    }
+    if (route.page === 'diagnostics') {
+      this.openDiagnostics();
+      return;
+    }
+    // 默认：会话页；带 sessionId 时直接下钻到那个会话
+    this.selectTab(NavTab.SESSIONS);
+    const sessionId: string | undefined = route.sessionId;
+    if (sessionId !== undefined && sessionId.length > 0) {
+      this.openSession(sessionId);
+    }
   }
 
   /**

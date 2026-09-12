@@ -30,6 +30,8 @@ import {
   notifyInputForPending,
   notifyInputForTurn,
   NotifyKind,
+  NOTIFY_PAGES,
+  parseNotifyRoute,
   PendingKind,
   projectCommands,
   RiskLevel,
@@ -578,6 +580,33 @@ export default function liveWireTest() {
         makePending('p-4', PendingKind.APPROVAL, 's-1', 'Bash', ''), '会话甲', 'h-1');
       expect(assertNoSensitiveContent(notificationFor(normal))).assertFalse();
       expect(notificationFor(normal).body.indexOf('Bash') >= 0).assertTrue();
+    });
+
+    it('parseNotifyRoute：坏 JSON / 未知页面名一律不跳转', 0, () => {
+      // 通知点击的路由来自 Want 参数，可能是**旧版本应用**写下的。白名单校验
+      // 是为了避免"点了通知什么都没发生、且没有任何线索"。
+      expect(parseNotifyRoute('') === undefined).assertTrue();
+      expect(parseNotifyRoute('not json') === undefined).assertTrue();
+      expect(parseNotifyRoute('{"page":"nowhere"}') === undefined).assertTrue();
+      expect(parseNotifyRoute('[]') === undefined).assertTrue();
+
+      const pending = parseNotifyRoute('{"page":"pending","sessionId":"s-1","pendingId":"p-1"}');
+      expect(pending === undefined).assertFalse();
+      expect(pending!.page).assertEqual('pending');
+      expect(pending!.pendingId).assertEqual('p-1');
+      expect(pending!.sessionId).assertEqual('s-1');
+
+      const diag = parseNotifyRoute('{"page":"diagnostics"}');
+      expect(diag === undefined).assertFalse();
+      expect(diag!.page).assertEqual('diagnostics');
+      // 只挂真正需要的定位参数：诊断页不该带 sessionId（生产端 routeOf 也这么保证）
+      expect(diag!.sessionId === undefined).assertTrue();
+
+      // 与生产端对齐：routeOf 产出的页面名必须都在白名单里
+      for (let i = 0; i < NOTIFY_PAGES.length; i++) {
+        const one: string = `{"page":"${NOTIFY_PAGES[i]}"}`;
+        expect(parseNotifyRoute(one) === undefined).assertFalse();
+      }
     });
 
     it('textPart / filePart：判别字段与载荷', 0, () => {
