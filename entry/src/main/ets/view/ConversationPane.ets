@@ -15,6 +15,8 @@ import {
   formatDuration,
   Fs,
   Lh,
+  matchCounterText,
+  matchTrajectoryIndices,
   ModelOption,
   ModelSelection,
   PendingAttachment,
@@ -24,6 +26,8 @@ import {
   ReferenceCandidate,
   Sp,
   Speaker,
+  stepMatch,
+  Sz,
   ToolState,
   toolStateIsProblem,
   toolStateLabel,
@@ -78,15 +82,124 @@ export struct ConversationPane {
   };
 
   @State expanded: string[] = [];
+  /**
+   * 会话内搜索状态（D3 §5.1 的 `Ctrl/Cmd + F`）。
+   *
+   * 【为什么状态放在本组件而不是宿主】搜索框就在轨迹上方，命中的滚动目标也是这条 List，
+   * 放在持有 List/Scroller 的组件里最直接。宿主只负责**触发**（Ctrl+F 把 `searchOpen` 置真）。
+   */
+  @Prop searchOpen: boolean = false;
+  /** 关闭搜索（`searchOpen` 是 `@Prop`，子组件不能可靠地写回，因此由宿主关闭） */
+  onCloseSearch: () => void = () => {
+  };
+  /** 搜索关键词（本组件自己维护；宿主不需要知道用户搜了什么） */
+  @State searchQuery: string = '';
+  /** 当前选中的命中在**命中数组**里的位置（-1 = 未选中） */
+  @State matchPos: number = -1;
   private scroller: Scroller = new Scroller();
+
+  /** 当前命中集合（每次渲染按关键词算一次；轨迹长度是几十到几百条，代价可忽略） */
+  private hits(): number[] {
+    return matchTrajectoryIndices(this.items, this.searchQuery);
+  }
+
+  /** 某一条是否在命中集合里（`isHit` 只用于左侧色条） */
+  private isHit(item: TrajectoryItem): boolean {
+    const list: number[] = this.hits();
+    for (let i = 0; i < list.length; i++) {
+      if (this.items[list[i]] !== undefined && this.items[list[i]].id === item.id) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** 跳到第 `pos` 个命中（越界时不动作） */
+  private jumpTo(pos: number): void {
+    const list: number[] = this.hits();
+    if (pos < 0 || pos >= list.length) {
+      return;
+    }
+    this.matchPos = pos;
+    // `scrollToIndex` 失败（索引越界/列表未就绪）不该让整页崩：搜索只是导航辅助。
+    try {
+      this.scroller.scrollToIndex(list[pos], true, ScrollAlign.CENTER);
+    } catch (err) {
+      // 忽略：下一次按键会再试一次
+    }
+  }
+
+  /** 关键词变化：重算命中并把光标移到第一个命中上 */
+  private onQueryChange(value: string): void {
+    this.searchQuery = value;
+    const list: number[] = this.hits();
+    this.matchPos = list.length > 0 ? 0 : -1;
+    if (list.length > 0) {
+      this.jumpTo(0);
+    }
+  }
+
+  /** 上一个 / 下一个命中（环绕，见 `stepMatch` 的语义说明） */
+  private step(delta: number): void {
+    const list: number[] = this.hits();
+    this.jumpTo(stepMatch(this.matchPos, list.length, delta));
+  }
+
+  @Builder
+  searchBar() {
+    Row({ space: Sp.S }) {
+      TextInput({ text: this.searchQuery, placeholder: '在本次会话中搜索…' })
+        .layoutWeight(1)
+        .constraintSize({ minHeight: Sz.TOUCH_MIN - 8 })
+        .onChange((value: string) => {
+          this.onQueryChange(value);
+        })
+        .accessibilityText('会话内搜索输入框')
+      Text(matchCounterText(this.matchPos, this.hits().length))
+        .fontSize(Fs.CAPTION)
+        .fontColor($r('sys.color.font_tertiary'))
+      Text('↑')
+        .fontSize(Fs.SECONDARY)
+        .fontColor($r('sys.color.brand'))
+        .padding(Sp.XS)
+        .onClick(() => {
+          this.step(-1);
+        })
+      Text('↓')
+        .fontSize(Fs.SECONDARY)
+        .fontColor($r('sys.color.brand'))
+        .padding(Sp.XS)
+        .onClick(() => {
+          this.step(1);
+        })
+      Text('×')
+        .fontSize(Fs.SECONDARY)
+        .fontColor($r('sys.color.font_secondary'))
+        .padding(Sp.XS)
+        .onClick(() => {
+          this.onCloseSearch();
+        })
+    }
+    .width('100%')
+    .padding({ left: Sp.M, right: Sp.M, top: Sp.S, bottom: Sp.S })
+    .backgroundColor($r('sys.color.background_secondary'))
+  }
 
   build() {
     Column() {
+      if (this.searchOpen) {
+        this.searchBar()
+      }
+
       List({ space: Sp.M, scroller: this.scroller }) {
         ForEach(this.items, (item: TrajectoryItem) => {
           ListItem() {
             this.trajectoryItem(item)
           }
+          // 命中项加一条左侧色条：**不改变正文**（正文里做高亮要拆 span，
+          // 而拆 span 会让 Markdown/代码块的渲染路径多一条分支，风险大于收益）。
+          .border({ width: { left: this.isHit(item) ? 3 : 0 },
+            color: $r('sys.color.brand') })
         }, (item: TrajectoryItem) => item.id)
       }
       .layoutWeight(1)

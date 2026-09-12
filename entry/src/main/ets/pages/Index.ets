@@ -416,6 +416,8 @@ struct Index {
   @StorageProp('dshThemeMode') themeMode: string = 'system';
   /** 主题上次应用是否成功（能力层写入；失败时设置页要如实说明） */
   @StorageProp('dshThemeApplied') themeApplied: boolean = true;
+  /** 会话内搜索条是否打开（D3 §5.1 的 Ctrl/Cmd+F；由快捷键打开、由搜索条自己关闭） */
+  @State searchOpen: boolean = false;
   /** 自动重连只跑一次（StorageProp 变化会触发，重复跑会反复认证） */
   private autoConnectAttempted: boolean = false;
   /** 未识别的上游事件类型数量（真机跑一次即可据此回填事件表） */
@@ -1166,10 +1168,17 @@ struct Index {
       this.sendDraft();
       return;
     }
-    // 以下是**尚未实现**的能力。如实说明而不是静默无反应（D3 §4 文案纪律：
-    // 能力缺失要说明原因，不隐藏）。静默无反应会让用户以为快捷键坏了。
-    if (id === 'command-palette' || id === 'search-in-session') {
-      this.attachNotice = `「${id === 'command-palette' ? '命令面板' : '会话内搜索'}」尚未实现（快捷键已按规范绑定，功能待补）。`;
+    if (id === 'search-in-session') {
+      // D3 §5.1 的 Ctrl/Cmd+F：打开会话内搜索条（仅会话页有意义）
+      if (this.showsConversation()) {
+        this.searchOpen = true;
+      } else {
+        this.attachNotice = '会话内搜索需要先打开一个会话。';
+      }
+      return;
+    }
+    if (id === 'command-palette') {
+      this.attachNotice = '「命令面板」尚未实现（快捷键已按规范绑定，功能待补）。';
       return;
     }
     if (id === 'toggle-nav') {
@@ -2277,6 +2286,10 @@ struct Index {
         },
         onOpenDetail: () => {
           this.stackPage = StackPage.DETAIL;
+        },
+        searchOpen: this.searchOpen,
+        onCloseSearch: () => {
+          this.searchOpen = false;
         }
       })
     } else {

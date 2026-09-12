@@ -109,6 +109,9 @@ export type {
 export { aboutInfo } from './model/StubData2';
 export { emptyDiagReport } from './model/Diag';
 
+// ── 会话内搜索（D3 §5.1 的 Ctrl/Cmd + F） ──
+export { matchCounterText, matchTrajectoryIndices, stepMatch } from './model/Search';
+
 // ── 详情栏分区（从真实轨迹派生，D3 §3.6） ──
 export { projectDetailSections } from './model/Detail';
 export type { DetailSection } from './model/Detail';

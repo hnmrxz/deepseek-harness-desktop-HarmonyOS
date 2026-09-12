@@ -32,6 +32,9 @@ import {
   notifyInputForTurn,
   NotifyKind,
   NOTIFY_PAGES,
+  matchCounterText,
+  matchTrajectoryIndices,
+  stepMatch,
   parseNotifyRoute,
   PendingKind,
   projectCommands,
@@ -681,6 +684,47 @@ export default function liveWireTest() {
       expect(colorModeOf(ThemeMode.LIGHT)).assertEqual(ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT);
       expect(colorModeOf(ThemeMode.DARK)).assertEqual(ConfigurationConstant.ColorMode.COLOR_MODE_DARK);
       expect(colorModeOf(ThemeMode.SYSTEM)).assertEqual(ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET);
+    });
+
+    // ───────────────── 会话内搜索 ─────────────────
+
+    it('matchTrajectoryIndices：大小写不敏感，搜正文/工具/交付物等可见字段', 0, () => {
+      const t: TrajectoryItem[] = [
+        item('a', TrajectoryKind.MESSAGE, 1),
+        item('b', TrajectoryKind.TOOL, 2),
+        item('c', TrajectoryKind.DELIVERABLE, 3)
+      ];
+      t[0].body = 'Fix the Parser bug';
+      t[1].toolName = 'edit';
+      t[1].toolArgs = 'file=parser.ts';
+      t[2].fileName = 'docs/report.md';
+
+      const forParser = matchTrajectoryIndices(t, 'parser');
+      expect(forParser.length).assertEqual(2);   // 正文 + 工具参数
+      expect(matchTrajectoryIndices(t, 'PARSER').length).assertEqual(2);
+      expect(matchTrajectoryIndices(t, 'report.md').length).assertEqual(1);
+      expect(matchTrajectoryIndices(t, 'nothing-here').length).assertEqual(0);
+      // 空关键词不返回全部（否则"打开搜索框"就等于全选，计数会变成条目总数）
+      expect(matchTrajectoryIndices(t, '   ').length).assertEqual(0);
+    });
+
+    it('stepMatch：环绕且从头开始，未选中时两个方向都给到端点', 0, () => {
+      // 三条语义都要对，否则用户会觉得"跳转坏了"：
+      const total = 3;
+      expect(stepMatch(-1, total, 1)).assertEqual(0);    // 还没选中 → 下一个从头
+      expect(stepMatch(-1, total, -1)).assertEqual(2);   // 还没选中 → 上一个从尾
+      expect(stepMatch(2, total, 1)).assertEqual(0);     // 末尾 → 环绕到开头
+      expect(stepMatch(0, total, -1)).assertEqual(2);    // 开头 → 环绕到末尾
+      expect(stepMatch(1, total, 1)).assertEqual(2);
+      // 无命中 / delta=0 一律 -1（不是 0：0 是合法位置，会把"没有命中"显示成"第 1 个"）
+      expect(stepMatch(0, 0, 1)).assertEqual(-1);
+      expect(stepMatch(0, total, 0)).assertEqual(-1);
+    });
+
+    it('matchCounterText：未选中时显示 1/总数（而不是 0/总数）', 0, () => {
+      expect(matchCounterText(-1, 12)).assertEqual('1/12');
+      expect(matchCounterText(2, 12)).assertEqual('3/12');
+      expect(matchCounterText(-1, 0)).assertEqual('0/0');
     });
 
     it('textPart / filePart：判别字段与载荷', 0, () => {

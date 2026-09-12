@@ -10,7 +10,20 @@
 > 配色取深靛紫 → 青绿的对角渐变，与官方偏亮的蓝处于不同色相区间。
 > 资源由 `node tools/make-brand-assets.mjs` 生成（形状即代码，可 diff、可复现）。
 
-> **当前进度**：**全部界面开发完成**（M1/M2/M3 界面部分）+ **设备能力层** + **真实数据接线核心** + **上游基线已升级到 `0.1.5-rc.1`** + **全部桩数据已清除**。
+> **当前进度**：**全部界面开发完成** + **设备能力层** + **真实数据接线** + **上游基线 `0.1.5-rc.2`（零漂移对齐）** + **零桩数据**。
+>
+> - **数据来源纪律**：**没有任何桩数据**。会话、待决、轨迹、工作区、文件树/预览、
+>   斜杠命令、`@` 引用、Host 列表、详情栏分区、设置、凭据、插件、模型目录**全部**
+>   由真实接口投影；未连接时显示各视图自己的**空态**（D3 §4）。
+> - **长连接在这台设备上会周期性断开**（服务端心跳要求 Pong，而端侧 ArkTS 不回），
+>   因此会话内容的读取有一条**纯一元**的兜底通路（`session/list` 取游标 → `session/page`），
+>   详见下文「设备侧的已知环境限制」。
+> - **一条命令起核心**：`node tools/dev-host.mjs` 自己拉起 dsh 核心、建反连、
+>   把地址与令牌经启动参数带进应用——**界面零手填**。
+>
+> **验证状态**：主构建通过；三道门禁为绿（漂移 / 架构回归 / hostkit 295 项）；
+> **设备内 `ohosTest` 最后一次实测 157/157**（此后新增的用例尚未在设备上执行，
+> 换机器后请先跑一遍，命令见下文「换到新机器要做什么」）。
 >
 > - **界面**：三形态导航与让步链、待决聚合、会话列表、会话轨迹与输入区、详情栏、
 >   工作区与文件树/预览、设置五页签、连接诊断、添加 Host —— 共 9 个视图组件，全部建成。
@@ -42,14 +55,16 @@
 > 并已让应用在设备上真的连上宿主 Host：认证、mux、`$events`、控制流、会话列表、
 > 设置/凭据/插件目录、**工作区文件树**全部走通；
 > 断连时如实报 `degraded` 且横幅提供「手动重连」，点击后真的重新认证并拉回数据。
-> **`hdc rport` 转发仍会在数秒内失效**，因此「加载后紧接着的交互」
-> （目录展开、文件预览、命令与引用候选）无法在这条通道上验收——
+> **长连接会周期性断开**（根因是服务端要求 Pong 而端侧不回，**不是** `hdc rport`——
+> 换到不经转发的通道症状相同），因此会话内容的读取走**一元兜底通路**；
+> 目录展开、文件预览、命令与引用候选的实机交互仍需在可靠通道上验收——
 > 见 [`docs/30-技术验证清单.md`](docs/30-技术验证清单.md) 的「设备 ↔ Host 端到端验证」。
 >
-> **仍待完成的项**：附件/文件上传的端侧选择与 `fileUploads/upload` 调用点
-> （协议侧载荷与投影已就绪）、完整「失效→恢复」全链路验收（需可靠通道）、
-> 2in1 快捷键与多窗口实机行为、通知送达与点击直达、本机偏好持久化。
-> 逐项列在 [`docs/30-技术验证清单.md`](docs/30-技术验证清单.md) 的「界面完成度对照」与 POC 跟踪表。
+> **仍待完成的项**：命令面板 / 切换左导航栏 / 复制选中代码块 / `Alt+↑↓` 消息跳转
+> （四者都已绑定快捷键并给出"尚未实现"的如实提示）、连接断开通知的偏好开关、
+> 多窗口与 2in1 的实机行为、端侧 Host 可行性。
+> 逐项列在下文「当前完成度与剩余缺口」与
+> [`docs/30-技术验证清单.md`](docs/30-技术验证清单.md)。
 
 ## 核心主张
 
@@ -257,16 +272,56 @@ devecocli ui layout --device DshApi26Phone --format json
 > （`Get-Process node | ... | Stop-Process` 这类写法会杀掉代理自己）。
 > 需要停止模拟器时用 `devecocli emulator stop <name>`，停止后台任务用任务 id。
 
+### 一条命令：起核心 + 应用自动接入（**不需要手填地址与令牌**）
+
+```sh
+# 起 dsh 核心（默认用**你自己的** ~/.dsh，故模型凭据/provider 都可用），
+# 建 hdc 反连，冷启动应用并把地址+令牌经启动参数带进去
+node tools/dev-host.mjs
+
+node tools/dev-host.mjs --isolated       # 用 .research/dev-host-home 的干净环境（没有凭据 → Agent 会在模型调用处失败）
+node tools/dev-host.mjs --rport 3137     # 指定设备侧端口（默认按 --port 自动推导）
+node tools/dev-host.mjs --no-launch      # 只起核心，打印可手抄的启动命令
+node tools/dev-host.mjs --relaunch       # 核心已在跑，只重启应用（复用已记录的地址与令牌）
+node tools/dev-host.mjs --stop           # 停止本项目起的核心（按记下的 pid，不做进程名匹配）
+```
+
+要点（都已实测，写下来是因为它们各自都能让人卡住半小时）：
+
+- **默认用用户自己的 `~/.dsh`**：空目录里没有模型凭据，`session/prompt` 会返回
+  `{accepted:true}` 但 Agent **永远不产出回复**（投递成功、无报错、没有回答）。
+- 只绑 `127.0.0.1`（不碰 `0.0.0.0`），客户端实际请求的权威用上游正规开关
+  `--trusted-host` **显式**加入信任栅栏——不伪造 `Host`/`Origin`。
+- 模型密钥自动注入：先看进程环境，再读 **Windows 注册表**（用户级→机器级）。
+  机器级变量常常存在注册表里而**不在当前 shell 的环境块**里；值不打印、不落盘。
+- 启动应用前会先 `aa force-stop`：启动参数只在**冷启动**被完整消费，
+  应用还活着时 `aa start` 走 `onNewWant`，而页面的自动连接有"只跑一次"守卫——
+  症状是"换了地址，界面还连着上一个 Host"。
+- **不要把它的输出接 `Select-Object -First N`**：PowerShell 会提前终止上游进程，
+  连带杀掉它持有的核心。
+
 ### 应用内验证（POC-1）
 
 产品首屏右上角的「POC」（或三栏模式左导航底部的「POC 协议验证」）进入 `pages/Poc1`：
 
-1. 在 Host 上执行 `dsh web --no-open --port <port> --host 127.0.0.1`，记下打印的 URL；
-2. 设备/模拟器上运行应用，填入 `host:port` 与 token（或整段启动 URL）；
+1. 用 `node tools/dev-host.mjs --no-launch` 起核心并拿到 URL（或自己 `dsh web`）；
+2. 设备/模拟器上运行应用，粘贴启动 URL（或用 `dev-host.mjs` 全自动带入）；
 3. 点「① 认证并跑通」依次执行：token 换 cookie → 一元只读调用 → 打开逻辑流复用端点 → 校验 `ready` 首项 → 心跳存活观察；
 4. 点「诊断」查看五项判定（端点 / TLS / 认证 / 协议 / Host），点「复制报告」导出可归档的验证证据。
 
 日志不打印 token 与 cookie 值（见 D1 §11.5 S4）。
+
+### 设备侧的已知环境限制（**换机器后请先读这段**）
+
+| 现象 | 结论 | 证据 |
+|---|---|---|
+| 应用连上后约 **5 秒**掉线，下一次 `send()` 报 `code=-1` | **服务端心跳是硬要求**（每 2 s Ping、漏两次即 terminate），而设备侧 ArkTS 的 `WebSocket` 不回 Pong | 对照实验：回 Pong → 15 s 保持；不回 → 5.4 s 被 CLOSE（`.research/protocol/probe-probe-harm.mjs`）。换到不经转发的通道症状相同，**因此这不是 `hdc` 转发的问题** |
+| 诊断页「协议」一项常显示 `未通过：WebSocket 已建立；事件流 opening` | 同一根因：`$events` 拿不到 `ready` | `devecocli ui` 读诊断页 |
+| 会话页显示不出内容 | **已用一元通路兜底**：`session/list` 取 `projections.asOfSeq` → `session/page{throughSeq}` 读回整段历史（与 follow 的记录同形，复用同一投影） | D2 §8.7.23；`SessionHub.refreshTrajectoryByPage()` |
+| 模拟器可能**起不来**（`emulator list` 显示 running 但 `hdc list targets` 为空） | 资源不足时它会半死；先 `devecocli emulator stop <name>`，确认空闲内存回到 3 GB 以上再 `start`。仍不行就打开 DevEco Studio → Device Manager 手工处理 | 2026-09-11 实测 |
+
+> 需要一条**稳定**的跨设备通道时，用 `hostkit/` 的加密隧道
+> （`node bin/hostkit.mjs start --pair`，295 项测试通过），而不是继续调 `hdc rport`。
 
 ### 在本仓库里做脚本化改动的两条硬约束
 
@@ -279,6 +334,39 @@ devecocli ui layout --device DshApi26Phone --format json
 2. **不要用进程名匹配去 kill**。本仓库的开发代理运行在 DSH 自身进程内，
    `Get-Process node | Where-Object {...} | Stop-Process` 这类写法会杀掉代理自己。
    停后台任务用任务 id，停模拟器用 `devecocli emulator stop`。
+
+## 换到新机器要做什么
+
+1. 装 DevEco Studio（含 SDK API 26）、`devecocli`、`hdc`、Node ≥ 22；
+2. `git clone` 本仓库 → `ohpm install --all`；
+3. 起一个模拟器（`DshApi26Phone`，API 26 手机）或接真机，确认 `hdc list targets` 有它；
+4. `devecocli build` 应通过；`node tools/arch-check.mjs` 与 `node tools/compat-drift.mjs` 应为绿；
+5. **把设备测试跑一遍并回填数字**（本机最后一轮实测是 **157/157**，此后又加了
+   `session/page`、本机偏好主题、会话内搜索的用例，尚未在设备上执行过）：
+   ```sh
+   devecocli build --modules entry@ohosTest
+   hdc install -r entry\build\default\outputs\ohosTest\entry-ohosTest-unsigned.hap
+   hdc shell aa test -b com.deepseek.dshharmony -m entry_test -s unittest OpenHarmonyTestRunner -s timeout 240000
+   ```
+6. 要连真实 Host 时：`node tools/dev-host.mjs`（一条命令，见上）。
+
+## 当前完成度与剩余缺口
+
+**已完成且经真实 Host 实测**：协议层（84 端点 / 4 流 / 15 能力，基线 `0.1.5-rc.2`）、
+三形态 UI、会话列表与轨迹、输入区（命令目录、`@` 引用、附件上传）、Host 侧待发队列、
+设置与凭据、工作区文件树与预览、诊断、通知（含点击直达路由）、本机偏好（主题模式）、
+快捷键（D3 §5.1 的 12 行）、连接恢复链（重连不再进终态）。
+
+**剩余缺口**（都已在代码里以"尚未实现"的提示如实呈现，不是静默无反应）：
+
+| 项 | 现状 |
+|---|---|
+| 命令面板（`Ctrl/Cmd + K`） | 快捷键已绑定，功能未实现 |
+| 切换左导航栏（`Ctrl/Cmd + B`） | 导航显隐目前由窗口宽度自动决定（让步链），手动折叠未实现 |
+| 复制选中代码块（`Ctrl/Cmd + Shift + C`） | 需要消息内选中状态，未实现 |
+| 上一条/下一条消息（`Alt + ↑/↓`） | 未实现 |
+| 连接断开通知 | 机制与文案都已就绪，但缺"本机偏好的开关"（D3 定为默认关闭），且在本机 5 秒断一次的环境下按默认开启会刷屏 |
+| 端侧 Host（POC-11） | 未评估 |
 
 ## 关键待决（见 D1 §12.2）
 
