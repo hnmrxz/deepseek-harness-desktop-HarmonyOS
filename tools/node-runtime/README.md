@@ -188,6 +188,28 @@ ArkTS 侧是**可单测的纯函数**（`hostruntime/.../RuntimePort.ets` 的 `b
 再做——在此之前声明一个不存在的原生库，会让 ArkTS 侧引用到一个加载不起来的模块，
 把当前可用的构建与页面一起弄坏。
 
+## 构建目标：`make libnode` 是一条绕开附属二进制的路（但有权衡）
+
+端侧真正需要的只有 `libnode.so`。看 `node.gyp` 的目标结构（行号可查）：
+
+| 目标 | 行 | 说明 |
+|---|---|---|
+| `node`（`node_core_target_name`） | 527–830 | **可执行文件**；依赖 `libnode`（589）；**`node_mksnapshot` 的依赖项与同名 action 都在这里**（693、699–722） |
+| `libnode`（`node_lib_target_name`） | 832–1043 | 共享库；**没有任何 `node_mksnapshot` 引用** |
+| `node_mksnapshot` | 1389–1451 | 宿主工具，依赖 `libnode` |
+| `cctest` / `embedtest` / `fuzz_*` | 1180 / 1269 / 1045+ | 测试与模糊测试二进制，都依赖 `libnode` |
+| `overlapped-checker` / `nop` | 1325 / 1346 | 与 libnode 无关的小二进制 |
+
+⇒ 所以当某个附属二进制挂掉时（`nop` / `overlapped-checker` 已经挂过一次），
+**`make libnode -j$(nproc)` 是合法的绕行**：它跳过 `node_mksnapshot`（一个要链接整个 V8 的
+宿主二进制）以及全部测试/模糊二进制。
+
+**权衡要写清**：`libnode` 自己**没有**快照 action，`node_mksnapshot` 属于 `node` 目标
+⇒ 只构建 `libnode` 可能得到一个**不带内置快照**的共享库。这**不影响能否跑**，
+但直接影响 G3′「冷启动到核心 ready ≤ 5 s」——所以这是**绕行方案，不是首选**：
+正常 `make` 能过就用正常 `make`；只在附属目标反复失败时才用它推进，
+并在真机上按 G3′ 复核冷启动。
+
 ## 已知风险（写在这里，避免"以为已经成功"）
 
 1. **`--shared` 在 OpenHarmony 上是官方"未测试"路径**（Node 文档只保证 Linux/macOS/Windows/AIX）。
