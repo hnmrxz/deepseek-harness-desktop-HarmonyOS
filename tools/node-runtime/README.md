@@ -53,6 +53,23 @@ bash tools/node-runtime/check-hap-native-signing.sh
 它们会不会被系统校验拒掉，**必须上设备用 `dlopen` 的错误码回答**（两种互斥解释见 D6 §4.1.9）。
 若确实需要签名，那一步必须放在 **HAP 组装之前**（组装后再改包内字节会破坏 HAP 签名）。
 
+## 中断与恢复（后台构建随会话死掉也不丢工作）
+
+`make` 是**增量**的：已编好的对象留在 `out/Release/obj.host` / `obj.target` 下，
+所以后台任务无论怎么结束，下一步都只是继续编剩下的。恢复方式：
+
+```bash
+bash tools/node-runtime/status-brief.sh   # 先确认：没有 make/cc1plus 在跑
+bash tools/node-runtime/resume-make.sh    # 续跑（先清掉非 AArch64 的目标对象，再 make）
+```
+
+**唯一会被 session 结束吞掉的是"当前正在编的那几个文件"**——它们没有产出 `.o`，
+下次会重编。已完成的不会重来。
+
+> 交叉验证过的一点：**不要在会话结束时去 kill 按进程名匹配的东西**。
+> `pkill make` / `Stop-Process -Name make` 这类写法会连带杀掉代理自己
+> （实测踩过），要停后台任务就用它的 job id。
+
 ## 签名回退流程 `sign-native.ps1`（已就位，未启用）
 
 `display-sign` 是回答"这个 `.so` 到底签没签"的**客观手段**，比 grep 段名强：它区分
