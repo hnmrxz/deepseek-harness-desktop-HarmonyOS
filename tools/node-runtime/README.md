@@ -84,6 +84,52 @@ zlib 会退回可移植 C 的 CRC32。**正确性不变**，只影响 gzip CRC �
 - 怀疑被污染就跑 `diagnose-toolchain.sh`：`other` **必须是 0**。
 - `resume-make.sh` 默认（`PURGE_FOREIGN=1`）在续跑前自动删掉所有非 AArch64 的目标对象。
 
+## NAPI 引导模块 `libdshhost.so`（阶段二：把 Node 在同进程内起起来）
+
+源码：`hostruntime/src/main/cpp/dshhost.cc`（**它只做引导**，不做协议、不碰 dsh：
+dsh 的 Host 由 Node 侧脚本在 loopback 上起，ArkTS 仍按既有 HTTP/WS 协议说话——
+这样换了运行时载体，上面的客户端一行都不用改）。
+
+```bash
+# 只编译（不需要 libnode.so，可以立刻验证 C++ 对不对）
+bash tools/node-runtime/build-dshhost.sh --compile-only
+
+# 编译 + 链接（需要 out/Release/libnode.so 已经产出）
+bash tools/node-runtime/build-dshhost.sh
+#   产物：entry/libs/arm64-v8a/libdshhost.so（该目录已 gitignore，字节不进库、方法进库）
+```
+
+**为什么同进程而不是 fork/exec**：鸿蒙手机**禁止三方应用 fork/创建进程**
+（D6 E15，`childProcessManager` 仅平板/PC-2in1）。同进程加载 `libnode.so` 是
+手机 / 折叠屏 / 平板 / 2in1 四条形态唯一共同可行的路径。
+
+**导出的接口**（ArkTS 侧 `import dshhost from 'libdshhost.so'`）：
+
+| 成员 | 语义 |
+|---|---|
+| `runtimeVersion(): string` | 编译进 libnode.so 的 Node 版本。**只要它返回非空就证明"模块加载成功且与 libnode 链接在一起了"**——这是"运行时可用"的第一条可观测证据 |
+| `startHost(argv: string[]): {started, note}` | 在独立线程里跑 `node::Start`（阻塞）。**同进程只允许起一次**：第二次返回 `started=false` 并说明原因，而不是偷偷再起一个（两个 Host 会抢同一个端口） |
+| `isHostRunning(): boolean` | Node 线程是否还活着 |
+| `stopHost(): {ok, note}` | **如实返回做不到**，理由见下 |
+
+**已知边界（写清，别当成已解决）**：
+
+1. **进程内 Node 无法从外部线程安全停止**。`node::Start` 阻塞，唯一正路是在 Node 线程
+   内部持一个 `uv_async` 句柄并调用 `node::Stop(env)`；那需要先拿到 env，属于下一步。
+   现在 `stopHost()` 返回 `ok:false` 而不是假装成功——假装成功会让上层以为核心停了，
+   而它还在监听回环端口，那比报错更糟。
+2. `node::Start` 会走 `uv_setup_args` 并尝试确定 `process.execPath`；鸿蒙沙箱下
+   `/proc/self/exe` 未必可用，`process.execPath` 可能为空。**必须上设备验证**。
+3. 本项目统一 jitless，因此 `argv` 里必须带 `--jitless`；否则 V8 初始化时会申请
+   可写可执行内存而被系统拦（这也是不申请 `ALLOW_WRITABLE_CODE_MEMORY` 的前提）。
+4. `libnode.so` 与 `libdshhost.so` 都必须随 HAP 打包且已签名（D6 E14），
+   热更新的 `.so` 会被系统拦截。
+
+**接线顺序（有依赖，不要提前做）**：`entry/oh-package.json5` 里声明 `${napi_name}.so`
+依赖 + `entry/src/main/cpp/types/` 下放 `.d.ts`，这两步**必须等 `libdshhost.so` 真的链接出来之后**
+再做——在此之前声明一个不存在的原生库，会让 ArkTS 侧引用到一个加载不起来的模块，
+把当前可用的构建与页面一起弄坏。
+
 ## 已知风险（写在这里，避免"以为已经成功"）
 
 1. **`--shared` 在 OpenHarmony 上是官方"未测试"路径**（Node 文档只保证 Linux/macOS/Windows/AIX）。
