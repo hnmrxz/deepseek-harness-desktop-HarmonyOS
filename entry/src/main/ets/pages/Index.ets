@@ -1929,7 +1929,9 @@ struct Index {
       return '连接诊断';
     }
     if (this.stackPage === StackPage.CONNECT) {
-      return '添加 Host';
+      // 新架构下"连接一台远程 Host"是**可选能力**（D7 §3 第 1 项），
+      // 因此标题不再叫"添加 Host"——那会让用户以为这是必经步骤。
+      return '远程 Host（可选）';
     }
     return navTabLabel(this.tab);
   }
@@ -2084,11 +2086,12 @@ struct Index {
 
       Blank()
 
-      // 二级入口：诊断 / 添加 Host / POC
+      // 二级入口：诊断 / 远程 Host（可选）/ POC
+      // 注意「远程 Host」的措辞：端侧自足运行后，连接别人的 Host 是**可选项**而不是前提（D7 §3）
       this.navPanelAction('连接诊断', () => {
         this.openDiagnostics();
       })
-      this.navPanelAction('添加 Host', () => {
+      this.navPanelAction('远程 Host（可选）', () => {
         this.stackPage = StackPage.CONNECT;
       })
       this.navPanelAction('POC 协议验证', () => {

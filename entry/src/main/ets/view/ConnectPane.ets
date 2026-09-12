@@ -53,7 +53,7 @@ export struct ConnectPane {
         .onClick(() => {
           this.onBack();
         })
-        Text('添加 Host')
+        Text('远程 Host（可选）')
           .fontSize(Fs.TITLE_S)
           .fontWeight(FontWeight.Medium)
           .layoutWeight(1)
