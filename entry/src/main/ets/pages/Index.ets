@@ -90,6 +90,7 @@ import {
   projectHosts,
   projectWorkspaces,
   pluginNativeOf,
+  PluginNative,
   SessionHub,
   Sz,
   TrajectoryItem,
@@ -130,7 +131,7 @@ import { hitOfKeyEvent } from '../view/ShortcutKeys';
 import type { ShortcutHit } from '../view/ShortcutKeys';
 // 端侧核心运行层（D6）：核心版本仓库与激活事务。运行时载体尚未接线，
 // 因此这里现在只用它的"仓库/状态"部分，不声称任何"已启动"。
-import { BundledInstallResult, DshHost, HostPluginReport, HostStatus, NotWiredRuntime, RuntimeProbe, hostStateIsTransient } from 'hostruntime';
+import { ActivationAction, ActivationDecision, BundledInstallResult, DshHost, HostPluginReport, HostStartResult, HostStatus, NotWiredRuntime, OpResult, RuntimeProbe, hostStateIsTransient } from 'hostruntime';
 
 /**
  * 把紧凑 JSON 美化以便人读写；失败时原样返回。
@@ -2598,6 +2599,18 @@ struct Index {
     for (const r of report.rows) {
       rows.push(classifyPlugin(r.name, '', pluginNativeOf(r.nativeKind), r.id, r.disabled));
     }
+    // 排序：**先看该看的**。端侧核心实测 152 行里 146 行是"可安装"的普通插件；
+    // 按清单原顺序铺开，真正需要用户注意的 6 行（依赖原生、运行时装不了）与
+    // 3 行（默认禁用）会被淹掉。
+    // **只排序、不隐藏**：插件清单的价值恰恰在于"到底装了什么"能被查全，
+    // 藏掉 146 行会让这个问题无法回答。sort 是稳定的，同档内保持清单原顺序。
+    const rank = (p: PluginRow): number => {
+      if (p.nativeKind === PluginNative.NATIVE) {
+        return 0;
+      }
+      return p.disabled ? 1 : 2;
+    };
+    rows.sort((a: PluginRow, b: PluginRow) => rank(a) - rank(b));
     return rows;
   }
 
@@ -2642,28 +2655,106 @@ struct Index {
       all ? '' : '未加载的原生件会让对应能力缺失（终端 / 进程沙箱 / 图片处理）');
   }
 
-  /** 核心页的动作。未接线的动作**必须**给出如实原因，不允许静默失败。 */
+  /**
+   * 核心页的动作。
+   *
+   * 【接线原则】能在今天真实执行的，就接真实实现，而不是统一回一句"尚未接线"。
+   * 因为"尚未接线"这句话必须**只用于真的没实现的东西**——否则等载体接上以后，
+   * 这些按钮还会继续说不接线，而没人会想起来改。具体：
+   *   - install  ：解包内置核心包，**不依赖运行时**，早已接线；
+   *   - start/stop/restart：`DshHost` 上已实现的真实调用。未接载体时它返回的是
+   *                 **真实原因**（运行时探测结果），载体一接上同一段代码就直接可用；
+   *   - rollback ：`CoreStore.rollback()` 是真实状态事务，且**不要求健康检查**
+   *                （回滚的语义就是退回已知可用的上一版），所以今天就能做；
+   *   - import   ：需要文件选择器 + 包校验 + 签名检查，确实还没做；
+   *   - diagnose ：需要运行时事实，确实还没做。
+   */
   private onCoreAction(id: string): void {
     if (id === 'install') {
       this.installBundledCore();
       return;
     }
-    if (id === 'diagnose') {
-      this.coreNotice = '诊断导出尚未接线：运行时接上后，这里会导出运行时事实与核心状态。';
+    if (id === 'start' || id === 'restart' || id === 'stop') {
+      this.coreLifecycleAction(id);
       return;
     }
-    const label: string = id === 'start' ? '启动核心'
-      : (id === 'restart' ? '重启核心'
-        : (id === 'stop' ? '停止核心'
-          : (id === 'rollback' ? '回滚到上一版' : (id === 'import' ? '导入核心包' : id))));
-    this.coreNotice = `「${label}」尚未接线：运行时载体（阶段一的 Electron-on-鸿蒙 运行时 / `
-      + `阶段二的 libnode.so）还没接上，因此这一步现在无法执行。`;
+    if (id === 'rollback') {
+      this.rollbackCore();
+      return;
+    }
+    if (id === 'import') {
+      this.coreNotice = '「导入核心包」尚未接线：需要文件选择器、容器校验与签名检查'
+        + '（校验规则见 hostcore/README.md 的容器契约），现在导入无法保证包可用。';
+      return;
+    }
+    this.coreNotice = '「诊断导出」尚未接线：运行时接上后，这里会导出运行时事实与核心状态。';
   }
 
-  /** 选择某个已安装版本作为切换目标。切换必须过健康检查，所以运行时未接线时做不了。 */
+  /** 起停核心。restart = 先停再起（stop 是幂等的）。 */
+  private coreLifecycleAction(id: string): void {
+    this.coreLifecycleActionAsync(id).catch(() => {
+      this.coreNotice = '核心操作失败（详见 hilog）';
+    });
+  }
+
+  private async coreLifecycleActionAsync(id: string): Promise<void> {
+    const ctx = getContext(this) as common.UIAbilityContext;
+    const host: DshHost = this.coreHost(ctx.filesDir);
+    const notes: string[] = [];
+    if (id === 'stop' || id === 'restart') {
+      const stopped: OpResult = await host.stop();
+      notes.push(stopped.ok ? '核心已停止' : stopped.message);
+    }
+    if (id !== 'stop') {
+      const started: HostStartResult = await host.start();
+      // start() 失败时给的是真实原因（例如运行时未接线的探测结论），不要改写成"请稍后"
+      notes.push(started.ok ? started.note : `未启动：${started.note}`);
+    }
+    this.coreNotice = notes.join('；');
+    await this.refreshCoreViewAsync();
+  }
+
+  /**
+   * 回滚到上一版。
+   *
+   * `CoreStore.rollback()` 要求 previous 存在且仍是已安装版本（判据在 Types.decideRollback，
+   * 可单测），不满足就 REFUSE 且**不动状态**。这里如实区分三种结果：
+   * 拒绝、写盘失败、成功。成功后还要说清"核心并未随之重启"——
+   * 状态指向变了 ≠ 有东西在跑，这句话不能省。
+   */
+  private rollbackCore(): void {
+    let notice: string = '';
+    try {
+      const ctx = getContext(this) as common.UIAbilityContext;
+      const host: DshHost = this.coreHost(ctx.filesDir);
+      const decision: ActivationDecision = host.store_().rollback();
+      if (decision.action === ActivationAction.REFUSE) {
+        notice = `未回滚：${decision.reason}`;
+      } else {
+        notice = `已回滚到 ${decision.next.current}（退回的版本：${decision.next.previous}）。`
+          + '核心并未随之重启：运行时载体接上后才会以该版本启动。';
+      }
+    } catch (e) {
+      const err = e as Error;
+      notice = `回滚失败：${err.message}`;
+    }
+    this.coreNotice = notice;
+    this.refreshCoreViewAsync().catch(() => {
+    });
+  }
+
+  /**
+   * 选择某个已安装版本作为**切换目标**。
+   *
+   * 「切换」走的是 `activate(candidate, health, …)`，而它的判据要求健康检查为 PASS
+   * （`Types.decideActivation`：宁可停在旧版本，也不要把没验证过的核心设为当前）。
+   * 健康检查必须先把候选版本起一次，因此运行时未接线时这一步**做不了**；
+   * 这里不写任何状态，只说明原因。
+   */
   private onCoreSelectVersion(version: string): void {
-    this.coreNotice = `版本 ${version} 已在设备上，但「切换」需要先把它起一次做健康检查；`
-      + `运行时载体接线后这里才能真正切换（当前不会改动任何状态）。`;
+    this.coreNotice = `版本 ${version} 已在设备上。把它设为当前版本需要先起一次做健康检查`
+      + '（未通过就不切换，见核心版本激活事务）；运行时载体接线后这里才能真正切换。'
+      + '当前不会改动任何状态。';
   }
 
   @Builder
