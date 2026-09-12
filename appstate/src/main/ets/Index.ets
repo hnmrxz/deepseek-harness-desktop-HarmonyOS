@@ -122,6 +122,7 @@ export {
   buildCoreView,
   classifyPlugin,
   corePhaseLabel,
+  corePhaseOfHostState,
   emptyCoreView,
   fact,
   sessionEmptyCopy,

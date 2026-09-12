@@ -14,6 +14,8 @@ export enum CorePhase {
   UNWIRED = 'unwired',
   /** 已接线但一个核心版本都没装 */
   EMPTY = 'empty',
+  /** 已安装、未启动 */
+  IDLE = 'idle',
   /** 正在解包核心 */
   EXTRACTING = 'extracting',
   /** 正在启动 Host */
@@ -32,6 +34,9 @@ export function corePhaseLabel(phase: CorePhase): string {
   }
   if (phase === CorePhase.EMPTY) {
     return '尚未安装核心';
+  }
+  if (phase === CorePhase.IDLE) {
+    return '待启动';
   }
   if (phase === CorePhase.EXTRACTING) {
     return '正在解包';
@@ -210,8 +215,7 @@ export function classifyPlugin(name: string, version: string, hasNative: boolean
 }
 
 /** 空态文案（标题 + 说明）。 */
-export interface EmptyCopy {
-  title: string;
+export interface EmptyCopy {  title: string;
   hint: string;
 }
 
@@ -259,6 +263,39 @@ export function sessionEmptyCopy(phase: CorePhase): EmptyCopy {
     title: '还没有会话',
     hint: '在本机核心上新建会话后会自动出现在这里。',
   };
+}
+
+/**
+ * 把 hostruntime 的 HostState 映射成呈现层的 CorePhase。
+ *
+ * 【为什么用字符串而不是 import hostruntime 的枚举】分层规则（D1 §10.1）要求
+ * appstate 不反向依赖机制层；而**映射本身是需要被审视的一步**——
+ * 例如底层 READY 在呈现层必须真的是"就绪"，不能因为字符串写错而退化成默认分支。
+ * 因此这里逐值显式映射，未知值一律落到 UNWIRED（保守：宁可说"未就绪"，也不谎称就绪）。
+ */
+export function corePhaseOfHostState(state: string): CorePhase {
+  if (state === 'ready') {
+    return CorePhase.READY;
+  }
+  if (state === 'degraded') {
+    return CorePhase.DEGRADED;
+  }
+  if (state === 'failed') {
+    return CorePhase.FAILED;
+  }
+  if (state === 'starting') {
+    return CorePhase.STARTING;
+  }
+  if (state === 'extracting') {
+    return CorePhase.EXTRACTING;
+  }
+  if (state === 'empty') {
+    return CorePhase.EMPTY;
+  }
+  if (state === 'idle') {
+    return CorePhase.IDLE;
+  }
+  return CorePhase.UNWIRED;
 }
 
 /** 初始（未接线）视图：用于运行时还没接上时的如实呈现。 */export function emptyCoreView(): CoreViewState {

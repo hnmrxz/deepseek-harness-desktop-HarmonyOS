@@ -70,8 +70,8 @@ import {
   aboutInfo,
   buildCoreView,
   CoreFact,
-  CorePhase,
   CoreViewState,
+  corePhaseOfHostState,
   emptyCoreView,
   emptyDiagReport,
   fact,
@@ -120,7 +120,7 @@ import { hitOfKeyEvent } from '../view/ShortcutKeys';
 import type { ShortcutHit } from '../view/ShortcutKeys';
 // 端侧核心运行层（D6）：核心版本仓库与激活事务。运行时载体尚未接线，
 // 因此这里现在只用它的"仓库/状态"部分，不声称任何"已启动"。
-import { CoreState, CoreStore } from 'hostruntime';
+import { DshHost, HostStatus, NotWiredRuntime, RuntimeProbe, hostStateIsTransient } from 'hostruntime';
 
 /**
  * 把紧凑 JSON 美化以便人读写；失败时原样返回。
@@ -260,6 +260,8 @@ struct Index {
   @State coreView: CoreViewState = emptyCoreView();
   /** 核心页的一次性提示（动作未接线/进行中等），显示后由用户下次操作覆盖 */
   @State coreNotice: string = '';
+  /** 端侧核心的生命周期句柄（懒建；只有一个，与"单一状态机"的纪律一致） */
+  private host: DshHost | null = null;
   @State workspaces: WorkspaceItem[] = [];
   @State fileTree: FileNode[] = [];
   /** 文件预览结果；undefined = 未选择文件（@State 必须给默认值） */
@@ -2459,49 +2461,99 @@ struct Index {
    * 这条纪律与项目"界面不说谎"的要求一致（D3 §4）。
    */
   private refreshCoreView(): void {
-    let installed: string[] = [];
-    let current: string = '';
-    let previous: string = '';
+    this.refreshCoreViewAsync().catch(() => {
+    });
+  }
+
+  /** 端侧核心的生命周期入口。运行时未接线时用 NotWiredRuntime——它会**如实**报告未接线。 */
+  private coreHost(filesDir: string): DshHost {
+    if (this.host === null) {
+      this.host = new DshHost(filesDir, new NotWiredRuntime(
+        '运行时载体尚未接线：阶段一是 Electron-on-鸿蒙 运行时（产物需从华为侧获取，见 D6 §4.1），'
+          + '阶段二是自建 libnode.so（见 tools/node-runtime/）。接线后这里会显示真实的 Node 版本与原生件加载结果。'));
+    }
+    return this.host;
+  }
+
+  /**
+   * 刷新核心页的呈现模型。
+   *
+   * 【为什么状态从 DshHost 来，而不是在这里写死】阶段的判断（未接线/未安装/待启动/就绪/失败）
+   * 与"为什么"必须只有一个来源，否则核心页与诊断页迟早会给出互相矛盾的结论。
+   * 这里只做**映射**：hostruntime 的事实 → appstate 的呈现契约。
+   */
+  private async refreshCoreViewAsync(): Promise<void> {
+    let status: HostStatus | null = null;
     let repoNote: string = '';
-    let repoOk: boolean = false;
     try {
       const ctx = getContext(this) as common.UIAbilityContext;
-      const store: CoreStore = new CoreStore(ctx.filesDir);
-      installed = store.listInstalled();
-      const state: CoreState = store.readState();
-      current = state.current;
-      previous = state.previous;
-      repoNote = `核心树目录：${store.coresDir()}`;
-      repoOk = true;
+      const host: DshHost = this.coreHost(ctx.filesDir);
+      status = await host.status();
+      repoNote = `核心树目录：${host.store_().coresDir()}`;
     } catch (e) {
       repoNote = '读取核心树目录失败（详见 hilog）';
     }
+    if (status === null) {
+      this.coreView = emptyCoreView();
+      return;
+    }
 
+    const probe: RuntimeProbe = status.probe;
     const facts: CoreFact[] = [
-      unknownFact('Node 运行时', '运行时载体接线后显示实际版本（要求 ≥ 22.17.0）'),
-      unknownFact('zlib zstd 能力', '会话持久化依赖 node:zlib 的 zstd，接线后自动探测'),
-      unknownFact('JIT 状态', '本项目统一按 jitless 运行，不申请任何特殊权限'),
-      unknownFact('原生件加载', 'koffi / node-pty / sharp 三个鸿蒙移植件的加载结果'),
-      unknownFact('监听地址', '核心起来后应只监听 127.0.0.1'),
+      probe.nodeVersion.length > 0
+        ? fact('Node 运行时', probe.nodeVersion, 'ok', '')
+        : unknownFact('Node 运行时', '运行时载体接线后显示实际版本（要求 ≥ 22.17.0）'),
+      probe.zstd === null
+        ? unknownFact('zlib zstd 能力', '会话持久化依赖 node:zlib 的 zstd，接线后自动探测')
+        : fact('zlib zstd 能力', probe.zstd ? '可用' : '不可用', probe.zstd ? 'ok' : 'warn',
+          probe.zstd ? '' : '缺少 zstd 会让会话持久化不可用'),
+      probe.jitless === null
+        ? unknownFact('JIT 状态', '本项目统一按 jitless 运行，不申请任何特殊权限')
+        : fact('JIT 状态', probe.jitless ? 'jitless（无 JIT）' : '启用了 JIT', probe.jitless ? 'ok' : 'warn',
+          probe.jitless ? '' : '本项目要求 jitless：不申请特殊权限以保证顺利上架（D6 §4.4）'),
+      this.nativeFact(probe),
+      probe.listenAddress.length > 0
+        ? fact('监听地址', probe.listenAddress,
+          probe.listenAddress.startsWith('127.0.0.1') ? 'ok' : 'warn',
+          probe.listenAddress.startsWith('127.0.0.1') ? '' : '端侧核心只应监听回环地址')
+        : unknownFact('监听地址', '核心起来后应只监听 127.0.0.1'),
       fact('核心仓库',
-        installed.length > 0 ? `已安装 ${installed.length} 个版本` : '空',
-        repoOk ? (installed.length > 0 ? 'ok' : 'warn') : 'warn',
+        status.installed.length > 0 ? `已安装 ${status.installed.length} 个版本` : '空',
+        status.installed.length > 0 ? 'ok' : 'warn',
         repoNote)
     ];
 
     this.coreView = buildCoreView({
-      phase: CorePhase.UNWIRED,
-      title: '端侧核心尚未接线',
-      detail: '核心管理的骨架已经就位（版本仓库、激活事务、端侧 profile 与打包流水线），'
-        + '但运行时载体还没接上，所以现在还不能在设备上起 Host。',
-      busy: false,
-      installed: installed,
-      currentVersion: current,
-      previousVersion: previous,
-      profileName: 'ondevice',
+      phase: corePhaseOfHostState(status.state),
+      title: status.note,
+      detail: probe.available
+        ? ''
+        : '版本仓库与运行时事实现在就能看；载体接线后即可在这里起 Host。',
+      busy: hostStateIsTransient(status.state),
+      installed: status.installed,
+      currentVersion: status.currentVersion,
+      previousVersion: status.previousVersion,
+      profileName: status.profile,
       facts: facts,
       plugins: []
     });
+  }
+
+  /** 原生件加载事实。没有数据时如实写"未探测"，不写 0/N 这种看起来像结论的值。 */
+  private nativeFact(probe: RuntimeProbe): CoreFact {
+    if (probe.natives.length === 0) {
+      return unknownFact('原生件加载', 'koffi / node-pty / sharp 三个鸿蒙移植件的加载结果');
+    }
+    let loaded: number = 0;
+    for (let i = 0; i < probe.natives.length; i++) {
+      if (probe.natives[i].loaded) {
+        loaded++;
+      }
+    }
+    const all: boolean = loaded === probe.natives.length;
+    return fact('原生件加载', `${loaded}/${probe.natives.length} 已加载`,
+      all ? 'ok' : 'warn',
+      all ? '' : '未加载的原生件会让对应能力缺失（终端 / 进程沙箱 / 图片处理）');
   }
 
   /** 核心页的动作。未接线的动作**必须**给出如实原因，不允许静默失败。 */

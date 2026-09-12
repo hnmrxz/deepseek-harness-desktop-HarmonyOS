@@ -1,388 +1,142 @@
-# HDSH —— DeepSeek Harness 鸿蒙客户端
+# HDSH —— 应用本体自足运行 DeepSeek Harness 的鸿蒙端
 
-<img src="docs/brand/hdsh-icon.png" alt="HDSH 应用图标" width="128" align="right" />
+<img src="docs/brand/hdsh-icon.png" alt="HDSH 应用图标" width="112" align="right" />
 
-面向 HarmonyOS（手机 / 折叠屏 / 平板 / 2in1 PC）的 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）一等客户端，**ArkTS + ArkUI 原生实现**。应用名统一为 **HDSH**（HarmonyOS + DSH）。
+面向 HarmonyOS（手机 / 折叠屏 / 平板 / 2in1）的 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）端，**ArkTS + ArkUI 原生实现**。
 
-> **图标**：字母 **H** 为主体，横杠是一道**斜向开口的链环**（产品名 `harness` 就是"挂具"，
-> 而客户端做的事正是挂接到 Host）；下腔内三道波纹是"海"的几何暗示——
-> 与 DeepSeek 的鲸鱼属于同一血缘，但**不是**同一个符号。
-> 配色取深靛紫 → 青绿的对角渐变，与官方偏亮的蓝处于不同色相区间。
-> 资源由 `node tools/make-brand-assets.mjs` 生成（形状即代码，可 diff、可复现）。
-
-> **当前进度**：**全部界面开发完成** + **设备能力层** + **真实数据接线** + **上游基线 `0.1.5-rc.2`（零漂移对齐）** + **零桩数据**。
+> **它不是"PC 上 dsh 的遥控器"。** 应用**本体就是 DSH 的运行载体**：HAP 内自带 Node 运行时与 dsh 核心树，
+> Host 起在本端 `127.0.0.1`，ArkUI 原生页面就是这个**本地** Host 的客户端页面；
+> 并支持插件的增删启停与核心版本的安装 / 切换 / 回滚。
+> 「连接远程 Host」保留为**可选能力**，不再是目标与验收口径。
 >
-> - **数据来源纪律**：**没有任何桩数据**。会话、待决、轨迹、工作区、文件树/预览、
->   斜杠命令、`@` 引用、Host 列表、详情栏分区、设置、凭据、插件、模型目录**全部**
->   由真实接口投影；未连接时显示各视图自己的**空态**（D3 §4）。
-> - **长连接在这台设备上会周期性断开**（服务端心跳要求 Pong，而端侧 ArkTS 不回），
->   因此会话内容的读取有一条**纯一元**的兜底通路（`session/list` 取游标 → `session/page`），
->   详见下文「设备侧的已知环境限制」。
-> - **一条命令起核心**：`node tools/dev-host.mjs` 自己拉起 dsh 核心、建反连、
->   把地址与令牌经启动参数带进应用——**界面零手填**。
->
-> **验证状态**：主构建通过；三道门禁为绿（漂移 / 架构回归 / hostkit 295 项）；
-> **设备内 `ohosTest` 最后一次实测 157/157**（此后新增的用例尚未在设备上执行，
-> 换机器后请先跑一遍，命令见下文「换到新机器要做什么」）。
->
-> - **界面**：三形态导航与让步链、待决聚合、会话列表、会话轨迹与输入区、详情栏、
->   工作区与文件树/预览、设置五页签、连接诊断、添加 Host —— 共 9 个视图组件，全部建成。
-> - **设备能力层**（`platform` HAR）：通知与三类渠道、长时任务保活、剪贴板、系统分享、
->   设备形态事实、窗口几何记忆、进程级运行时身份与窗口台账。
-> - **真实数据接线**（`appstate/store/SessionHub.ets`）：全应用**单一** mux 连接 +
->   单一 `$events` + 单一 `session/control` + 单一 `session/follow`（D1 §7.7.5b），
->   含待发队列、离线降级、未识别上游事件的自证汇总。
-> - **数据来源纪律**：**没有任何桩数据**。会话、待决、轨迹、工作区、文件树/预览、
->   斜杠命令、`@` 引用、Host 列表、详情栏分区、设置、凭据、插件、模型目录**全部**
->   由真实接口投影；未连接时显示各视图自己的**空态**（D3 §4），而不是编造的示例内容。
->   曾经有六块是编造的（其中「本机 Host · 已授权」是**安全陈述**），它把「功能没接上」
->   伪装成「功能正常」——详见提交 `85e44be`。
-> - **上游兼容面**：基线由 `0.1.2-rc.1`（74 端点）升级到 **`0.1.5-rc.1`（84 端点）**，
->   新增 `workspaceFiles/*`、`fileUploads/upload`、`goals/get`、`sessionFeedback/record` 四个能力域；
->   漂移门禁绿、负测试通过。**已对齐 `0.1.5-rc.2`**——三层证据表明它是**零协议漂移**
->   （调用描述符逐字节相同；1336 个 `.d.ts` 里只有 8 个与我们无关的文件有差异；
->   另起 rc.2 Host 复跑关键探测结果逐字相同），因此只更新了版本矩阵，未改任何代码。
->
-> **验证状态**：主构建与 `entry@ohosTest` 目标编译通过；三道门禁为绿
-> （漂移门禁 + 架构回归门禁 + hostkit 的 295 项测试）；**设备内 `ohosTest` 139/139 通过**；
-> 已对**真实 `0.1.5-rc.1` Host** 完成三轮只读实测（含 mux 帧、`$events` ready、
-> `session/control` baseline、`session/follow` snapshot、`session/page`、会话列表真实字段全集、
-> `workspaceFiles/list` 的**根目录词法**），结论逐条落在
-> [`docs/10-协议兼容事实基线.md`](docs/10-协议兼容事实基线.md) §8.7。
->
-> **设备侧**：API 26 手机模拟器上已完成构建 → 安装 → 启动 → 渲染与交互验收
-> （单栏形态、会话列表状态徽标、待决聚合、**危险动作权重反转**逐条通过），
-> 并已让应用在设备上真的连上宿主 Host：认证、mux、`$events`、控制流、会话列表、
-> 设置/凭据/插件目录、**工作区文件树**全部走通；
-> 断连时如实报 `degraded` 且横幅提供「手动重连」，点击后真的重新认证并拉回数据。
-> **长连接会周期性断开**（根因是服务端要求 Pong 而端侧不回，**不是** `hdc rport`——
-> 换到不经转发的通道症状相同），因此会话内容的读取走**一元兜底通路**；
-> 目录展开、文件预览、命令与引用候选的实机交互仍需在可靠通道上验收——
-> 见 [`docs/30-技术验证清单.md`](docs/30-技术验证清单.md) 的「设备 ↔ Host 端到端验证」。
->
-> **仍待完成的项**：命令面板 / 切换左导航栏 / 复制选中代码块 / `Alt+↑↓` 消息跳转
-> （四者都已绑定快捷键并给出"尚未实现"的如实提示）、连接断开通知的偏好开关、
-> 多窗口与 2in1 的实机行为、端侧 Host 可行性。
-> 逐项列在下文「当前完成度与剩余缺口」与
-> [`docs/30-技术验证清单.md`](docs/30-技术验证清单.md)。
+> 目标与架构的权威说明见 **[`docs/50-端侧核心运行架构.md`](docs/50-端侧核心运行架构.md)（D6）**；
+> 界面规范见 **[`docs/60-界面重塑-端侧核心.md`](docs/60-界面重塑-端侧核心.md)（D7）**。
+> 与 D1（开发任务书）冲突处，以 D6/D7 为准——D1 的部分结论（把端侧 Host 列为非目标）已经过期。
 
-## 核心主张
+## 为什么是端侧自足（三条事实变了）
 
-> ⚠️ **目标已更正（2026-09-12）——本项目不是"远程客户端"。**
-> 本应用**本体就要具备 DSH 核心运行能力**：HAP 内自带 Node 运行时与 dsh 核心树，Host 起在本端 `127.0.0.1`，
-> ArkUI 原生页面就是这个**本地** Host 的客户端页面，并支持插件增删启停与核心版本的安装 / 切换 / 回滚。
-> 「连接远程 Host」保留为可选的接入方式，但不再是目标与验收口径。
-> 权威说明与可行性证据见 [`docs/50-端侧核心运行架构.md`](docs/50-端侧核心运行架构.md)（D6）。
-> 下文原「核心主张」中与远程客户端定位相关的表述，以 D6 为准。
+| # | 事实 | 后果 |
+|---|---|---|
+| 1 | **Node.js 官方已支持 OpenHarmony**（`BUILDING.md` 平台表列 `OpenHarmony / arm64 / >= 5.0`；支持 PR [#58350](https://github.com/nodejs/node/pull/58350) 已合入 `main`） | "端侧没有 Node 运行时"这个前提不成立 |
+| 2 | **dsh 的原生依赖已有鸿蒙移植**：`@ohos-ports/{koffi,node-pty,sharp}`、`@ohos-npm-ports/*`，甚至已有 `@ohos-ports/deepseek-ai-dsh` | "原生模块无 aarch64 产物 → 能力全缺失"这条反面对标的理由过期 |
+| 3 | 端侧自足后**不存在跨设备传输层**：Host 与页面同进程走回环 | 旧方案最痛的"长连接周期性断开 / 转发不可靠 / 需要隧道"从关键路径消失 |
 
-1. **本体即运行时，而不是套壳也不是遥控器** —— ArkUI 原生页面 + 原生协议客户端（`POST /api/<endpoint>` + `/api/remote.mux`）；
-   同时应用内嵌 Node 运行时与 dsh 核心树，**自己把 Host 跑起来**。Host 与页面同进程，走 `127.0.0.1`：
-   不绑 `0.0.0.0`、不改写 `Host`/`Origin`、不需要隧道，也没有浏览器内核。
-2. **全形态而非只做 PC/平板** —— 手机竖屏单手可用、折叠屏展开秒变双栏、平板/2in1 多窗口 + 键鼠 + 拖拽。
-3. **接入而不打洞** —— 不绑 `0.0.0.0`、不改写 `Host`/`Origin`、**0 个上游 patch**；跨设备访问走显式配对 + 加密隧道，隧道出口仍在 Host 的 loopback 上，因此上游安全围栏天然满足。
-4. **升级友好** —— 上游接口细节只允许出现在 `dshcompat` 一处，配一个**会真的失败**的漂移门禁（详见下方）。
+## 架构
 
-## 与参考项目的关系
+```
+┌─ HDSH（HAP）────────────────────────────────────────────────────────┐
+│  页面层   ArkUI 原生：待决 / 会话 / 工作区 /【核心】/ 设置            │
+│  状态层   appstate：单一连接与会话状态中枢（SessionHub）             │
+│  协议层   connection + dshcompat：84 端点 / 4 流，漂移门禁保护        │
+│  核心层   hostruntime：版本仓库 + 激活事务 + 运行时载体抽象 + 状态机   │
+│  设备层   platform：通知 / 长时任务 / 剪贴板 / 分享 / 窗口 / 密钥存储  │
+└────────────────────────────────────────────────────────────────────┘
+        │ 进程内回环：POST /api/<endpoint> + WS /api/remote.mux
+        ▼
+   端侧 dsh Host（Node 运行时跑在本应用进程内）
+     webserver(127.0.0.1) ├ /api ├ /api/remote.mux ├ $events
+     DSH_HOME = <应用沙箱>/dsh/home（跨核心版本共享的唯一一份用户数据）
+```
 
-| 项目 | 关系 |
+**同进程的好处不是"省事"，而是安全语义不用绕**：社区方案必须绑 `0.0.0.0` + 改写 `Host` 头才能穿过
+鸿蒙的进程间 loopback 隔离；同进程不跨该边界，因此**不绑全网卡、不改信任头、不需要隧道**。
+
+## 当前状态（据实，2026-09-12）
+
+| 项 | 状态 |
 |---|---|
-| [`deepseek-ai/deepseek-harness/apps/desktop`](https://github.com/deepseek-ai/deepseek-harness/blob/master/apps/desktop/README.zh.md) | 官方 Electron 桌面壳。本项目借鉴其**架构决策与工程纪律**（发布身份、状态归属、激活事务、真机验收），不复制其形态与运行时 |
-| [`fellow99/deepseek-harness-harmony`](https://github.com/fellow99/deepseek-harness-harmony) | 社区 Electron-on-鸿蒙移植（真机已跑通）。本项目以其为**反面对标**：换掉 172.7 MB 运行时与 143 MB 启动解压、去掉全部上游 patch、不再绑 `0.0.0.0`、补回终端/沙箱/图片管线能力、并把手机纳入一等目标 |
+| 目标与架构 | ✅ 已更正为端侧自足（D6），四项决策落定 |
+| 界面 | ✅ 新增「核心」一级页面（阶段/运行时事实/版本/插件四分区）；会话空态按核心阶段分档 |
+| 端侧核心树 | ✅ `tools/pack-core.mjs` 可产出鸿蒙形态核心包（zip 63.2 MB / 解包 207 MB；48 个原生 ELF 全部带 `.codesign`） |
+| 核心版本管理 | ✅ `hostruntime` 的版本仓库与激活事务（stage→verify→health→activate→rollback）可编译 |
+| **运行时载体** | ⏳ **未接线**——这是当前关键路径。阶段一（Electron-on-鸿蒙）缺华为侧产物；阶段二（自建 `libnode.so`）交叉编译已启动，见 `tools/node-runtime/` |
+| 设备验收 | ⏳ 无活动设备；所有"真机可用"的结论都还没产生 |
+
+> 界面上不写桩数据：运行时没接上就显示「未接线」，未探测的事实写「未探测 + 探测条件」，
+> 不可用的动作把原因写在按钮下方。**"看起来正常"比"报错"更危险**，这一条在本项目已有过教训。
+
+## 不变式（改代码前先看这四条）
+
+1. **零上游 patch**：不 fork、不魔改 dsh；端侧差异只走它自己的组合面（profile / `cordis.patch.yml` / bundle）。
+2. **不打洞**：默认只监听 `127.0.0.1`；不绑 `0.0.0.0`、不伪造 `Host`/`Origin`。
+3. **不申请特殊权限**：各端一律按 **jitless** 运行，权限面只保留普通权限（网络 = `ohos.permission.INTERNET`），
+   以确保顺利上架。任何"靠申请 JIT 类 ACL 权限才能成立"的方案都不进选型（D6 §4.4）。
+4. **界面不说谎**：失败必须给出下一步；空态要说明"可以做什么"；未探测 ≠ 未知。
 
 ## 仓库结构
 
 ```
-.
-├── AppScope/                 # 应用级配置与资源（bundleName、图标、应用名）
-├── entry/                    # HAP 入口：Ability、AbilityStage、页面、视图、形态适配
-│   └── src/
-│       ├── main/ets/
-│       │   ├── abilitystage/     # specified 启动模式的实例 key（多窗口归属）
-│       │   ├── entryability/     # UIAbility：窗口登记、几何记忆、启动参数下发
-│       │   ├── pages/Index.ets   # 应用首屏：三形态导航 + 让步链 + 全部页面装配
-│       │   ├── pages/Poc1.ets    # POC-1 协议往返验证页（验收工具）
-│       │   └── view/             # 全部界面组件（9 个，见下）
-│       └── ohosTest/             # 单元测试（Hypium，约 60 条断言）
-├── platform/                 # HAR：**设备能力层**（机制，零 UI、零上游知识）
-│   └── src/main/ets/
-│       ├── notify/           # 通知发布/撤回/去重键 + 三类渠道 + 长时任务保活
-│       ├── system/           # 剪贴板、系统分享、设备与形态事实
-│       ├── window/           # 多窗口开启与路由参数、窗口几何/布局记忆
-│       └── runtime/          # 进程级 runtimeId + 窗口台账（§7.7.5b 的可核查证据面）
-├── connection/               # HAR：协议**机制层**（零 UI 依赖，不含具体端点/字段名）
-│   └── src/main/ets/protocol/
-│       ├── Surface.ets       # 注入式「上游接口面」定义（路径等事实由 dshcompat 提供）
-│       ├── RpcTypes.ets      # endpoint 校验、RemoteFailure、RpcResult
-│       ├── Envelope.ets      # 一元信封构造/解析
-│       ├── HostAddress.ets   # 地址规范化、authority、loopback 判定
-│       ├── Cookies.ets       # Set-Cookie 多形态解析 + 按 authority 隔离的 CookieJar
-│       ├── HttpClient.ets    # @ohos.net.http 载体
-│       ├── AuthSession.ets   # token → 签名 cookie、401 重绑、403 信任栅栏诊断
-│       ├── RemoteMux.ets     # 逻辑流复用 + 心跳 + `item`/`error`/`end` 三态帧
-│       ├── EventStream.ets   # 事件流、ready 首项、generation 失效
-│       ├── Backoff.ets       # 500ms→10s 退避 + 抖动
-│       └── Connection.ets    # 门面 + 五项连接诊断
-├── dshcompat/                # HAR：**DSH 上游兼容面（唯一的上游事实落点）**
-│   └── src/main/ets/
-│       ├── Endpoints.ets     # 端点上表（自动生成，84 条，含参数形态与流式标记）
-│       ├── Surface.ets       # 载体路径 / 事件流端点 / 开流 payload
-│       ├── Aliases.ets       # 字段别名表 + endpoint 常量 + **参数改名别名（PARAM_ALIASES）**
-│       ├── RemoteEvents.ets  # **转发事件白名单 + 审批/提问词汇 + 投影键**
-│       ├── CompatIndex.ets   # 能力映射 + 版本矩阵 + 参数构造 + 能力判定
-│       └── CompatTypes.ets   # 兼容面类型
-├── appstate/                 # HAR：状态层（投影 / 派生 / 呈现契约；零 UI 依赖）
-│   ├── store/SessionHub.ets  # **单一连接与会话状态中枢**（D1 §7.7.5b）
-│   ├── model/SessionList.ets # 会话列表投影（标题走 `projections.values.title`）
-│   ├── model/Trajectory.ets  # 轨迹与待决的**呈现层契约**
-│   ├── model/Workspace.ets   # 工作区/文件树/预览的呈现契约（含预览类型推导）
-│   ├── model/Settings.ets    # 设置/凭据/插件/Host/诊断/模型 的呈现契约
-│   ├── model/Present.ets     # 呈现层纯函数（相对时间 / 截断 / 排序 / 朗读文本）
-│   ├── model/Notify.ets      # 通知策略（D3 §6 六类 + 内容纪律 + 去重/撤回键）
-│   ├── model/Wire.ets        # 请求构造器 + 回复投影（端点名一律取自 dshcompat）
-│   ├── model/StubData*.ets   # 桩数据源（无 Host 时驱动界面）
-│   └── ui/                   # 断点与导航模型、设计令牌、2in1 快捷键表
-├── entry/src/main/ets/view/  # 全部界面组件（9 个）
-│   ├── ConversationPane.ets  # 会话轨迹（7 类条目）+ 输入区
-│   ├── Composer.ets          # 输入区：@引用 / 斜杠命令 / 附件 / 模型 chip / 离线排队
-│   ├── DetailPane.ets        # 详情栏：工具 / 子代理 / 交付物 / 目标 / 任务
-│   ├── SessionListPane.ets   # 会话列表（运行中/待审核/空闲/失败 状态徽标）
-│   ├── PendingPane.ets       # 待决聚合（审批三选 / 提问单选与多选 / 自由文本）
-│   ├── WorkspacePane.ets     # 工作区 → 文件树 → 文件预览（宽屏三列、窄屏栈式）
-│   ├── SettingsPane.ets      # 设置五页签：通用 / 模型 / 凭据 / 插件 / 设备
-│   ├── DiagnosticsPane.ets   # 连接诊断：五项判定 + 兼容面自检 + 旁路日志
-│   └── ConnectPane.ets       # 添加 Host：URL / 手输 / 发现 / 授权 / 安全说明
-├── hostkit/                  # PC 侧搭桥服务（Node，独立可发布，**可选组件**）
-│   ├── src/core/             # 配对、设备白名单、E2E 加密帧、隧道、审计、Host 守护
-│   ├── src/platform/         # 平台相关隔离（Windows / macOS / Linux）
-│   └── test/                 # `node --test`，含隧道端到端测试
-├── tools/                    # 协议与兼容面工具（Node，独立于应用）
-│   ├── protocol-contract.mjs    # 从生成描述符提取调用契约（并写自描述元数据）
-│   ├── gen-compat-endpoints.mjs # 由契约生成 dshcompat 端点上表（支持跨版本生成）
-│   ├── compat-drift.mjs         # **上游漂移门禁**（支持版本间比对，有漂移则非零退出）
-│   ├── arch-check.mjs           # **架构回归门禁**（注释感知 + 内置注入式自检）
-│   ├── protocol-enum*.mjs       # endpoint 枚举（历史工具）
-│   └── protocol-probe.mjs       # 对真实 Host 做只读探测 → 可用性与错误码矩阵
-└── docs/                     # 文档基线（D1~D5）
+AppScope/        应用级配置（bundleName: com.hnmrxz.hdsh、图标、应用名）
+entry/           HAP 入口：Ability、页面、10 个视图组件、形态适配
+appstate/        状态与呈现契约：SessionHub（单一状态中枢）、Core（核心页契约，纯函数）、
+                 ui/（断点导航、设计令牌、快捷键）
+connection/      协议机制层：信封 / cookie / RemoteMux / EventStream / 退避（零 UI 依赖）
+dshcompat/       **唯一的上游事实落点**：端点表、事件白名单、能力映射、版本矩阵
+platform/        设备能力层：通知、长时任务、剪贴板、分享、文件选择、窗口与形态、密钥存储
+hostruntime/ ★   端侧核心运行层：CoreStore（版本仓库 + 激活事务）、RuntimePort（载体抽象）、DshHost（状态机）
+hostcore/        打包期配方与端侧 profile（core-recipe.json、profile/ondevice/）
+tools/           协议与打包工具：pack-core.mjs（核心包）、node-runtime/（自建 Node 运行时）、
+                 compat-drift.mjs（漂移门禁）、arch-check.mjs（架构回归门禁）、dev-host.mjs（远程 Host 调试）
+hostkit/         可选的 PC 侧搭桥服务（仅在"连接远程 Host"这一可选路径下才需要）
+docs/            文档基线（见下）
 ```
 
 ## 文档
 
-入口：[`docs/README.md`](docs/README.md)
-
-| 文档 | 作用 |
-|---|---|
-| [`docs/00-开发任务书.md`](docs/00-开发任务书.md) | **开发任务书 D1**：背景与对标、目标、架构（含安全分级 L0/L1/L2）、功能需求、POC 门、里程碑、验收体系、风险与待决事项 |
-| [`docs/10-协议兼容事实基线.md`](docs/10-协议兼容事实基线.md) | 协议事实基线 D2：载体与端点、认证与信任、连接生命周期、**§8 实测矩阵**（§8.7 = 0.1.5-rc.1 实测 + 本仓库缺陷修正 + 门禁升级） |
-| [`docs/11-请求载荷契约.md`](docs/11-请求载荷契约.md) | **载荷契约 D2b**：84 个端点的请求内层字段与回复结构、6 条事件流的逐项结构、审批/提问应答编码、未确认清单（每行带上游源码出处） |
-| [`docs/20-产品需求与体验规范.md`](docs/20-产品需求与体验规范.md) | 体验规范 D3：信息架构、三形态导航、界面规格、通知、无障碍、视觉 |
-| [`docs/30-技术验证清单.md`](docs/30-技术验证清单.md) | 技术验证清单 D4：POC-1~11 的判定与止损 |
-| [`docs/40-上游升级手册.md`](docs/40-上游升级手册.md) | **上游升级手册 D5**：分层前提与评审检查表、五步升级流程、漂移门禁、降级策略、版本矩阵 |
-
-## 怎么应对 DSH 上游升级
-
-核心约束：**上游接口细节只允许出现在 `dshcompat` 一处**。`connection` 只提供机制（载体/信封/cookie/退避），
-`appstate` 与 UI 只认呈现层契约。上游改动全部落在 `dshcompat`，其余三层零改动。
-
-```sh
-# 1) 提取新上游的调用契约（每个 endpoint 的参数形态、流式标记、可否取消）
-#    同时写出一份「自描述元数据」，下游工具据此报版本，不靠猜
-node tools/protocol-contract.mjs --json .research/protocol/contracts.json
-
-# 2) 漂移门禁：与已提交基线逐条比对，有差异则非零退出并给出精确差异
-node tools/compat-drift.mjs
-
-# 3) 重新生成端点上表（必要时同步调整能力映射）
-node tools/gen-compat-endpoints.mjs
-
-# 4) 对真实 Host 复跑只读探测，确认端点可用性与错误码语义
-node tools/protocol-probe.mjs --base http://127.0.0.1:3111 --token <token>
-```
-
-**版本间比对**（升级评估时最常用，不需要改动机器上装的 dsh）：
-
-```sh
-# 把任意版本的契约装到隔离目录
-npm install --prefix .research/upstream-0.1.5 "@deepseek-ai/dsh@0.1.5-rc.1"
-
-# 用目标版本的契约重生成上表
-DSH_NODE_MODULES=.research/upstream-0.1.5/node_modules \
-  node tools/protocol-contract.mjs --json .research/protocol/contracts.json
-node tools/gen-compat-endpoints.mjs
-
-# 或者：只算「A 版本 → B 版本差了什么」，不动仓库文件
-DSH_CONTRACTS=.research/protocol/contracts-0.1.2-rc.1.json node tools/compat-drift.mjs
-```
-
-配套的**架构回归检查**（期望无输出、exit 0）：
-
-```sh
-node tools/arch-check.mjs --self-test   # 先证明门禁有效（8 个正/负样例）
-node tools/arch-check.mjs
-```
-
-配套的**门禁负测试**（期望非零退出——证明门禁真的会失败）：
-
-```sh
-DSH_CONTRACTS=.research/protocol/contracts-0.1.2-rc.1.json node tools/compat-drift.mjs; echo "exit=$?"
-```
-
-完整流程、降级策略、版本矩阵维护与「门禁必须经负测试验证」的纪律见
-[`docs/40-上游升级手册.md`](docs/40-上游升级手册.md)。
-
-## 开发
-
-### 环境要求
-
-| 项 | 版本 |
-|---|---|
-| DevEco Studio | DS-261.23567.138.36.2600821（或兼容版本） |
-| HarmonyOS SDK | API 26（`platformVersion 26.0.0`） |
-| Node.js | ≥ 22（仅 `tools/` 下的协议工具需要） |
-| 命令行工具 | `devecocli`（DevEco CLI）、`ohpm`、`hdc` |
-
-### 构建与运行
-
-```sh
-# 依赖安装（首次或模块增删后）
-ohpm install --all
-
-# 构建（产出未签名 HAP）
-devecocli build
-
-# 单元测试目标（仅编译；执行需设备）
-devecocli build --modules entry@ohosTest
-
-# 构建并部署到设备/模拟器
-devecocli run
-
-# 增量热重载（需先跑一次完整 run）
-devecocli run --module entry --hotreload          # 后台常驻
-devecocli run --module entry --hotreload-apply changes.txt
-```
-
-### 本地模拟器
-
-```sh
-devecocli emulator list                  # 查看实例（本仓库使用 DshApi26Phone）
-devecocli emulator license accept        # 首次需接受协议（非交互式）
-devecocli emulator start DshApi26Phone   # 启动 API 26 手机实例
-devecocli device list                    # 确认已出现在 hdc targets
-
-# 部署与查看日志
-devecocli run --device DshApi26Phone
-devecocli log --level E --from 5m --tail 200
-devecocli ui screenshot --device DshApi26Phone --path ./screenshots/
-devecocli ui layout --device DshApi26Phone --format json
-```
-
-> **宿主内存门槛**：模拟器的 `HostFreeMemMonitor` 要求**空闲内存 ≥ 3 GB**，不足会自行终止。
-> 启动前请用 `Get-CimInstance Win32_OperatingSystem` 确认 `FreePhysicalMemory`。
-> 另外：本仓库的开发代理运行在 DSH 自身进程内，**任何按进程名匹配的 kill 命令都被禁止**
-> （`Get-Process node | ... | Stop-Process` 这类写法会杀掉代理自己）。
-> 需要停止模拟器时用 `devecocli emulator stop <name>`，停止后台任务用任务 id。
-
-### 一条命令：起核心 + 应用自动接入（**不需要手填地址与令牌**）
-
-```sh
-# 起 dsh 核心（默认用**你自己的** ~/.dsh，故模型凭据/provider 都可用），
-# 建 hdc 反连，冷启动应用并把地址+令牌经启动参数带进去
-node tools/dev-host.mjs
-
-node tools/dev-host.mjs --isolated       # 用 .research/dev-host-home 的干净环境（没有凭据 → Agent 会在模型调用处失败）
-node tools/dev-host.mjs --rport 3137     # 指定设备侧端口（默认按 --port 自动推导）
-node tools/dev-host.mjs --no-launch      # 只起核心，打印可手抄的启动命令
-node tools/dev-host.mjs --relaunch       # 核心已在跑，只重启应用（复用已记录的地址与令牌）
-node tools/dev-host.mjs --stop           # 停止本项目起的核心（按记下的 pid，不做进程名匹配）
-```
-
-要点（都已实测，写下来是因为它们各自都能让人卡住半小时）：
-
-- **默认用用户自己的 `~/.dsh`**：空目录里没有模型凭据，`session/prompt` 会返回
-  `{accepted:true}` 但 Agent **永远不产出回复**（投递成功、无报错、没有回答）。
-- 只绑 `127.0.0.1`（不碰 `0.0.0.0`），客户端实际请求的权威用上游正规开关
-  `--trusted-host` **显式**加入信任栅栏——不伪造 `Host`/`Origin`。
-- 模型密钥自动注入：先看进程环境，再读 **Windows 注册表**（用户级→机器级）。
-  机器级变量常常存在注册表里而**不在当前 shell 的环境块**里；值不打印、不落盘。
-- 启动应用前会先 `aa force-stop`：启动参数只在**冷启动**被完整消费，
-  应用还活着时 `aa start` 走 `onNewWant`，而页面的自动连接有"只跑一次"守卫——
-  症状是"换了地址，界面还连着上一个 Host"。
-- **不要把它的输出接 `Select-Object -First N`**：PowerShell 会提前终止上游进程，
-  连带杀掉它持有的核心。
-
-### 应用内验证（POC-1）
-
-产品首屏右上角的「POC」（或三栏模式左导航底部的「POC 协议验证」）进入 `pages/Poc1`：
-
-1. 用 `node tools/dev-host.mjs --no-launch` 起核心并拿到 URL（或自己 `dsh web`）；
-2. 设备/模拟器上运行应用，粘贴启动 URL（或用 `dev-host.mjs` 全自动带入）；
-3. 点「① 认证并跑通」依次执行：token 换 cookie → 一元只读调用 → 打开逻辑流复用端点 → 校验 `ready` 首项 → 心跳存活观察；
-4. 点「诊断」查看五项判定（端点 / TLS / 认证 / 协议 / Host），点「复制报告」导出可归档的验证证据。
-
-日志不打印 token 与 cookie 值（见 D1 §11.5 S4）。
-
-### 设备侧的已知环境限制（**换机器后请先读这段**）
-
-| 现象 | 结论 | 证据 |
+| # | 文档 | 作用 |
 |---|---|---|
-| 应用连上后约 **5 秒**掉线，下一次 `send()` 报 `code=-1` | **服务端心跳是硬要求**（每 2 s Ping、漏两次即 terminate），而设备侧 ArkTS 的 `WebSocket` 不回 Pong | 对照实验：回 Pong → 15 s 保持；不回 → 5.4 s 被 CLOSE（`.research/protocol/probe-probe-harm.mjs`）。换到不经转发的通道症状相同，**因此这不是 `hdc` 转发的问题** |
-| 诊断页「协议」一项常显示 `未通过：WebSocket 已建立；事件流 opening` | 同一根因：`$events` 拿不到 `ready` | `devecocli ui` 读诊断页 |
-| 会话页显示不出内容 | **已用一元通路兜底**：`session/list` 取 `projections.asOfSeq` → `session/page{throughSeq}` 读回整段历史（与 follow 的记录同形，复用同一投影） | D2 §8.7.23；`SessionHub.refreshTrajectoryByPage()` |
-| 模拟器可能**起不来**（`emulator list` 显示 running 但 `hdc list targets` 为空） | 资源不足时它会半死；先 `devecocli emulator stop <name>`，确认空闲内存回到 3 GB 以上再 `start`。仍不行就打开 DevEco Studio → Device Manager 手工处理 | 2026-09-11 实测 |
+| **D6** | [`50-端侧核心运行架构.md`](docs/50-端侧核心运行架构.md) | **先读这篇**：目标更正、目标架构、可行性证据、运行时路线与 JIT 决策、核心版本激活事务、指标与里程碑 |
+| **D7** | [`60-界面重塑-端侧核心.md`](docs/60-界面重塑-端侧核心.md) | 界面重塑规范：新一级导航、核心页规格、"去掉无用功能"清单与去向 |
+| D1 | [`00-开发任务书.md`](docs/00-开发任务书.md) | 开发任务书（**其"远程客户端"定位已被 D6 更正**） |
+| D2 / D2b | [`10-协议兼容事实基线.md`](docs/10-协议兼容事实基线.md)、[`11-请求载荷契约.md`](docs/11-请求载荷契约.md) | 协议事实与载荷契约（含实测矩阵） |
+| D3 / D3b | [`20-产品需求与体验规范.md`](docs/20-产品需求与体验规范.md)、[`12-设置页契约.md`](docs/12-设置页契约.md) | 体验规范与设置页契约 |
+| D4 | [`30-技术验证清单.md`](docs/30-技术验证清单.md) | POC 清单（POC-11/12/13 是端侧运行时与 JIT 的门） |
+| D5 | [`40-上游升级手册.md`](docs/40-上游升级手册.md) | 上游升级流程、漂移门禁、版本矩阵 |
 
-> 需要一条**稳定**的跨设备通道时，用 `hostkit/` 的加密隧道
-> （`node bin/hostkit.mjs start --pair`，295 项测试通过），而不是继续调 `hdc rport`。
+## 构建与运行
 
-### 在本仓库里做脚本化改动的两条硬约束
-
-1. **绝不要用 `Get-Content -Raw` + `Set-Content` 往返改写这些源文件。**
-   Windows PowerShell 5.1 的 `Get-Content` 默认按 ANSI/GBK 读取，再按 UTF-8 写回，
-   会把文件里的**中文注释全部变成乱码**，并且可能吃掉换行导致语法错误。
-   已验证过这一惨案（`entry/pages/Index.ets` 被写坏，只能 `git checkout` 重做）。
-   要改文件就用带字面量替换的工具（`edit` 类），或者用明确指定 `-Encoding UTF8`
-   读取、再 `[System.IO.File]::WriteAllText` 以无 BOM UTF-8 写回。
-2. **不要用进程名匹配去 kill**。本仓库的开发代理运行在 DSH 自身进程内，
-   `Get-Process node | Where-Object {...} | Stop-Process` 这类写法会杀掉代理自己。
-   停后台任务用任务 id，停模拟器用 `devecocli emulator stop`。
-
-## 换到新机器要做什么
-
-1. 装 DevEco Studio（含 SDK API 26）、`devecocli`、`hdc`、Node ≥ 22；
-2. `git clone` 本仓库 → `ohpm install --all`；
-3. 起一个模拟器（`DshApi26Phone`，API 26 手机）或接真机，确认 `hdc list targets` 有它；
-4. `devecocli build` 应通过；`node tools/arch-check.mjs` 与 `node tools/compat-drift.mjs` 应为绿；
-5. **把设备测试跑一遍并回填数字**（本机最后一轮实测是 **157/157**，此后又加了
-   `session/page`、本机偏好主题、会话内搜索的用例，尚未在设备上执行过）：
-   ```sh
-   devecocli build --modules entry@ohosTest
-   hdc install -r entry\build\default\outputs\ohosTest\entry-ohosTest-unsigned.hap
-   hdc shell aa test -b com.hnmrxz.hdsh -m entry_test -s unittest OpenHarmonyTestRunner -s timeout 240000
-   ```
-6. 要连真实 Host 时：`node tools/dev-host.mjs`（一条命令，见上）。
-
-## 当前完成度与剩余缺口
-
-**已完成且经真实 Host 实测**：协议层（84 端点 / 4 流 / 15 能力，基线 `0.1.5-rc.2`）、
-三形态 UI、会话列表与轨迹、输入区（命令目录、`@` 引用、附件上传）、Host 侧待发队列、
-设置与凭据、工作区文件树与预览、诊断、通知（含点击直达路由）、本机偏好（主题模式）、
-快捷键（D3 §5.1 的 12 行）、连接恢复链（重连不再进终态）。
-
-**剩余缺口**（都已在代码里以"尚未实现"的提示如实呈现，不是静默无反应）：
-
-| 项 | 现状 |
+| 项 | 值 |
 |---|---|
-| 命令面板（`Ctrl/Cmd + K`） | 快捷键已绑定，功能未实现 |
-| 切换左导航栏（`Ctrl/Cmd + B`） | 导航显隐目前由窗口宽度自动决定（让步链），手动折叠未实现 |
-| 复制选中代码块（`Ctrl/Cmd + Shift + C`） | 需要消息内选中状态，未实现 |
-| 上一条/下一条消息（`Alt + ↑/↓`） | 未实现 |
-| 连接断开通知 | 机制与文案都已就绪，但缺"本机偏好的开关"（D3 定为默认关闭），且在本机 5 秒断一次的环境下按默认开启会刷屏 |
-| 端侧 Host（POC-11） | 未评估 |
+| HarmonyOS SDK | **API 24（platformVersion 6.1.1）** —— 本机 DevEco 为 DS-243.24978.46.36.611300，其 hvigor 上限为 `modelVersion 6.1.1`；原声明的 API 26 在本机无法构建，已按此下调 |
+| 包名 | `com.hnmrxz.hdsh` |
+| 命令行工具 | `devecocli`、`ohpm`、`hdc` |
 
-## 关键待决（见 D1 §12.2）
+```sh
+ohpm install --all                     # 依赖安装（首次或模块增删后）
+devecocli build                        # 构建（产出未签名 HAP）
+devecocli build --modules entry@ohosTest   # 单测目标（仅编译；执行需设备）
+devecocli run                          # 构建 + 安装 + 启动（需设备）
+```
 
-- v1 是否必须同时覆盖手机形态？（建议：是）
-- 跨设备加密隧道是否进 v1？（建议：进，否则手机场景不完整）
-- 是否允许任何形式的上游 patch？（建议：v1 绝对禁止）
-- 端侧 Host（Node 运行时进 HAP）是否值得评估？（建议：限时评估）
+**产出端侧核心包**（随应用分发的 dsh 核心树）：
+
+```sh
+node tools/pack-core.mjs               # 物化 → 裁剪 → 校验签名 → 打包（首次约 5 分钟）
+node tools/pack-core.mjs --skip-install # 复用已有 node_modules，秒级重打包
+# 产物：build/core/dsh-core-<ver>-openharmony-arm64.zip + .manifest.json
+```
+
+**自建 Node 运行时**（阶段二关键路径，在 WSL2/Linux 里跑）：
+
+```sh
+bash tools/node-runtime/fetch-ohos-sdk.sh    # 匿名下载 OpenHarmony 公开 SDK（含 Linux NDK）
+bash tools/node-runtime/build-node-ohos.sh   # 交叉编译 libnode.so + node（V8 很重）
+bash tools/node-runtime/status.sh            # 看进展
+```
+
+## 可选：连接远程 Host
+
+端侧自足之外仍保留这条路（例如手机连开发机上的 Host）：`node tools/dev-host.mjs` 会自己拉起一个
+dsh 核心、建反连，并把地址与令牌经启动参数带进应用；跨设备可用 `hostkit/` 的加密隧道。
+**注意**：这条路径不是目标，其"必须在另一台机器上跑 dsh"的前提也不再是验收口径。
+
+## 在本仓库里做脚本化改动的两条硬约束
+
+1. **不要用 `Get-Content -Raw` + `Set-Content` 往返改写源文件**：Windows PowerShell 5.1 默认按 ANSI/GBK
+   读取、按 UTF-8 写回，会把中文注释全变成乱码。要改就用字面量替换的工具，或显式 `-Encoding UTF8`
+   读 + `[System.IO.File]::WriteAllText` 以无 BOM UTF-8 写回。
+2. **不要按进程名 kill**。本仓库的开发代理运行在 DSH 自身进程内，`Get-Process node | ... | Stop-Process`
+   这类写法会杀掉代理自己。停后台任务用任务 id，停模拟器用 `devecocli emulator stop <name>`。
 
 ## 许可
 
