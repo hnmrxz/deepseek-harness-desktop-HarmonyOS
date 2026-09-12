@@ -63,16 +63,14 @@ echo "[node] 应用源码修补：C++ 标准 / zlib ARMv8 CRC32 SIMD"
 bash "${HERE}/fix-cxx-std.sh" "${SRC_DIR}"
 bash "${HERE}/fix-zlib-crc32.sh" "${SRC_DIR}"
 
-# ── 配置 ──
-# -fno-emulated-tls：OHOS 工具链的 ABI 要求（来自 Node OHOS 移植维护者的 CI 用法）
-export CC="${CLANG} -fno-emulated-tls"
-export CXX="${CLANG_DIR}/aarch64-unknown-linux-ohos-clang++ -fno-emulated-tls"
-# 交叉编译时宿主工具用系统 gcc/g++
-export CC_host="gcc"
-export CXX_host="g++"
-export AR_host="ar"
-export LD="${CLANG_DIR}/ld.lld"
-export LDFLAGS="-fuse-ld=lld"
+# ── 工具链环境 ──
+# 单一来源：toolchain-env.sh。**不要**在这里另写一份 export。
+# 原因（实测踩过，代价是一次全量重建）：out/Makefile 里是 `CC.target ?= $(CC)`，
+# 目标编译器取自环境变量；漏掉导出时 make 会静默用宿主 cc/g++ 编译**目标**对象，
+# 编译期不报错，几千个对象之后才以一个看不懂的错误暴露。
+# shellcheck source=toolchain-env.sh
+source "${HERE}/toolchain-env.sh"
+echo "[node] 交叉工具链 CC=${CC}"
 
 echo "[node] configure（dest-os=openharmony dest-cpu=arm64 --shared）"
 ./configure \

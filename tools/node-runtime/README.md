@@ -32,8 +32,13 @@ bash tools/node-runtime/status.sh
 #    只想看三行结论（是否在跑 / 产物有没有出现 / 日志尾）：
 bash tools/node-runtime/status-brief.sh
 
-# 构建中断后原地续跑（会把真实退出码写进日志尾，便于判定成败）
+# 构建中断后原地续跑（会清掉误用宿主编译器编出的目标对象，并把真实退出码写进日志尾）
 bash tools/node-runtime/resume-make.sh
+
+# 失败时看原因（尾部若干行 + 错误标记，逐行截断，不会刷屏）
+bash tools/node-runtime/show-build-failure.sh 40 190
+# 校验"目标对象是不是真的都是 AArch64"（这个数必须是 other=0）
+bash tools/node-runtime/diagnose-toolchain.sh
 ```
 
 产物在 `~/ohos/node-<ver>/out/Release/`：`libnode.so.<n>` 与 `node`。
@@ -61,6 +66,22 @@ zlib 会退回可移植 C 的 CRC32。**正确性不变**，只影响 gzip CRC �
 > 注意：Node 生成的 `Makefile` **没有** `GYPFILES` 规则，所以**改 `.gyp` 不会自动重生成 makefile**。
 > `fix-zlib-crc32.sh` 因此同时改 `out/**/*.target.mk` 并删掉旧对象——旧的 `zlib.o`
 > 命令行里带 `-DCRC32_ARMV8_CRC32`，不删就会在链接期留下对 `armv8_crc32_little` 的引用。
+
+## 构建期纪律：工具链环境只有一个来源（`toolchain-env.sh`）
+
+`out/Makefile` 第 43 行是 **`CC.target ?= $(CC)`**——gyp 生成的 makefile **从环境变量取目标编译器**。
+因此任何一次不带 `CC`/`CXX` 导出的 `make`，都会静默改用宿主 `cc`/`g++` 去编译 `obj.target/` 下的
+**目标**对象。**编译期不报任何错**，几千个对象之后才以宿主 gcc 撞上 OHOS 专属头文件
+（`asm/hwcap.h: No such file or directory`、`arm_neon.h: No such file or directory`）的形式暴露，
+而那个错误看起来和"编译器选错了"毫无关系。
+
+实测代价：一次漏导出的续跑把 **2410 个目标对象里的 1112 个**编成了 x86-64。
+
+规矩：
+- 交叉工具链的所有 export **只写在 `toolchain-env.sh`**，`build-node-ohos.sh` 与
+  `resume-make.sh` 都 `source` 它。不要再在任何地方另写一份。
+- 怀疑被污染就跑 `diagnose-toolchain.sh`：`other` **必须是 0**。
+- `resume-make.sh` 默认（`PURGE_FOREIGN=1`）在续跑前自动删掉所有非 AArch64 的目标对象。
 
 ## 已知风险（写在这里，避免"以为已经成功"）
 

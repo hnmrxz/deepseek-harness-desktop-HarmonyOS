@@ -30,6 +30,7 @@ import {
 import { deflateRawSync } from 'node:zlib';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { inventoryOf } from './lib/core-inventory.mjs';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
@@ -270,6 +271,13 @@ function embedProfile() {
  * 因此这里只写不依赖产物哈希的字段——容器的 sha256 仍然只在外层清单（否则自指）。
  */
 function embedTreeInfo() {
+  // 插件与原生模块清单：**在构建期算一次**，写进树里给端侧读。
+  //
+  // 【为什么不在端侧现算】端侧要算同一件事，得在 27250 个文件 / 4000 个目录上递归
+  // （实测规模），那是一秒级的目录遍历 + 一堆错误分支，纯风险。而这件事的答案在**打包这一刻
+  // 就已经确定**，且能在一台能跑 Node 的机器上核对。端侧只需读一个小 JSON。
+  // 【判据】见 tools/lib/core-inventory.mjs 头注释：看依赖闭包，不看包内有没有 .node。
+  const inv = inventoryOf(join(STAGE, 'node_modules'));
   const info = {
     coreVersion: recipe.coreVersion,
     platform: `${recipe.platform.os}/${recipe.platform.cpu}`,
@@ -279,9 +287,22 @@ function embedTreeInfo() {
     nodeFloor: '22.17.0',
     overrides: recipe.overrides,
     producer: 'tools/pack-core.mjs',
+    // 端侧插件页的数据源。nativeKind ∈ PURE_JS | NATIVE | UNKNOWN
+    // （NATIVE＝依赖闭包内含 .node，**不能**运行时安装，只能随应用发版）
+    plugins: inv.plugins,
+    pluginTotals: inv.totals,
+    nativePackages: inv.nativePackages,
   };
   writeFileSync(join(STAGE, TREE_INFO_FILE), JSON.stringify(info, null, 2) + '\n', 'utf8');
-  log(`[pack-core]   树内元数据 ${TREE_INFO_FILE} 已写入（端侧解包后据此识别版本与 profile）`);
+  log(`[pack-core]   树内元数据 ${TREE_INFO_FILE} 已写入（端侧解包后据此识别版本、profile 与插件清单）`);
+  log(
+    `[pack-core]   插件 ${inv.totals.pluginRows} 行：纯 JS ${inv.totals.pureJs} / 依赖原生 ${inv.totals.native}` +
+      ` / 待确认 ${inv.totals.unknown}（默认禁用 ${inv.totals.disabled}）；含原生模块的包 ${inv.nativePackages.length} 个`,
+  );
+  if (inv.totals.unknown > 0) {
+    log(`[pack-core]   ⚠ 有 ${inv.totals.unknown} 行无法判定可安装性——端侧会显示为「待确认」，请查 core-inventory 的解析`);
+  }
+  return inv;
 }
 const TREE_INFO_FILE = 'hdsh-core.json';
 
