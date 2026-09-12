@@ -33,5 +33,19 @@ else
   echo "(no out/Release yet)"
 fi
 
+echo "--- progress counter (distinguishes 'slow' from 'stuck') ---"
+# 对象计数会在编大文件时**连续两轮不变**，看起来像卡死。真正能区分的是：
+#   日志的 mtime 距今多久 + 累计的编译器调用次数（单调递增）。
+# 实测：obj.host 停在 870 时，日志 mtime 仅距今 2 秒、turboshaft 的 .o 每分钟都在产出
+# ⇒ 是"慢"，不是"卡"。只看对象计数会误判。
+if [ -f "${LOG}" ]; then
+  now=$(date +%s)
+  m=$(stat -c %Y "${LOG}" 2>/dev/null || echo 0)
+  echo "log age: $((now - m))s (small = actively compiling)"
+  echo "compiler invocations so far: $(grep -c g++ "${LOG}" 2>/dev/null)"
+else
+  echo "(no log yet)"
+fi
+
 echo "--- log tail (truncated) ---"
 tail -n 2 "${LOG}" 2>/dev/null | cut -c1-120
