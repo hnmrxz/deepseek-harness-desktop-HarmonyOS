@@ -39,7 +39,19 @@ bash tools/node-runtime/resume-make.sh
 bash tools/node-runtime/show-build-failure.sh 40 190
 # 校验"目标对象是不是真的都是 AArch64"（这个数必须是 other=0）
 bash tools/node-runtime/diagnose-toolchain.sh
+
+# 查 HAP 里的原生 .so 有没有签名段、以及打包有没有改动它们
+bash tools/node-runtime/check-hap-native-signing.sh
 ```
+
+**已实测的结论（E18）**：构建出的 HAP 里全部 4 个 `libs/arm64-v8a/*.so`
+（`libelectron` / `libadapter` / `libffmpeg` / `libc++_shared`）都**只有 `.note.ohos.ident`、
+没有 `.codesign`**，且与 `entry/libs/arm64-v8a/` 下的源文件**逐字节相同**——
+**我们的打包流程从不给 `.so` 签名**。HAP 自身的签名是包级的，不会回溯给内嵌 `.so`。
+
+这直接关系到阶段二能否上架：`libnode.so` / `libdshhost.so` 也是内嵌 `.so`，
+它们会不会被系统校验拒掉，**必须上设备用 `dlopen` 的错误码回答**（两种互斥解释见 D6 §4.1.9）。
+若确实需要签名，那一步必须放在 **HAP 组装之前**（组装后再改包内字节会破坏 HAP 签名）。
 
 产物在 `~/ohos/node-<ver>/out/Release/`：`libnode.so.<n>` 与 `node`。
 脚本最后会对两者做 ELF 检查（Class/Machine/Type）并**打印签名段**：
