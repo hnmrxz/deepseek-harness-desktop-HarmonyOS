@@ -608,7 +608,9 @@ export struct SettingsPane {
         .fontSize(Fs.CAPTION)
         .fontColor($r('sys.color.font_tertiary'))
         .layoutWeight(1)
-      Text('添加 / 配对')
+      // 措辞刻意写全「远程」：端侧自足运行后，本机核心是默认路径，
+      // 连别人的 Host 是**可选能力**，不是"添加 Host 才能用"（D7 §3）
+      Text('远程 Host（可选）')
         .fontSize(Fs.CAPTION)
         .fontColor($r('sys.color.brand'))
         .onClick(() => {

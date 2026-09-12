@@ -2105,9 +2105,10 @@ struct Index {
       this.navPanelAction('连接诊断', () => {
         this.openDiagnostics();
       })
-      this.navPanelAction('远程 Host（可选）', () => {
-        this.stackPage = StackPage.CONNECT;
-      })
+      // 【D7 §3 第 1 项的收尾】「远程 Host」不再出现在二级导航面板里：
+      // 它属于"配置一个可选的远端"，归位到「设置 → 设备 → 远程 Host（可选）」。
+      // 那条路径的 onPairHost 回调同样打开 ConnectPane（见本文件下方 SettingsPane 的装配），
+      // 因此能力没有消失，只是不再占据主流程的入口位置。
       this.navPanelAction('POC 协议验证', () => {
         this.openPoc();
       })
