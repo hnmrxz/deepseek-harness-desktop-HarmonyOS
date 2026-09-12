@@ -113,6 +113,7 @@ import { CorePane } from '../view/CorePane';
 import { DetailPane } from '../view/DetailPane';
 import { DiagnosticsPane } from '../view/DiagnosticsPane';
 import { PendingPane } from '../view/PendingPane';
+import { RuntimeHost } from '../view/RuntimeHost';
 import { SessionListPane } from '../view/SessionListPane';
 import { SettingsPane } from '../view/SettingsPane';
 import { WorkspacePane } from '../view/WorkspacePane';
@@ -1091,6 +1092,10 @@ struct Index {
       } else {
         this.buildTriple()
       }
+      // 端侧运行时宿主：Node 只能从 XComponent 的 onLoad 启动（D6 §4.1.2），
+      // 因此它必须**常驻**在根 Stack 上、不参与任何条件分支——表面一没 Node 就死。
+      // 1×1 且不吃触摸，用户看不到它也点不到它。
+      RuntimeHost()
       if (this.choosing !== undefined) {
         this.choiceSheet()
       }
