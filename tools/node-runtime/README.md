@@ -29,13 +29,38 @@ bash tools/node-runtime/build-node-ohos.sh
 
 # 3) 看进展
 bash tools/node-runtime/status.sh
+#    只想看三行结论（是否在跑 / 产物有没有出现 / 日志尾）：
+bash tools/node-runtime/status-brief.sh
+
+# 构建中断后原地续跑（会把真实退出码写进日志尾，便于判定成败）
+bash tools/node-runtime/resume-make.sh
 ```
 
-产物在 `~/node-<ver>/out/Release/`：`libnode.so.<n>` 与 `node`。
+产物在 `~/ohos/node-<ver>/out/Release/`：`libnode.so.<n>` 与 `node`。
 脚本最后会对两者做 ELF 检查（Class/Machine/Type）并**打印签名段**：
 - 有 `.codesign` → 可以直接进 HAP
 - 只有 `.note.ohos.ident` → **还不算已签名**，需要用 `binary-sign-tool` 或
   `ohos-bst-light` 的 `self-sign.py` 补签（参见 D6 §4.2 R4）
+
+## 必须的源码修补（已接线进 build-node-ohos.sh，在 configure 之前跑）
+
+这两条修的是**我们自己编译 Node 时的构建配置**，与"对 dsh 上游零 patch"的纪律无关——
+dsh 那边仍然一个字节都没改。
+
+| 脚本 | 修什么 | 证据 |
+|---|---|---|
+| `fix-cxx-std.sh` | `common.gypi` 里 linux/openharmony 分支的 `-std=gnu++17` → `gnu++20` | `deps/ncrypto/ncrypto.cc` 用了 C++20 三路比较，报 `'operator<=' cannot be the name of a variable or data member` |
+| `fix-zlib-crc32.sh` | 把 `CRC32_ARMV8_CRC32` 这个宏名整体改名，使 zlib 的 ARMv8 CRC32 SIMD 路径不参与编译 | OHOS clang 15 报 `fatal error: error in backend: Cannot select: intrinsic %llvm.aarch64.crc32b`；实测补 `-march=armv8-a+crc` 只能消掉 `crc32b`，同一函数里的内联 `pmull` 仍报 `instruction requires: aes`，因为 `+aes` 只存在于被 OHOS clang 忽略的函数级 target 属性里。详见脚本头部注释 |
+
+关于第二条的取舍（**写清楚，免得以后被当成"漏了一个优化"**）：
+zlib 会退回可移植 C 的 CRC32。**正确性不变**，只影响 gzip CRC 吞吐；
+在端侧推理/网络延迟占主导的场景里这不是关键路径，而换来的是不再依赖
+一个 OHOS clang 尚未支持的函数级 target 属性、也不再需要 hwcap 探测。
+要恢复它，得把该目标的 CPU 基线整体抬到 `armv8-a+crc+aes`，代价与收益不匹配。
+
+> 注意：Node 生成的 `Makefile` **没有** `GYPFILES` 规则，所以**改 `.gyp` 不会自动重生成 makefile**。
+> `fix-zlib-crc32.sh` 因此同时改 `out/**/*.target.mk` 并删掉旧对象——旧的 `zlib.o`
+> 命令行里带 `-DCRC32_ARMV8_CRC32`，不删就会在链接期留下对 `armv8_crc32_little` 的引用。
 
 ## 已知风险（写在这里，避免"以为已经成功"）
 

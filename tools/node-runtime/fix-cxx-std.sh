@@ -7,7 +7,7 @@
 #   'operator<=' cannot be the name of a variable or data membe
 # 注意：这是**我们自己编译 Node 时的构建配置**，与"对 dsh 上游零 patch"的纪律无关。
 set -euo pipefail
-SRC="${HOME}/ohos/node-v22.23.2"
+SRC="${1:-${HOME}/ohos/node-v22.23.2}"
 cd "${SRC}"
 
 if [ ! -f common.gypi.bak ]; then

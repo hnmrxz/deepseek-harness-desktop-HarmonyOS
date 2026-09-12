@@ -1,0 +1,12 @@
+# shell 脚本必须以 LF 检出。
+#
+# 【为什么必须写死】本机 `core.autocrlf=true`：git 会在检出时把文本文件的 LF 换成 CRLF。
+# 对 .sh 这是致命的——`bash tools/node-runtime/build-node-ohos.sh` 会因 shebang 与每行末尾的
+# `\r` 报 "No such file or directory" / "command not found"，而文件内容看上去完全正常。
+# 实测告警："LF will be replaced by CRLF the next time Git touches it"。
+#
+# 因此：本仓库所有 .sh 一律 LF（无论在哪台机器上克隆），其余文件不限定。
+*.sh text eol=lf
+
+# 构建脚本依赖的 .mjs 同理（Node 不介意 CRLF，但保持一致、避免 diff 噪声）
+*.mjs text eol=lf

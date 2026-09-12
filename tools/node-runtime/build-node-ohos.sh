@@ -54,6 +54,15 @@ if [ ! -d "${SRC_DIR}" ]; then
 fi
 cd "${SRC_DIR}"
 
+# ── 源码修补（**必须**在 configure 之前）──
+# 这两条修的是"我们自己编译 Node"的构建配置，与"对 dsh 上游零 patch"的纪律无关。
+# 放在 configure 之前，是为了让 gyp 直接生成正确的 makefile；若改在之后，
+# 还得手工改 out/**/*.target.mk（make 不会自己重跑 gyp——实测过）。
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+echo "[node] 应用源码修补：C++ 标准 / zlib ARMv8 CRC32 SIMD"
+bash "${HERE}/fix-cxx-std.sh" "${SRC_DIR}"
+bash "${HERE}/fix-zlib-crc32.sh" "${SRC_DIR}"
+
 # ── 配置 ──
 # -fno-emulated-tls：OHOS 工具链的 ABI 要求（来自 Node OHOS 移植维护者的 CI 用法）
 export CC="${CLANG} -fno-emulated-tls"
