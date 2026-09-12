@@ -41,6 +41,9 @@ import {
   projectHosts,
   projectQueuedItems,
   projectSessionReferences,
+  projectSessionPage,
+  sessionCursorOf,
+  sessionPagePayload,
   projectWorkspaceListing,
   projectWorkspaceFailure,
   projectWorkspaceText,
@@ -607,6 +610,48 @@ export default function liveWireTest() {
         const one: string = `{"page":"${NOTIFY_PAGES[i]}"}`;
         expect(parseNotifyRoute(one) === undefined).assertFalse();
       }
+    });
+
+    // ───────────────── 一元读回历史（session/page） ─────────────────
+
+    it('sessionCursorOf：游标取自 projections.asOfSeq；取不到给 -1（不是 0）', 0, () => {
+      // 为什么"取不到"必须是 -1 而不是 0：0 是一个**合法游标**（对应第 0 条记录），
+      // 用它去请求会得到一页"看起来正常"的空记录，把"读不到游标"伪装成"这个会话是空的"。
+      expect(sessionCursorOf(parseJson('{"projections":{"asOfSeq":18}}'))).assertEqual(18);
+      expect(sessionCursorOf(parseJson('{"projections":{"asOfSeq":0}}'))).assertEqual(0);
+      expect(sessionCursorOf(parseJson('{"projections":{}}'))).assertEqual(-1);
+      expect(sessionCursorOf(parseJson('{}'))).assertEqual(-1);
+      expect(sessionCursorOf(undefined)).assertEqual(-1);
+      expect(sessionCursorOf(parseJson('{"projections":{"asOfSeq":-3}}'))).assertEqual(-1);
+      // 类型不符也要给 -1（老 Host 可能把它报成字符串）
+      expect(sessionCursorOf(parseJson('{"projections":{"asOfSeq":"18"}}'))).assertEqual(-1);
+    });
+
+    it('sessionPagePayload：address 是 {kind,sessionId}，throughSeq 原样带上', 0, () => {
+      const args: Object | undefined = sessionPagePayload('s-1', 18, 200);
+      const bag: Record<string, Object> = args as Record<string, Object>;
+      const request: Record<string, Object> = bag['request'] as Record<string, Object>;
+      const address: Record<string, Object> = request['address'] as Record<string, Object>;
+      expect(address['kind'] as string).assertEqual('session');
+      expect(address['sessionId'] as string).assertEqual('s-1');
+      expect(request['throughSeq'] as number).assertEqual(18);
+      expect(request['maxMessages'] as number).assertEqual(200);
+      // maxMessages<=0 时不带该键（让 Host 用它自己的默认值，而不是我们传一个 0 条的上限）
+      const noMax: Record<string, Object> =
+        sessionPagePayload('s-1', 3, 0) as Record<string, Object>;
+      const req2: Record<string, Object> = noMax['request'] as Record<string, Object>;
+      expect(req2['maxMessages'] === undefined).assertTrue();
+    });
+
+    it('projectSessionPage：records 与 hasMore 的收窄', 0, () => {
+      const ok = projectSessionPage(parseJson('{"records":[{"type":"event"},{"type":"event"}],"hasMore":true}'));
+      expect(ok.records.length).assertEqual(2);
+      expect(ok.hasMore).assertTrue();
+      const empty = projectSessionPage(undefined);
+      expect(empty.records.length).assertEqual(0);
+      expect(empty.hasMore).assertFalse();
+      // 形状不对时给空而不是抛错：调用方据此走"读不到"分支
+      expect(projectSessionPage(parseJson('{"records":"nope"}')).records.length).assertEqual(0);
     });
 
     it('textPart / filePart：判别字段与载荷', 0, () => {
