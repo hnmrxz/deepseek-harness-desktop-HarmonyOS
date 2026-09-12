@@ -1,9 +1,6 @@
 {
-  "name": "electron-example",
-  "version": "1.0.0",
-  "description": "Electron simple example",
-  "main": "main.js",
-  "scripts": {
-    "start": "electron ."
-  }
+  "name": "hdsh-host",
+  "version": "0.0.0",
+  "description": "HDSH on-device DSH host (started by the Electron runtime, no BrowserWindow)",
+  "main": "main.js"
 }

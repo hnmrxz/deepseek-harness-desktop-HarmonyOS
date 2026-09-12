@@ -22,9 +22,54 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
-const CORE_DIR = process.env.HDSH_CORE_DIR || '';
-const HOME_DIR = process.env.HDSH_HOME || '';
-const SANDBOX_HOME = process.env.HDSH_SANDBOX_HOME || HOME_DIR;
+/**
+ * 路径从哪来（**这一环不能靠环境变量**）
+ *
+ * 我们跑在 Electron 主进程里：`runBrowser()` 是 native 侧直接启动的，
+ * ArkTS **没有**给这个进程设环境变量的通道。所以路径必须由 Node 侧自己定位。
+ * Electron 的 `app.getPath('userData')` 就是应用沙箱内的可写目录（社区已验证可用），
+ * 于是约定：`<userData>/dsh/` 下放 cores/ 与 home/。
+ * 环境变量仍然优先生效——那是给"宿主侧离线验证 / 调试"用的。
+ */
+function electronUserData() {
+  try {
+    // 只有真的在 Electron 主进程里才有这个模块；离线跑 Node 时会抛错，走 env 回退
+    const electron = require('electron');
+    if (electron && electron.app && typeof electron.app.getPath === 'function') {
+      return electron.app.getPath('userData');
+    }
+  } catch (e) {
+    // 忽略：不是 Electron 环境
+  }
+  return '';
+}
+
+const USER_DATA = electronUserData();
+const DSH_BASE = USER_DATA.length > 0 ? path.join(USER_DATA, 'dsh') : '';
+
+/** 读我们自己的 state.json，得到"当前版本"，据此拼出核心树目录。 */
+function currentCoreDir() {
+  if (DSH_BASE.length === 0) {
+    return '';
+  }
+  try {
+    const statePath = path.join(DSH_BASE, 'state.json');
+    if (!fs.existsSync(statePath)) {
+      return '';
+    }
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    if (typeof state.current !== 'string' || state.current.length === 0) {
+      return '';
+    }
+    return path.join(DSH_BASE, 'cores', state.current);
+  } catch (e) {
+    return '';
+  }
+}
+
+const CORE_DIR = process.env.HDSH_CORE_DIR || currentCoreDir();
+const HOME_DIR = process.env.HDSH_HOME || (DSH_BASE.length > 0 ? path.join(DSH_BASE, 'home') : '');
+const SANDBOX_HOME = process.env.HDSH_SANDBOX_HOME || USER_DATA || HOME_DIR;
 const PORT = process.env.HDSH_PORT || '3120';
 const PROFILE = process.env.HDSH_PROFILE || 'ondevice';
 
