@@ -15,6 +15,7 @@
  */
 
 import { describe, expect, it } from '@ohos/hypium';
+import { ConfigurationConstant } from '@kit.AbilityKit';
 import { KeyCode } from '@kit.InputKit';
 import { parseJson } from 'connection';
 import { hitOfKeyEvent } from '../../../main/ets/view/ShortcutKeys';
@@ -87,6 +88,7 @@ import type {
   WorkspaceListingProjection
 } from 'appstate';
 import type { NotificationDraft } from 'platform';
+import { colorModeOf, ThemeMode, themeModeOf } from 'platform';
 
 /** 造一个最小会话项 */
 function session(id: string, cwd: string, updatedAt: number): SessionListItem {
@@ -652,6 +654,33 @@ export default function liveWireTest() {
       expect(empty.hasMore).assertFalse();
       // 形状不对时给空而不是抛错：调用方据此走"读不到"分支
       expect(projectSessionPage(parseJson('{"records":"nope"}')).records.length).assertEqual(0);
+    });
+
+    // ───────────────── 本机偏好：主题模式 ─────────────────
+
+    it('themeModeOf：未知取值一律回到"跟随系统"', 0, () => {
+      expect(themeModeOf('light')).assertEqual(ThemeMode.LIGHT);
+      expect(themeModeOf('dark')).assertEqual(ThemeMode.DARK);
+      expect(themeModeOf('system')).assertEqual(ThemeMode.SYSTEM);
+      // 存坏值不该让应用停在随机主题上，也不该抛错
+      expect(themeModeOf('')).assertEqual(ThemeMode.SYSTEM);
+      expect(themeModeOf('LIGHT')).assertEqual(ThemeMode.SYSTEM);
+      expect(themeModeOf('blue')).assertEqual(ThemeMode.SYSTEM);
+    });
+
+    it('主题模式往返：枚举值与持久化字符串必须一一对应', 0, () => {
+      // 这条守的是"用户选了深色，下次启动又回到跟随系统"这类静默失效：
+      // 它不会报错，只会让用户觉得这个设置时灵时不灵。
+      const all: ThemeMode[] = [ThemeMode.SYSTEM, ThemeMode.LIGHT, ThemeMode.DARK];
+      for (let i = 0; i < all.length; i++) {
+        expect(themeModeOf(all[i] as string)).assertEqual(all[i]);
+      }
+    });
+
+    it('colorModeOf：三种模式各自映射到系统的 ColorMode', 0, () => {
+      expect(colorModeOf(ThemeMode.LIGHT)).assertEqual(ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT);
+      expect(colorModeOf(ThemeMode.DARK)).assertEqual(ConfigurationConstant.ColorMode.COLOR_MODE_DARK);
+      expect(colorModeOf(ThemeMode.SYSTEM)).assertEqual(ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET);
     });
 
     it('textPart / filePart：判别字段与载荷', 0, () => {

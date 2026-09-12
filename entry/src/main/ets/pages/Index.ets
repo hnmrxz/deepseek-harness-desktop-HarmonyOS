@@ -27,7 +27,7 @@ import {
 } from 'dshcompat';
 import type { VersionCheck } from 'dshcompat';
 import type { DiagnosticItem, DiagnosticReport } from 'connection';
-import { copyText, PickOutcome, pickDocument } from 'platform';
+import { applyThemeMode, copyText, LocalPrefs, PickOutcome, pickDocument, themeModeOf } from 'platform';
 import type { NotifyRoute, PickedFile } from 'platform';
 import { common } from '@kit.AbilityKit';
 import {
@@ -59,6 +59,8 @@ import {
   ReferenceCandidate,
   SessionListItem,
   SettingGroup,
+  SettingKind,
+  SettingOrigin,
   SettingValueType,
   SettingsWriteOutcome,
   parseSettingInput,
@@ -207,6 +209,12 @@ function projectDiagnostics(report: DiagnosticReport): DiagReport {
  */
 const APP_NAME: string = 'HDSH';
 
+/** 本机偏好「主题模式」的 key 与取值（与 `platform/LocalPrefs` 的 `ThemeMode` 一致） */
+const LOCAL_THEME_KEY: string = 'local.themeMode';
+const LOCAL_THEME_SYSTEM: string = 'system';
+const LOCAL_THEME_LIGHT: string = 'light';
+const LOCAL_THEME_DARK: string = 'dark';
+
 /** 单栏下的页面栈 */
 enum StackPage {
   MAIN = 'main',
@@ -248,6 +256,14 @@ struct Index {
    * 见 `mergeSettingsGroups` 的说明。
    */
   @State localSettings: SettingGroup[] = [];
+  /**
+   * Host 设置分组（`settings/describe` 的那一份）。
+   *
+   * 与 `localSettings` **分开存**：界面用到的 `settings` 是两者合并的结果，
+   * 而"本机偏好改了要重新合并"时必须有一份没被覆盖的 Host 分组可用。
+   * 只存合并结果的话，第二次合并会把上一次的本机组再叠一遍。
+   */
+  @State hostSettings: SettingGroup[] = [];
   /** 设置命名空间的写状态（含 revision）；用于诊断「界面值与 Host 版本是否一致」 */
   @State settingsStates: SettingsNamespaceState[] = [];
   /** 设置写入的结果回显（成功/失败/冲突都如实显示，不做乐观更新） */
@@ -392,6 +408,14 @@ struct Index {
    * 这条链路的平台半段早已就位（`buildAgent`），此前缺的就是这里的消费。
    */
   @StorageProp('dshLaunchRouteJson') launchRouteJson: string = '';
+  /**
+   * 本机偏好「主题模式」（能力层从 preferences 读出后发布）。
+   *
+   * 三种取值的界面呈现由 `localPreferenceGroup()` 负责；这里只做只读订阅。
+   */
+  @StorageProp('dshThemeMode') themeMode: string = 'system';
+  /** 主题上次应用是否成功（能力层写入；失败时设置页要如实说明） */
+  @StorageProp('dshThemeApplied') themeApplied: boolean = true;
   /** 自动重连只跑一次（StorageProp 变化会触发，重复跑会反复认证） */
   private autoConnectAttempted: boolean = false;
   /** 未识别的上游事件类型数量（真机跑一次即可据此回填事件表） */
@@ -448,6 +472,8 @@ struct Index {
       this.models = [];
       this.plugins = [];
       this.credentials = [];
+      // 断连后 Host 设置没了，但**本机偏好仍然有效**（它本来就与 Host 无关）
+      this.hostSettings = [];
       this.settings = this.localSettings;
       this.settingsStates = [];
       this.hosts = [];
@@ -465,7 +491,8 @@ struct Index {
     this.models = s.models;
     this.plugins = s.plugins;
     this.credentials = s.credentials;
-    this.settings = mergeSettingsGroups(s.settings, this.localSettings);
+    this.hostSettings = s.settings;
+    this.settings = mergeSettingsGroups(this.hostSettings, this.localSettings);
     this.settingsStates = s.settingsStates;
     this.commands = s.commands;
     this.references = s.references;
@@ -531,6 +558,10 @@ struct Index {
     // 初始值 = 空态。所有真实数据都在 `applyHubSnapshot` 到达时落地；
     // 连接建立前界面显示的是各视图自己的空态文案（D3 §4），而不是编造的示例数据。
     this.diag = emptyDiagReport();
+    // 本机偏好是**端侧**的，与连接无关，因此一开始就要有（否则设置页会缺一组）。
+    // 当前值来自能力层（它从 preferences 读出后发布到 AppStorage）。
+    this.localSettings = this.localPreferenceGroup();
+    this.settings = this.localSettings;
     this.updateHosts();
     this.recomputeDerived();
     this.applyWidth(initialWidthVp());
@@ -548,6 +579,76 @@ struct Index {
     this.waitForRememberedHost();
     // 冷启动时也可能是"从通知进来"的（应用被杀后点通知 → onCreate 带参数）
     this.applyLaunchRoute();
+  }
+
+  /**
+   * 本机偏好分组（D1 §7.6.5 P0：主题「跟随系统深浅色」，且 D3 §8 要求「设置可覆盖」）。
+   *
+   * 【为什么这一组是"真的"而不再是桩数据】此前它是被删掉的桩项之一——
+   * 删得对（那些项点了没有任何效果），但**功能本身是指定要有的**：
+   * 主题模式必须能覆盖系统。现在它由 `platform/LocalPrefs` 持久化、
+   * 由能力层在启动时应用、由这里写回并立即生效。
+   *
+   * 【为什么 key 用 `local.` 前缀】`settingItemOf()` 用"能不能在 Host 设置分组里找到"
+   * 来判定一项是不是本机偏好；前缀让来源一眼可辨，也避免与 Host 的命名空间撞名
+   * （Host 侧不存在 `local.*` 命名空间）。
+   */
+  private localPreferenceGroup(): SettingGroup[] {
+    const choices: SettingChoice[] = [];
+    const options: string[] = [LOCAL_THEME_SYSTEM, LOCAL_THEME_LIGHT, LOCAL_THEME_DARK];
+    const labels: string[] = ['跟随系统', '浅色', '深色'];
+    for (let i = 0; i < options.length; i++) {
+      choices.push({ value: options[i], label: labels[i] });
+    }
+    const items: SettingItem[] = [{
+      key: LOCAL_THEME_KEY,
+      label: '主题模式',
+      hint: this.themeApplied
+        ? '本机偏好：覆盖系统深浅色，只在端侧生效（Host 设置里没有这一项）'
+        : '本机偏好：覆盖系统深浅色。**上次应用未成功**（系统拒绝或当前窗口模式不支持）',
+      kind: SettingKind.CHOICE,
+      boolValue: false,
+      textValue: this.themeMode,
+      options: options,
+      choices: choices,
+      readOnly: false,
+      hostWritable: false,
+      appliesLive: true,
+      origin: SettingOrigin.LOCAL,
+      userSet: this.themeMode !== LOCAL_THEME_SYSTEM,
+      credentialRef: false,
+      valueType: SettingValueType.STRING,
+      minValue: 0, maxValue: 0, stepValue: 0, hasMin: false, hasMax: false,
+      pattern: '', required: false, rawJson: '', structType: ''
+    }];
+    const out: SettingGroup[] = [];
+    out.push({ title: '本机偏好', items: items });
+    return out;
+  }
+
+  /**
+   * 写入本机偏好并**立即应用**主题。
+   *
+   * 三步的顺序有意义：先落盘（失败要能说出来）→ 再应用（D1 判据：1 秒内生效）→
+   * 最后把新值放回 AppStorage 让界面跟着变。任何一步失败都要在 `settingWriteNote`
+   * 里如实说明，而不是让用户对着一个没生效的开关反复点。
+   */
+  private async writeLocalTheme(mode: string): Promise<void> {
+    const prefs: LocalPrefs = new LocalPrefs();
+    await prefs.attach(getContext(this) as common.UIAbilityContext);
+    const saved: boolean = await prefs.saveThemeMode(themeModeOf(mode));
+    const applied: boolean = applyThemeMode(getContext(this) as common.UIAbilityContext, themeModeOf(mode));
+    AppStorage.setOrCreate<string>('dshThemeMode', mode);
+    AppStorage.setOrCreate<boolean>('dshThemeApplied', applied);
+    this.localSettings = this.localPreferenceGroup();
+    this.settings = mergeSettingsGroups(this.hostSettings, this.localSettings);
+    if (!saved || !applied) {
+      this.settingWriteNote = !saved
+        ? '主题已切换，但**没能保存**：下次启动会回到上次的值。'
+        : '主题已保存，但**本次应用未成功**（系统拒绝或当前窗口模式不支持）。';
+      return;
+    }
+    this.settingWriteNote = '主题模式已保存并在本次生效。';
   }
 
   /**
@@ -1208,7 +1309,37 @@ struct Index {
   private applyChoice(value: string): void {
     const key: string = this.choosingKey;
     this.choosing = undefined;
+    // 本机偏好走端侧持久化 + 立即生效；Host 项走 `settings/mutate`。
+    // 分流判据是"这一项在不在 Host 分组里"——与本机偏好分组的存在无关，
+    // 因为 Host 分组在未连接时本来就是空的。
+    if (this.settingItemOf(key) === undefined) {
+      this.writeLocalChoice(key, value);
+      return;
+    }
     this.writeSetting(key, value as Object, this.choosingLabel);
+  }
+
+  /** 在本机偏好分组里找一项 */
+  private localItemOf(key: string): SettingItem | undefined {
+    for (let i = 0; i < this.localSettings.length; i++) {
+      const items: SettingItem[] = this.localSettings[i].items;
+      for (let j = 0; j < items.length; j++) {
+        if (items[j].key === key) {
+          return items[j];
+        }
+      }
+    }
+    return undefined;
+  }
+
+  /** 写入本机偏好（目前只有主题模式；新增项时在这里加分支并说明它的生效路径） */
+  private writeLocalChoice(key: string, value: string): void {
+    if (key === LOCAL_THEME_KEY) {
+      this.writeLocalTheme(value);
+      return;
+    }
+    // 防御：本机偏好表里出现了没有写入路径的项。如实说明，而不是静默丢弃这次点击。
+    this.settingWriteNote = `本机偏好「${key}」尚未实现写入路径（选项已选中，但没有生效）。`;
   }
 
   // ───────────────────── 凭据写入浮层 ─────────────────────
@@ -2376,7 +2507,17 @@ struct Index {
         onPickChoice: (key: string, current: string) => {
           const item: SettingItem | undefined = this.settingItemOf(key);
           if (item === undefined) {
-            this.settingWriteNote = `「${key}」是本机偏好，只在本次运行内生效（尚未做持久化）。`;
+            // 本机偏好：没有上游写路径，但**有端侧持久化路径**（`platform/LocalPrefs`）。
+            // 仍然复用同一个选中浮层（选项来源换成端侧那一组），提交时由 `applyChoice` 分流。
+            const local: SettingItem | undefined = this.localItemOf(key);
+            if (local === undefined) {
+              this.settingWriteNote = `「${key}」既不属于 Host 设置、也不在本机偏好表里。`;
+              return;
+            }
+            this.choosingKey = key;
+            this.choosingLabel = local.label;
+            this.choosingCurrent = current;
+            this.choosing = local.choices;
             return;
           }
           if (item.choices.length === 0) {

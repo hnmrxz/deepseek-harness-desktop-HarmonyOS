@@ -37,16 +37,20 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { emitter } from '@kit.BasicServicesKit';
 import { window } from '@kit.ArkUI';
 import {
+  applyThemeMode,
   EVENT_HOST_CONNECTED,
   EVENT_KEY_HOST_TOKEN,
   EVENT_KEY_HOST_URL,
   HostStore,
+  KEY_THEME_MODE,
+  LocalPrefs,
   NotificationCenter,
   parseWindowParams,
   readDeviceFacts,
   registerWindow,
   relabelWindow,
   SecretLoadState,
+  ThemeMode,
   unregisterWindow,
   WindowKind,
   WindowMemory,
@@ -81,6 +85,8 @@ const KEY_LAUNCH_ROUTE_JSON: string = 'dshLaunchRouteJson';
  */
 const KEY_LAUNCH_HOST: string = 'dshHost';
 const KEY_LAUNCH_TOKEN: string = 'dshToken';
+/** 本机偏好「主题模式」经 AppStorage 交给页面的键（页面据此渲染当前值并写回） */
+const KEY_THEME_APPLIED: string = 'dshThemeApplied';
 /**
  * 「上次连上的 Host」经 AppStorage 交给页面的键。
  *
@@ -141,6 +147,8 @@ export default class EntryAbility extends UIAbility {
   private launchHostProvided: boolean = false;
   /** 系统通知机制（能力层持有 context，故在此装配） */
   private notifier: NotificationCenter = new NotificationCenter();
+  /** 本机偏好（主题模式等） */
+  private prefs: LocalPrefs = new LocalPrefs();
   /** 通知授权是否已查过（只查/只弹一次） */
   private notifyChecked: boolean = false;
   private notifyReady: boolean = false;
@@ -160,6 +168,14 @@ export default class EntryAbility extends UIAbility {
   };
 
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
+    /**
+     * 主题模式从**本机偏好**读（D3 §8：「设置可覆盖」系统主题）。
+     *
+     * 此前这里无条件 `COLOR_MODE_NOT_SET`（= 跟随系统），也就是"覆盖"这一半从来不存在。
+     * 读取是异步的（preferences），因此先用"跟随系统"起步，读到之后再改正——
+     * 反过来（先等存储再设）会让启动多一次阻塞，而主题本来就是可以稍后生效的。
+     * 依据 D1 §7.6.5 的判据（系统切换主题 1 秒内生效），这次修正必须在 1 秒内完成。
+     */
     try {
       this.context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET);
     } catch (err) {
@@ -168,6 +184,16 @@ export default class EntryAbility extends UIAbility {
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onCreate');
     // 先于 onWindowStageCreate 发布：窗口标签与「是否主窗」的判断都依赖它
     this.applyLaunchParams(want);
+    this.prefs.attach(this.context).then(async () => {
+      const mode: ThemeMode = await this.prefs.loadThemeMode();
+      // 应用**并如实记录是否成功**：失败时页面会把这个事实说出来（见 Index 的主题写回路径），
+      // 而不是让用户以为"设置生效了、只是看起来没变"。
+      AppStorage.setOrCreate<boolean>(KEY_THEME_APPLIED, applyThemeMode(this.context, mode));
+      // 界面据此渲染「本机偏好」分组里的当前值
+      AppStorage.setOrCreate<string>(KEY_THEME_MODE, mode as string);
+    }).catch((_error: Object) => {
+      // attach 内部已兜底（失败时 store = undefined，读取返回 SYSTEM）
+    });
   }
 
   onDestroy(): void {

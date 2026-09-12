@@ -36,6 +36,14 @@ export {
 } from './system/HostEvents';
 export { FormFactor, readDeviceFacts } from './system/DeviceFacts';
 export type { DeviceFacts } from './system/DeviceFacts';
+export {
+  applyThemeMode,
+  colorModeOf,
+  KEY_THEME_MODE,
+  LocalPrefs,
+  ThemeMode,
+  themeModeOf
+} from './system/LocalPrefs';
 export { MAX_ATTACHMENT_BYTES, PickOutcome, pickDocument } from './system/FilePicker';
 export type { PickedFile } from './system/FilePicker';
 
