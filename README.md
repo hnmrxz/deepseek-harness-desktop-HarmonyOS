@@ -108,6 +108,13 @@ devecocli build --modules entry@ohosTest   # 单测目标（仅编译；执行�
 devecocli run                          # 构建 + 安装 + 启动（需设备）
 ```
 
+**签名**：本仓库**不提交** `build-profile.json5` 的 `signingConfigs`。
+DevEco 自动签名写进去的是机器绑定的绝对路径与加密口令，且它引用的
+`.p12` / `.cer` / `.p7b` 在 `~/.ohos/config/` 下、**不在库内**——提交它既帮不了别人，
+也会让 `build-profile.json5` 每次都被改脏。要装到真机时，用 DevEco 打开工程走一次
+**自动签名**（File → Project Structure → Signing Configs → Automatically generate signature），
+它会就地写回该文件；这一步是每台机器各自做一次的事。
+
 **产出端侧核心包**（随应用分发的 dsh 核心树）：
 
 ```sh
@@ -116,6 +123,14 @@ node tools/pack-core.mjs --skip-install        # 复用已有 node_modules，秒
 node tools/pack-core.mjs --place-in-app        # 额外把核心 zip 放进 entry 的 resfile（随 HAP 分发）
 # 产物：dist/core/dsh-core-<ver>-openharmony-arm64.zip + .manifest.json
 # （放 dist/ 而不是 build/：根 build/ 属于 HarmonyOS 构建，devecocli build 会清掉它）
+```
+
+**扫描端侧核心的插件与原生模块**（回答"哪些插件能运行时安装、发版风险面有多大"）：
+
+```sh
+node tools/scan-core-plugins.mjs       # 读真实核心树，不改任何东西
+# 产物：dist/core/plugin-scan.json + plugin-scan.md（不进版本库，方法进库）
+# 实测结论与两条方法纠正见 docs/50-端侧核心运行架构.md §6.2.1
 ```
 
 **自建 Node 运行时**（阶段二关键路径，在 WSL2/Linux 里跑）：

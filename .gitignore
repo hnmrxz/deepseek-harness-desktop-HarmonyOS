@@ -43,3 +43,9 @@ hostkit/**/*.key
 hostkit/**/*.crt
 hostkit/**/*.jsonl
 hostkit/**/*.tmp
+
+# hvigor 为每个 HAR 模块生成的 BuildProfile.ets（HAR_VERSION / BUILD_MODE_NAME / DEBUG）。
+# 【为什么必须忽略】它含 `BUILD_MODE_NAME = 'debug'|'release'`，即**随构建模式变化**的生成物；
+# 提交它会在每次 build 后产生纯噪声 diff（实测只差换行符），release 构建还会把它改错。
+# 构建时自动重新生成，不需要进版本库。
+**/BuildProfile.ets
