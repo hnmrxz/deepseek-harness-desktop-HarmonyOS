@@ -53,6 +53,38 @@ bash tools/node-runtime/check-hap-native-signing.sh
 它们会不会被系统校验拒掉，**必须上设备用 `dlopen` 的错误码回答**（两种互斥解释见 D6 §4.1.9）。
 若确实需要签名，那一步必须放在 **HAP 组装之前**（组装后再改包内字节会破坏 HAP 签名）。
 
+## 签名回退流程 `sign-native.ps1`（已就位，未启用）
+
+`display-sign` 是回答"这个 `.so` 到底签没签"的**客观手段**，比 grep 段名强：它区分
+**permission** 与 **code signature** 两件事。对本机发出的原生库实测：
+
+```
+--- display-sign: entry\libs\arm64-v8a\libc++_shared.so
+INFO - permission is not found
+INFO - code signature is not found
+INFO - verify: No signature found
+```
+
+```powershell
+# 只查状态（不需要任何口令）
+.\tools\node-runtime\sign-native.ps1 -InFile <file.so> -DisplayOnly
+
+# 真签（**必须在 HAP 组装之前**）
+.\tools\node-runtime\sign-native.ps1 -InFile <unsigned.so> `
+    -KeystorePwd <pwd> -KeyPwd <pwd> [-Force]
+```
+
+工具：`<DevEco sdk>\default\openharmony\toolchains\lib\binary-sign-tool.jar`
+（本机已确认存在，其真实子命令为 `sign` / `display-sign`，参数名以工具自身输出的
+`USAGE` 为准：`-mode localSign`、`-keyAlias`、`-appCertFile`、`-profileFile`、
+`-inFile`、`-signAlg`、`-keystoreFile`、`-outFile`）。
+
+**口令是参数、不自动发现**：DevEco 在 `build-profile.json5` 里存的是**加密后的**口令
+（`0000001B...` 那串），它不是口令明文，只有 DevEco 自己调用工具时才解密。
+所以脚本不猜、缺口令就**明确失败**；**任何情况下不要把口令写进本仓库**。
+keystore/证书/profile 三项可以从 `~/.ohos/config/default_*` 自动挑（本机已确认存在
+`.p12` / `.cer` / `.p7b` / `.csr`），口令不行。
+
 产物在 `~/ohos/node-<ver>/out/Release/`：`libnode.so.<n>` 与 `node`。
 脚本最后会对两者做 ELF 检查（Class/Machine/Type）并**打印签名段**：
 - 有 `.codesign` → 可以直接进 HAP
