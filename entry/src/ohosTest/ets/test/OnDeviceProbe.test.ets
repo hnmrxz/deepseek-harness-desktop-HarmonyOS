@@ -37,10 +37,51 @@ const DOMAIN: number = 0x0000;
 const PROBE_PORT: number = 31977;
 
 /** 取应用上下文（测试进程里没有页面，因此从 delegator 拿 app context） */
-function appFilesDir(): string {
+function appContext(): common.Context {
   const delegator = abilityDelegatorRegistry.getAbilityDelegator();
-  const ctx: common.Context = delegator.getAppContext();
-  return ctx.filesDir;
+  return delegator.getAppContext();
+}
+
+/**
+ * 在**一个目录**里试建符号链接，返回结果描述。
+ *
+ * 为什么要试多个目录：上一轮只在 `filesDir` 里试，得到 `13900012 Permission denied`。
+ * 但鸿蒙不同沙箱目录的挂载属性可能不同（files/cache/temp 各有各的用途与策略），
+ * 而 `$DSH_HOME` 放哪儿是**我们自己能选的**。所以先把"是不是所有目录都不行"问清楚，
+ * 再决定要不要动 dsh 的代码——这比直接去改上游便宜得多。
+ */
+interface LinkProbe {
+  dir: string;
+  ok: boolean;
+  code: number;
+  msg: string;
+}
+
+function probeSymlinkIn(parent: string, label: string, suffix: string): LinkProbe {
+  const dir: string = parent + '/probe-link-' + suffix;
+  let ok: boolean = false;
+  let code: number = 0;
+  let msg: string = '';
+  try {
+    fs.mkdirSync(dir, true);
+    const target: string = dir + '/target';
+    const f = fs.openSync(target, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
+    fs.writeSync(f.fd, 'probe');
+    fs.closeSync(f);
+    try {
+      fs.symlinkSync(target, dir + '/link');
+      ok = true;
+    } catch (e) {
+      const err: BusinessError = e as BusinessError;
+      code = err.code;
+      msg = err.message;
+    }
+  } catch (e) {
+    const err: BusinessError = e as BusinessError;
+    code = err.code;
+    msg = 'prep: ' + err.message;
+  }
+  return { dir: label, ok: ok, code: code, msg: msg };
 }
 
 export default function onDeviceProbeTest() {
@@ -53,7 +94,7 @@ export default function onDeviceProbeTest() {
      *   - symlinkOk=false → 必须走替代方案（见本文件头部说明），并把错误码带回
      */
     it('sandbox_symlink_capability', 0, async () => {
-      const base: string = appFilesDir();
+      const base: string = appContext().filesDir;
       const dir: string = base + '/probe-symlink';
       const target: string = dir + '/target.txt';
       const link: string = dir + '/link.txt';
@@ -88,6 +129,29 @@ export default function onDeviceProbeTest() {
       // 断言"探针跑完了"，而不是断言"符号链接一定可用"——
       // 可用与否是**结论**，不是**通过条件**；结论由日志与 errCode 承载。
       expect(typeof symlinkOk).assertEqual('boolean');
+    });
+
+    /**
+     * ①b 逐目录试符号链接。
+     *
+     * 上一轮只在 filesDir 里试得到 `13900012 Permission denied`。但 `$DSH_HOME` 放哪儿
+     * 是**我们自己能选的**，而鸿蒙各沙箱目录（files / cache / temp）的挂载与策略可能不同。
+     * 先把"是不是所有目录都不行"问清楚，再决定要不要动 dsh 的代码——
+     * 这比直接去改上游便宜得多（dsh 本身有"不写符号链接"的 ESM-proxy 分支，见 D6 §4.1.4）。
+     */
+    it('sandbox_symlink_by_directory', 0, async () => {
+      const ctx: common.Context = appContext();
+      const results: LinkProbe[] = [
+        probeSymlinkIn(ctx.filesDir, 'filesDir', 'files'),
+        probeSymlinkIn(ctx.cacheDir, 'cacheDir', 'cache'),
+        probeSymlinkIn(ctx.tempDir, 'tempDir', 'temp'),
+      ];
+      for (let i = 0; i < results.length; i++) {
+        const r: LinkProbe = results[i];
+        hilog.info(DOMAIN, TAG, 'symlink[%{public}s] ok=%{public}s code=%{public}d msg=%{public}s',
+          r.dir, String(r.ok), r.code, r.msg);
+      }
+      expect(results.length).assertEqual(3);
     });
 
     /**

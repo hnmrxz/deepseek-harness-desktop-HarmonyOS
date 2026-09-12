@@ -52,6 +52,35 @@ process.env.DSH_HOME = HOME_DIR;
 process.env.DSH_DISABLE_HMR = '1';
 process.env.DSH_TELEMETRY_DISABLED = '1';
 
+/**
+ * 让 dsh 走"ESM proxy 目录"而不是"符号链接"来建模块回退。
+ *
+ * 【为什么必须这么做 —— 有真机证据】
+ * dsh 启动时会由 `healProfilesModuleFallback` 在 `$DSH_HOME/profiles/node_modules` 下
+ * 建立依赖闭包的链接（`dsh-app-boot` 源码 `resolveModuleFallbackEntries`）：
+ *
+ *     entries: !isPackagedExecutable()
+ *       ? [...].map(... { kind: "symlink" })   // 普通 Node：写符号链接
+ *       : [...].flatMap(... { kind: "proxy" }) // pkg 打包：写真实目录 + entry-N.js
+ *
+ * 而鸿蒙沙箱**全局禁止创建符号链接**：本机真机（Mate 70 Pro+ / API 26）探针实测
+ * `filesDir` / `cacheDir` / `tempDir` 三个目录全部返回
+ * `13900012 Permission denied`。⇒ 走 symlink 分支必然 boot 失败（D6 §4.1.3）。
+ *
+ * 【为什么这样绕是合法的，而不是 hack】
+ * `isPackagedExecutable()` 的实现只有一句 `process.pkg !== void 0`；而 proxy 分支的实现
+ * （`ensureModuleProxy`）**完全基于普通文件系统 API**——`mkdirSync` + `writeFileSync`，
+ * 写出的每个 `entry-N.js` 就是 `export * from "<file:// URL>"`。
+ * pkg 只出现在那段代码的**动机注释**里，运行路径上没有任何 pkg 虚拟文件系统依赖。
+ * 也就是说：proxy 形态在普通 Node 下同样成立，我们只是让 dsh 选对了分支。
+ *
+ * 【风险（要在真机上验证，别当成已解决）】
+ * 1. 其它依赖若也探测 `process.pkg` 并据此改变行为，可能被这一行影响；
+ * 2. `$DSH_HOME/profiles/node_modules` 会从"一堆链接"变成"一堆小目录"（文件数变多）。
+ * 在真机上跑通 boot 之前，这条只算"有依据的候选方案"。
+ */
+process.pkg = process.pkg || {};
+
 function ensureDir(p) {
   try {
     fs.mkdirSync(p, { recursive: true });
