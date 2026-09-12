@@ -36,10 +36,15 @@
  *     「改了 A 窗口却影响 B 窗口」时的第一条线索。
  */
 
-import { AbilityStage, Want } from '@kit.AbilityKit';
+import { Want } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { parseWindowParams, WindowKind, WindowParams } from 'platform';
+// 端侧运行时（D6 §4.1.2）：Node 的启动链挂在 WebAbilityStage 上——
+// 它的 onCreate 会 initNativeContext(libadapter.so) 并注册 JsBindingMethod，
+// 之后页面上挂载的 WebWindow 才能在 XComponent.onLoad 里调 runBrowser()。
+// 因此我们的 AbilityStage 必须继承它，而不是裸的 AbilityStage。
+import { WebAbilityStage } from 'web_engine';
 
 const DOMAIN: number = 0x0000;
 const TAG: string = 'entry/abilitystage';
@@ -49,7 +54,18 @@ const KEY_MAIN: string = 'main';
 /** 会话窗实例 key 前缀：其后拼会话 id */
 const KEY_SESSION_PREFIX: string = 'session:';
 
-export default class AppAbilityStage extends AbilityStage {
+export default class AppAbilityStage extends WebAbilityStage {
+  /**
+   * 必须转发给基类：`WebAbilityStage.onCreate` 里做的事（初始化 nativeContext、
+   * 注册 JsBindingMethod、注入式容器引导）是运行时启动的前置条件。
+   * 不调用 `super.onCreate()` 会让后面挂 WebWindow 时拿不到 nativeContext——
+   * 表现为"页面出来了但 Node 永远不启动"，而不是报错。
+   */
+  onCreate(): void {
+    super.onCreate();
+    hilog.info(DOMAIN, TAG, 'AbilityStage.onCreate 完成（原生桥接已初始化）');
+  }
+
   /**
    * 决定本次 specified 启动复用还是新建实例（返回值 = 实例 key）。
    *
