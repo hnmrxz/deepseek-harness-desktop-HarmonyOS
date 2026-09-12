@@ -70,10 +70,16 @@ import {
   aboutInfo,
   buildCoreView,
   CoreFact,
+  CorePhase,
   CoreViewState,
   corePhaseOfHostState,
   emptyCoreView,
   emptyDiagReport,
+  DiagMode,
+  diagHintOf,
+  diagModeOf,
+  diagTitleOf,
+  filterDiagEntries,
   fact,
   sessionEmptyCopy,
   unknownFact,
@@ -2168,6 +2174,10 @@ struct Index {
       DiagnosticsPane({
         report: this.diag,
         running: this.diagRunning,
+        // 判定项按模式裁剪（D7 §3 第 4 项）：本地核心模式下 TLS / 认证不适用
+        entries: filterDiagEntries(this.diagMode(), this.diag.entries),
+        modeTitle: diagTitleOf(this.diagMode()),
+        modeHint: diagHintOf(this.diagMode()),
         traceEnabled: this.traceEnabled,
         traceLines: this.traceLines,
         onRerun: () => {
@@ -2452,6 +2462,13 @@ struct Index {
     .width('100%')
     .padding(Sp.S)
     .backgroundColor($r('sys.color.background_secondary'))
+  }
+
+  /** 诊断模式（D7 §3 第 4 项）：本机核心 / 远程 Host / 未接线 */
+  private diagMode(): DiagMode {
+    const ready: boolean = this.coreView.phase === CorePhase.READY
+      || this.coreView.phase === CorePhase.DEGRADED;
+    return diagModeOf(ready, this.hosts.length > 0);
   }
 
   // ── 端侧核心页（D6）────────────────────────────────────────────────────

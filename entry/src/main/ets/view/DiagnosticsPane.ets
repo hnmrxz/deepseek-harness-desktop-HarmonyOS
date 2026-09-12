@@ -25,6 +25,17 @@ export struct DiagnosticsPane {
     versionMessage: '', versionAdvice: '', tableStats: '', surface: ''
   };
   @Prop running: boolean = false;
+  /**
+   * 判定项由宿主按**模式**裁剪后传入（D7 §3 第 4 项）。
+   *
+   * 为什么不直接用 `report.entries`：本地核心模式下 TLS 与 cookie 认证**不适用**
+   * （回环 + `--skip-auth`），把它们列出来只会给诊断页添噪音。
+   * 裁剪判据是 appstate 的纯函数 `filterDiagEntries`，本组件不自己判断。
+   */
+  @Prop entries: DiagEntry[] = [];
+  /** 模式化标题与说明（本地核心 / 远程 Host / 未接线） */
+  @Prop modeTitle: string = '连接诊断';
+  @Prop modeHint: string = '';
   /** 是否允许展示协议旁路日志（默认关闭，D1 §7.8.3） */
   @Prop traceEnabled: boolean = false;
   @Prop traceLines: string[] = [];
@@ -50,7 +61,7 @@ export struct DiagnosticsPane {
         .onClick(() => {
           this.onBack();
         })
-        Text('连接诊断')
+        Text(this.modeTitle)
           .fontSize(Fs.TITLE_S)
           .fontWeight(FontWeight.Medium)
           .layoutWeight(1)
@@ -117,7 +128,7 @@ export struct DiagnosticsPane {
   @Builder
   entriesCard() {
     Column({ space: Sp.S }) {
-      ForEach(this.report.entries, (entry: DiagEntry) => {
+      ForEach(this.entries, (entry: DiagEntry) => {
         Column({ space: Sp.XS }) {
           Row({ space: Sp.S }) {
             SymbolGlyph(entry.passed ? $r('sys.symbol.checkmark_circle') : $r('sys.symbol.xmark_circle'))
@@ -160,8 +171,8 @@ export struct DiagnosticsPane {
         .backgroundColor($r('sys.color.background_secondary'))
       }, (entry: DiagEntry) => entry.name)
 
-      if (this.report.entries.length === 0) {
-        Text('点「重新诊断」开始五项判定。')
+      if (this.entries.length === 0) {
+        Text(this.modeHint.length > 0 ? this.modeHint : '点「重新诊断」开始五项判定。')
           .fontSize(Fs.CAPTION)
           .fontColor($r('sys.color.font_tertiary'))
           .width('100%')

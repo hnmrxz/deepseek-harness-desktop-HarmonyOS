@@ -108,6 +108,8 @@ export type {
 // ── 「关于」与诊断空态（**不是桩数据**：全部从 dshcompat 实时派生） ──
 export { aboutInfo } from './model/StubData2';
 export { emptyDiagReport } from './model/Diag';
+// 诊断模式（D7 §3 第 4 项）：本地核心 / 远程 Host 分流
+export { DiagMode, diagHintOf, diagModeOf, diagTitleOf, filterDiagEntries } from './model/Diag';
 
 // ── 会话内搜索（D3 §5.1 的 Ctrl/Cmd + F） ──
 export { matchCounterText, matchTrajectoryIndices, stepMatch } from './model/Search';

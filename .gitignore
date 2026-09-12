@@ -29,6 +29,8 @@ entry/src/main/resources/resfile/*.zip
 # 阶段一的运行时载体（由 tools/electron-runtime/collect.ps1 从 dist/ 导入）
 # libelectron.so 单个就有 172.7 MB，绝不能进版本库
 runtime/
+# 运行时原生库（libelectron.so 等，由 collect.ps1 + 手工复制进入 entry/libs）
+entry/libs/
 
 # 华为侧 release 产物（账号门禁、无公开 URL，由人放入根目录；见 tools/electron-runtime/README.md）
 v*-release.zip
