@@ -20,6 +20,10 @@ import {
   modelSelectionLabel,
   pluginSummary,
   PluginItem,
+  // 插件可安装性三态契约（D6 §6.2）：不把"未知"渲染成"可安装"
+  PluginNative,
+  PluginRow,
+  classifyPlugin,
   Radius,
   SettingGroup,
   SettingItem,
@@ -549,6 +553,17 @@ export struct SettingsPane {
 
   // ───────────── 插件 ─────────────
 
+  /**
+   * 单个插件的可安装性行。
+   *
+   * 目前**恒为 UNKNOWN**：上游 `pluginInventory.list` 不提供"是否含原生模块"这一信息。
+   * 这是**记录事实**而不是偷懒——等能读到插件包清单（package.json / 是否存在 .node）后，
+   * 再把真实取值传进来即可，界面与契约都不用改。
+   */
+  private pluginRowOf(p: PluginItem): PluginRow {
+    return classifyPlugin(p.moduleName, '', PluginNative.UNKNOWN);
+  }
+
   @Builder
   pluginsTab() {
     Row({ space: Sp.S }) {
@@ -556,11 +571,17 @@ export struct SettingsPane {
         .fontSize(Fs.CAPTION)
         .fontColor($r('sys.color.font_tertiary'))
         .layoutWeight(1)
-      Text('市场')
-        .fontSize(Fs.CAPTION)
-        .fontColor($r('sys.color.brand'))
     }
     .width('100%')
+
+    // 【为什么这里只有说明、没有"市场"按钮】原实现有个「市场」文字，点了没有任何反应——
+    // 它是个假入口。而"能不能运行时安装插件"取决于插件是否含原生 .node，
+    // 上游 pluginSummary/pluginInventory 都不提供该信息 ⇒ 一律显示「待确认」，
+    // 不给会失败的承诺（D6 §6.2）。这里把原因写在明处，而不是留一个无响应的按钮。
+    Text('上游插件清单不含「是否含原生模块」的信息，所以下方一律标为「待确认」；确认含原生模块（.node）的插件受鸿蒙签名策略约束，只能随应用发版提供。')
+      .fontSize(Fs.CAPTION)
+      .fontColor($r('sys.color.font_tertiary'))
+      .width('100%')
 
     ForEach(this.plugins, (p: PluginItem) => {
       Row({ space: Sp.M }) {
@@ -586,6 +607,13 @@ export struct SettingsPane {
             .borderRadius(5)
             .backgroundColor($r('sys.color.background_primary'))
         }
+        // 可安装性徽标：取值由 appstate 的三态契约给出（纯 JS / 需发版 / 待确认）
+        Text(this.pluginRowOf(p).badge)
+          .fontSize(10)
+          .fontColor($r('sys.color.font_tertiary'))
+          .padding({ left: 5, right: 5 })
+          .borderRadius(5)
+          .backgroundColor($r('sys.color.background_primary'))
       }
       .width('100%')
       .padding(Sp.M)
