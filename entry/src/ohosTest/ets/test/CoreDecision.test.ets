@@ -30,9 +30,10 @@ import {
   corePhaseOfHostState,
   diagModeOf,
   filterDiagEntries,
+  pluginNativeOf,
   sessionEmptyCopy
 } from 'appstate';
-import type { DiagEntry } from 'appstate';
+import type { DiagEntry, PluginRow } from 'appstate';
 
 function entry(name: string): DiagEntry {
   return { name: name, passed: true, detail: '', advice: '' };
@@ -155,6 +156,35 @@ export default function coreDecisionTest() {
       const native = classifyPlugin('p', '1.0.0', PluginNative.NATIVE);
       expect(native.installable).assertFalse();
       expect(native.badge).assertEqual('需发版');
+    });
+
+    // ── 核心树清单取值 → appstate 枚举：两侧字符串故意不同名 ─────────────
+    it('manifest_kind_maps_to_plugin_native', 0, () => {
+      expect(pluginNativeOf('PURE_JS')).assertEqual(PluginNative.PURE_JS);
+      expect(pluginNativeOf('NATIVE')).assertEqual(PluginNative.NATIVE);
+
+      // 关键：清单里的 'PURE_JS' 与枚举取值 'pure-js' 不是同一个字符串。
+      // 直接把清单取值当枚举用，会在**任何一侧改名时静默变成 UNKNOWN**（而不是编译报错），
+      // 于是所有插件都被渲染成"待确认"——所以映射必须显式存在并在这里钉住。
+      expect(pluginNativeOf('pure-js') === PluginNative.PURE_JS).assertFalse();
+      expect(pluginNativeOf('native') === PluginNative.NATIVE).assertFalse();
+      expect(pluginNativeOf('pure-js')).assertEqual(PluginNative.UNKNOWN);
+
+      // 未知/拼错/空一律 UNKNOWN，不得谎称可安装
+      expect(pluginNativeOf('')).assertEqual(PluginNative.UNKNOWN);
+      expect(pluginNativeOf('PUREJS')).assertEqual(PluginNative.UNKNOWN);
+    });
+
+    // ── 清单行 → 界面行：id 与禁用态必须原样带到界面 ─────────────────────
+    it('plugin_row_keeps_id_and_disabled', 0, () => {
+      const row: PluginRow = classifyPlugin('@deepseek-ai/dsh-sandbox', '', PluginNative.NATIVE,
+        'sandbox', true);
+      expect(row.id).assertEqual('sandbox');
+      expect(row.disabled).assertTrue();
+      expect(row.installable).assertFalse();
+      // id 缺省时不得编造：空就是空
+      expect(classifyPlugin('p', '', PluginNative.PURE_JS).id).assertEqual('');
+      expect(classifyPlugin('p', '', PluginNative.PURE_JS).disabled).assertFalse();
     });
 
     // ── 诊断模式分流 ────────────────────────────────────────────────────

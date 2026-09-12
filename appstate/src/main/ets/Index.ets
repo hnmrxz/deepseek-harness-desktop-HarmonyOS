@@ -128,6 +128,7 @@ export {
   corePhaseOfHostState,
   emptyCoreView,
   fact,
+  pluginNativeOf,
   sessionEmptyCopy,
   unknownFact
 } from './model/Core';

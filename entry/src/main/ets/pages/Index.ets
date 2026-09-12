@@ -69,6 +69,7 @@ import {
   Sp,
   aboutInfo,
   buildCoreView,
+  classifyPlugin,
   CoreFact,
   CorePhase,
   CoreViewState,
@@ -88,6 +89,7 @@ import {
   projectDetailSections,
   projectHosts,
   projectWorkspaces,
+  pluginNativeOf,
   SessionHub,
   Sz,
   TrajectoryItem,
@@ -104,6 +106,7 @@ import type {
   CredentialWriteResult,
   HubSnapshot,
   HubSubscriber,
+  PluginRow,
   SettingChoice,
   SettingInputResult,
   SettingItem,
@@ -127,7 +130,7 @@ import { hitOfKeyEvent } from '../view/ShortcutKeys';
 import type { ShortcutHit } from '../view/ShortcutKeys';
 // 端侧核心运行层（D6）：核心版本仓库与激活事务。运行时载体尚未接线，
 // 因此这里现在只用它的"仓库/状态"部分，不声称任何"已启动"。
-import { BundledInstallResult, DshHost, HostStatus, NotWiredRuntime, RuntimeProbe, hostStateIsTransient } from 'hostruntime';
+import { BundledInstallResult, DshHost, HostPluginReport, HostStatus, NotWiredRuntime, RuntimeProbe, hostStateIsTransient } from 'hostruntime';
 
 /**
  * 把紧凑 JSON 美化以便人读写；失败时原样返回。
@@ -2543,7 +2546,8 @@ struct Index {
       fact('核心仓库',
         status.installed.length > 0 ? `已安装 ${status.installed.length} 个版本` : '空',
         status.installed.length > 0 ? 'ok' : 'warn',
-        repoNote)
+        repoNote),
+      this.pluginInventoryFact(status.plugins)
     ];
 
     this.coreView = buildCoreView({
@@ -2558,8 +2562,43 @@ struct Index {
       previousVersion: status.previousVersion,
       profileName: status.profile,
       facts: facts,
-      plugins: []
+      plugins: this.corePluginRows(status.plugins)
     });
+  }
+
+  /**
+   * 插件清单的**来源与统计**，作为核心页的一条事实。
+   *
+   * 【为什么要有这一行】清单是"某个已安装版本"的属性，且它由**打包时**写进树里
+   * （端侧不遍历目录现算，见 D6 §6.2.1）。所以用户必须能看出清单来自哪一版；
+   * 装的是没有清单的旧包时，也要说清"是这个包没带清单"，而不是让他以为插件为零。
+   */
+  private pluginInventoryFact(report: HostPluginReport): CoreFact {
+    if (report.note.length > 0) {
+      return unknownFact('插件清单', report.note);
+    }
+    const t = report.totals;
+    return fact('插件清单',
+      `${t.pluginRows} 行 · 纯 JS ${t.pureJs} · 依赖原生 ${t.native}`
+        + (t.disabled > 0 ? ` · 默认禁用 ${t.disabled}` : ''),
+      t.native > 0 ? 'warn' : 'ok',
+      `来自核心 ${report.version}；含原生模块的包 ${report.nativePackages.length} 个。`
+        + '「依赖原生」的插件受签名策略约束，只能随应用发版。');
+  }
+
+  /**
+   * 树内插件清单 → 核心页的行。
+   *
+   * 端侧的 nativeKind 来自打包时沿**依赖闭包**的判定（D6 §6.2.1），所以这里的分类是
+   * **真实取值**，正常情况不会出现「待确认」。
+   * `version` 留空：清单描述的是"包内的行"，行本身没有独立版本，编一个版本号比留空更糟。
+   */
+  private corePluginRows(report: HostPluginReport): PluginRow[] {
+    const rows: PluginRow[] = [];
+    for (const r of report.rows) {
+      rows.push(classifyPlugin(r.name, '', pluginNativeOf(r.nativeKind), r.id, r.disabled));
+    }
+    return rows;
   }
 
   /**

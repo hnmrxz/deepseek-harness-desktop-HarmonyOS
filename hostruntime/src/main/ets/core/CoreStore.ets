@@ -39,6 +39,32 @@ function fail(message: string): OpResult {
   return { ok: false, message: message };
 }
 
+/**
+ * 树内清单里的一条插件行（打包器写入，判据见 `tools/lib/core-inventory.mjs`）。
+ *
+ * 【nativeKind 的判据是依赖闭包，不是"包里有 .node"】实测端侧核心的 6 个依赖原生的
+ * 插件行**没有一个自带 .node**，它们全靠传递依赖摸到 koffi / node-pty / sharp。
+ * 用"包内有没有 .node"当判据会把它们标成"纯 JS 可安装"，用户装完必然起不来。
+ */
+export interface CorePluginRow {
+  id: string;
+  name: string;
+  bundle: string;
+  disabled: boolean;
+  /** `'PURE_JS' | 'NATIVE' | 'UNKNOWN'`（打包器取值，**不是** appstate 的枚举取值） */
+  nativeKind: string;
+  /** NATIVE 时非空：闭包内命中的原生包，用来向用户解释"为什么不能装" */
+  nativeVia: string[];
+}
+
+export interface CorePluginTotals {
+  pluginRows: number;
+  pureJs: number;
+  native: number;
+  unknown: number;
+  disabled: number;
+}
+
 /** 树内元数据（打包器写入 <top>/hdsh-core.json）。字段全部按"可能缺失"处理。 */
 export interface CoreTreeInfo {
   coreVersion: string;
@@ -47,6 +73,55 @@ export interface CoreTreeInfo {
   builtAt: string;
   /** 该版本要求的 Node 版本下限（来自配方）；空串表示未记录 */
   nodeFloor: string;
+  /**
+   * 打包时算好的插件清单。
+   * **旧核心包没有这些字段**（清单是本轮才加进树里的），此时一律为空——
+   * 空表示"这个包没带清单"，而不是"没有插件"，界面必须区分这两句话。
+   */
+  plugins: CorePluginRow[];
+  pluginTotals: CorePluginTotals;
+  nativePackages: string[];
+}
+
+/** 清单里的插件行 → 强类型行。逐字段校验：损坏的清单不能让整个核心状态读不出来。 */
+function toPluginRows(raw: CorePluginRow[]): CorePluginRow[] {
+  const out: CorePluginRow[] = [];
+  if (!Array.isArray(raw)) {
+    return out;
+  }
+  for (const r of raw) {
+    if (r === null || r === undefined) {
+      continue;
+    }
+    const id: string = typeof r.id === 'string' ? r.id : '';
+    const name: string = typeof r.name === 'string' ? r.name : '';
+    if (id.length === 0 && name.length === 0) {
+      continue;
+    }
+    out.push({
+      id: id,
+      name: name,
+      bundle: typeof r.bundle === 'string' ? r.bundle : '',
+      disabled: r.disabled === true,
+      nativeKind: typeof r.nativeKind === 'string' ? r.nativeKind : 'UNKNOWN',
+      nativeVia: Array.isArray(r.nativeVia) ? r.nativeVia : [],
+    });
+  }
+  return out;
+}
+
+function toTotals(raw: CorePluginTotals, rowCount: number): CorePluginTotals {
+  if (raw === null || raw === undefined) {
+    return { pluginRows: rowCount, pureJs: 0, native: 0, unknown: 0, disabled: 0 };
+  }
+  const num = (v: number): number => (typeof v === 'number' && v >= 0 ? v : 0);
+  return {
+    pluginRows: num(raw.pluginRows),
+    pureJs: num(raw.pureJs),
+    native: num(raw.native),
+    unknown: num(raw.unknown),
+    disabled: num(raw.disabled),
+  };
 }
 
 export class CoreStore {
@@ -155,19 +230,42 @@ export class CoreStore {
     return out;
   }
 
+  /**
+   * 读树内元数据。
+   *
+   * 【为什么这里要认得"没有清单"】插件清单是本轮才由打包器写进树里的，
+   * 设备上可能还装着上一版（没有该字段）的核心包。此时返回空清单——
+   * 空清单 ≠ "没有插件"，界面必须把"这个包没带清单"与"插件为零"分开说。
+   */
   readTreeInfo(version: string): CoreTreeInfo {
-    const empty: CoreTreeInfo = { coreVersion: version, platform: '', profile: '', builtAt: '', nodeFloor: '' };
+    const empty: CoreTreeInfo = {
+      coreVersion: version,
+      platform: '',
+      profile: '',
+      builtAt: '',
+      nodeFloor: '',
+      plugins: [],
+      pluginTotals: { pluginRows: 0, pureJs: 0, native: 0, unknown: 0, disabled: 0 },
+      nativePackages: [],
+    };
     try {
       if (!fs.accessSync(this.treeInfoPath(version))) {
         return empty;
       }
-      const raw: CoreTreeInfo = JSON.parse(fs.readTextSync(this.treeInfoPath(version))) as CoreTreeInfo;
+      const raw = JSON.parse(fs.readTextSync(this.treeInfoPath(version))) as CoreTreeInfo;
+      if (raw === null || raw === undefined) {
+        return empty;
+      }
+      const plugins: CorePluginRow[] = toPluginRows(raw.plugins);
       return {
         coreVersion: typeof raw.coreVersion === 'string' ? raw.coreVersion : version,
         platform: typeof raw.platform === 'string' ? raw.platform : '',
         profile: typeof raw.profile === 'string' ? raw.profile : '',
         builtAt: typeof raw.builtAt === 'string' ? raw.builtAt : '',
         nodeFloor: typeof raw.nodeFloor === 'string' ? raw.nodeFloor : '',
+        plugins: plugins,
+        pluginTotals: toTotals(raw.pluginTotals, plugins.length),
+        nativePackages: Array.isArray(raw.nativePackages) ? raw.nativePackages : [],
       };
     } catch (e) {
       return empty;

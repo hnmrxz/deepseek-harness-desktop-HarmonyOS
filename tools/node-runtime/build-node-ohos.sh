@@ -59,9 +59,10 @@ cd "${SRC_DIR}"
 # 放在 configure 之前，是为了让 gyp 直接生成正确的 makefile；若改在之后，
 # 还得手工改 out/**/*.target.mk（make 不会自己重跑 gyp——实测过）。
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-echo "[node] 应用源码修补：C++ 标准 / zlib ARMv8 CRC32 SIMD"
+echo "[node] 应用源码修补：C++ 标准 / zlib ARMv8 CRC32 SIMD / 目标链接的 -latomic"
 bash "${HERE}/fix-cxx-std.sh" "${SRC_DIR}"
 bash "${HERE}/fix-zlib-crc32.sh" "${SRC_DIR}"
+bash "${HERE}/fix-latomic.sh" "${SRC_DIR}"
 
 # ── 工具链环境 ──
 # 单一来源：toolchain-env.sh。**不要**在这里另写一份 export。

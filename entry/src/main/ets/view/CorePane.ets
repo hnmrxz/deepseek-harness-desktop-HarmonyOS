@@ -232,7 +232,7 @@ export struct CorePane {
         .fontColor($r('sys.color.font_tertiary'))
         .width('100%')
       if (this.view.plugins.length === 0) {
-        Text('未读取到插件清单。核心就绪后这里会列出实际安装的插件。')
+        Text('未读取到插件清单。清单由核心包携带（打包时算好，端侧只读一份清单，不遍历目录）；装上带清单的核心版本后，这里会列出实际的行。')
           .fontSize(Fs.CAPTION)
           .fontColor($r('sys.color.font_tertiary'))
           .width('100%')
@@ -240,17 +240,24 @@ export struct CorePane {
         ForEach(this.view.plugins, (p: PluginRow) => {
           Column({ space: 2 }) {
             Row({ space: Sp.S }) {
-              Text(p.name)
+              // 行 id 是用户在 profile 里改启停时写的那个名字，比包名更有用，因此优先显示
+              Text(p.id.length > 0 ? p.id : p.name)
                 .fontSize(Fs.CAPTION)
                 .layoutWeight(1)
-              Text(p.version)
-                .fontSize(Fs.CAPTION)
-                .fontColor($r('sys.color.font_tertiary'))
+              if (p.disabled) {
+                Text('已禁用')
+                  .fontSize(Fs.CAPTION)
+                  .fontColor($r('sys.color.font_tertiary'))
+              }
               Text(p.badge)
                 .fontSize(Fs.CAPTION)
                 .fontColor(p.installable ? $r('sys.color.brand') : $r('sys.color.font_tertiary'))
             }
             .width('100%')
+            Text(p.name)
+              .fontSize(10)
+              .fontColor($r('sys.color.font_tertiary'))
+              .width('100%')
             if (!p.installable && p.reason.length > 0) {
               Text(p.reason)
                 .fontSize(Fs.CAPTION)
@@ -259,7 +266,7 @@ export struct CorePane {
             }
           }
           .width('100%')
-        }, (p: PluginRow) => p.name)
+        }, (p: PluginRow) => `${p.id}|${p.name}`)
       }
     }
     .width('100%')

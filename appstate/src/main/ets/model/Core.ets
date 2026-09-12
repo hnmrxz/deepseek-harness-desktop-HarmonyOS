@@ -94,23 +94,46 @@ export interface CoreActionSpec {
 /**
  * 插件是否含原生模块——**三态，不能是两态**。
  *
- * 【为什么必须有 UNKNOWN】能不能在运行时安装一个插件，取决于它是否含原生 `.node`。
- * 但上游 `pluginInventory.list` 只给 `entryId / moduleName / enabled / fiberPhase`，
- * **没有**原生信息。把"不知道"硬塞进 `hasNative: false` 就会把"未知"渲染成"可安装"——
- * 用户点了才发现装不了，或者更糟：以为装上了。
- * 因此这里显式保留 UNKNOWN，界面必须如实呈现并给出获取途径。
+ * 【为什么必须有 UNKNOWN】能不能在运行时安装一个插件，取决于它是否依赖原生码。
+ * 两条数据来源的**能力不同**，必须都容纳：
+ *   - 连远程 Host：`pluginInventory.list` 只给 `entryId / moduleName / enabled / fiberPhase`，
+ *     **没有**原生信息 ⇒ 只能 UNKNOWN；
+ *   - 端侧自足运行：我们自己就是核心树的主人，打包时已沿依赖闭包判定并写进树内元数据
+ *     （D6 §6.2.1）⇒ 端侧拿到的是真实取值，正常情况**不该再出现 UNKNOWN**。
+ * 把"不知道"硬塞进 `hasNative: false` 就会把"未知"渲染成"可安装"——
+ * 用户点了才发现装不了，或者更糟：以为装上了。所以这里保留 UNKNOWN 并如实呈现。
  */
 export enum PluginNative {
   /** 确认纯 JS：可在运行时安装/停用 */
   PURE_JS = 'pure-js',
-  /** 确认含原生 .node：只能随应用发版提供（D6 §6.2 的硬约束） */
+  /** 确认依赖原生 .node：只能随应用发版提供（D6 §6.2 的硬约束） */
   NATIVE = 'native',
   /** 尚未判断：需要读取插件包清单 */
   UNKNOWN = 'unknown',
 }
 
+/**
+ * 核心树清单里的 `nativeKind`（打包器取值 `'PURE_JS' | 'NATIVE' | 'UNKNOWN'`）
+ * → `PluginNative` 的取值。
+ *
+ * 【为什么要一个显式映射】两侧的字符串**故意不是同一套**：清单里的是打包器的取值，
+ * 枚举里的是界面契约的取值。直接传字符串就成了"两个模块碰巧用了同名常量"，
+ * 任何一侧改名都会静默变成 UNKNOWN 而不是编译错误。映射收在这里，可单测。
+ */
+export function pluginNativeOf(manifestKind: string): string {
+  if (manifestKind === 'PURE_JS') {
+    return PluginNative.PURE_JS;
+  }
+  if (manifestKind === 'NATIVE') {
+    return PluginNative.NATIVE;
+  }
+  return PluginNative.UNKNOWN;
+}
+
 /** 插件分类结果（决定"能不能运行时安装"）。 */
 export interface PluginRow {
+  /** cordis 行 id（比包名短，是用户在 profile 里改启停时写的那个名字） */
+  id: string;
   name: string;
   version: string;
   /** `PluginNative` 的取值 */
@@ -121,40 +144,53 @@ export interface PluginRow {
   badge: string;
   /** 不可安装时的原因，会直接显示给用户 */
   reason: string;
+  /** 该行在 profile 里是否被禁用 */
+  disabled: boolean;
 }
 
 /**
  * 插件分类：只有"确认不含原生模块"的插件才允许运行时安装（D6 §6.2 的硬约束）。
  * UNKNOWN **不**视为可安装——宁可让用户看到"待确认"，也不要给一个会失败的承诺。
+ *
+ * `id` / `disabled` 可选，是为了不破坏只关心可安装性的调用点（远程 Host 路径没有这两个事实，
+ * 它连"是否被禁用"都只在 `pluginInventory` 的 enabled 里、语义与 profile 的 disabled 不同）。
  */
-export function classifyPlugin(name: string, version: string, nativeKind: string): PluginRow {
+export function classifyPlugin(name: string, version: string, nativeKind: string,
+  id: string = '', disabled: boolean = false): PluginRow {
   if (nativeKind === PluginNative.PURE_JS) {
     return {
+      id: id,
       name: name,
       version: version,
       nativeKind: PluginNative.PURE_JS,
       installable: true,
       badge: '可安装',
       reason: '',
+      disabled: disabled,
     };
   }
   if (nativeKind === PluginNative.NATIVE) {
     return {
+      id: id,
       name: name,
       version: version,
       nativeKind: PluginNative.NATIVE,
       installable: false,
       badge: '需发版',
       reason: '含原生模块（.node）。鸿蒙只允许加载随 HAP 打包且已签名的原生库，无法在运行时安装——需随应用发版提供。',
+      disabled: disabled,
     };
   }
   return {
+    id: id,
     name: name,
     version: version,
     nativeKind: PluginNative.UNKNOWN,
     installable: false,
     badge: '待确认',
-    reason: '上游插件清单不含"是否含原生模块"的信息，因此无法判断能否运行时安装。需要读取该插件的包清单（package.json / 是否存在 .node）后才能确定。',
+    reason: '无法判断该插件是否依赖原生模块。端侧清单由打包时沿依赖闭包判定并写进核心树，'
+      + '因此这里出现「待确认」说明该版本的核心包没有带清单（旧包），或该插件的包在树里解析不到。',
+    disabled: disabled,
   };
 }
 

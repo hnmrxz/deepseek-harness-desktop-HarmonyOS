@@ -306,6 +306,47 @@ function embedTreeInfo() {
 }
 const TREE_INFO_FILE = 'hdsh-core.json';
 
+/**
+ * 把写好的树内清单**读回来**逐字段核对，不符就让打包失败。
+ *
+ * 【为什么值得一个硬断言】这份 JSON 的消费者是 ArkTS 侧的 `CoreStore.readTreeInfo()`
+ * （`hostruntime/src/main/ets/core/CoreStore.ets`），它按字段名逐个取。
+ * 两端都是字符串键：**任何一侧改名都不会报错**，只会静默退化成"读不到清单"，
+ * 于是核心页永远显示"未读取到插件清单"，而没有任何一处会告诉你是拼写问题。
+ * 所以这里把契约钉在唯一的产出口上：字段名/类型不对就不许出厂。
+ */
+function verifyTreeInfoContract() {
+  const p = join(STAGE, TREE_INFO_FILE);
+  let raw;
+  try {
+    raw = JSON.parse(readFileSync(p, 'utf8'));
+  } catch (e) {
+    die(`树内清单不可解析：${p}（${e.message}）`);
+  }
+  const wantString = ['coreVersion', 'platform', 'profile', 'builtAt', 'nodeFloor'];
+  for (const k of wantString) {
+    if (typeof raw[k] !== 'string') die(`树内清单字段 ${k} 不是字符串（端侧按字符串读）`);
+  }
+  if (!Array.isArray(raw.plugins)) die('树内清单缺少 plugins 数组（端侧插件页的数据源）');
+  if (!Array.isArray(raw.nativePackages)) die('树内清单缺少 nativePackages 数组');
+  const t = raw.pluginTotals;
+  if (t === null || typeof t !== 'object') die('树内清单缺少 pluginTotals 对象');
+  for (const k of ['pluginRows', 'pureJs', 'native', 'unknown', 'disabled']) {
+    if (typeof t[k] !== 'number') die(`pluginTotals.${k} 不是数字`);
+  }
+  for (const [i, r] of raw.plugins.entries()) {
+    for (const k of ['id', 'name', 'bundle', 'nativeKind']) {
+      if (typeof r[k] !== 'string') die(`plugins[${i}].${k} 不是字符串`);
+    }
+    if (typeof r.disabled !== 'boolean') die(`plugins[${i}].disabled 不是布尔`);
+    if (!Array.isArray(r.nativeVia)) die(`plugins[${i}].nativeVia 不是数组`);
+  }
+  if (t.pluginRows !== raw.plugins.length) {
+    die(`pluginTotals.pluginRows=${t.pluginRows} 与 plugins 长度 ${raw.plugins.length} 不一致`);
+  }
+  log(`[pack-core]   树内清单契约核对通过（端侧 CoreStore.readTreeInfo 按这些字段读）`);
+}
+
 function sha256(file) {
   const h = createHash('sha256');
   h.update(readFileSync(file));
@@ -528,6 +569,7 @@ materialize();
 prune();
 const sig = verify();
 embedTreeInfo();
+verifyTreeInfoContract();
 embedProfile();
 const packed = pack();
 const manifest = writeManifest({ ...packed, ...sig });

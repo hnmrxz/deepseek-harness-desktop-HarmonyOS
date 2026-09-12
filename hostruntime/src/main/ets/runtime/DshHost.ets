@@ -17,7 +17,7 @@
  * `corePhaseOfHostState()` 映射（纯函数，可单测）。
  */
 import { ActivationDecision, ActivationAction, CoreState, CoreVersionRecord } from '../core/Types';
-import { CoreStore, OpResult } from '../core/CoreStore';
+import { CoreStore, CorePluginRow, CorePluginTotals, CoreTreeInfo, OpResult } from '../core/CoreStore';
 import { BundledInstallResult, installBundledCores } from '../core/BundledCore';
 import { HostHandle, RuntimePort, RuntimeProbe, RuntimeKind } from '../runtime/RuntimePort';
 
@@ -33,6 +33,23 @@ export enum HostState {
   FAILED = 'failed',
 }
 
+/**
+ * 插件清单的报告（核心页的插件分区用）。
+ *
+ * 【为什么带 version 和 note】清单是**某个已安装版本**的属性，不是全局事实。
+ * 只给一个数组会让界面无法回答"这是哪一版的插件"。而 note 用来区分两件不同的事：
+ * "这个核心包里没有清单"（早于清单内嵌的旧包）与"清单里插件为零"。
+ */
+export interface HostPluginReport {
+  /** 清单来自哪个已安装版本；空串表示没有可用清单 */
+  version: string;
+  rows: CorePluginRow[];
+  totals: CorePluginTotals;
+  nativePackages: string[];
+  /** 清单为空时说明原因；非空时为空串 */
+  note: string;
+}
+
 /** 状态快照。全部字段都是"事实或空值"，没有默认假值。 */
 export interface HostStatus {
   state: HostState;
@@ -45,6 +62,8 @@ export interface HostStatus {
   probe: RuntimeProbe;
   /** 已启动时的句柄；未启动为空 */
   handle: HostHandle | null;
+  /** 插件清单（来自树内元数据，打包时算好；端侧不重新遍历目录） */
+  plugins: HostPluginReport;
 }
 
 /** 瞬态状态（正在解包 / 正在启动）：核心页据此显示"进行中"并禁用会冲突的动作。 */
@@ -119,6 +138,45 @@ export class DshHost {
       profile: DshHost.PROFILE,
       probe: probe,
       handle: this.handle,
+      plugins: this.plugins(),
+    };
+  }
+
+  /**
+   * 插件清单：取自**会被启动的那个版本**的树内元数据（选取规则与 start() 一致）。
+   *
+   * 【为什么不聚合所有版本】清单回答的是"这一版装了什么"。把两个版本的插件混成一个列表，
+   * 用户会以为设备上装着这一份合集——那是编造。
+   * 【为什么端侧不自己扫】判据要沿依赖闭包走 518 个包 / 27000 余文件（实测规模）；
+   * 而答案在打包那一刻就确定了，所以打包器算好写进树里，端侧只读一个小 JSON。
+   */
+  plugins(): HostPluginReport {
+    const zero: CorePluginTotals = { pluginRows: 0, pureJs: 0, native: 0, unknown: 0, disabled: 0 };
+    const installed: string[] = this.store.listInstalled();
+    if (installed.length === 0) {
+      return {
+        version: '', rows: [], totals: zero, nativePackages: [],
+        note: '还没有安装核心版本，因此没有插件清单',
+      };
+    }
+    const state: CoreState = this.store.readState();
+    const target: string = state.current.length > 0 && installed.includes(state.current)
+      ? state.current
+      : installed[0];
+    const info: CoreTreeInfo = this.store.readTreeInfo(target);
+    if (info.plugins.length === 0) {
+      return {
+        version: target, rows: [], totals: info.pluginTotals, nativePackages: info.nativePackages,
+        note: `核心 ${target} 的树内元数据不含插件清单（该包早于"清单随包内嵌"这一改动）；`
+          + '重新安装一份较新的核心包即可显示。',
+      };
+    }
+    return {
+      version: target,
+      rows: info.plugins,
+      totals: info.pluginTotals,
+      nativePackages: info.nativePackages,
+      note: '',
     };
   }
 
