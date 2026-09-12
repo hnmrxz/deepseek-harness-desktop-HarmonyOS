@@ -1,0 +1,21 @@
+# HDSH 端侧 profile —— 用户 patch 层
+#
+# dsh 的 patch 应用顺序（见 D6 §5.3）：
+#   bundle 层 patch（按 dsh.profile.bundles 顺序）
+#     → 本文件（profile 的 cordis.patch.yml）
+#     → $DSH_HOME/cordis.patch.yml
+#     → --patch 覆盖层
+# 本文件里的覆盖**整块替换**目标行的 config；`{insert: […]}` 是追加。
+#
+# ── 纪律 ────────────────────────────────────────────────────────────────
+# 这里只放**有实测证据支持**的覆盖。阶段一的目标是先回答一个问题：
+#   「三个 @ohos-ports 原生件（koffi / node-pty / sharp）能否在鸿蒙运行时里加载」
+# 为了不让"我们自己的覆盖"混淆这个问题，阶段一**故意不覆盖任何行**——
+# 与官方 web 组合完全一致。等某一行被实测证伪，才在此加 {id, disabled: true}
+# 并在注释里写上证据（日志原文 / 复现步骤）。
+#
+# 已经知道"迟早要处理"、但**尚未实测**的三项（不要提前写进来）：
+#   1) session-query-sqlite：`node:sqlite` 在目标运行时是否可用（默认 openAt: never 已足够安全）
+#   2) directory-picker：auto → native 需要 koffi，若 koffi 可用则无需改
+#   3) session-telemetry-otel：默认关闭（用 DSH_TELEMETRY_DISABLED 环境变量，无需 patch）
+[]
