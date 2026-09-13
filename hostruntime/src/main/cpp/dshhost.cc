@@ -195,6 +195,12 @@ napi_value StopHost(napi_env env, napi_callback_info info) {
 }
 
 napi_value Init(napi_env env, napi_value exports) {
+  // 这条日志是二分的关键：构造器日志已证明 `.so` 被加载且注册调用返回，
+  // 而四种名字口径全试过仍绑不到我们（E25/E26 + 本轮）。
+  // 于是只剩两种可能，且修法完全不同：
+  //   ① Init 从未被调用 ⇒ 运行时**没有用我们的模块**去实例化（查找/映射问题）；
+  //   ② Init 被调用了，但 ArkTS 那边仍拿到别的对象 ⇒ 绑定侧问题。
+  OH_LOG_Print(LOG_APP, LOG_INFO, 0x0000, "HDSH-SHIM", "Init called: creating exports object");
   napi_property_descriptor desc[] = {
       {"runtimeVersion", nullptr, RuntimeVersion, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"startHost", nullptr, StartHost, nullptr, nullptr, nullptr, napi_default, nullptr},
@@ -236,6 +242,36 @@ napi_module g_dshHostModuleFull = {
     {nullptr},
 };
 
+/*
+ * 再补两种名字口径：`libdshhost`（带 lib 前缀、不带扩展名）与 `dshhost.so`。
+ *
+ * 【为什么把四种都注册上】真机实测已确认：`.so` 被 `dlopen`、构造器执行、
+ * `napi_module_register` 返回（见构造器里那条 `HDSH-SHIM` 日志），
+ * 但 ArkTS 的 `import … from 'libdshhost.so'` 拿到的仍是 ArkUI 的节点模块（E25/E26）
+ * ⇒ 只剩"运行时用哪个名字查表"这一个变量，而**查错名字不会报错**，
+ * 只会返回一个别的模块。与其一轮一轮猜（每轮一次构建+安装≈3 分钟），
+ * 不如把四种合理口径一次全覆盖：命中哪一种，看日志即可反推规则。
+ */
+napi_module g_dshHostModuleNoExt = {
+    1,
+    0,
+    nullptr,
+    Init,
+    "libdshhost",
+    nullptr,
+    {nullptr},
+};
+
+napi_module g_dshHostModuleBareDotSo = {
+    1,
+    0,
+    nullptr,
+    Init,
+    "dshhost.so",
+    nullptr,
+    {nullptr},
+};
+
 }  // namespace
 
 // 模块注册：OHOS 的 NAPI 也是靠 constructor 把模块挂上去的（与 Node 原生模块一致）。
@@ -249,8 +285,10 @@ napi_module g_dshHostModuleFull = {
 // 一条日志就能区分。用 OH_LOG_Print 而不是 printf：应用进程的 stdout 在设备上看不见（E23）。
 extern "C" __attribute__((constructor)) void RegisterDshHostModule() {
   OH_LOG_Print(LOG_APP, LOG_INFO, 0x0000, "HDSH-SHIM",
-               "constructor ran: registering g_dshHostModule(name=dshhost) + g_dshHostModuleFull(name=libdshhost.so)");
+               "constructor ran: registering 4 name forms (dshhost / libdshhost.so / libdshhost / dshhost.so)");
   napi_module_register(&g_dshHostModule);
   napi_module_register(&g_dshHostModuleFull);
+  napi_module_register(&g_dshHostModuleNoExt);
+  napi_module_register(&g_dshHostModuleBareDotSo);
   OH_LOG_Print(LOG_APP, LOG_INFO, 0x0000, "HDSH-SHIM", "registration calls returned");
 }
