@@ -95,6 +95,28 @@ export struct ConversationPane {
   };
 
   @State expanded: string[] = [];
+
+  /**
+   * 展开/收起**全部**条目（E197，官方轨迹工具栏的 `expandTurns`/`collapseTurns` 与
+   * `expandCalls`/`collapseCalls`）。
+   *
+   * 【为什么合并成一个"全部"而不是四颗按钮】官方把"轮次"和"调用"分成两组开关；
+   * 我们的轨迹把消息、思考、工具调用、子代理、交付物都放在**同一条时间线**里，
+   * 逐组区分反而不如"全部"直观——这是**形态差异**，不是能力缺失，所以如实做成两颗：
+   * 需要更细的粒度时再按 `TrajectoryKind` 拆分即可（`expanded` 存的是条目 id）。
+   */
+  private expandAllItems(): void {
+    const next: string[] = [];
+    for (let i = 0; i < this.items.length; i++) {
+      next.push(this.items[i].id);
+    }
+    this.expanded = next;
+  }
+
+  /** 收起全部（清空展开集合） */
+  private collapseAllItems(): void {
+    this.expanded = [];
+  }
   /**
    * 会话内搜索状态（D3 §5.1 的 `Ctrl/Cmd + F`）。
    *
@@ -327,6 +349,19 @@ export struct ConversationPane {
         this.viewChip('trajectory', $r('app.string.view_trajectory'))
         Blank()
         if (this.view === 'trajectory') {
+        // E197：官方的"展开/收起所有"（`toolbar.expandTurns`/`collapseTurns`、`expandCalls`/`collapseCalls`）
+        Text('展开全部')
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.brand'))
+          .onClick(() => {
+            this.expandAllItems();
+          })
+        Text('收起全部')
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.brand'))
+          .onClick(() => {
+            this.collapseAllItems();
+          })
           Text(`${this.items.length} 条事件`)
             .fontSize(Fs.CAPTION)
             .fontColor($r('sys.color.font_tertiary'))
