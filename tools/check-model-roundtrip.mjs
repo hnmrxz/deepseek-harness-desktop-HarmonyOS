@@ -336,6 +336,25 @@ try {
     finish(created.status === 200 ? 0 : 1);
   }
 
+  /*
+   * `--set-credential`：把一份凭据写进 Host（`credentials/set`，扁平命名参数 `{ref, value}`）。
+   *
+   * 【为什么不从命令行传值】明文密钥出现在 argv 里会进进程表与 shell 历史；
+   * 这里只从**环境变量** `HDSH_TEST_KEY` 读，且**从不打印**它的值（只报长度）。
+   */
+  if (args.includes('--set-credential')) {
+    const ref = arg('--ref', 'apiKey');
+    const value = process.env.HDSH_TEST_KEY ?? '';
+    if (value.length === 0) {
+      console.error('FAIL: --set-credential 需要环境变量 HDSH_TEST_KEY（不从命令行传明文）');
+      finish(2);
+    }
+    const res = await rpc('credentials/set', { ref, value }, cookie);
+    const ok = res.parsed?.result?.ok === true;
+    console.log(`credential ref=${ref} len=${value.length} -> ${res.status} ok=${String(ok)}`);
+    finish(ok ? 0 : 1);
+  }
+
   if (args.includes('--list')) {
     const listed = await rpc('session/list', {}, cookie);
     const value = listed.parsed?.result?.value ?? listed.parsed?.result?.error;
@@ -388,7 +407,7 @@ try {
    */
   if (SESSION.length > 0 && args.includes('--follow')) {
     const wsMod = await import(pathToFileURL(join(CORE_DIR, 'node_modules', 'ws', 'index.js')).href);
-    mux = new wsMod.default(`ws://127.0.0.1:${PORT}/api/remote.mux`, { headers: { cookie } });
+    mux = new wsMod.default(`ws://${TARGET_HOST}:${TARGET_PORT}/api/remote.mux`, { headers: { cookie } });
     mux.on('message', (data) => { frames.push(data.toString()); });
     await new Promise((resolve, reject) => {
       mux.once('open', resolve);
@@ -444,7 +463,7 @@ try {
      */
     const wsMod = await import(pathToFileURL(join(CORE_DIR, 'node_modules', 'ws', 'index.js')).href);
     const WebSocket = wsMod.default;
-    mux = new WebSocket(`ws://127.0.0.1:${PORT}/api/remote.mux`, { headers: { cookie } });
+    mux = new WebSocket(`ws://${TARGET_HOST}:${TARGET_PORT}/api/remote.mux`, { headers: { cookie } });
     mux.on('message', (data) => { frames.push(data.toString()); });
     await new Promise((resolve, reject) => {
       mux.once('open', resolve);
@@ -473,7 +492,7 @@ try {
       const page = await rpc('session/page', {
         request: { address: { kind: 'session', sessionId }, throughSeq: -1, maxMessages: 5 },
       }, cookie);
-      console.log(`page     ${page.text.slice(0, 700)}`);
+      console.log(`page     ${page.text.slice(0, 6000)}`);
       console.log(`mux frames ${frames.length}`);
       for (const f of frames.slice(0, 4)) console.log(`frame    ${f.slice(0, 700)}`);
       finish(0);

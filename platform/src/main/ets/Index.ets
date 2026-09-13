@@ -44,8 +44,8 @@ export {
   ThemeMode,
   themeModeOf
 } from './system/LocalPrefs';
-export { MAX_ATTACHMENT_BYTES, PickOutcome, pickDocument } from './system/FilePicker';
-export type { PickedFile } from './system/FilePicker';
+export { MAX_ATTACHMENT_BYTES, PickOutcome, pickDocument, pickFolder } from './system/FilePicker';
+export type { PickedFile, PickedFolder } from './system/FilePicker';
 
 // ── 窗口与形态 ──
 export {

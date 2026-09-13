@@ -133,3 +133,40 @@ else()
   message(WARNING "未找到 koffi 源码（${KOFFI_DIR}）⇒ 本架构不带 libkoffi.so；"
                   "先跑 `node tools/fetch-koffi.mjs`")
 endif()
+
+# ── node-addon-system 的 flock（自建；E103）──────────────────────────────────
+#
+# 【用途】`dsh-session-persistence-jsonl` 用它给会话日志加**排他锁**（POSIX flock）——
+# 这是会话持久化的一部分，不能绕过（绕过的代价是并发写坏日志）。
+#
+# 【为什么要自建，而不是用 npm 预编译】
+#   1. npm 在 Windows 上装树时**不会**装 `@deepseek-ai/node-addon-system-linux-arm64`
+#      （optionalDependencies 只装当前平台），而设备上 `process.platform=linux/arch=arm64`
+#      ⇒ 加载器找不到它（真机报错：`Cannot find module '@deepseek-ai/node-addon-system-linux-arm64/package.json'`）；
+#   2. 取 npm 的 musl 预编译件也不行：它只 `DT_NEEDED libc.so`，dlopen 后 **napi 符号解析不到**
+#      （与 koffi 同一个坑，E43/E44），而 `libc.so` 是必需项、不能被替换掉。
+# 自建时可以把 libnode 显式写进链接行 ⇒ 依赖闭包正确。
+#
+# 产物名取 `system` ⇒ `libs/<abi>/libsystem.so`，正好命中入口脚本的原生库重定向约定
+# （`lib<stem>.so`，与 koffi/sharp 同一套，E40）。
+set(SYSTEM_ADDON_SRC
+    ${REPO_ROOT}/dist/core/work/dsh-core-0.1.5-rc.2/node_modules/@deepseek-ai/node-addon-system/src)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|amd64|AMD64|X86_64" OR OHOS_ARCH MATCHES "x86")
+  set(SYSTEM_LIBNODE ${ENTRY_LIBS}/x86_64/libnode.so.127)
+else()
+  set(SYSTEM_LIBNODE ${ENTRY_LIBS}/arm64-v8a/libnode.so.127)
+endif()
+if(EXISTS ${SYSTEM_ADDON_SRC}/flock.c AND EXISTS ${SYSTEM_LIBNODE})
+  add_library(system MODULE ${SYSTEM_ADDON_SRC}/flock.c)
+  target_include_directories(system PRIVATE ${NATIVE_ROOT}/node-headers/src)
+  target_link_libraries(system PRIVATE ${SYSTEM_LIBNODE})
+  message(STATUS "flock（node-addon-system）编入 HAP：libsystem.so ← ${SYSTEM_ADDON_SRC}/flock.c")
+else()
+  # 【为什么把两种原因分开报】此前只写"缺 flock.c 或 libnode"，而 x86_64 目标**本来就没有**
+  # libnode（koffi 同样跳过），于是每次构建都会打出看着像"源码丢了"的警告。
+  if(NOT EXISTS ${SYSTEM_ADDON_SRC}/flock.c)
+    message(WARNING "flock 跳过：缺源码 ${SYSTEM_ADDON_SRC}/flock.c（先跑 tools/pack-core.mjs 物化核心树）")
+  else()
+    message(STATUS "flock(${CMAKE_SYSTEM_PROCESSOR}) 跳过：该架构还没有 libnode（${SYSTEM_LIBNODE}）")
+  endif()
+endif()

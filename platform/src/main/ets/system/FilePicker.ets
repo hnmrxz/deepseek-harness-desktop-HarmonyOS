@@ -24,6 +24,7 @@
 import { common } from '@kit.AbilityKit';
 import { picker } from '@kit.CoreFileKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
+import { fileUri } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
@@ -77,6 +78,67 @@ function outcomeOf(outcome: PickOutcome, uri: string, reason: string): PickedFil
   return {
     outcome: outcome, uri: uri, name: '', mediaType: '', bytes: 0, base64: '', reason: reason
   };
+}
+
+/** 选中的**文件夹**（E102）：URI 与**真实路径**都带回来（Host 侧用路径）。 */
+export interface PickedFolder {
+  outcome: PickOutcome;
+  /** 原始 URI（file://docs/...） */
+  uri: string;
+  /** 供 Host（Node）使用的真实路径；取不到时为空串（那时**不猜**，按失败处理） */
+  path: string;
+  name: string;
+  reason: string;
+}
+
+/**
+ * 拉起系统**文件夹**选择器，用于把设备上的真实项目目录选作工作区。
+ *
+ * 【平台边界（SDK 原文）】`DocumentSelectMode` 的注释明确写着
+ * "Only 2-in-1 devices are supported" ⇒ **手机/平板拿不到文件夹选择**。
+ * 所以调用方必须准备好回退路径（我们的做法：回退到"浏览沙箱目录"，
+ * 并把原因说清楚），而不是让按钮点了没反应。
+ *
+ * 【路径怎么来】选择器给的是 `file://docs/...` URI，而 Host 是 Node、按**路径**干活，
+ * 因此用 `fileUri.FileUri(uri).path` 换成真实路径。转换失败就返回空路径，
+ * 由调用方按"不可用"处理（不拿 URI 冒充路径）。
+ */
+export async function pickFolder(context: common.Context): Promise<PickedFolder> {
+  let uris: string[] = [];
+  try {
+    const options: picker.DocumentSelectOptions = new picker.DocumentSelectOptions();
+    options.maxSelectNumber = 1;
+    options.selectMode = picker.DocumentSelectMode.FOLDER;
+    const view: picker.DocumentViewPicker = new picker.DocumentViewPicker(context);
+    uris = await view.select(options);
+  } catch (err) {
+    const e = err as BusinessError;
+    const cancelled: boolean = isCancelCode(e.code);
+    hilog.info(DOMAIN, TAG, 'pickFolder rejected: code=%{public}d', e.code);
+    return {
+      outcome: cancelled ? PickOutcome.CANCELLED : PickOutcome.FAILED,
+      uri: '', path: '', name: '',
+      reason: cancelled ? '' : `文件夹选择器不可用（该能力仅 2in1 支持）：${e.message}（code=${e.code}）`
+    };
+  }
+  if (uris.length === 0) {
+    return { outcome: PickOutcome.CANCELLED, uri: '', path: '', name: '', reason: '' };
+  }
+  const uri: string = uris[0];
+  let realPath: string = '';
+  try {
+    realPath = new fileUri.FileUri(uri).path;
+  } catch (e) {
+    const e2 = e as BusinessError;
+    hilog.warn(DOMAIN, TAG, 'URI → 路径失败：%{public}s', e2.message);
+  }
+  if (realPath.length === 0) {
+    return {
+      outcome: PickOutcome.FAILED, uri: uri, path: '', name: nameOfUri(uri),
+      reason: '已选中文件夹，但拿不到它的真实路径（Host 需要路径而不是 URI），因此无法作为工作区。'
+    };
+  }
+  return { outcome: PickOutcome.PICKED, uri: uri, path: realPath, name: nameOfUri(uri), reason: '' };
 }
 
 /**

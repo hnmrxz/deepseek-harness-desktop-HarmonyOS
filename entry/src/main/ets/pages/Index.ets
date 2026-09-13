@@ -28,8 +28,8 @@ import {
 } from 'dshcompat';
 import type { VersionCheck } from 'dshcompat';
 import type { DiagnosticItem, DiagnosticReport } from 'connection';
-import { applyThemeMode, copyText, LocalPrefs, PickOutcome, pickDocument, themeModeOf } from 'platform';
-import type { NotifyRoute, PickedFile } from 'platform';
+import { applyThemeMode, copyText, LocalPrefs, PickOutcome, pickDocument, pickFolder, themeModeOf } from 'platform';
+import type { NotifyRoute, PickedFile, PickedFolder } from 'platform';
 import { common } from '@kit.AbilityKit';
 import {
   APPROVAL_CHOICE_ALLOW_ALWAYS,
@@ -1619,11 +1619,56 @@ struct Index {
    * 「添加」强（原实现正是那样一个死入口）。
    */
   private openFolderPicker(): void {
+    /*
+     * 【先试系统文件夹选择器（E102）】2in1/平板支持"选真实文件夹"（SDK：
+     * `DocumentSelectMode` 仅 2in1），那是"选择本地项目"的正路；手机不支持，
+     * 此时**如实说明原因**再回退到沙箱浏览（而不是让入口点了没反应）。
+     */
+    const ctx = getContext(this) as common.UIAbilityContext;
+    pickFolder(ctx).then((picked: PickedFolder) => {
+      if (picked.outcome === PickOutcome.PICKED && picked.path.length > 0) {
+        this.folderUsePath(picked.path);
+        return;
+      }
+      if (picked.outcome === PickOutcome.CANCELLED) {
+        return; // 用户主动取消：不打扰
+      }
+      // 失败（手机上的常态）：回退到沙箱浏览，并把原因写在浮层顶部
+      this.openSandboxFolderPicker(picked.reason);
+    }).catch((e: Object) => {
+      const err = e as Error;
+      this.openSandboxFolderPicker(`文件夹选择器异常：${err.message}`);
+    });
+  }
+
+  /** 选定一个真实路径作为工作区（注册 + 就地开会话） */
+  private folderUsePath(path: string): void {
+    const hub: SessionHub = SessionHub.shared();
+    hub.setDefaultWorkspace(path);
+    this.settingWriteNote = `正在把 ${path} 设为工作区…`;
+    hilog.info(DOMAIN, TAG, 'HDSH-WS 选择工作区：%{public}s', path);
+    hub.ensureWorkspace(path).then((note: string) => {
+      this.settingWriteNote = note;
+      hilog.info(DOMAIN, TAG, 'HDSH-WS 注册结果：%{public}s', note);
+      return hub.createSession();
+    }).then((sid: string | undefined) => {
+      if (sid !== undefined) {
+        this.settingWriteNote = `已在这里开始工作：${path}`;
+        this.selectTab(NavTab.SESSIONS);
+      }
+    }).catch((e: Object) => {
+      const err = e as Error;
+      this.settingWriteNote = `选择文件夹失败：${err.message}`;
+      hilog.warn(DOMAIN, TAG, 'HDSH-WS 失败：%{public}s', err.message);
+    });
+  }
+
+  private openSandboxFolderPicker(reason: string): void {
     const root: string = this.localWorkspaceDir.length > 0
       ? this.localWorkspaceDir
       : `${this.filesDirOf()}/workspace`;
     this.folderPath = root;
-    this.folderNote = '';
+    this.folderNote = reason;
     this.folderOpen = true;
     this.folderList();
   }
@@ -2363,12 +2408,12 @@ struct Index {
             this.stackPage = StackPage.DETAIL;
           })
       }
-      Button('POC')
-        .buttonStyle(ButtonStyleMode.TEXTUAL)
-        .fontSize(Fs.CAPTION)
-        .onClick(() => {
-          this.openPoc();
-        })
+      /*
+       * 【页头的 POC 入口已移除（E102）】协议往返验证并入「设置 → 通用 → 本地调试」：
+       * 顶部常驻一个 POC 按钮会让它看起来像一个产品功能，而它其实是排障工具；
+       * 更重要的是"连接诊断（结论）+ POC（逐步证据）"必须**在同一处**，
+       * 否则用户要在两个入口之间来回走。入口保留在诊断页里的「协议往返验证」按钮。
+       */
     }
     .width('100%')
     .height(52)

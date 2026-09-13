@@ -498,6 +498,143 @@ function wrapSharp() {
   log('[pack-core]   sharp 调度器：真件在 node_modules/sharp.impl（加载失败时如实降级）');
 }
 
+/**
+ * 补齐 `@deepseek-ai/node-addon-system-<platform>-<arch>` 平台包（E103）。
+ *
+ * 【为什么需要】`dsh-session-persistence-jsonl` 通过
+ * `@deepseek-ai/node-addon-system/flock` 给会话日志加排他锁，而那个加载器会
+ * `require.resolve('@deepseek-ai/node-addon-system-linux-arm64/package.json')`。
+ * npm 在 Windows 上装树时**不会**装这个平台包（optionalDependencies 只装当前平台），
+ * 设备上因此报 `Cannot find module …`（真机实测，agent 一轮直接失败）。
+ *
+ * 这里只补**清单文件**：真正的 `.node` 由 CMake 自建为 `libsystem.so` 进 HAP libs，
+ * 入口脚本的原生库重定向会把 `bin/musl/system.node` 映射过去（`lib<stem>.so` 约定）。
+ * 放清单而不放 prebuilt，是因为 prebuilt 的 musl 变体只 `DT_NEEDED libc.so`，
+ * dlopen 后 napi 符号解析不到（E43/E44 同一个坑）。
+ */
+function addSystemAddonPackage() {
+  const nm = join(STAGE, 'node_modules', '@deepseek-ai');
+  if (!existsSync(join(nm, 'node-addon-system'))) {
+    log('[pack-core]   node-addon-system 不在树里（跳过平台包）');
+    return;
+  }
+  const abi = recipe.platform.cpu === 'x64' ? 'x64' : 'arm64';
+  const target = join(nm, `node-addon-system-linux-${abi}`);
+  const pkgFile = join(target, 'package.json');
+  const marker = '0.1.2-hdsh-shim';
+  let needManifest = true;
+  if (existsSync(pkgFile)) {
+    try {
+      const pkg = JSON.parse(readFileSync(pkgFile, 'utf8'));
+      if (pkg.version === marker) {
+        needManifest = false;
+      }
+    } catch {
+      die('node-addon-system 平台包：现有 package.json 不可解析，拒绝覆盖');
+    }
+  }
+  mkdirSync(join(target, 'bin', 'musl'), { recursive: true });
+  mkdirSync(join(target, 'bin', 'glibc'), { recursive: true });
+  if (needManifest) {
+    writeFileSync(pkgFile, JSON.stringify({
+      name: `@deepseek-ai/node-addon-system-linux-${abi}`,
+      version: marker,
+      description: 'HDSH 端侧 shim：真正的 system.node 由 CMake 自建为 libsystem.so（见 pack-core.addSystemAddonPackage）',
+      private: true,
+    }, null, 2) + '\n', 'utf8');
+  }
+  /*
+   * 【为什么这里要放**占位文件**】Node 的模块解析走的是**内部 stat**（`Module._findPath`），
+   * 不是我们 hook 过的 `fs.existsSync` ⇒ 目标路径**必须物理存在**，否则在 `.node` 扩展处理器
+   * 被调用之前就抛 `Cannot find module …/bin/musl/system.node`（真机实测：agent 轮次直接失败，
+   * 用户看到的是"发消息后没反应"）。
+   * 文件内容无所谓：真正加载时一定经过我们 hook 的 `Module._extensions['.node']`，
+   * 那里会把路径改写成 HAP 里的 `libs/<abi>/libsystem.so`（与 koffi/sharp 同一条机制）。
+   * 两个 libc 变体都放，是因为加载器按 `process.report.header.glibcVersionRuntime` 选目录。
+   */
+  const placeholder = 'HDSH placeholder: real binary is loaded from HAP libs/<abi>/libsystem.so\n';
+  writeFileSync(join(target, 'bin', 'musl', 'system.node'), placeholder, 'utf8');
+  writeFileSync(join(target, 'bin', 'glibc', 'system.node'), placeholder, 'utf8');
+  log(`[pack-core]   node-addon-system 平台包已补：linux-${abi}（占位 .node + HAP libs 的 libsystem.so）`);
+}
+
+/**
+ * 让会话日志的**排他发布**在鸿蒙沙箱里可用（E104）。
+ *
+ * 【真机根因】`dsh-session-persistence-jsonl` 用 `link(2)` 把写好的临时文件"排他发布"成
+ * 正式日志（`link` 天生带 EEXIST 语义），而鸿蒙应用沙箱**禁止 link**：
+ *
+ *     EACCES: permission denied, link '…/sessions/--…--/session-…/session.v3.jsonl.zstd.2112db587c…'
+ *
+ * 后果正是用户看到的「发消息后没反应、详情里数量也不变」——每写一次日志就失败一次，
+ * 会话状态根本无法落盘。这与符号链接禁令（E46）是同一类沙箱约束。
+ *
+ * 【等价改写】"存在性检查 + rename"：rename 在同一文件系统上是**原子**的，
+ * 因此"目标不存在时改名过去"与"link 且不带 O_EXCL 冲突"在语义上一致。
+ * 唯一弱化之处是极端 TOCTOU 窗口内可能覆盖同名的刚出现文件——而两个调用点在发布前
+ * 都已经检查过目标（`rejectExistingLog` / `inspectExpectedCurrent`），所以按等价处理。
+ *
+ * 上游若改了这两段，这里**报错退出**，不静默跳过（悄悄发出一个"会话永远写不进去"的包，
+ * 比打包失败难查得多）。
+ */
+function patchLinkForSandbox() {
+  const target = join(
+    STAGE, 'node_modules', '@deepseek-ai', 'dsh-session-persistence-jsonl', 'lib', 'index.js',
+  );
+  if (!existsSync(target)) {
+    die(`link 沙箱补丁：找不到 ${target}`);
+  }
+  let text = readFileSync(target, 'utf8');
+  if (text.includes('HDSH_LINK_SANDBOX')) {
+    log('[pack-core]   link 沙箱补丁已存在（跳过）');
+    return;
+  }
+  const importBefore = 'import { link, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, stat, truncate } from "node:fs/promises";';
+  const importAfter = 'import { access, link, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, stat, truncate } from "node:fs/promises";';
+  const helper = `/**
+ * HDSH_LINK_SANDBOX: 鸿蒙沙箱禁止 link(2)（EACCES），用"存在性检查 + rename"做等价发布。
+ * rename 在同一文件系统上是原子的；目标已存在时按 EEXIST 抛错，保持调用方的分支语义。
+ * @param fsImpl - 提供 access/rename 的 fs/promises 句柄
+ * @param from - 已写好并 fsync 过的临时文件
+ * @param to - 目标路径（必须尚不存在）
+ */
+async function hdshPublishExclusive(fsImpl, from, to) {
+	let exists = true;
+	try {
+		await fsImpl.access(to);
+	} catch {
+		exists = false;
+	}
+	if (exists) {
+		const error = new Error(\`EEXIST: file already exists, link '\${from}' -> '\${to}'\`);
+		error.code = "EEXIST";
+		throw error;
+	}
+	await fsImpl.rename(from, to);
+}
+`;
+  const callSites = [
+    ['\t\tawait internals.fs.link(staged, currentPath);',
+      '\t\tawait hdshPublishExclusive(internals.fs, staged, currentPath);'],
+    ['\t\t\tawait link(tmp, finalPath);',
+      '\t\t\tawait hdshPublishExclusive({ access, rename }, tmp, finalPath);'],
+  ];
+  if (!text.includes(importBefore)) {
+    die('link 沙箱补丁：上游 import 行已变化（未找到待替换片段），拒绝静默跳过');
+  }
+  for (const [before] of callSites) {
+    if (!text.includes(before)) {
+      die(`link 沙箱补丁：未找到调用点 ${JSON.stringify(before.trim())}，拒绝静默跳过`);
+    }
+  }
+  text = text.replace(importBefore, `${importAfter}\n${helper}`);
+  for (const [before, after] of callSites) {
+    text = text.replace(before, after);
+  }
+  writeFileSync(target, text, 'utf8');
+  log('[pack-core]   link 沙箱补丁：会话日志改用「存在性检查 + rename」发布');
+}
+
 function embedTreeInfo() {
   // 插件与原生模块清单：**在构建期算一次**，写进树里给端侧读。
   // 【为什么不在端侧现算】端侧要算同一件事，得在 27250 个文件 / 4000 个目录上递归
@@ -798,6 +935,8 @@ const sig = verify();
 addPlatformAliases();
 allowOriginList();
 wrapSharp();
+addSystemAddonPackage();
+patchLinkForSandbox();
 addOnDevicePreset();
 embedTreeInfo();
 verifyTreeInfoContract();
