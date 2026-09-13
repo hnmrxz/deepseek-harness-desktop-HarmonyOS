@@ -98,6 +98,16 @@
 #   ① 让 `attachment-local` 真正可用（把 libvips 及其依赖搬进 HAP libs 并处理带版本号的
 #      SONAME，见 E46 的恢复线索）→ 撤销下面 3 条；
 #   ② shell 链在鸿蒙上没有对应物（无法创建进程，E15）→ 这条级联要长期评估。
+# ④ 权限预设（E116）：**端侧无法启用**——实测把它打开会让整棵插件树启动失败：
+#     `1 entry did not activate · @deepseek-ai/dsh-permission-presets: pending
+#      (waiting for service: shell)`
+#    官方该插件需要 `shell` 服务，而 shell 只能由 `bash-sandbox`/`pwsh-sandbox` 提供，
+#    两者在鸿蒙上没有对应物（无法创建进程，E15）⇒ 这条链是**上游硬约束**，不是配置问题。
+#    三档本身的取值仍然有效（`dsh-sandbox-policy` 的 `SANDBOX_MODES` =
+#    `read-only` / `workspace-write` / `danger-full-access`，真机系统提示里也确实写着
+#    `Current DSH file policy: workspace-write`），但把它们**捆绑成用户可选预设**的这一层
+#    在端侧缺席。客户端因此按官方规则"没有权限组合就不显示选择器"处理，
+#    并在设置里如实说明原因（而不是给一个点了没反应的档位）。
 - id: permission
   disabled: true
 - id: file-upload
