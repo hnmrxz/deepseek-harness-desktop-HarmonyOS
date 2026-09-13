@@ -36,15 +36,16 @@
  *     「改了 A 窗口却影响 B 窗口」时的第一条线索。
  */
 
-import { Want } from '@kit.AbilityKit';
+import { AbilityStage, Want } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { parseWindowParams, WindowKind, WindowParams } from 'platform';
-// 端侧运行时（D6 §4.1.2）：Node 的启动链挂在 WebAbilityStage 上——
-// 它的 onCreate 会 initNativeContext(libadapter.so) 并注册 JsBindingMethod，
-// 之后页面上挂载的 WebWindow 才能在 XComponent.onLoad 里调 runBrowser()。
-// 因此我们的 AbilityStage 必须继承它，而不是裸的 AbilityStage。
-import { WebAbilityStage } from 'web_engine';
+// 【为什么不再继承 web_engine 的 `WebAbilityStage`】那个基类的 onCreate 会
+// `initNativeContext(libadapter.so)` —— `libadapter.so` 是**阶段一 Electron 通道**的桥接库。
+// 阶段二不需要它，而它在模拟器（x86_64）上**根本不存在**（只有 arm64 预编译件），
+// 于是基类里 `getNativeContext` 落到 undefined 上抛 TypeError，应用被 RuntimeError 终止。
+// 端侧运行时的正确挂载点是 CMake 构建的 `libdshhost`（D6 E30/E31），与 nativeContext 无关。
+// 连带把 entry 对 web_engine 的依赖整个去掉：Electron 那套（libelectron 181 MB 等）不再进包。
 
 const DOMAIN: number = 0x0000;
 const TAG: string = 'entry/abilitystage';
@@ -54,16 +55,11 @@ const KEY_MAIN: string = 'main';
 /** 会话窗实例 key 前缀：其后拼会话 id */
 const KEY_SESSION_PREFIX: string = 'session:';
 
-export default class AppAbilityStage extends WebAbilityStage {
-  /**
-   * 必须转发给基类：`WebAbilityStage.onCreate` 里做的事（初始化 nativeContext、
-   * 注册 JsBindingMethod、注入式容器引导）是运行时启动的前置条件。
-   * 不调用 `super.onCreate()` 会让后面挂 WebWindow 时拿不到 nativeContext——
-   * 表现为"页面出来了但 Node 永远不启动"，而不是报错。
-   */
+export default class AppAbilityStage extends AbilityStage {
   onCreate(): void {
+    // 基类（裸 AbilityStage）的 onCreate 是空实现；显式调用只为表明"这里没有隐藏前置条件"
     super.onCreate();
-    hilog.info(DOMAIN, TAG, 'AbilityStage.onCreate 完成（原生桥接已初始化）');
+    hilog.info(DOMAIN, TAG, 'AbilityStage.onCreate 完成（无 Electron 桥接依赖）');
   }
 
   /**

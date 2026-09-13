@@ -38,3 +38,23 @@
 # libvips 及其依赖一并打进 HAP libs，并解决 ② 的软链（改加载器或用绝对路径 LD_LIBRARY_PATH）。
 - id: attachment-local
   disabled: true
+
+# ── subprocess / sandbox：暂时禁用（koffi 代差，D6 E47）──────────────────────
+#
+# 证据（真机 hilog，插件树 boot 阶段）：
+#   failed to import loader entry subprocess (@deepseek-ai/dsh-subprocess-local):
+#     STARTUPINFOW layout mismatch: koffi computed undefined, expected 104
+#   failed to import loader entry sandbox (@deepseek-ai/dsh-sandbox-local): 同上
+# 根因：dsh 全线声明 `koffi ^3.1.0`，而鸿蒙侧只有 `@ohos-ports/koffi@2.16.2-beta.0`；
+# 2.x 的 `koffi.struct(...).size` 是 undefined ⇒ `dsh-win32-process` **模块顶层**断言抛错
+# ⇒ 这两个插件 import 失败 ⇒ fail-loud 让整棵树起不来。
+#
+# 【这是**临时**措施，不是结论】目的：先把"Host 能在端侧起来"这条主流程跑通，
+# 不被一条原生依赖卡住。恢复条件与步骤：
+#   ① 自建 koffi 3.x 的 OHOS 版（源码随包发布，`src/koffi/CMakeLists.txt`，3.x 自带 FFI、不依赖 libffi）；
+#   ② 模拟器（x86_64）还额外需要 x86_64 版（当前**任何** koffi x64 都不存在）；
+#   ③ 两者到位后删掉下面两行，并复测 `subprocess`/`sandbox` 两行的加载。
+- id: subprocess-local
+  disabled: true
+- id: sandbox-local
+  disabled: true

@@ -10,8 +10,7 @@
     "appstate": "file:../appstate",
     "dshcompat": "file:../dshcompat",
     "platform": "file:../platform",
-    "hostruntime": "file:../hostruntime",
-    "web_engine": "file:../web_engine"
+    "hostruntime": "file:../hostruntime"
   },
   "devDependencies": {
     "libdshhost.so": "file:./src/main/cpp/types/libdshhost",
