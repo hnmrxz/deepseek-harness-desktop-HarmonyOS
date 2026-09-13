@@ -143,6 +143,19 @@ $boot  = Run-Hdc "hilog -x | grep 'BOOT_10_ENV_READY' | tail -1"
 $conn  = Run-Hdc "hilog -x | grep 'HDSH-AUTH connect' | tail -1"
 $plat  = Run-Hdc "hilog -x | grep '平台标识' | tail -1"
 $files = Run-Hdc "hilog -x | grep 'files changes opened' | tail -1"
+$crashes = Run-Hdc "hilog -x | grep -E 'CppCrash|AppKilledReporter|JS_ERROR|exitSigno' | tail -5"
+
+# E262：**可脚本化的判定**（能自动判的就别让人判）——真机上只留给"必须看一眼界面"的项。
+$verdicts = @()
+function Add-Verdict([string]$item, [bool]$ok, [string]$detail) {
+  $script:verdicts += , @($item, $ok, $detail)
+}
+Add-Verdict '设备在线' ($targets.Trim().Length -gt 0) $targets.Trim()
+Add-Verdict '核心已启动' ($boot -match 'BOOT_10_ENV_READY') ($boot -replace '\s+', ' ')
+Add-Verdict '客户端已接入（凭据豁免生效）' ($conn -match 'ok=true') ($conn -replace '\s+', ' ')
+Add-Verdict '平台标识 = ohos' ($plat -match 'HDSH_PLATFORM=ohos') ($plat -replace '\s+', ' ')
+Add-Verdict '文件变更流已开' ($files -match 'cancel=ok') ($files -replace '\s+', ' ')
+Add-Verdict '无崩溃记录' (-not ($crashes -match 'CppCrash|AppKilledReporter|JS_ERROR|exitSigno')) ($crashes -replace '\s+', ' ')
 
 $lines = @()
 $lines += '# 设备验收报告（' + $stamp + '）'
@@ -157,6 +170,20 @@ $lines += ('| 核心加载路径 | ' + $boot.Replace("`n", ' ') + ' |')
 $lines += ('| 连接结果 | ' + $conn.Replace("`n", ' ') + ' |')
 $lines += ('| 平台标识（凭据豁免是否生效） | ' + $plat.Replace("`n", ' ') + ' |')
 $lines += ('| 文件变更流是否开启 | ' + $files.Replace("`n", ' ') + ' |')
+$lines += ''
+$lines += '## 自动判定（E262：能脚本化的部分，已替你判好）'
+$lines += ''
+$lines += '| 项 | 结论 | 读数 |'
+$lines += '|---|---|---|'
+foreach ($v in $verdicts) {
+  $mark = 'FAIL'
+  if ($v[1]) { $mark = 'PASS' }
+  $lines += ('| ' + $v[0] + ' | ' + $mark + ' | ' + $v[2] + ' |')
+}
+$lines += ''
+$lines += '> 这几项**不需要你再看**：读数是脚本按判据自动取的（判据与 §14 一致）。'
+$lines += '> 未列入的项（命令面板、模型选择、计划模式、轨迹、模型页、插件启停、删除/归档、多形态、目标栏、消息反馈）'
+$lines += '> **必须看界面**——它们考的是"行为与呈现"，日志判不出来。'
 $lines += ''
 $lines += '## 需要你看界面判定的项（勾选并补读数）'
 $lines += ''
