@@ -332,6 +332,15 @@ struct Index {
   @State presetNote: string = '';
   /** 已按过一次「删除」、等待确认的工作区路径（两步确认） */
   @State confirmingDeletePath: string = '';
+  /**
+   * 归档分组是否展开（E165，用户反馈②）。
+   *
+   * 用户原话："归档后的会话不应该在工作区显示。" 归档集本身是对的（真机读数 `archived=3/4`），
+   * 问题在于我把「归档 · N」**平铺在工作区页里** ⇒ 看起来像"归档了还留在工作区"。
+   * 默认**折叠**：只留一行「归档 · N」作为入口，点开才展开——既不再"显示在工作区里"，
+   * 也没有把已归档的会话变得找不到。
+   */
+  @State archiveOpen: boolean = false;
   @State fileTree: FileNode[] = [];
   /** 文件预览结果；undefined = 未选择文件（@State 必须给默认值） */
   @State preview: FilePreview | undefined = undefined;
@@ -3851,6 +3860,28 @@ struct Index {
        * 归档集为空时整段不出现，不占版面。
        */
       if (this.archivedSessionIds.length > 0) {
+        /*
+         * E165：归档**默认折叠**（反馈②）。这一行是入口；点开才列出已归档会话。
+         * 说明文字写清语义，避免"归档了为什么还在这里"的误解。
+         */
+        Row({ space: Sp.S }) {
+          Text(`${$r('app.string.section_archive')} · ${this.archivedSessionIds.length}`)
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.font_tertiary'))
+            .layoutWeight(1)
+          Text(this.archiveOpen ? '收起' : '展开')
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.brand'))
+        }
+        .width('100%')
+        .padding(Sp.M)
+        .borderRadius(Radius.S)
+        .backgroundColor($r('sys.color.background_secondary'))
+        .onClick(() => {
+          this.archiveOpen = !this.archiveOpen;
+        })
+
+        if (this.archiveOpen) {
         Column({ space: Sp.XS }) {
           Text(`${$r('app.string.section_archive')} · ${this.archivedSessionIds.length}`)
             .fontSize(Fs.CAPTION)
@@ -3882,6 +3913,7 @@ struct Index {
         .padding(Sp.M)
         .borderRadius(Radius.M)
         .backgroundColor($r('sys.color.background_secondary'))
+        }
       }
 
       if (this.workspaces.length === 0) {
