@@ -90,6 +90,8 @@ import {
   SKILLS_LIST_ENDPOINT,
   WORKSPACE_FILES_CHANGES_ENDPOINT,
   GOALS_GET_ENDPOINT,
+  MESSAGE_FEEDBACK_LIST_ENDPOINT,
+  MESSAGE_FEEDBACK_PUT_ENDPOINT,
   AGENT_PRESETS_LIST_ENDPOINT,
   AGENT_PRESETS_COPY_ENDPOINT,
   AGENT_PRESETS_DELETE_ENDPOINT,
@@ -604,6 +606,9 @@ export class SessionHub {
    */
   private goalText: string = '';
   private goalNote: string = '';
+  /** 消息级反馈（E253：`messageFeedback/list`；按 messageId 查） */
+  private feedbackRows: FeedbackRow[] = [];
+  private feedbackFor: string = '';
   /** 当前预览的文件（未打开时为 undefined） */
   private filePreview: FilePreview | undefined = undefined;
   /** 待发附件（回执 + 展示信息；字节不留在端侧） */
@@ -1982,6 +1987,8 @@ export class SessionHub {
     // 若上一次拉取失败（例如选会话时恰好离线），`commandsFor` 仍是空串，
     // 那么重连时必须补拉——只看"换没换"会让命令目录永远空着。
     if (changed || this.commandsFor !== sessionId || this.fileTreeFor !== sessionId) {
+      // E253：反馈也是会话范围的，跟随同一处刷新（保持 E245 的"状态→触发→呈现"成环）
+      this.refreshFeedback();
       this.refreshSessionScoped();
     }
   }
@@ -3016,6 +3023,102 @@ export class SessionHub {
     this.notify();
   }
 
+  /**
+   * 读取**消息反馈**（E253：`messageFeedback/list`，契约 `{sessionId}` → `{items}`）。
+   *
+   * 会话范围（同族规则：`sessionId` 必带）。形状按契约是 `{items:[…]}`；不中就把真实顶层键记账、不猜。
+   * 失败与空是两件事：**"没有反馈"是正常空态**，"读失败"要如实说原因。
+   */
+  async refreshFeedback(): Promise<void> {
+    const scope: string = this.selectedSessionId;
+    if (!this.unaryReady || scope.length === 0) {
+      this.feedbackRows = [];
+      this.feedbackFor = '';
+      this.notify();
+      return;
+    }
+    const inner: Record<string, Object> = {};
+    inner['sessionId'] = scope;
+    const args: Object | undefined = argsFor(MESSAGE_FEEDBACK_LIST_ENDPOINT, inner as Object);
+    if (args === undefined) {
+      this.record('messageFeedback/list 不在兼容上表');
+      return;
+    }
+    const result: RpcResult = await this.conn.call(MESSAGE_FEEDBACK_LIST_ENDPOINT, args);
+    if (!result.ok) {
+      const f = result.error;
+      this.record('messageFeedback/list fail ' + (f === undefined ? 'unknown' : f.code));
+      return;
+    }
+    // 回包可能晚于一次切会话：只接受仍对应当前会话的结果
+    if (this.selectedSessionId !== scope) {
+      return;
+    }
+    const rows: FeedbackRow[] | undefined = feedbackFromReply(result.value);
+    if (rows === undefined) {
+      const keys: string = result.value === undefined
+        ? '(空回复)' : Object.keys(result.value as Record<string, Object>).join(', ');
+      this.record('messageFeedback/list shape unknown keys=' + keys);
+      return;
+    }
+    this.feedbackRows = rows;
+    this.feedbackFor = scope;
+    this.record('messageFeedback/list ok ' + rows.length);
+    this.notify();
+  }
+
+  /** 查某条消息的反馈（E253：界面按 messageId 取；没有则返回 undefined） */
+  feedbackOf(messageId: string): FeedbackRow | undefined {
+    for (let i = 0; i < this.feedbackRows.length; i++) {
+      if (this.feedbackRows[i].messageId === messageId) {
+        return this.feedbackRows[i];
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * 写入/替换某条助手消息的反馈（E253：`messageFeedback/put`）。
+   *
+   * 契约：`{sessionId, messageId, rating, note?, category?}`——上游注释是
+   * *"Create or replace feedback for one assistant message"*，所以同一个 messageId 再写就是**替换**。
+   * `note` 为空串时**不带上该字段**（契约里它是可选，空白由上游记为"无"）。
+   */
+  async putFeedback(messageId: string, rating: string, note: string): Promise<ActionNotice> {
+    if (!this.unaryReady) {
+      return noticeWith('offline', 'action', 'messageFeedback.put');
+    }
+    const scope: string = this.selectedSessionId;
+    if (scope.length === 0) {
+      return notice('feedback.needs-session');
+    }
+    if (messageId.length === 0 || rating.length === 0) {
+      return notice('feedback.incomplete');
+    }
+    const inner: Record<string, Object> = {};
+    inner['sessionId'] = scope;
+    inner['messageId'] = messageId;
+    inner['rating'] = rating;
+    if (note.length > 0) {
+      inner['note'] = note;
+    }
+    const args: Object | undefined = argsFor(MESSAGE_FEEDBACK_PUT_ENDPOINT, inner as Object);
+    if (args === undefined) {
+      return noticeWith('contract.missing', 'endpoint', MESSAGE_FEEDBACK_PUT_ENDPOINT);
+    }
+    const result: RpcResult = await this.conn.call(MESSAGE_FEEDBACK_PUT_ENDPOINT, args);
+    if (!result.ok) {
+      const f = result.error;
+      const code: string = f === undefined ? 'unknown' : f.code;
+      const why: string = friendlyFailure(code, f === undefined ? '' : f.message);
+      this.record('messageFeedback/put fail ' + code + ' ' + (f === undefined ? '' : f.message));
+      return noticeWith('feedback.failed', 'reason', why);
+    }
+    this.record('messageFeedback/put ok ' + messageId.substring(0, 12) + ' ' + rating);
+    await this.refreshFeedback();
+    return noticeWith('feedback.saved', 'rating', rating);
+  }
+
   /** 从"提供方目录"类端点取名字数组；形状不识别时返回空数组并记账（不猜） */
   private async providerNamesFrom(endpoint: string): Promise<string[]> {
     const inner: Record<string, Object> = {};
@@ -4024,6 +4127,45 @@ function goalTextFromReply(value: Object | undefined): string | undefined {
 
 /* E242 备注：原本我还写了一个 firstStringOf，但**它已经存在**（构建报重复实现）——已删除并复用既有的那个。
    这正是本项目"先查再写"的纪律：新增辅助函数前先搜一遍，否则同一功能会有两份实现（本会话已因此返工数次）。 */
+
+/**
+ * 一条消息反馈（E253：官方 `ui-message-feedback`）。
+ *
+ * 字段按上游契约：`messageId` + `rating`（总体判断）+ `note?`（说明）+ `category?`（分类）。
+ * 我们只存渲染需要的四个字符串，避免把上游类型整棵搬进来。
+ */
+export interface FeedbackRow {
+  messageId: string;
+  rating: string;
+  note: string;
+  category: string;
+}
+
+/** 从 `messageFeedback/list` 的回复取反馈行（`{items:[…]}`；缺 id 的行跳过——id 是写入的键） */
+function feedbackFromReply(value: Object | undefined): FeedbackRow[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const raw: Object[] | undefined = getArray(value, 'items');
+  if (raw === undefined) {
+    return undefined;
+  }
+  const out: FeedbackRow[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const one: Object = raw[i];
+    const messageId: string = getString(one, 'messageId') ?? '';
+    if (messageId.length === 0) {
+      continue;
+    }
+    out.push({
+      messageId: messageId,
+      rating: getString(one, 'rating') ?? '',
+      note: getString(one, 'note') ?? '',
+      category: getString(one, 'category') ?? ''
+    });
+  }
+  return out;
+}
 
 export function projectWireRecord(record: Object): TrajectoryItem | undefined {
   const type: string = getString(record, 'type') ?? '';
