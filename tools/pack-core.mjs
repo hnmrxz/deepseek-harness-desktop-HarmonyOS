@@ -635,6 +635,49 @@ async function hdshPublishExclusive(fsImpl, from, to) {
   log('[pack-core]   link 沙箱补丁：会话日志改用「存在性检查 + rename」发布');
 }
 
+/**
+ * 凭据文件"仅属主可读"检查的**鸿蒙平台豁免**（E127）。
+ *
+ * 【上游行为】`dsh-credentials-local/lib/index.js` 的 `assertOwnerOnly()` 读文件 mode，
+ * 属组/其他位非零即抛 `… is readable beyond its owner (mode 660); run "chmod 600 …"`。
+ * 这在桌面 POSIX 上是合理防护。
+ *
+ * 【为什么必须豁免】hmfs 会把文件权限**强制成 660**，`chmod 600` 无效
+ * （社区移植版 `@ohos-ports/deepseek-ai-dsh` 的补丁清单也记着同一条）。
+ * 该检查在端侧**永远不可能通过**，只会把"凭据确实写进去了"判成读取失败——
+ * 用户看到的是"填了密钥，模型仍说没有密钥"。
+ *
+ * 【为什么这是豁免而不是放宽安全】端侧凭据位于**应用私有沙箱**，其它应用本就进不来；
+ * 这条检查在端侧不提供任何额外保护，只提供假失败。豁免条件用入口脚本自己设的
+ * `HDSH_PLATFORM === 'ohos'`（`hostcore/app/main.js`），桌面/CI 上该变量不存在 ⇒ 检查照旧生效。
+ *
+ * 上游若改了这段，这里**报错退出**：静默发一个"凭据读不出来"的包，比打包失败难查得多。
+ */
+function patchCredentialsOwnerCheck() {
+  const target = join(
+    STAGE, 'node_modules', '@deepseek-ai', 'dsh-credentials-local', 'lib', 'index.js',
+  );
+  if (!existsSync(target)) {
+    die(`凭据权限补丁：找不到 ${target}`);
+  }
+  let text = readFileSync(target, 'utf8');
+  if (text.includes('HDSH_CREDENTIALS_MODE_EXEMPT')) {
+    log('[pack-core]   凭据权限补丁已存在（跳过）');
+    return;
+  }
+  const before = '\tif (process.platform === "win32") return;\n\tif ((mode & GROUP_OTHER_BITS) === 0) return;';
+  const after = '\tif (process.platform === "win32") return;\n'
+    + '\t/* HDSH_CREDENTIALS_MODE_EXEMPT: hmfs 强制 660 ⇒ 该检查在鸿蒙永远不可能通过（E127）。\n'
+    + '\t   端侧凭据在应用私有沙箱内，其它应用本就进不来；豁免只去掉假失败，不放宽真实保护。 */\n'
+    + '\tif (process.env.HDSH_PLATFORM === "ohos") return;\n'
+    + '\tif ((mode & GROUP_OTHER_BITS) === 0) return;';
+  if (!text.includes(before)) {
+    die('凭据权限补丁：上游 `assertOwnerOnly` 实现已变化（未找到待替换片段），拒绝静默跳过');
+  }
+  writeFileSync(target, text.replace(before, after), 'utf8');
+  log('[pack-core]   凭据权限补丁：鸿蒙上豁免"仅属主可读"检查（hmfs 强制 660）');
+}
+
 function embedTreeInfo() {
   // 插件与原生模块清单：**在构建期算一次**，写进树里给端侧读。
   // 【为什么不在端侧现算】端侧要算同一件事，得在 27250 个文件 / 4000 个目录上递归
@@ -937,6 +980,7 @@ allowOriginList();
 wrapSharp();
 addSystemAddonPackage();
 patchLinkForSandbox();
+patchCredentialsOwnerCheck();
 addOnDevicePreset();
 embedTreeInfo();
 verifyTreeInfoContract();

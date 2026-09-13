@@ -637,6 +637,22 @@ const WORKSPACE_DIR = SANDBOX_HOME.length > 0 ? path.join(SANDBOX_HOME, 'workspa
 if (WORKSPACE_DIR.length > 0) {
   ensureDir(WORKSPACE_DIR);
 }
+
+/*
+ * 「这是鸿蒙端侧」的**单一事实来源**（E127）。
+ *
+ * 【为什么需要它】上游有一处平台相关的安全检查在鸿蒙上**永远不可能通过**：
+ * `dsh-credentials-local` 的 `assertOwnerOnly()` 要求凭据文件"不能被属主以外读到"，
+ * 而 hmfs 把文件权限强制成 **660**（属组可读）⇒ 检查必然抛错，
+ * 表现就是"用户明明填了密钥、模型却说没有密钥"。
+ * 【为什么不用别的手段探测】端侧 `process.platform` 是 `linux`，与桌面 Linux 无法区分；
+ * 这里用**我们自己确知的事实**：应用沙箱路径一定以 `/data/storage` 开头。
+ * 显式、可审计，且只在端侧成立——pack-core 的补丁只认这个变量。
+ */
+if (SANDBOX_HOME.startsWith('/data/storage') || HOME_DIR.startsWith('/data/storage')) {
+  process.env.HDSH_PLATFORM = 'ohos';
+  diag('平台标识：HDSH_PLATFORM=ohos（鸿蒙应用沙箱路径）');
+}
 for (const key of ['NO_PROXY', 'no_proxy']) {
   if (!process.env[key] || process.env[key].length === 0) {
     process.env[key] = '127.0.0.1,localhost,::1';
