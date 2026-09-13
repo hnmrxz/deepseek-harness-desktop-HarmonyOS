@@ -143,6 +143,31 @@ function officialSettingLabel(ns: string, key: string): string {
   if (ns === 'ui-onboarding' && key === 'welcomeNoticeVersion') {
     return '欢迎提示版本';
   }
+  /*
+   * E155（用户反馈③）：**预设分区**此前直接显示宿主给的英文键，中文界面里很突兀。
+   * 键名取自真机截图（`agent-default-model` / `agent-loop` / `agent-presets`）。
+   */
+  if (ns === 'agent-default-model' && key === 'provider') {
+    return '提供方';
+  }
+  if (ns === 'agent-default-model' && key === 'model') {
+    return '模型';
+  }
+  if (ns === 'agent-default-model' && key === 'reasoningEffort') {
+    return '推理强度';
+  }
+  if (ns === 'agent-loop' && key === 'maxParallelToolCalls') {
+    return '最大并行工具调用数';
+  }
+  if (ns === 'agent-presets' && key === 'default') {
+    return '默认预设';
+  }
+  if (ns === 'subagent-model-selection' && key === 'enabled') {
+    return '允许子代理选模型';
+  }
+  if (ns === 'subagent-model-selection' && key === 'allowedModels') {
+    return '允许的模型';
+  }
   return '';
 }
 
