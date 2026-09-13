@@ -13,6 +13,7 @@
 import {
   AboutInfo,
   CredentialItem,
+  emptyCoreView,
   Fs,
   HostRecord,
   ModelOption,
@@ -29,10 +30,12 @@ import {
   SettingItem,
   SettingKind,
   SettingOrigin,
+  splitSettingKey,
   Sp,
   Sz
 } from 'appstate';
-import type { SettingsNamespaceState } from 'appstate';
+import type { CoreViewState, SettingsNamespaceState } from 'appstate';
+import { CorePane } from './CorePane';
 
 /**
  * 选择项的显示文案：优先用选项自带的显示名，找不到就回退到取值本身。
@@ -109,6 +112,75 @@ export interface ModelProviderGroup {
   models: ModelOption[];
 }
 
+/**
+ * 设置项的**官方中文措辞**（E120）。
+ *
+ * 【为什么需要一张表】设置项的 label / 选项值是 **Host 给的**（真机上是英文：
+ * `Preference` / `Font size` / `Busy enter` / `Transcript view`，选项 `system` / `compact`），
+ * 而官方 web 显示的是它自己内嵌的中文文案。用户要求"设置-通用里默认中文、措辞与官方一致"，
+ * 所以这里按 `命名空间.键` 覆盖成官方译名——文案取自官方客户端包内嵌的 locale 表
+ * （`dsh-client-ui-theme/lib/client.js` 的 `"appearance.title": "外观"` 等，同一批还给了
+ * 选项值「浅色/深色/跟随系统」「字号大小」「语言」「对话显示/标准/紧凑」）。
+ * 覆盖不到的键**保持 Host 原文**：宁可显示英文，也不自创一个官方没有的说法。
+ */
+function officialSettingLabel(ns: string, key: string): string {
+  if (ns === 'ui-theme' && key === 'preference') {
+    return '外观';
+  }
+  if (ns === 'ui-theme' && key === 'fontSize') {
+    return '字号大小';
+  }
+  if (ns === 'locale' && key === 'preference') {
+    return '语言';
+  }
+  if (ns === 'ui-chat' && key === 'transcriptView') {
+    return '对话显示';
+  }
+  if (ns === 'ui-conversation' && key === 'busyEnter') {
+    return '回车键行为';
+  }
+  if (ns === 'ui-onboarding' && key === 'welcomeNoticeVersion') {
+    return '欢迎提示版本';
+  }
+  return '';
+}
+
+/** 官方对**选项值**的中文措辞（取不到就返回空串，由调用方回落原值） */
+function officialSettingValue(ns: string, key: string, value: string): string {
+  if (ns === 'ui-theme' && key === 'preference') {
+    if (value === 'light') {
+      return '浅色';
+    }
+    if (value === 'dark') {
+      return '深色';
+    }
+    if (value === 'system') {
+      return '跟随系统';
+    }
+  }
+  if (ns === 'ui-chat' && key === 'transcriptView') {
+    if (value === 'normal') {
+      return '标准';
+    }
+    if (value === 'compact') {
+      return '紧凑';
+    }
+  }
+  return '';
+}
+
+/** 官方对**说明文字**的中文措辞（同上，取不到返回空串） */
+function officialSettingHint(ns: string, key: string): string {
+  if (ns === 'ui-theme' && key === 'fontSize') {
+    return '仅影响会话内容的字号';
+  }
+  if (ns === 'ui-chat' && key === 'transcriptView') {
+    return '控制已完成轮次的过程内容';
+  }
+  return '';
+}
+
+/** 设置面板（E108/E110/E114/E120） */
 @Component
 export struct SettingsPane {
   /** 插件分区子页签（E114：配置 / 列表） */
@@ -195,7 +267,35 @@ export struct SettingsPane {
       Scroll() {
         Column({ space: Sp.L }) {
           if (this.tab === 'core') {
-            this.coreSlot()
+            // 核心分区：与原来的一级「核心」页内容一致（版本切换/回滚、插件、运行时事实）
+            Column({ space: Sp.S }) {
+              if (this.coreNotice.length > 0) {
+                Text(this.coreNotice)
+                  .fontSize(Fs.CAPTION)
+                  .fontColor($r('sys.color.font_secondary'))
+                  .width('100%')
+                  .padding(Sp.S)
+                  .borderRadius(Radius.S)
+                  .backgroundColor($r('sys.color.background_secondary'))
+              }
+              CorePane({
+                view: this.coreView,
+                onAction: (id: string) => {
+                  this.onCoreAction(id);
+                },
+                onSelectVersion: (version: string) => {
+                  this.onCoreSelectVersion(version);
+                },
+                onTogglePlugin: (id: string, disabled: boolean) => {
+                  this.onTogglePluginRow(id, disabled);
+                },
+                onResetPluginRows: () => {
+                  this.onResetPluginRowsAction();
+                },
+                pluginNotice: this.pluginNotice
+              })
+            }
+            .width('100%')
           } else if (this.tab === 'general') {
             this.generalTab()
           } else if (this.tab === 'model') {
@@ -219,16 +319,27 @@ export struct SettingsPane {
   }
 
   /**
-   * 核心分区（E110：原「核心」一级页签并入这里）。
+   * 核心分区（E110/E118：原「核心」一级页签并入这里）。
    *
-   * 用 `@BuilderParam` 由宿主注入内容，而不是把十几个回调再串一遍：
-   * 核心页的状态与动作都在宿主（Index）手里，串一遍只会多出一层容易接错的透传。
+   * 【为什么不用 `@BuilderParam` 注入】原先由宿主注入一个 `@Builder`（`coreSlot`），
+   * 真机上点开「核心」分区**直接 JS 崩溃**（`AppKilledReporter: reason: JsError`，
+   * 23:57:10 的 `JS_ERROR…` faultlog），而只改这一处即可回避。
+   * 改为把 `CorePane` 需要的 6 个属性直接传进来：数据流一眼能看完，
+   * 也不再依赖"父 Builder 在子组件里被调用"这条容易踩坑的机制。
    */
-  @BuilderParam coreSlot: () => void = this.coreSlotEmpty;
-
-  @Builder
-  coreSlotEmpty() {
-  }
+  @Prop coreView: CoreViewState = emptyCoreView();
+  /** 核心页顶部的一次性提示（宿主维护） */
+  @Prop coreNotice: string = '';
+  /** 插件行操作的结果提示（核心页里的插件分区会显示） */
+  @Prop pluginNotice: string = '';
+  onCoreAction: (id: string) => void = () => {
+  };
+  onCoreSelectVersion: (version: string) => void = () => {
+  };
+  onTogglePluginRow: (id: string, disabled: boolean) => void = () => {
+  };
+  onResetPluginRowsAction: () => void = () => {
+  };
 
   @Builder
   tabBar() {
@@ -322,12 +433,46 @@ export struct SettingsPane {
     this.diagnosticsEntry()
   }
 
+  /** 行的显示名：有官方中文措辞就用它，否则保持 Host 原文（E120） */
+  private labelOf(item: SettingItem): string {
+    const parts = splitSettingKey(item.key);
+    if (parts === undefined) {
+      return item.label;
+    }
+    const official: string = officialSettingLabel(parts.ns, parts.fieldPath);
+    return official.length > 0 ? official : item.label;
+  }
+
+  /** 行的说明：官方有 description 就用官方的（如「仅影响会话内容的字号」），否则用 Host 给的 */
+  private hintOf(item: SettingItem): string {
+    const parts = splitSettingKey(item.key);
+    if (parts !== undefined) {
+      const official: string = officialSettingHint(parts.ns, parts.fieldPath);
+      if (official.length > 0) {
+        return `${official} · ${item.hint}`;
+      }
+    }
+    return item.hint;
+  }
+
+  /** 选项值的显示：官方译名优先（浅色/深色/跟随系统、标准/紧凑），否则回落既有标签 */
+  private valueLabelOf(item: SettingItem): string {
+    const parts = splitSettingKey(item.key);
+    if (parts !== undefined) {
+      const official: string = officialSettingValue(parts.ns, parts.fieldPath, item.textValue);
+      if (official.length > 0) {
+        return official;
+      }
+    }
+    return choiceLabel(item);
+  }
+
   @Builder
   settingRow(item: SettingItem) {
     Row({ space: Sp.M }) {
       Column({ space: 2 }) {
         Row({ space: Sp.XS }) {
-          Text(item.label)
+          Text(this.labelOf(item))
             .fontSize(Fs.BODY)
           // 【来源标记是必需信息，不是装饰】本客户端的通知 / 离线缓存等偏好
           // 在上游根本没有对应命名空间；不标出来，用户会以为改它也会影响 Host。
@@ -360,7 +505,7 @@ export struct SettingsPane {
         }
         .width('100%')
 
-        Text(item.hint)
+        Text(this.hintOf(item))
           .fontSize(Fs.CAPTION)
           .fontColor($r('sys.color.font_tertiary'))
           .width('100%')
@@ -404,7 +549,7 @@ export struct SettingsPane {
             this.onToggleSetting(item.key, on);
           })
       } else if (item.kind === SettingKind.CHOICE) {
-        Text(choiceLabel(item))
+        Text(this.valueLabelOf(item))
           .fontSize(Fs.SECONDARY)
           .fontColor(item.readOnly ? $r('sys.color.font_tertiary') : $r('sys.color.brand'))
           .onClick(() => {

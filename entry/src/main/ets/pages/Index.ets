@@ -3211,9 +3211,23 @@ struct Index {
       }
     }
     const all: boolean = loaded === probe.natives.length;
+    /*
+     * 【2/3 到底是谁没加载（E121）】此前只写"2/3 已加载"，用户（和排查的人）无法知道
+     * 缺的是哪一件、为什么缺——而"哪一个"直接决定受影响的能力：
+     * koffi → 进程/沙箱链，node-pty → 终端，sharp → 图片处理。
+     * 这里把**未加载者的名字与原因**一并写出来，原因取自 Host 的探测记录（原生 require 的真实报错）。
+     */
+    const missing: string[] = [];
+    for (let i = 0; i < probe.natives.length; i++) {
+      const n = probe.natives[i];
+      if (!n.loaded) {
+        const why: string = n.note === undefined || n.note.length === 0 ? '原因未记录' : n.note;
+        missing.push(`${n.name}：${why}`);
+      }
+    }
     return fact('原生件加载', `${loaded}/${probe.natives.length} 已加载`,
       all ? 'ok' : 'warn',
-      all ? '' : '未加载的原生件会让对应能力缺失（终端 / 进程沙箱 / 图片处理）');
+      all ? '' : `未加载：${missing.join('；')}`);
   }
 
   /**
@@ -3754,7 +3768,22 @@ struct Index {
       })
     } else {
       SettingsPane({
-        coreSlot: this.coreTabContent,
+        // E118：核心分区的内容直接由属性传入（不再用 @BuilderParam 注入父 Builder——
+        // 真机上点开该分区会 JS 崩溃）
+        coreView: this.coreView,
+        coreNotice: this.coreNotice,
+        onCoreAction: (id: string) => {
+          this.onCoreAction(id);
+        },
+        onCoreSelectVersion: (version: string) => {
+          this.onCoreSelectVersion(version);
+        },
+        onTogglePluginRow: (id: string, disabled: boolean) => {
+          this.onTogglePlugin(id, disabled);
+        },
+        onResetPluginRowsAction: () => {
+          this.onResetPluginRows();
+        },
         // E114：官方「通用」分区承载的是**用户面向的功能包设置**（外观/语言/会话…），
         // 引擎参数不在其中。这里做同样的策展：白名单命名空间整组显示，
         // 其余命名空间里**用户改过**的项收进「其他已修改项」，既不占版面又撤得回。

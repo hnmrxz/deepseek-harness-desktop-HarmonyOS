@@ -255,10 +255,23 @@ napi_value StartHost(napi_env env, napi_callback_info info) {
       OH_LOG_Print(LOG_APP, LOG_ERROR, 0x0000, "HDSH-SHIM",
                    "node::Start 未解析到（libnode 未首载成功），无法启动 Node");
       g_running.store(false);
+      // 【E119】启动失败也要把"已启动"标记复位，否则这一次失败会把此后所有启动永久拒掉
+      g_started.store(false);
       return;
     }
     int rc = g_nodeStart(static_cast<int>(g_argv.size()), g_argv.data());
     g_running.store(false);
+    /*
+     * 【E119：切换/重启失败的根因就在这里】`g_started` 是 `startHost` 的守卫
+     * （"同一进程只允许一个 Node 实例"），但此前**置真之后从未复位**：
+     * 第一次启动成功后，任何后续 `startHost` 都会被拒，报
+     * 「运行时已经启动过；同一进程只允许一个 Node 实例」——真机上表现为
+     * **核心版本切换、重启核心全部失败**（而旧核心明明已经退出了：
+     * `isHostRunning()` 读的是 `g_running`，它是准的）。
+     * 语义应当是"当前**有**一个 Node 线程在跑"，因此线程一退出就复位；
+     * 这样它仍然拦住真正的并发启动，而不拦住"停掉之后再起"。
+     */
+    g_started.store(false);
 
     // Node 退出后，把抓到的输出**转成 hilog**——这是设备上唯一能读到的通道。
     ::fflush(stdout);
