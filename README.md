@@ -1,187 +1,85 @@
-# HDSH —— 应用本体自足运行 DeepSeek Harness 的鸿蒙端
+<div align="center">
 
-<img src="docs/brand/hdsh-icon.png" alt="HDSH 应用图标" width="112" align="right" />
+<img src="docs/brand/hdsh-icon.png" alt="HDSH" width="112" />
 
-面向 HarmonyOS（手机 / 折叠屏 / 平板 / 2in1）的 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）端，**ArkTS + ArkUI 原生实现**。
+# HDSH
 
-> **它不是"PC 上 dsh 的遥控器"。** 应用**本体就是 DSH 的运行载体**：HAP 内自带 Node 运行时与 dsh 核心树，
-> Host 起在本端 `127.0.0.1`，ArkUI 原生页面就是这个**本地** Host 的客户端页面；
-> 并支持插件的增删启停与核心版本的安装 / 切换 / 回滚。
-> 「连接远程 Host」保留为**可选能力**，不再是目标与验收口径。
->
-> 目标与架构的权威说明见 **[`docs/50-端侧核心运行架构.md`](docs/50-端侧核心运行架构.md)（D6）**；
-> 界面规范见 **[`docs/60-界面重塑-端侧核心.md`](docs/60-界面重塑-端侧核心.md)（D7）**。
-> 与 D1（开发任务书）冲突处，以 D6/D7 为准——D1 的部分结论（把端侧 Host 列为非目标）已经过期。
+**在 HarmonyOS 上自足运行 DeepSeek Harness 的应用**
 
-## ⚠️ 当前真实状态（先读这一节，再看下面的"已完成"）
+</div>
 
-| 层 | 状态 | 证据（都是读数，不是推断） |
-|---|---|---|
-| ArkTS/ArkUI 页面、核心管理、版本/插件/协议 | ✅ 可用 | 真机与模拟器都能安装、启动、常驻 |
-| 核心包物化与打包（`tools/pack-core.mjs`） | ✅ 可用 | 66 MB zip / 28990 条目 / 树内清单契约核对通过 |
-| 运行时载体接线（`RuntimePort` → `NodeRuntime`） | ✅ **已接线** | `entry/.../EntryAbility.ets:267` 与 `pages/Index.ets:2514` 都用 `NodeRuntime`；`NotWiredRuntime` 只是 `hostruntime` 里的兜底实现 |
-| 自建 Node 进 HAP 并**执行 JS**（arm64） | ✅ **已验证** | 真机：`first-load /data/storage/el1/bundle/libs/arm64/libnode.so.127 (RTLD_GLOBAL): handle=ok node::Start=ok`；Node 自报 `platform=linux arch=arm64 versions={"node":"22.23.2",…}` |
-| 原生插件加载（koffi / node-pty） | 🟡 加载已通、版本代差待解 | 真机 `diag3 dlopen …/libkoffi.so = ok`；但 dsh 全线要 `koffi ^3.1.0`，鸿蒙只有 `@ohos-ports/koffi@2.16.2-beta.0`（D6 E47）⇒ `subprocess-local`/`sandbox-local` 按证据**临时禁用** |
-| **Host 起监听（`127.0.0.1:3120`）** | ✅ **真机已达成** | 本机以**端侧同参**（`node --jitless --no-experimental-fetch hostcore/app/main.js`）跑通：`BOOT_50_DSH_INIT` → `BOOT_60_HTTP_BIND port=3121` → `HDSH_READY` → `BOOT_70_HTTP_READY GET / → HTTP 401`（401 = dsh 的 browser-trust fence，端口真的应答）；并打印出带 token 的 `dsh web: http://127.0.0.1:3121/?token=…`。真机（arm64）原生件已齐但设备当前未连接；模拟器（x86_64）待 x86_64 的 `libnode.so.127` 编译完成 |
-| 原生插件加载（koffi / node-pty） | 🟡 node-pty 链已在 profile 层禁用 | koffi **已自建 3.2.1**（arm64，`DT_NEEDED libnode.so.127`）；node-pty 需要创建进程执行 `spawn-helper`，鸿蒙平台不支持（E15），因此 `subprocess`/`sandbox`/`bash-sandbox`/`pwsh-sandbox`/`tool-bash`/`tool-pwsh` 连同其服务级联（E53）一并禁用 |
-| 端侧 fetch（LLM 调用） | 🟡 已垫片，待端侧验证 | jitless 下 WASM 不可用 ⇒ Node 自带 undici 无法初始化 ⇒ 原生 fetch 在端侧不可用；已加 `hostcore/app/fetch-shim.js`（基于 `node:http/https`，含 `Headers`/`FormData`/`Blob`），仅在原生 fetch 缺失时安装 |
-| x86_64（本机模拟器）原生链路 | 🟡 进行中 | 应用已能在模拟器常驻（`libs/x86_64/libdshhost.so` 正常绑定）；x86_64 的 `libnode.so.127` 交叉编译进行中 |
+HDSH 把 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）的**运行本体**装进一个鸿蒙应用：HAP 内自带 Node 运行时与 dsh 核心树，核心在本机 `127.0.0.1` 上起 Host，应用内的原生 ArkUI 页面就是这个本地 Host 的客户端。
 
-> **一句话**：**不是架构没闭合，而是差最后一段**——"Node 能在鸿蒙里执行 JS"已证，
-> "dsh 的 webServer 起监听"未证，中间卡在插件树加载（koffi 版本代差 + 已按证据禁用的三行）。
->
-> **已知未闭合项（都写在这里，不藏）**：① `DshHost.start()` 的门槛仍是"拿到句柄"，
-> 真正的健康门禁（HTTP 通 + API/WS 通 + 原生依赖齐）尚未成为硬门槛；② `node::Start` 阻塞、
-> **停止/生命周期未实现**（Ability 前后台/销毁与 Node 线程的关系尚未定义）；
-> ③ **端侧 fetch 的处置已定并已实现**：`--jitless` 下 WASM 不可用是**定义使然**（V8 的 jitless
-> 隐含 `--no-expose-wasm`，不是权限问题），所以"让 undici 在 jitless 下工作"这条路不存在；
-> 正确做法是给端侧垫一个基于 `node:http/https` 的 fetch（`hostcore/app/fetch-shim.js`，含
-> `Headers`/`FormData`/`Blob`，仅在原生 fetch 缺失时安装）。**待办**：在端侧用一次真实模型调用
-> 验证它（含 SSE 流式与 `signal` 中止）。
+**它不是 PC 上 dsh 的遥控器**，也不需要在电脑上常驻任何服务：装上即用，数据只在本机应用沙箱内。
 
+支持 HarmonyOS 手机 / 折叠屏 / 平板 / 2in1。
 
-## 为什么是端侧自足（三条事实变了）
+---
 
-| # | 事实 | 后果 |
-|---|---|---|
-| 1 | **Node.js 官方已支持 OpenHarmony**（`BUILDING.md` 平台表列 `OpenHarmony / arm64 / >= 5.0`；支持 PR [#58350](https://github.com/nodejs/node/pull/58350) 已合入 `main`） | "端侧没有 Node 运行时"这个前提不成立 |
-| 2 | **dsh 的原生依赖已有鸿蒙移植**：`@ohos-ports/{koffi,node-pty,sharp}`、`@ohos-npm-ports/*`，甚至已有 `@ohos-ports/deepseek-ai-dsh` | "原生模块无 aarch64 产物 → 能力全缺失"这条反面对标的理由过期 |
-| 3 | 端侧自足后**不存在跨设备传输层**：Host 与页面同进程走回环 | 旧方案最痛的"长连接周期性断开 / 转发不可靠 / 需要隧道"从关键路径消失 |
+## 能力
+
+| 领域 | 说明 |
+|---|---|
+| **本地核心** | 内置 Node 运行时（自建、`jitless`）与 dsh 核心树；Host 仅监听 `127.0.0.1`，随应用生命周期起停 |
+| **对话与轨迹** | 对话视图（问答，思考过程折叠在回答上方）与轨迹视图（工具调用、子代理、目标/任务、交付物、错误）分开呈现 |
+| **工作区** | 工作区为组、会话挂在组下；可在设备上选择文件夹作为工作区（系统文件夹选择器），并在其中浏览文件 |
+| **模型与密钥** | 按提供方管理：API 密钥（只写）、`baseURL` 与模型目录；默认模型与推理强度可选 |
+| **插件** | 查看随包插件清单与运行阶段；按行启用/禁用，并可恢复部署默认 |
+| **核心版本** | 同时安装多个核心版本，一键**切换 / 回滚**（停旧起新，逐版本校验后激活） |
+| **多语言** | 界面文案跟随系统语言，默认中文 |
+| **上架友好** | 不申请 JIT 等特殊权限，全部按 `jitless` 运行；权限仅网络相关三项 |
 
 ## 架构
 
-```
-┌─ HDSH（HAP）────────────────────────────────────────────────────────┐
-│  页面层   ArkUI 原生：待决 / 会话 / 工作区 /【核心】/ 设置            │
-│  状态层   appstate：单一连接与会话状态中枢（SessionHub）             │
-│  协议层   connection + dshcompat：84 端点 / 4 流，漂移门禁保护        │
-│  核心层   hostruntime：版本仓库 + 激活事务 + 运行时载体抽象 + 状态机   │
-│  设备层   platform：通知 / 长时任务 / 剪贴板 / 分享 / 窗口 / 密钥存储  │
-└────────────────────────────────────────────────────────────────────┘
-        │ 进程内回环：POST /api/<endpoint> + WS /api/remote.mux
-        ▼
-   端侧 dsh Host（Node 运行时跑在本应用进程内）
-     webserver(127.0.0.1) ├ /api ├ /api/remote.mux ├ $events
-     DSH_HOME = <应用沙箱>/dsh/home（跨核心版本共享的唯一一份用户数据）
+```text
+┌─ HDSH（一个 HAP）──────────────────────────────────────────────┐
+│  ArkUI 原生页面（客户端）                                       │
+│        │  HTTP /api/*        WebSocket /api/remote.mux          │
+│        ▼                                                        │
+│  端侧 dsh Host（Node 运行时运行在**本应用进程内**）              │
+│        │  DSH_HOME = <应用沙箱>/dsh/home（跨版本共享的唯一数据）  │
+│        ▼                                                        │
+│  核心版本仓库（多个版本可并存，切换 = 停旧 + 起新 + 校验）        │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-**同进程的好处不是"省事"，而是安全语义不用绕**：社区方案必须绑 `0.0.0.0` + 改写 `Host` 头才能穿过
-鸿蒙的进程间 loopback 隔离；同进程不跨该边界，因此**不绑全网卡、不改信任头、不需要隧道**。
+同进程带来的是**安全语义的简化**：客户端与 Host 走回环，不需要把服务暴露到局域网，也不需要跨设备转发。
 
-## 当前状态（据实，2026-09-12）
+## 构建
 
-| 项 | 状态 |
-|---|---|
-| 目标与架构 | ✅ 已更正为端侧自足（D6），四项决策落定 |
-| 界面 | ✅ 新增「核心」一级页面（阶段/运行时事实/版本/插件四分区）；会话空态按核心阶段分档 |
-| 端侧核心树 | ✅ `tools/pack-core.mjs` 可产出鸿蒙形态核心包（zip 63.2 MB / 解包 207 MB；48 个原生 ELF 全部带 `.codesign`） |
-| 核心版本管理 | ✅ `hostruntime` 的版本仓库与激活事务（stage→verify→health→activate→rollback）可编译 |
-| **运行时载体** | ⏳ **未接线**——这是当前关键路径。阶段一（Electron-on-鸿蒙）缺华为侧产物；阶段二（自建 `libnode.so`）交叉编译已启动，见 `tools/node-runtime/` |
-| 设备验收 | ⏳ 无活动设备；所有"真机可用"的结论都还没产生 |
+前置：DevEco Studio / `devecocli`、HarmonyOS SDK（API 24）、Node.js（仅用于仓库内的构建与检查脚本）。
 
-> 界面上不写桩数据：运行时没接上就显示「未接线」，未探测的事实写「未探测 + 探测条件」，
-> 不可用的动作把原因写在按钮下方。**"看起来正常"比"报错"更危险**，这一条在本项目已有过教训。
+```bash
+# 1) 打完整体（HAP + 原生库 + 内置核心资源）
+devecocli build
 
-## 不变式（改代码前先看这四条）
+# 2) 需要重新打包核心树时（素材来自 dist/core/，产物落到应用资源目录）
+node tools/pack-core.mjs --skip-install --place-in-app
 
-1. **零上游 patch**：不 fork、不魔改 dsh；端侧差异只走它自己的组合面（profile / `cordis.patch.yml` / bundle）。
-2. **不打洞**：默认只监听 `127.0.0.1`；不绑 `0.0.0.0`、不伪造 `Host`/`Origin`。
-3. **不申请特殊权限**：各端一律按 **jitless** 运行，权限面只保留普通权限（网络 = `ohos.permission.INTERNET`），
-   以确保顺利上架。任何"靠申请 JIT 类 ACL 权限才能成立"的方案都不进选型（D6 §4.4）。
-4. **界面不说谎**：失败必须给出下一步；空态要说明"可以做什么"；未探测 ≠ 未知。
+# 3) 安装到已连接设备
+hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
+```
 
 ## 仓库结构
 
-```
-AppScope/        应用级配置（bundleName: com.hnmrxz.hdsh、图标、应用名）
-entry/           HAP 入口：Ability、页面、10 个视图组件、形态适配
-appstate/        状态与呈现契约：SessionHub（单一状态中枢）、Core（核心页契约，纯函数）、
-                 ui/（断点导航、设计令牌、快捷键）
-connection/      协议机制层：信封 / cookie / RemoteMux / EventStream / 退避（零 UI 依赖）
-dshcompat/       **唯一的上游事实落点**：端点表、事件白名单、能力映射、版本矩阵
-platform/        设备能力层：通知、长时任务、剪贴板、分享、文件选择、窗口与形态、密钥存储
-hostruntime/ ★   端侧核心运行层：CoreStore（版本仓库 + 激活事务）、RuntimePort（载体抽象）、DshHost（状态机）
-hostcore/        打包期配方与端侧 profile（core-recipe.json、profile/ondevice/）
-tools/           协议与打包工具：pack-core.mjs（核心包）、node-runtime/（自建 Node 运行时）、
-                 compat-drift.mjs（漂移门禁）、arch-check.mjs（架构回归门禁）、dev-host.mjs（远程 Host 调试）
-hostkit/         可选的 PC 侧搭桥服务（仅在"连接远程 Host"这一可选路径下才需要）
-docs/            文档基线（见下）
-```
-
-## 文档
-
-| # | 文档 | 作用 |
-|---|---|---|
-| **D6** | [`50-端侧核心运行架构.md`](docs/50-端侧核心运行架构.md) | **先读这篇**：目标更正、目标架构、可行性证据、运行时路线与 JIT 决策、核心版本激活事务、指标与里程碑 |
-| **D7** | [`60-界面重塑-端侧核心.md`](docs/60-界面重塑-端侧核心.md) | 界面重塑规范：新一级导航、核心页规格、"去掉无用功能"清单与去向 |
-| D1 | [`00-开发任务书.md`](docs/00-开发任务书.md) | 开发任务书（**其"远程客户端"定位已被 D6 更正**） |
-| D2 / D2b | [`10-协议兼容事实基线.md`](docs/10-协议兼容事实基线.md)、[`11-请求载荷契约.md`](docs/11-请求载荷契约.md) | 协议事实与载荷契约（含实测矩阵） |
-| D3 / D3b | [`20-产品需求与体验规范.md`](docs/20-产品需求与体验规范.md)、[`12-设置页契约.md`](docs/12-设置页契约.md) | 体验规范与设置页契约 |
-| D4 | [`30-技术验证清单.md`](docs/30-技术验证清单.md) | POC 清单（POC-11/12/13 是端侧运行时与 JIT 的门） |
-| D5 | [`40-上游升级手册.md`](docs/40-上游升级手册.md) | 上游升级流程、漂移门禁、版本矩阵 |
-
-## 构建与运行
-
-| 项 | 值 |
+| 目录 | 作用 |
 |---|---|
-| HarmonyOS SDK | **API 24（platformVersion 6.1.1）** —— 本机 DevEco 为 DS-243.24978.46.36.611300，其 hvigor 上限为 `modelVersion 6.1.1`；原声明的 API 26 在本机无法构建，已按此下调 |
-| 包名 | `com.hnmrxz.hdsh` |
-| 命令行工具 | `devecocli`、`ohpm`、`hdc` |
+| `entry/` | 鸿蒙应用入口：ArkUI 页面与视图、原生桥（`libdshhost`）、随包资源（核心包与原生库） |
+| `hostcore/` | 端侧 Host 的入口脚本与 profile（`cordis.patch.yml`）、`fetch` 垫片 |
+| `hostruntime/` | 核心版本仓库、激活事务、运行时载体（`RuntimePort` → `NodeRuntime`） |
+| `appstate/` | 客户端状态中枢与投影（会话、轨迹、工作区、设置、凭据、插件、核心视图） |
+| `platform/` | 系统能力封装（文件选择、剪贴板、通知、窗口记忆等） |
+| `dshcompat/` | 与上游协议有关的**全部**事实：端点、参数形状、事件类型与投影键 |
+| `tools/` | 构建与检查脚本（核心打包、依赖闭包、上架红线、协议往返、死按钮扫描等） |
+| `docs/` | 文档基线，索引见 [`docs/README.md`](docs/README.md) |
 
-```sh
-ohpm install --all                     # 依赖安装（首次或模块增删后）
-devecocli build                        # 构建（产出未签名 HAP）
-devecocli build --modules entry@ohosTest   # 单测目标（仅编译；执行需设备）
-devecocli run                          # 构建 + 安装 + 启动（需设备）
-```
+## 设计原则
 
-**签名**：本仓库**不提交** `build-profile.json5` 的 `signingConfigs`。
-DevEco 自动签名写进去的是机器绑定的绝对路径与加密口令，且它引用的
-`.p12` / `.cer` / `.p7b` 在 `~/.ohos/config/` 下、**不在库内**——提交它既帮不了别人，
-也会让 `build-profile.json5` 每次都被改脏。要装到真机时，用 DevEco 打开工程走一次
-**自动签名**（File → Project Structure → Signing Configs → Automatically generate signature），
-它会就地写回该文件；这一步是每台机器各自做一次的事。
-
-**产出端侧核心包**（随应用分发的 dsh 核心树）：
-
-```sh
-node tools/pack-core.mjs               # 物化 → 裁剪 → 校验签名 → 打包（首次约 5 分钟）
-node tools/pack-core.mjs --skip-install        # 复用已有 node_modules，秒级重打包
-node tools/pack-core.mjs --place-in-app        # 额外把核心 zip 放进 entry 的 resfile（随 HAP 分发）
-# 产物：dist/core/dsh-core-<ver>-openharmony-arm64.zip + .manifest.json
-# （放 dist/ 而不是 build/：根 build/ 属于 HarmonyOS 构建，devecocli build 会清掉它）
-```
-
-**扫描端侧核心的插件与原生模块**（回答"哪些插件能运行时安装、发版风险面有多大"）：
-
-```sh
-node tools/scan-core-plugins.mjs       # 读真实核心树，不改任何东西
-# 产物：dist/core/plugin-scan.json + plugin-scan.md（不进版本库，方法进库）
-# 实测结论与两条方法纠正见 docs/50-端侧核心运行架构.md §6.2.1
-```
-
-**自建 Node 运行时**（阶段二关键路径，在 WSL2/Linux 里跑）：
-
-```sh
-bash tools/node-runtime/fetch-ohos-sdk.sh    # 匿名下载 OpenHarmony 公开 SDK（含 Linux NDK）
-bash tools/node-runtime/build-node-ohos.sh   # 交叉编译 libnode.so + node（V8 很重）
-bash tools/node-runtime/status.sh            # 看进展
-```
-
-## 可选：连接远程 Host
-
-端侧自足之外仍保留这条路（例如手机连开发机上的 Host）：`node tools/dev-host.mjs` 会自己拉起一个
-dsh 核心、建反连，并把地址与令牌经启动参数带进应用；跨设备可用 `hostkit/` 的加密隧道。
-**注意**：这条路径不是目标，其"必须在另一台机器上跑 dsh"的前提也不再是验收口径。
-
-## 在本仓库里做脚本化改动的两条硬约束
-
-1. **不要用 `Get-Content -Raw` + `Set-Content` 往返改写源文件**：Windows PowerShell 5.1 默认按 ANSI/GBK
-   读取、按 UTF-8 写回，会把中文注释全变成乱码。要改就用字面量替换的工具，或显式 `-Encoding UTF8`
-   读 + `[System.IO.File]::WriteAllText` 以无 BOM UTF-8 写回。
-2. **不要按进程名 kill**。本仓库的开发代理运行在 DSH 自身进程内，`Get-Process node | ... | Stop-Process`
-   这类写法会杀掉代理自己。停后台任务用任务 id，停模拟器用 `devecocli emulator stop <name>`。
+1. **不 fork、不魔改 dsh**：端侧差异只通过 dsh 自己的组合面（profile / `cordis.patch.yml` / bundle）表达。
+2. **不申请特殊权限**：需要 JIT、ACL 之类前提的方案一律不进入选型，以保证可正常上架。
+3. **界面不撒谎**：失败必须给出下一步；空态说明"可以做什么"；不可用的动作把原因写在旁边，而不是给一个点了没反应的入口。
+4. **上游知识只出现在 `dshcompat`**：字段名、端点形状、事件类型集中一处，升级上游时改一个地方。
 
 ## 许可
 
-[MIT](LICENSE)
+见 [`LICENSE`](LICENSE)。
