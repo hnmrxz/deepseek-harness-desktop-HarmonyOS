@@ -3642,6 +3642,38 @@ struct Index {
    * 而注册表行带 `workspaceId`——两者之间**唯一**可靠的共同键是目录路径。
    * 匹配不到就返回空串：调用方据此**不显示**删除入口，而不是给一个点了没反应的按钮。
    */
+  /**
+   * 在**指定工作区**里新建会话（E163，用户反馈①）。
+   *
+   * 【为什么要先注册工作区】会话归属由宿主按 `workspaceId`（注册表 id）记账，
+   * 而列表里的工作区是由会话目录归并出来的、本身没有 id。所以顺序是：
+   * ①`ensureWorkspace(w.path)` 把该目录注册/解析成工作区并拿到 id，
+   * ②`createSession()` 便会带上这个 `workspaceId`（E98 已实现）⇒ 新会话**确实落在这个工作区**，
+   * 而不是像以前那样落在"当前默认工作区"（用户看不出是给谁加的）。
+   *
+   * 未连接时如实提示，不做乐观动作。
+   */
+  private createSessionIn(w: WorkspaceItem): void {
+    const hub: SessionHub = SessionHub.shared();
+    if (!this.hubConnected) {
+      this.settingWriteNote = '尚未连接 Host，无法新建会话。';
+      return;
+    }
+    this.settingWriteNote = `正在把 ${w.path} 设为当前工作区…`;
+    hub.setDefaultWorkspace(w.path);
+    hub.ensureWorkspace(w.path).then((note: string) => {
+      hilog.info(DOMAIN, TAG, 'HDSH-WS 目标工作区：%{public}s', note);
+      return hub.createSession();
+    }).then((sid: string | undefined) => {
+      this.settingWriteNote = sid === undefined
+        ? '新建会话失败：见状态条上的原因。'
+        : `已在 ${w.name.length > 0 ? w.name : w.path} 里新建会话。`;
+    }).catch((e: Object) => {
+      const err = e as Error;
+      this.settingWriteNote = `新建会话失败：${err.message}`;
+    });
+  }
+
   private registryIdOf(w: WorkspaceItem): string {
     const key: string = normalizePathKey(w.path);
     for (let i = 0; i < this.workspaceRows.length; i++) {
@@ -3769,16 +3801,18 @@ struct Index {
       }
 
       Row({ space: 4 }) {
-        Text('+')
-          .fontSize(Fs.BODY)
-          .fontColor($r('sys.color.brand'))
-        Text($r('app.string.action_new_session'))
-          .fontSize(Fs.BODY)
-          .fontColor($r('sys.color.brand'))
+        /*
+         * E163（用户反馈①）：**顶层不再放「新建会话」**。
+         * 用户原话："新建会话应当在工作区文件夹上点击，而不是处在顶层外围，不然不知是给哪个工作区加会话。"
+         * 现在入口在每个工作区组头（见 `workspaceGroup`），建会话时会把该工作区注册成目标 ⇒
+         * "给哪个工作区加会话"从"猜"变成"看得见"。
+         */
+        Text('选择工作区后，在其组头点「+ 会话」')
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.font_tertiary'))
       }
-      .onClick(() => {
-        SessionHub.shared().createSession();
-      })
+      .width('100%')
+      .height(Sz.TOUCH_MIN)
       Blank()
       Text($r('app.string.action_choose_folder'))
         .fontSize(Fs.CAPTION)
@@ -3907,6 +3941,13 @@ struct Index {
             .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
         .layoutWeight(1)
+        // E163：**在该工作区里建会话**（反馈①：入口挂在工作区上，用户看得见"给谁加"）
+        Text('+ 会话')
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.brand'))
+          .onClick(() => {
+            this.createSessionIn(w);
+          })
         Text($r('app.string.action_files'))
           .fontSize(Fs.CAPTION)
           .fontColor($r('sys.color.brand'))
