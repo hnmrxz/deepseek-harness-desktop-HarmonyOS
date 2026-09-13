@@ -152,6 +152,18 @@ export function buildHostArgv(entryScript: string): string[] {
     // 不加它，那一行会在 import 期抛 ERR_UNKNOWN_BUILTIN_MODULE —— 与其因此禁掉一个
     // 鸿蒙上**本来能做**的能力，不如把开关打开。
     '--experimental-sqlite',
+    /*
+     * 【为什么要显式给 `--trusted-host`（E66/E67）】dsh 的 `/api` 前是 browser-trust fence，
+     * 而 dsh-web-app 的 `startup.js` 定义的合法选项只有四个：
+     *   `--host <host>` / `--no-open` / `--port <port>` / **`--trusted-host <authority...>`**。
+     * 我们此前只传了 `--host 127.0.0.1`（**没有**声明可信 authority），而端侧是
+     * "本机同源、浏览器等价"的场景：浏览器请求天然带 `Origin` 与同源 authority。
+     * 实测症状与这条吻合——token→cookie 兑换成功（`HDSH-AUTH ok=true`），
+     * 但 WS 升级一律 403（dsh 的 lws：`ws_upgrade: got bad HTTP response '403'`）。
+     * 所以把回环 authority 明确写进可信列表；它与 `--host` 一致，属低风险改动。
+     * （客户端侧同时也补了 `Origin` 头，两边一起对齐"浏览器等价"。）
+     */
+    '--trusted-host', `127.0.0.1:${HOST_DEFAULT_PORT}`,
     entryScript,
   ];
 }
