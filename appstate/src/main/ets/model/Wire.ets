@@ -2193,13 +2193,27 @@ export function commandsExecuteEndpoint(): string {
  * 交给 `argsFor` 按端点契约（`Endpoints.ets:683`，REQUEST 形态）映射/校验，
  * 不符时返回 `undefined`，调用方如实说"缺少参数契约"，不把不确定的字段发出去碰运气。
  */
+/**
+ * `session/selectModel` 的 args 载荷（E222：**按契约修正为嵌套**）。
+ *
+ * 【修正了什么】我原先发的是扁平 `{sessionId, provider, model, effort}`，**错了**。
+ * 上游类型定义（`dsh-api-session-controller` 的 `types.d.ts`）写的是：
+ *   `interface SessionSelectModelRequest { readonly sessionId: SessionId; readonly selected: ModelSelection }`
+ * ⇒ 选择项要**嵌套在 `selected` 里**（`ModelSelection` 的字段是 `provider / modelId / effort`，
+ * 与我们的镜像类型一致——`setDefaultModel` 用的也是这三个名字）。
+ * 【顺带核对】同一份类型定义确认 `SkillListRequest = { sessionId }` ⇒ E174 给 `skills/list`
+ * 传 `sessionId` 的修复是**对的**（那条 `failed to observe session "undefined"` 正是缺它）。
+ */
 export function sessionSelectModelPayload(sessionId: string, provider: string, model: string,
   effort: string): Object | undefined {
+  const selected: Record<string, Object> = {
+    'provider': provider,
+    'modelId': model,
+    'effort': effort
+  };
   const body: Record<string, Object> = {
     'sessionId': sessionId,
-    'provider': provider,
-    'model': model,
-    'effort': effort
+    'selected': selected
   };
   return argsFor(SESSION_SELECT_MODEL_ENDPOINT, body as Object);
 }
