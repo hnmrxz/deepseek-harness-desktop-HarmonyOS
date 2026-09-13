@@ -1329,40 +1329,15 @@ export struct SettingsPane {
     }
     .width('100%')
 
-    Column({ space: Sp.XS }) {
-      Text('推理强度（当前默认）')
-        .fontSize(Fs.CAPTION)
-        .fontColor($r('sys.color.font_tertiary'))
-        .width('100%')
-      if (this.currentEfforts().length === 0) {
-        Text('当前模型不支持调整推理强度')
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
-          .width('100%')
-          .padding(Sp.M)
-          .borderRadius(Radius.M)
-          .backgroundColor($r('sys.color.background_secondary'))
-      } else {
-        Row({ space: Sp.S }) {
-          ForEach(this.currentEfforts(), (effort: string) => {
-            // 点档位 = 写默认模型的 reasoningEffort（与官方"能力随模型"的语义一致）
-            Text(effort)
-              .fontSize(Fs.SECONDARY)
-              .fontColor(this.selection.effort === effort ? Color.White : $r('sys.color.font_secondary'))
-              .padding({ left: Sp.M, right: Sp.M, top: Sp.S, bottom: Sp.S })
-              .borderRadius(Radius.L)
-              .backgroundColor(this.selection.effort === effort
-                ? $r('sys.color.brand')
-                : $r('sys.color.background_secondary'))
-              .onClick(() => {
-                this.onSelectModel(this.selection.provider, this.selection.modelId, effort);
-              })
-          }, (effort: string) => effort)
-        }
-        .width('100%')
-      }
-    }
-    .width('100%')
+    /*
+     * E207（用户要求：模型页与官方一致）：**「推理强度（当前默认）」区块已移除**。
+     *
+     * 官方 Models 页只列**提供方与密钥**，"选模型/强度"不在这里。而这个区块与我们已具备的
+     * 两条通道重复：① **默认值**在「通用」页有可编辑的 `agent-default-model` 项
+     * （Provider / Model / Reasoning effort）；② **本会话切换**由会话操作面板提供
+     * （E195 列表 + E199 按会话写 `session/selectModel`）。
+     * 留着它只会让"默认"与"本会话"两件事在同一页上混着，看不出在哪改哪一个。
+     */
 
     Column({ space: Sp.XS }) {
       Text('全部模型')
