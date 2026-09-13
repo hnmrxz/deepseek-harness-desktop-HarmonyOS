@@ -209,9 +209,30 @@ napi_module g_dshHostModule = {
     0,          // nm_flags
     nullptr,    // nm_filename
     Init,       // nm_register_func
-    "dshhost",  // nm_modname：ArkTS 侧 `import dshhost from 'libdshhost.so'`
+    "dshhost",  // nm_modname：见下方"注册两个名字"的说明
     nullptr,    // nm_priv
     {nullptr},  // reserved
+};
+
+/*
+ * 同一个模块再注册一次，名字用**完整的导入说明符** `libdshhost.so`。
+ *
+ * 【为什么两个都要注册】实测（真机 hilog）：
+ *     HDSH-RUNTIME 调用原生模块失败：runtimeVersion is not callable, runtimeVersion is undefined
+ * 也就是 `.so` 加载成功、`import` 没报错，但**模块注册没被认到**，导出全是 undefined。
+ * 而 `nm_modname` 到底该写 `<name>` 还是 `<name>.so` 取决于运行时的匹配口径：
+ * 官方样例是 `libentry.so` 配 `nm_modname = "entry"`，但那条规则在不同版本上并不一致，
+ * 且**写错不会报错**——只会得到一个空模块（正是我们遇到的症状）。
+ * 注册两份的成本是几十字节，换来的是不必靠猜：两者命中其一即可。
+ */
+napi_module g_dshHostModuleFull = {
+    1,
+    0,
+    nullptr,
+    Init,
+    "libdshhost.so",
+    nullptr,
+    {nullptr},
 };
 
 }  // namespace
@@ -219,4 +240,5 @@ napi_module g_dshHostModule = {
 // 模块注册：OHOS 的 NAPI 也是靠 constructor 把模块挂上去的（与 Node 原生模块一致）。
 extern "C" __attribute__((constructor)) void RegisterDshHostModule() {
   napi_module_register(&g_dshHostModule);
+  napi_module_register(&g_dshHostModuleFull);
 }

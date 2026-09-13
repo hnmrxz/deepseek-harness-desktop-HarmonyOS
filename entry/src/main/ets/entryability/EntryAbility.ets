@@ -34,6 +34,7 @@
 import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import dshhost from 'libdshhost.so';
 import { emitter } from '@kit.BasicServicesKit';
 import { window } from '@kit.ArkUI';
 import {
@@ -182,6 +183,35 @@ export default class EntryAbility extends UIAbility {
       hilog.error(DOMAIN, 'testTag', 'Failed to set colorMode. Cause: %{public}s', JSON.stringify(err));
     }
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onCreate');
+    /*
+     * 阶段二的**运行时门**：直接问原生模块"链接进来的 Node 是哪个版本"。
+     *
+     * 为什么这就是门：只要 `runtimeVersion()` 返回非空，就同时证明了三件事——
+     *   ① `libdshhost.so` 加载成功（NAPI 模块注册成功）；
+     *   ② 它依赖的 `libnode.so.127` 在设备上**也**加载成功（否则动态链接就失败了）；
+     *   ③ 我们自建的 Node 版本号可读。
+     * 反过来，若这里报错或返回空，就说明运行时还不可用，**不能**往下声称 Host 能起。
+     *
+     * 位置刻意放在 onCreate 最前面：它要早于任何可能失败或退出的后续步骤，
+     * 这样即使应用随后出问题，这条读数也已经进了 hilog（stdout 在设备上看不见，见 D6 E23）。
+     */
+    try {
+      const v: string = dshhost.runtimeVersion();
+      hilog.info(DOMAIN, TAG, 'HDSH-RUNTIME libnode 版本 = %{public}s', v.length > 0 ? v : '(空串)');
+    } catch (err) {
+      const e = err as BusinessError;
+      // 把"模块到底长什么样"一起打出来：加载失败与"注册没被认到"是两回事，
+      // 前者 import 就抛，后者会得到一个空模块（导出全是 undefined）——必须能区分。
+      let keys: string = '(无法枚举)';
+      try {
+        keys = JSON.stringify(Object.keys(dshhost as Object));
+      } catch (inner) {
+        keys = '(枚举抛错)';
+      }
+      hilog.error(DOMAIN, TAG, 'HDSH-RUNTIME 调用原生模块失败：%{public}s', e.message);
+      hilog.error(DOMAIN, TAG, 'HDSH-RUNTIME 模块类型=%{public}s 导出键=%{public}s',
+        typeof dshhost, keys);
+    }
     // 先于 onWindowStageCreate 发布：窗口标签与「是否主窗」的判断都依赖它
     this.applyLaunchParams(want);
     this.prefs.attach(this.context).then(async () => {
