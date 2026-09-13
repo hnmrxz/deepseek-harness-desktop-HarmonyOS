@@ -80,11 +80,39 @@ export async function installBundledCores(resourceDir: string, workDir: string,
     if (version.length === 0) {
       continue; // 不是本项目的核心容器，忽略（不猜）
     }
-    if (installed.includes(version)) {
-      result.skipped.push(version);
-      continue;
-    }
     const src: string = `${resourceDir}/${name}`;
+    // 【为什么不能只看"版本已安装"就跳过】实测踩过：改了核心包（补平台别名）并重装应用后，
+    // 端侧仍报 `内置核心已全部安装过，无需重复解包` ⇒ 设备上一直跑**旧核心树**，新改动根本没进去。
+    // 换包必须能生效，否则"核心版本安装/切换/回滚"这条功能形同虚设。
+    // 判据用**资源包大小**这个廉价指纹：与上次安装时记下的一致才跳过。
+    let srcSize: number = 0;
+    try {
+      srcSize = fs.statSync(src).size;
+    } catch (e) {
+      srcSize = 0; // 拿不到大小 ⇒ 当作"需要装"（保守）
+    }
+    if (installed.includes(version)) {
+      let stamp: string = '';
+      try {
+        const stampPath: string = `${store.coreDir(version)}/.hdsh-bundled-stamp`;
+        if (fs.accessSync(stampPath)) {
+          stamp = fs.readTextSync(stampPath).trim();
+        }
+      } catch (e) {
+        stamp = '';
+      }
+      if (srcSize > 0 && stamp === String(srcSize)) {
+        result.skipped.push(version);
+        continue;
+      }
+      // 指纹不同 ⇒ 删掉旧树重装。rmdirSync 在 OHOS 上可删**非空**目录
+      // （CoreStore.evict 就是这么清理旧版本的，见其第 435 行）。
+      try {
+        fs.rmdirSync(store.coreDir(version));
+      } catch (e) {
+        // 目录不存在等情况忽略：下面的解包会给出真实结论
+      }
+    }
     const tmp: string = `${workDir}/bundled-${name}`;
     try {
       // 第一步：把只读的 resfile 拷到可写目录（解压 API 要求可读写路径）
@@ -97,6 +125,20 @@ export async function installBundledCores(resourceDir: string, workDir: string,
       const staged: OpResult = await store.stageFromZip(tmp, version);
       if (staged.ok) {
         result.installed.push(version);
+        // 记下本次的指纹，供下次判断"资源包是否换过"
+        try {
+          if (srcSize > 0) {
+            const stampFile: fs.File = fs.openSync(`${store.coreDir(version)}/.hdsh-bundled-stamp`,
+              fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
+            try {
+              fs.writeSync(stampFile.fd, String(srcSize));
+            } finally {
+              fs.closeSync(stampFile);
+            }
+          }
+        } catch (e) {
+          // 写指纹失败不影响本次安装成功
+        }
       } else {
         result.failed.push(`${version}：${staged.message}`);
       }
