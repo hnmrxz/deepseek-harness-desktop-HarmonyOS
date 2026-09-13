@@ -2804,7 +2804,27 @@ export class SessionHub {
       this.notify();
       return;
     }
+    /*
+     * E174（用户反馈：技能读取失败）——真机错误原文：
+     * `failed to observe session "undefined": cannot read properties of undefined (reading 'length')`
+     *
+     * 【读出了什么】`skills/list` **不是"全局读名单"**，它要**观察一个会话**：
+     * 技能的可调用性取决于该会话的 scope（工具/权限/预设），因此请求必须带**会话范围**。
+     * 我们此前传空 `{}` ⇒ 宿主拿到 `sessionId = undefined` ⇒ 内部读 `.length` 直接抛。
+     * 这也解释了"技能"页为什么一直读不出来。
+     *
+     * 【修法】带上当前选中的会话；**没选中会话就不发请求**，并如实说明原因——
+     * "发了再报错"会把上游的 TypeError 当成本功能坏掉，是误导。
+     */
+    const skillScope: string = this.selectedSessionId;
+    if (skillScope.length === 0) {
+      this.skillRows = [];
+      this.skillNote = '技能清单取决于具体会话（可调用的工具与权限随会话而定）：请先在工作区里选中一个会话，再回来看这里。';
+      this.notify();
+      return;
+    }
     const inner: Record<string, Object> = {};
+    inner['sessionId'] = skillScope;
     const args: Object | undefined = argsFor(SKILLS_LIST_ENDPOINT, inner as Object);
     if (args === undefined) {
       this.skillNote = '兼容面缺少技能清单端点的参数契约。';

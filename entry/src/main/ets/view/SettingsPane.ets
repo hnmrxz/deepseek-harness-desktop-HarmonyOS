@@ -38,6 +38,7 @@ import {
   Sz
 } from 'appstate';
 import type { CoreViewState, SettingsNamespaceState } from 'appstate';
+import { SessionHub } from 'appstate';
 import { CorePane } from './CorePane';
 
 /**
@@ -442,6 +443,29 @@ export struct SettingsPane {
                       .fontColor($r('sys.color.brand'))
                       .onClick(() => {
                         this.onPresetCopy(p.id, p.name);
+                      })
+                    /*
+                     * E173：**查看**（只读）。官方对随附预设就是"在只读查看器里打开"
+                     * ——复制对话框之外的第二个允许动作。参数名 `agentPreset` 由宿主 schema 确证。
+                     */
+                    Text(this.presetViewedId === p.id ? '收起内容' : '查看')
+                      .fontSize(Fs.CAPTION)
+                      .fontColor($r('sys.color.brand'))
+                      .onClick(() => {
+                        if (this.presetViewedId === p.id) {
+                          this.presetViewedId = '';
+                          this.presetContent = '';
+                          return;
+                        }
+                        this.presetViewedId = p.id;
+                        this.presetContent = '正在读取…';
+                        SessionHub.shared().readAgentPreset(p.id).then((text: string) => {
+                          this.presetContent = text.length > 0
+                            ? text
+                            : '宿主没有返回内容（可能该预设没有可读的组装文本，或读取被拒）。';
+                        }).catch((e: Object) => {
+                          this.presetContent = `读取失败：${(e as Error).message}`;
+                        });
                       })
                     if (!presetIsBundled(p)) {
                       Text(this.confirmingPresetId === p.id ? '确认删除' : '删除')
@@ -913,6 +937,16 @@ export struct SettingsPane {
   };
   /** 已按过一次「删除」、等待确认的预设 id（两步确认；状态留在组件内，不牵动宿主页） */
   @State confirmingPresetId: string = '';
+  /**
+   * 只读查看器当前展示的预设内容（E173）。
+   *
+   * 【为什么视图直接调中枢】查看是**纯读取**、无副作用、也不改变其它页面状态；
+   * 为它再往 Index 穿一层 prop 只会增加耦合。写入类动作（复制/删除）仍走回调，
+   * 因为它们要影响"下一步做什么"（例如提示语落在宿主页上）。
+   */
+  @State presetContent: string = '';
+  /** 正在查看/已查看的预设 id（空=未查看） */
+  @State presetViewedId: string = '';
 
   /** 提供方 → 适配器默认凭据引用（官方派生规则 `<ROUTE>_API_KEY`，见 E106） */
   private providerKeyRefOf(provider: string): string {
@@ -928,21 +962,17 @@ export struct SettingsPane {
    * 用户就不会看到"同一把密钥填两次"，同时**没有任何引用被隐藏**。
    */
   private orphanCredentials(): CredentialItem[] {
-    const groups: ModelProviderGroup[] = this.providerGroups();
-    const out: CredentialItem[] = [];
-    for (let i = 0; i < this.credentials.length; i++) {
-      const c: CredentialItem = this.credentials[i];
-      let covered: boolean = false;
-      for (let j = 0; j < groups.length; j++) {
-        if (this.providerKeyRefOf(groups[j].provider) === c.ref) {
-          covered = true;
-        }
-      }
-      if (!covered) {
-        out.push(c);
-      }
-    }
-    return out;
+    /*
+     * E175（用户决定）：**模型页不再单独列凭据**。
+     *
+     * 用户原话："模型提供方里已经配置密钥，不需要额外的模型凭据 apikey 设置了。"
+     * 官方 Models 页的密钥入口**只有提供方卡片那一处**（只写不读），
+     * 我们之前保留的「模型凭据」区（哪怕去重后只剩孤儿引用）仍然多出一个入口 ⇒ 直接不给。
+     * 该区标题已是条件渲染（length > 0 才显示），所以这里返回空即整段消失；
+     * 凭据的统一管理仍在「凭据」页（设备的密钥设置），一处都不少。
+     */
+    const none: CredentialItem[] = [];
+    return none;
   }
 
   /**
