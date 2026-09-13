@@ -146,6 +146,8 @@ import type {
 import {
   commandsListEndpoint,
   commandsListPayload,
+  commandsExecuteEndpoint,
+  commandsExecutePayload,
   ControlFrameType,
   filePart,
   fileReferencesEndpoint,
@@ -2790,6 +2792,40 @@ export class SessionHub {
     this.notify();
   }
 
+  /**
+   * **执行一条斜杠命令**（E188，官方命令面板的落点）。
+   *
+   * 名字用 `CommandCandidate.name`（宿主给的、含前导 `/`，与用户手输一致）⇒ 不翻译不拼接。
+   * 参数契约缺失或执行失败时，把原因**原样**带回去并记账：若字段名与宿主不符，
+   * 宿主返回的那条 `gateway/arguments-invalid` 就是唯一能告诉我们正确形状的东西——
+   * 客户端不猜着"修正"。
+   */
+  async executeCommand(name: string): Promise<ActionNotice> {
+    if (!this.unaryReady) {
+      return noticeWith('offline', 'action', 'commands.execute');
+    }
+    const scope: string = this.selectedSessionId;
+    if (scope.length === 0) {
+      return notice('command.needs-session');
+    }
+    if (name.length === 0) {
+      return notice('command.no-name');
+    }
+    const payload: Object | undefined = commandsExecutePayload(scope, name);
+    if (payload === undefined) {
+      return noticeWith('contract.missing', 'endpoint', commandsExecuteEndpoint());
+    }
+    const result: RpcResult = await this.conn.call(commandsExecuteEndpoint(), payload);
+    if (!result.ok) {
+      const f = result.error;
+      const code: string = f === undefined ? 'unknown' : f.code;
+      const why: string = friendlyFailure(code, f === undefined ? '' : f.message);
+      this.record('commands/execute fail ' + code + ' ' + (f === undefined ? '' : f.message));
+      return noticeWith('command.failed', 'reason', why);
+    }
+    this.record('commands/execute ok ' + name);
+    return noticeWith('command.executed', 'name', name);
+  }
   /** 从"提供方目录"类端点取名字数组；形状不识别时返回空数组并记账（不猜） */
   private async providerNamesFrom(endpoint: string): Promise<string[]> {
     const inner: Record<string, Object> = {};
