@@ -188,6 +188,20 @@ export const AGENT_PRESETS_DELETE_ENDPOINT: string = 'agentPresets/deletePreset'
 /** 读取一个预设的内容（只读查看器用） */
 export const AGENT_PRESETS_READ_ENDPOINT: string = 'agentPresets/read';
 
+/*
+ * ── 模型提供方（E178：官方 Models 页的数据源）─────────────────────────────
+ *
+ * 官方 `dsh-client-ui-settings-models` 的说明原文：提供方目录 =
+ * `llm/listProviders`（**已注册的路由**）**联合** `llm/listConfigurableProviders`
+ * （**声明出来的可配置提供方**，即"可添加"的来源），再与各提供方的**设置命名空间**
+ * （`llm-<name>` 之类）对应；模型目录在该命名空间下用 `llm/discoverModels` 发现。
+ * 我们的模型页此前只渲染"已出现在设置里的提供方" ⇒ **无法添加新提供方**，这正是用户指出的缺口。
+ */
+/** 已注册的路由（当前可用的提供方） */
+export const LLM_LIST_PROVIDERS_ENDPOINT: string = 'llm/listProviders';
+/** 声明出来的**可配置**提供方（"添加提供方"的目录；NONE 形态，无参数） */
+export const LLM_LIST_CONFIGURABLE_PROVIDERS_ENDPOINT: string = 'llm/listConfigurableProviders';
+
 /** 工作区文件列表（需要的 `workspaceFileScopeId` 来自会话/工作区上下文） */
 export const WORKSPACE_FILES_LIST_ENDPOINT: string = 'workspaceFiles/list';
 /** 工作区文件元信息 */
