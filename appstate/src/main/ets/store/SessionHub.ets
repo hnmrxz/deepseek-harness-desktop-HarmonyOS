@@ -3102,6 +3102,17 @@ export class SessionHub {
     if (note.length > 0) {
       inner['note'] = note;
     }
+    /*
+     * E254：`ifVersion` 是契约里的必填（乐观并发）——"值为观察到的版本，或 `null` 表示要求原本不存在"。
+     * 我们**能表达**的是"已有反馈 ⇒ 回传它的 version"；"要求原本不存在"需要传 `null`，
+     * 而 ArkTS 的 `Record<string, Object>` 表达不了 null ⇒ **先按能表达的方式发**，
+     * 若宿主因此报 `arguments-invalid`，那条消息会告诉我们它期望的编码，再据此修正（不猜）。
+     * 该分支记在 account：这是本文件里唯一"契约已知、编码待宿主确认"的字段。
+     */
+    const known: FeedbackRow | undefined = this.feedbackOf(messageId);
+    if (known !== undefined && known.version.length > 0) {
+      inner['ifVersion'] = known.version;
+    }
     const args: Object | undefined = argsFor(MESSAGE_FEEDBACK_PUT_ENDPOINT, inner as Object);
     if (args === undefined) {
       return noticeWith('contract.missing', 'endpoint', MESSAGE_FEEDBACK_PUT_ENDPOINT);
@@ -4139,6 +4150,14 @@ export interface FeedbackRow {
   rating: string;
   note: string;
   category: string;
+  /**
+   * 乐观并发令牌（E254）。
+   *
+   * 上游 `MessageFeedbackItem.version` 的注释是 *"Equality-only token replaced by every material
+   * create or update"*；写入时必须回传 `ifVersion`（值就是它，或 `null` 表示"要求原本不存在"）。
+   * 空串 = 我们没拿到（只可能出现在"新建"场景）⇒ 调用方据此决定怎么带 `ifVersion`。
+   */
+  version: string;
 }
 
 /** 从 `messageFeedback/list` 的回复取反馈行（`{items:[…]}`；缺 id 的行跳过——id 是写入的键） */
@@ -4161,7 +4180,8 @@ function feedbackFromReply(value: Object | undefined): FeedbackRow[] | undefined
       messageId: messageId,
       rating: getString(one, 'rating') ?? '',
       note: getString(one, 'note') ?? '',
-      category: getString(one, 'category') ?? ''
+      category: getString(one, 'category') ?? '',
+      version: getString(one, 'version') ?? ''
     });
   }
   return out;
