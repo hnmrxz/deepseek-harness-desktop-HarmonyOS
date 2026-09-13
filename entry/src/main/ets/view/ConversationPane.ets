@@ -20,6 +20,7 @@ import {
   ModelOption,
   ModelSelection,
   PendingAttachment,
+  PendingItem,
   QueuedItem,
   previewOutput,
   Radius,
@@ -35,6 +36,7 @@ import {
   TrajectoryKind
 } from 'appstate';
 import { Composer } from './Composer';
+import { PendingPane } from './PendingPane';
 
 @Component
 export struct ConversationPane {
@@ -53,6 +55,17 @@ export struct ConversationPane {
   @Prop commands: CommandCandidate[] = [];
   /** 能力缺失的一次性提示（透传给输入区） */
   @Prop notice: string = '';
+  /**
+   * 本轮待决的审批/提问（E115：直接弹在会话里，方便一次点击放行）。
+   *
+   * 【为什么放在输入区上方而不是顶部】它卡住的是"这一轮还能不能继续"，
+   * 用户的注意力在对话末尾与输入框之间；摆在顶部会让人以为"跟我现在做的无关"。
+   */
+  @Prop pending: PendingItem[] = [];
+  onDecidePending: (item: PendingItem, choiceId: string, reason: string) => void = () => {
+  };
+  onAnswerPending: (item: PendingItem, selected: string[], custom: string) => void = () => {
+  };
 
   onDraftChange: (text: string) => void = () => {
   };
@@ -348,6 +361,40 @@ export struct ConversationPane {
       .scrollBar(BarState.Auto)
 
       Divider().color($r('sys.color.comp_divider'))
+
+      /*
+       * 【审批弹在会话里（E115）】以前审批/提问只在「待决」页签里，用户得先切页签再点，
+       * 而它恰恰是"卡住当前这一轮"的东西——官方 web 就是把它直接摆在对话流里。
+       * 这里放在**输入区正上方**：眼睛在对话上，手指就在按钮附近，一次点击即可放行。
+       * 只在这一轮真的有待决时出现，平时不占一行。
+       */
+      if (this.pending.length > 0) {
+        Column({ space: Sp.XS }) {
+          Row({ space: Sp.S }) {
+            SymbolGlyph($r('sys.symbol.exclamationmark_triangle'))
+              .fontSize(14)
+              .fontColor([$r('sys.color.warning')])
+            Text(`待你决定 · ${this.pending.length}`)
+              .fontSize(Fs.CAPTION)
+              .fontColor($r('sys.color.warning'))
+              .layoutWeight(1)
+          }
+          .width('100%')
+
+          PendingPane({
+            items: this.pending,
+            onDecide: (item: PendingItem, choiceId: string, reason: string) => {
+              this.onDecidePending(item, choiceId, reason);
+            },
+            onAnswer: (item: PendingItem, selected: string[], custom: string) => {
+              this.onAnswerPending(item, selected, custom);
+            }
+          })
+        }
+        .width('100%')
+        .constraintSize({ maxHeight: 300 })
+        .padding({ left: Sp.M, right: Sp.M, bottom: Sp.S })
+      }
 
       Composer({
         draft: this.draft,

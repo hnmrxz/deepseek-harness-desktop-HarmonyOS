@@ -2794,6 +2794,14 @@ struct Index {
     } else if (this.showsConversation() && this.stackPage === StackPage.CONVERSATION) {
       ConversationPane({
         itemCount: this.trajectoryItems.length,
+        // E115：审批/提问直接弹在会话里（官方 web 的形态），一次点击即可放行
+        pending: this.pending,
+        onDecidePending: (item: PendingItem, choiceId: string, reason: string) => {
+          this.decidePending(item, choiceId, reason);
+        },
+        onAnswerPending: (item: PendingItem, selected: string[], custom: string) => {
+          this.answerPending(item, selected, custom);
+        },
         sessionId: this.selectedSessionId,
         items: this.trajectoryItems,
         running: this.running,
