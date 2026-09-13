@@ -35,6 +35,7 @@ import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.Ab
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import dshhost from 'libdshhost.so';
+import probe from 'libentryprobe.so';
 import { emitter } from '@kit.BasicServicesKit';
 import { window } from '@kit.ArkUI';
 import {
@@ -183,6 +184,25 @@ export default class EntryAbility extends UIAbility {
       hilog.error(DOMAIN, 'testTag', 'Failed to set colorMode. Cause: %{public}s', JSON.stringify(err));
     }
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onCreate');
+    /*
+     * 最小探针（见 CMakeLists.txt）：先回答"hvigor 自己用 CMake 构建的原生模块能否绑上"。
+     * 这一问的答案决定下一步：能绑 ⇒ 手工放 .so 是根因，把 dshhost 改成 CMake 构建即可；
+     * 不能绑 ⇒ 问题在这条导入链本身，与 .so 从哪来无关。
+     */
+    try {
+      const hello: string = probe.hello();
+      hilog.info(DOMAIN, TAG, 'HDSH-PROBE cmake 构建的原生模块可绑定，返回值=%{public}s', hello);
+    } catch (err) {
+      const e = err as BusinessError;
+      let pk: string = '(无法枚举)';
+      try {
+        pk = JSON.stringify(Object.keys(probe as Object));
+      } catch (inner) {
+        pk = '(枚举抛错)';
+      }
+      hilog.error(DOMAIN, TAG, 'HDSH-PROBE cmake 模块绑定失败：%{public}s', e.message);
+      hilog.error(DOMAIN, TAG, 'HDSH-PROBE 模块类型=%{public}s 导出键=%{public}s', typeof probe, pk);
+    }
     /*
      * 阶段二的**运行时门**：直接问原生模块"链接进来的 Node 是哪个版本"。
      *

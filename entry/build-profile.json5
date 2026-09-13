@@ -5,6 +5,12 @@
       "copyCodeResource": {
         "enable": false
       }
+    },
+    // 走 DevEco 的标准 CMake 路径构建原生模块（见 src/main/cpp/CMakeLists.txt 的说明）：
+    // 目的是让 **hvigor 自己** 编译/链接出 .so 并生成原生模块映射，
+    // 而不是我们手工把预编译 .so 丢进 entry/libs/（那条路实测绑不上，D6 E25–E29）。
+    "externalNativeOptions": {
+      "path": "./src/main/cpp/CMakeLists.txt"
     }
   },
   "buildOptionSet": [

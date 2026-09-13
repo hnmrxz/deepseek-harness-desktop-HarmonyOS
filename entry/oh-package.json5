@@ -14,6 +14,7 @@
     "web_engine": "file:../web_engine"
   },
   "devDependencies": {
-    "libdshhost.so": "file:./src/main/cpp/types/libdshhost"
+    "libdshhost.so": "file:./src/main/cpp/types/libdshhost",
+    "libentryprobe.so": "file:./src/main/cpp/types/libentryprobe"
   }
 }
