@@ -28,6 +28,7 @@
 import {
   argsFor,
   COMMANDS_LIST_ENDPOINT,
+  COMMANDS_EXECUTE_ENDPOINT,
   FILE_REFERENCES_LIST_ENDPOINT,
   FILE_UPLOAD_ENDPOINT,
   SESSION_CANCEL_ENDPOINT,
@@ -2147,6 +2148,23 @@ export function commandsListEndpoint(): string {
   return COMMANDS_LIST_ENDPOINT;
 }
 
+/**
+ * `commands/execute` 的 args 载荷（E187）。
+ *
+ * 【字段名交给兼容层】执行端的具名参数没有真机证据：这里给出我们认为合理的
+ * `sessionId` + `name`（与 `CommandCandidate.name` 一致，含前导 `/`），
+ * 由 `argsFor` 按**端点契约**映射/校验——契约不符时它返回 `undefined`，
+ * 调用方就如实说"缺少参数契约"，而不是把不确定的字段发出去碰运气。
+ */
+export function commandsExecutePayload(sessionId: string, name: string): Object | undefined {
+  const body: Record<string, Object> = { 'sessionId': sessionId, 'name': name };
+  return argsFor(COMMANDS_EXECUTE_ENDPOINT, body as Object);
+}
+
+/** `commands/execute` 的端点。 */
+export function commandsExecuteEndpoint(): string {
+  return COMMANDS_EXECUTE_ENDPOINT;
+}
 /**
  * 投影命令目录。
  *
