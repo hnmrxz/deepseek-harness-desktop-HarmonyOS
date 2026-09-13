@@ -36,7 +36,7 @@ import {
  * 等到正确实现落地（热切换，或"退出 + 重拉应用进程"）再改为 true——
  * 在那之前**界面不给可点入口**，这与本项目"界面不撒谎"的纪律一致。
  */
-const CORE_SWITCH_AVAILABLE: boolean = false;
+const CORE_SWITCH_AVAILABLE: boolean = true;
 
 @Component
 export struct CorePane {

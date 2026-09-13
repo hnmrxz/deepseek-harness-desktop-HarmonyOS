@@ -518,6 +518,23 @@ export class DshHost {
    * 只改状态会让界面显示的版本与**正在跑的**版本不一致：那种不一致比回滚失败更难查。
    */
   async rollbackTo(): Promise<OpResult> {
+    /*
+     * 【E152：与 switchTo 同一处置】回滚同样是"停旧 + 起新"，而端侧同一进程内第二次
+     * `node::Start` 会 SIGABRT（E149/E151）。`store.rollback()` 只是**写状态** ⇒
+     * 宿主在跑时不起候选，改为"**安排回滚 + 重启应用生效**"。
+     * 宿主未运行（本次进程尚未启动 Node）时仍走原路径——那时起一次不会崩。
+     */
+    if (this.port.isRunning()) {
+      const pendingDecision: ActivationDecision = this.store.rollback();
+      if (pendingDecision.action === ActivationAction.REFUSE) {
+        return { ok: false, message: `未回滚：${pendingDecision.reason}` };
+      }
+      return {
+        ok: true,
+        message: `已安排回滚到 ${pendingDecision.next.current}（退回的版本：${pendingDecision.next.previous}）：`
+          + '请完全退出应用后重新打开，新版本即生效。'
+      };
+    }
     const wasRunning: boolean = this.handle !== null || this.port.isRunning();
     if (wasRunning) {
       const stopped: OpResult = await this.stop();
