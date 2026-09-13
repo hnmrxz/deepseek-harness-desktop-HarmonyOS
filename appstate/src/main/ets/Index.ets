@@ -62,6 +62,8 @@ export type { FileNode, FilePreview, WorkspaceItem } from './model/Workspace';
 export type { WorkspaceRow } from './store/SessionHub';
 /** E135：技能清单行 */
 export type { SkillRow } from './store/SessionHub';
+/** E145：结构化操作回执（中枢产出码+参数，视图层本地化） */
+export type { ActionNotice } from './store/SessionHub';
 
 // ── 设置 / 凭据 / 插件 / 设备 / 诊断 / 模型 ──
 export {
@@ -156,7 +158,7 @@ export {
 export { Breakpoint, Dur, Fs, Lh, Radius, SemanticColor, Sp, Sz } from './ui/Tokens';
 
 // ── 会话中枢（D1 §7.7.5b：全应用单一连接池 + 单一会话状态机 + 单一待发队列） ──
-export { HubPhase, projectWireRecord, SessionHub } from './store/SessionHub';
+export { HubPhase, projectWireRecord, SessionHub, notice, noticeWith, put } from './store/SessionHub';
 export type {
   AttachOutcome,
   HubSnapshot,

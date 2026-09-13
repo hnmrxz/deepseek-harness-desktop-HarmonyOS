@@ -163,6 +163,18 @@
     {
       "name": "note_offline",
       "value": "Not connected to the host; nothing was executed."
+    },
+    {
+      "name": "note_workspace_delete_failed",
+      "value": "Failed to delete the workspace: "
+    },
+    {
+      "name": "note_archive_failed",
+      "value": "Failed to archive: "
+    },
+    {
+      "name": "note_contract_missing",
+      "value": "The compatibility surface has no parameter contract for this endpoint (a client defect — please attach a diagnostics report): "
     }
   ]
 }

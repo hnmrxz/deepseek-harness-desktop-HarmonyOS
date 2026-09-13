@@ -163,6 +163,18 @@
     {
       "name": "note_offline",
       "value": "尚未连接 Host，操作未执行。"
+    },
+    {
+      "name": "note_workspace_delete_failed",
+      "value": "删除工作区失败："
+    },
+    {
+      "name": "note_archive_failed",
+      "value": "归档失败："
+    },
+    {
+      "name": "note_contract_missing",
+      "value": "兼容面缺少该端点的参数契约（属于本客户端的缺陷，请提交诊断报告）："
     }
   ]
 }

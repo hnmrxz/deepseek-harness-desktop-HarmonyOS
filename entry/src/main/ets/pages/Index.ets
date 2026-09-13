@@ -100,7 +100,8 @@ relativeTime,
   TrajectoryItem,
   WorkspaceItem,
   WorkspaceRow,
-  SkillRow
+  SkillRow,
+  ActionNotice
 } from 'appstate';
 /**
  * 类型单独用 `import type` 引入。
@@ -3620,16 +3621,52 @@ struct Index {
   private deleteWorkspaceByPath(w: WorkspaceItem): void {
     const id: string = this.registryIdOf(w);
     if (id.length === 0) {
-      this.settingWriteNote = '这个工作区不在宿主注册表里（列表是由会话目录归并出来的），没有可删除的登记。';
+      this.settingWriteNote = this.localized($r('app.string.note_no_workspace_id'));
       return;
     }
-    SessionHub.shared().deleteWorkspace(id).then((note: string) => {
-      this.settingWriteNote = note;
-      hilog.info(DOMAIN, TAG, 'HDSH-WS 删除工作区：%{public}s', note);
+    SessionHub.shared().deleteWorkspace(id).then((n: ActionNotice) => {
+      this.settingWriteNote = this.noticeText(n);
+      hilog.info(DOMAIN, TAG, 'HDSH-WS 删除工作区：%{public}s', n.code);
     }).catch((e: Object) => {
       const err = e as Error;
-      this.settingWriteNote = `删除工作区失败：${err.message}`;
+      this.settingWriteNote = `${this.localized($r('app.string.note_workspace_delete_failed'))}${err.message}`;
     });
+  }
+
+  /**
+   * 把中枢的**结构化回执**渲染成本地化文案（E143 方案①）。
+   *
+   * 【兜底纪律】不认识的码**必须显示"码 + 数据"，而不是空白**——空白会让人以为操作没发生，
+   * 而这正是本项目反复清理的那类"界面撒谎"。Host 侧给的原因（`params.reason`）**原样透传**：
+   * 它是上游文案，不是我们的 UI 文案，不翻译。
+   */
+  private noticeText(n: ActionNotice): string {
+    if (n.code === 'workspace.deleted') {
+      return this.localized($r('app.string.note_workspace_deleted'));
+    }
+    if (n.code === 'session.archived') {
+      return this.localized($r('app.string.note_session_archived'));
+    }
+    if (n.code === 'workspace.no-id') {
+      return this.localized($r('app.string.note_no_workspace_id'));
+    }
+    if (n.code === 'archive.no-session') {
+      return this.localized($r('app.string.note_archive_no_session'));
+    }
+    if (n.code === 'offline') {
+      return this.localized($r('app.string.note_offline'));
+    }
+    if (n.code === 'contract.missing') {
+      return `${this.localized($r('app.string.note_contract_missing'))}${n.params.endpoint}`;
+    }
+    if (n.code === 'workspace.delete.failed') {
+      return `${this.localized($r('app.string.note_workspace_delete_failed'))}${n.params.reason}`;
+    }
+    if (n.code === 'archive.failed') {
+      return `${this.localized($r('app.string.note_archive_failed'))}${n.params.reason}`;
+    }
+    // 兜底：显示码与数据本身（绝不显示空白）
+    return `${n.code} ${JSON.stringify(n.params)}`;
   }
 
   private sessionsOf(w: WorkspaceItem): SessionListItem[] {
@@ -3894,11 +3931,11 @@ struct Index {
               .fontSize(Fs.CAPTION)
               .fontColor($r('sys.color.font_tertiary'))
               .onClick(() => {
-                SessionHub.shared().archiveSession(s.id).then((note: string) => {
-                  this.settingWriteNote = note;
+                SessionHub.shared().archiveSession(s.id).then((n: ActionNotice) => {
+                  this.settingWriteNote = this.noticeText(n);
                 }).catch((e: Object) => {
                   const err = e as Error;
-                  this.settingWriteNote = `归档失败：${err.message}`;
+                  this.settingWriteNote = `${this.localized($r('app.string.note_archive_failed'))}${err.message}`;
                 });
               })
           }

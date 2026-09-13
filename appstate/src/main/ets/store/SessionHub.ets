@@ -2546,25 +2546,26 @@ export class SessionHub {
    * 【只删注册，不删目录】官方语义如此：删除的是"这个目录曾被登记为工作区"这件事，
    * 磁盘上的文件一个都不动。界面上必须把这句话写清楚，否则没人敢按。
    */
-  async deleteWorkspace(workspaceId: string): Promise<string> {
+  async deleteWorkspace(workspaceId: string): Promise<ActionNotice> {
     if (workspaceId.length === 0) {
-      return '未提供工作区 id（注册表里没有它，无法删除）。';
+      return notice('workspace.no-id');
     }
     if (!this.unaryReady) {
-      return '尚未连接 Host，删除未执行。';
+      return noticeWith('offline', 'action', 'workspace.delete');
     }
     const inner: Record<string, Object> = {};
     inner['workspaceId'] = workspaceId;
     const args: Object | undefined = argsFor(WORKSPACE_DELETE_ENDPOINT, inner as Object);
     if (args === undefined) {
-      return '兼容面缺少工作区删除端点的参数契约。';
+      return noticeWith('contract.missing', 'endpoint', WORKSPACE_DELETE_ENDPOINT);
     }
     const result: RpcResult = await this.conn.call(WORKSPACE_DELETE_ENDPOINT, args);
     if (!result.ok) {
       const f = result.error;
       const code: string = f === undefined ? 'unknown' : f.code;
       this.record(`workspace/delete fail ${code}`);
-      return `删除工作区失败：${friendlyFailure(code, f === undefined ? '' : f.message)}`;
+      return noticeWith('workspace.delete.failed', 'reason',
+        friendlyFailure(code, f === undefined ? '' : f.message));
     }
     // 本地立即过滤（流的增量帧可能稍后才到，界面不该等它）
     const next: WorkspaceRow[] = [];
@@ -2576,7 +2577,7 @@ export class SessionHub {
     this.workspaceRows = next;
     this.record(`workspace/delete ok ${workspaceId.substring(0, 8)}`);
     this.notify();
-    return '已从工作区列表移除（目录与文件未删除）。';
+    return notice('workspace.deleted');
   }
 
   /**
@@ -2585,25 +2586,26 @@ export class SessionHub {
    * 归档集是"注册表全局"的：客户端按它把会话从常规列表过滤掉——
    * 这也是官方 `workspace/follow` 基线里带 `archivedSessionIds` 的原因。
    */
-  async archiveSession(sessionId: string): Promise<string> {
+  async archiveSession(sessionId: string): Promise<ActionNotice> {
     if (sessionId.length === 0) {
-      return '未选择会话。';
+      return notice('archive.no-session');
     }
     if (!this.unaryReady) {
-      return '尚未连接 Host，归档未执行。';
+      return noticeWith('offline', 'action', 'session.archive');
     }
     const inner: Record<string, Object> = {};
     inner['sessionId'] = sessionId;
     const args: Object | undefined = argsFor(WORKSPACE_ARCHIVE_SESSION_ENDPOINT, inner as Object);
     if (args === undefined) {
-      return '兼容面缺少会话归档端点的参数契约。';
+      return noticeWith('contract.missing', 'endpoint', WORKSPACE_ARCHIVE_SESSION_ENDPOINT);
     }
     const result: RpcResult = await this.conn.call(WORKSPACE_ARCHIVE_SESSION_ENDPOINT, args);
     if (!result.ok) {
       const f = result.error;
       const code: string = f === undefined ? 'unknown' : f.code;
       this.record(`workspace/archiveSession fail ${code}`);
-      return `归档失败：${friendlyFailure(code, f === undefined ? '' : f.message)}`;
+      return noticeWith('archive.failed', 'reason',
+        friendlyFailure(code, f === undefined ? '' : f.message));
     }
     const value: Object | undefined = result.value;
     if (value !== undefined) {
@@ -2611,7 +2613,7 @@ export class SessionHub {
     }
     this.record(`archive ok ${sessionId.substring(0, 12)}（归档集 ${this.archivedIds.length}）`);
     this.notify();
-    return '已归档（可在「归档」里查看）。';
+    return notice('session.archived');
   }
 
   /**
@@ -3290,9 +3292,30 @@ export interface ActionNotice {
   params: Record<string, string>;
 }
 
-/** 构造回执（唯一的构造点，避免各处手写对象字面量） */
-export function notice(code: string, params: Record<string, string>): ActionNotice {
+/**
+ * 构造回执（唯一的构造点）。
+ *
+ * 【为什么不是一个 `notice(code, {…})`】ArkTS 的 `arkts-no-untyped-obj-literals` 不允许
+ * 把**无类型的对象字面量**当作参数传出去；而这里恰恰需要"键值对任意"的载荷。
+ * 于是提供两个无字面量的构造器：不带参数的、以及带**单个键值**的
+ * （需要两个以上键时连续调用 `put()` 追加即可）。
+ */
+export function notice(code: string): ActionNotice {
+  const params: Record<string, string> = {};
   return { code: code, params: params };
+}
+
+/** 带一个键值参数的回执 */
+export function noticeWith(code: string, key: string, value: string): ActionNotice {
+  const n: ActionNotice = notice(code);
+  n.params[key] = value;
+  return n;
+}
+
+/** 追加一个键值参数（返回自身，便于链式书写） */
+export function put(n: ActionNotice, key: string, value: string): ActionNotice {
+  n.params[key] = value;
+  return n;
 }
 
 /** 工作区注册表的一行（E132：`workspace/follow` 投影） */
