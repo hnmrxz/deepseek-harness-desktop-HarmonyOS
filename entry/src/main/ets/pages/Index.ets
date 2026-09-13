@@ -2730,7 +2730,11 @@ struct Index {
 
       DetailPane({
         sections: this.detailSections,
-        onLineTap: (section: string, index: number) => {
+        onLineTap: (section: string, text: string) => {
+          // E130：详情行看起来可点，就得真的做一件事——复制该行
+          if (text.length > 0) {
+            copyText(text);
+          }
         }
       })
     }
@@ -2848,7 +2852,11 @@ struct Index {
     } else if (this.stackPage === StackPage.DETAIL) {
       DetailPane({
         sections: this.detailSections,
-        onLineTap: (section: string, index: number) => {
+        onLineTap: (section: string, text: string) => {
+          // E130：详情行看起来可点，就得真的做一件事——复制该行
+          if (text.length > 0) {
+            copyText(text);
+          }
         }
       })
     } else if (this.showsConversation() && this.stackPage === StackPage.CONVERSATION) {

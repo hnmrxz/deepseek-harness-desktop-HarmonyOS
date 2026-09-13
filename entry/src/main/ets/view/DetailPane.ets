@@ -18,8 +18,8 @@ import {
 @Component
 export struct DetailPane {
   @Prop sections: DetailSection[] = [];
-  /** 点击某一行（宿主可用于跳转到轨迹中对应位置） */
-  onLineTap: (section: string, index: number) => void = () => {
+  /** 点击某一行（E130：把行文本交给宿主——先前的 (section,index) 让宿主拿不到文本，实现只能是空的） */
+  onLineTap: (section: string, text: string) => void = () => {
   };
 
   @State collapsed: string[] = [];
@@ -87,7 +87,8 @@ export struct DetailPane {
               .padding({ left: Sp.S, right: Sp.S, top: Sp.XS, bottom: Sp.XS })
               .borderRadius(6)
               .onClick(() => {
-                this.onLineTap(section.title, index);
+                // E130：这一行的**文本**直接给宿主（视图知道自己渲染了什么）
+                this.onLineTap(section.title, line);
               })
           }, (line: string, index: number) => `${section.title}-${index}`)
         }
