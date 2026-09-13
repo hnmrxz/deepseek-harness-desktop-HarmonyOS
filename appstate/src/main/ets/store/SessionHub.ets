@@ -88,7 +88,10 @@ import {
   WORKSPACE_DELETE_ENDPOINT,
   WORKSPACE_ARCHIVE_SESSION_ENDPOINT,
   SKILLS_LIST_ENDPOINT,
-  AGENT_PRESETS_LIST_ENDPOINT
+  AGENT_PRESETS_LIST_ENDPOINT,
+  AGENT_PRESETS_COPY_ENDPOINT,
+  AGENT_PRESETS_DELETE_ENDPOINT,
+  AGENT_PRESETS_READ_ENDPOINT
 } from 'dshcompat';
 import type { SessionEventShape, SlotBinding } from 'dshcompat';
 import { projectSessionList } from '../model/SessionList';
@@ -2636,6 +2639,109 @@ export class SessionHub {
     this.record(`archive ok ${sessionId.substring(0, 12)}（归档集 ${this.archivedIds.length}）`);
     this.notify();
     return notice('session.archived');
+  }
+
+  /**
+   * **复制**一个预设（E169：官方唯一的创建入口）。
+   *
+   * 【契约来自宿主 schema，不是猜的】`typert.host.js` 里 `agentPresets/copy` 的参数是
+   * **`from` + `id` + `name`** 三个：
+   * `from` = 被复制的预设标识，`id` = 新预设的标识（kebab-case），`name` = 它的显示名。
+   * 这也解释了此前的崩溃：只传 `{id,name}` 时处理函数读 `from.length` 得到 undefined。
+   * 复制成功后刷新名单。
+   */
+  async copyAgentPreset(from: string, id: string, name: string): Promise<ActionNotice> {
+    if (!this.unaryReady) {
+      return noticeWith('offline', 'action', 'agentPresets.copy');
+    }
+    if (from.length === 0 || id.length === 0 || name.length === 0) {
+      return notice('preset.copy.missing');
+    }
+    const inner: Record<string, Object> = {};
+    inner['from'] = from;
+    inner['id'] = id;
+    inner['name'] = name;
+    const args: Object | undefined = argsFor(AGENT_PRESETS_COPY_ENDPOINT, inner as Object);
+    if (args === undefined) {
+      return noticeWith('contract.missing', 'endpoint', AGENT_PRESETS_COPY_ENDPOINT);
+    }
+    const result: RpcResult = await this.conn.call(AGENT_PRESETS_COPY_ENDPOINT, args);
+    if (!result.ok) {
+      const f = result.error;
+      const code: string = f === undefined ? 'unknown' : f.code;
+      this.record(`agentPresets/copy fail ${code}`);
+      return noticeWith('preset.copy.failed', 'reason',
+        friendlyFailure(code, f === undefined ? '' : f.message));
+    }
+    this.record(`agentPresets/copy ok ${from} → ${id}`);
+    await this.refreshAgentPresets();
+    return noticeWith('preset.copied', 'id', id);
+  }
+
+  /**
+   * 删除一个**自定义**预设（E169）。
+   *
+   * 【随附预设的只读由宿主强制】真机实测：对 `standard` 调用会返回
+   * `agent-presets: preset "standard" cannot be written: it ships with the deployment`
+   * ⇒ 我们不需要自己判断"能不能删"，把宿主的话原样转达即可（`params.reason`）。
+   */
+  async deleteAgentPreset(id: string): Promise<ActionNotice> {
+    if (!this.unaryReady) {
+      return noticeWith('offline', 'action', 'agentPresets.deletePreset');
+    }
+    if (id.length === 0) {
+      return notice('preset.delete.missing');
+    }
+    const inner: Record<string, Object> = {};
+    inner['id'] = id;
+    const args: Object | undefined = argsFor(AGENT_PRESETS_DELETE_ENDPOINT, inner as Object);
+    if (args === undefined) {
+      return noticeWith('contract.missing', 'endpoint', AGENT_PRESETS_DELETE_ENDPOINT);
+    }
+    const result: RpcResult = await this.conn.call(AGENT_PRESETS_DELETE_ENDPOINT, args);
+    if (!result.ok) {
+      const f = result.error;
+      const code: string = f === undefined ? 'unknown' : f.code;
+      this.record(`agentPresets/deletePreset fail ${code}`);
+      return noticeWith('preset.delete.failed', 'reason',
+        friendlyFailure(code, f === undefined ? '' : f.message));
+    }
+    this.record(`agentPresets/deletePreset ok ${id}`);
+    await this.refreshAgentPresets();
+    return noticeWith('preset.deleted', 'id', id);
+  }
+
+  /**
+   * 读取一个预设的内容（E169：只读查看器用）。
+   *
+   * 【参数名是 `agentPreset`】宿主 schema 里 `agentPresets/read` 只有一个字段 `agentPreset`
+   * （回复也是 `{agentPreset: …}`）——`id`/`presetId`/`name` 都被描述符拒过，别再试。
+   */
+  async readAgentPreset(id: string): Promise<string> {
+    if (!this.unaryReady) {
+      return '';
+    }
+    const inner: Record<string, Object> = {};
+    inner['agentPreset'] = id;
+    const args: Object | undefined = argsFor(AGENT_PRESETS_READ_ENDPOINT, inner as Object);
+    if (args === undefined) {
+      return '';
+    }
+    const result: RpcResult = await this.conn.call(AGENT_PRESETS_READ_ENDPOINT, args);
+    if (!result.ok) {
+      this.record(`agentPresets/read fail ${result.error === undefined ? 'unknown' : result.error.code}`);
+      return '';
+    }
+    const value: Object | undefined = result.value;
+    if (value === undefined) {
+      return '';
+    }
+    // 回复是 `{agentPreset: …}`：能取到字符串就直接给，取到对象就序列化（只读查看器只要求"看得见"）
+    const text: string | undefined = getString(value, 'agentPreset');
+    if (text !== undefined) {
+      return text;
+    }
+    return JSON.stringify(value, null, 2) ?? '';
   }
 
   /**
