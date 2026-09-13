@@ -1003,6 +1003,37 @@ export struct SettingsPane {
   }
 
   /** 提供方的设置分区（先试 `llm-<提供方首段>`，再退到通用 pi-ai 分区；找不到就返回 undefined，不猜） */
+  /**
+   * 目录里**尚未配置**的提供方（E181）。
+   *
+   * 【为什么读中枢快照而不是再加一个 prop】目录是"静态事实"，由进入设置页时触发读取
+   * （`Index.selectTab` → `refreshProviderCatalog()`），读取后中枢通知、本组件随之重建；
+   * 为它单独再穿一层 prop 只增加耦合，不会带来额外正确性。
+   * 【已配置怎么判定】`providerGroups()` 是"宿主设置里已出现的提供方" ⇒ 从目录里减掉它们。
+   */
+  private providerCandidates(): string[] {
+    const catalog: string[] = SessionHub.shared().snapshot().providerCatalog;
+    const configured: ModelProviderGroup[] = this.providerGroups();
+    const out: string[] = [];
+    for (let i = 0; i < catalog.length; i++) {
+      const id: string = catalog[i];
+      if (id.length === 0) {
+        continue;
+      }
+      let already: boolean = false;
+      for (let j = 0; j < configured.length; j++) {
+        // 提供方 id 可能带后缀（deepseek-official），按首段比较以避免"已配置的还出现在可添加里"
+        if (configured[j].provider === id || configured[j].provider.split('-')[0] === id.split('-')[0]) {
+          already = true;
+        }
+      }
+      if (!already) {
+        out.push(id);
+      }
+    }
+    return out;
+  }
+
   private providerSettingGroup(provider: string): SettingGroup | undefined {
     const head: string = provider.split('-')[0];
     const candidates: string[] = [`llm-${head}`, 'llm-pi-ai'];
@@ -1031,6 +1062,50 @@ export struct SettingsPane {
       .fontSize(Fs.CAPTION)
       .fontColor($r('sys.color.font_tertiary'))
       .width('100%')
+    /*
+     * E181（用户要求）：**添加多个提供方**，形态照官方 `ui-settings-models`
+     * （其按钮名即 `addButton` / `addCard` / `candidate` / `candidateId` / `addActions`）。
+     *
+     * 【候选从哪来】官方把"已注册路由"（`llm/listProviders`）与"声明的可配置提供方"
+     * （`llm/listConfigurableProviders`）**联合**成目录；已配置的显示为卡片，**其余显示为候选**。
+     * 【为什么点击是"打开设置分区"而不是我们直接写】每个提供方的可写字段（baseURL、apiKey…）
+     * 由**它自己的设置分区**声明；我们只把用户带到那个分区（写入仍走既有设置通道），
+     * 分区不存在时**如实说明**——不凭猜测往一个不存在的命名空间里写。
+     */
+    if (this.providerCandidates().length > 0) {
+      Text('可添加的提供方')
+        .fontSize(Fs.CAPTION)
+        .fontColor($r('sys.color.font_tertiary'))
+        .width('100%')
+      ForEach(this.providerCandidates(), (id: string) => {
+        Row({ space: Sp.S }) {
+          SymbolGlyph($r('sys.symbol.plus_circle')).fontSize(16)
+            .fontColor([$r('sys.color.brand')])
+          Text(id)
+            .fontSize(Fs.SECONDARY)
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          Text(this.providerSettingGroup(id) === undefined ? '设置分区未声明' : '配置')
+            .fontSize(Fs.CAPTION)
+            .fontColor(this.providerSettingGroup(id) === undefined
+              ? $r('sys.color.font_tertiary')
+              : $r('sys.color.brand'))
+            .onClick(() => {
+              const g: SettingGroup | undefined = this.providerSettingGroup(id);
+              if (g === undefined) {
+                return;
+              }
+              // 展开该提供方的「自定义设置」分区（官方：一次只展开一张卡，字段由宿主声明）
+              this.expandedProvider = g.title;
+            })
+        }
+        .width('100%')
+        .padding(Sp.M)
+        .borderRadius(Radius.M)
+        .backgroundColor($r('sys.color.background_secondary'))
+      }, (id: string) => id)
+    }
     ForEach(this.providerGroups(), (g: ModelProviderGroup) => {
       Column({ space: Sp.XS }) {
         Row({ space: Sp.S }) {

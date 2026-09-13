@@ -1333,6 +1333,8 @@ struct Index {
       if (this.hubConnected) {
         SessionHub.shared().refreshSkills();
         SessionHub.shared().refreshAgentPresets();
+        // E181：提供方目录（"可添加"的来源）——官方 Models 页的数据源之一
+        SessionHub.shared().refreshProviderCatalog();
       }
     }
   }
