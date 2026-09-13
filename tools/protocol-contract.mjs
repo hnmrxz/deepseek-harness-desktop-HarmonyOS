@@ -18,11 +18,36 @@
  *
  * 用法：node tools/protocol-contract.mjs [--json <outfile>]
  */
-import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { homedir } from 'node:os';
 
+/**
+ * 上游 node_modules 的位置（E218）。
+ *
+ * 【为什么这么写】原先这里兜底成了一个**硬编码的用户名**（`C:\Users\<别人的名字>\…`），
+ * 换一台机器/换一个用户就必然找不到上游，`compat-drift` 这条门禁于是**静默失效**——
+ * 门禁失效比门禁报错更糟：它让人以为"检查过了、没问题"。
+ * 现在按**当前用户**推导，并在两个候选都找不到时**明确失败**（见 `requireDshNodeModules()`）。
+ */
 const DSH_NM = process.env.DSH_NODE_MODULES
-  ?? 'C:\\Users\\aotian\\AppData\\Roaming\\io.github.hairyf.deepseek-harness-desktop\\dependencies\\dsh\\node_modules';
+  ?? join(homedir(), 'AppData', 'Roaming', 'io.github.hairyf.deepseek-harness-desktop',
+    'dependencies', 'dsh', 'node_modules');
+
+/** 找不到上游就**直接失败并说清怎么指定**，不要退化成"没有数据也跑完" */
+function requireDshNodeModules() {
+  const marker = join(DSH_NM, '@deepseek-ai');
+  if (!existsSync(marker)) {
+    console.error(`找不到上游包目录：${marker}`);
+    console.error('请用环境变量指定，例如：');
+    console.error('  DSH_NODE_MODULES=<path-to>/dependencies/dsh/node_modules node tools/protocol-contract.mjs --json .research/protocol/contracts.json');
+    console.error('（若用本仓库内置的核心树，可指向 dist/core/work/<core>/node_modules）');
+    process.exit(1);
+  }
+  return DSH_NM;
+}
+
+requireDshNodeModules();
 
 const jsonIdx = process.argv.indexOf('--json');
 const jsonOut = jsonIdx >= 0 ? process.argv[jsonIdx + 1] : undefined;

@@ -2157,8 +2157,23 @@ export function commandsListEndpoint(): string {
  * 由 `argsFor` 按**端点契约**映射/校验——契约不符时它返回 `undefined`，
  * 调用方就如实说"缺少参数契约"，而不是把不确定的字段发出去碰运气。
  */
-export function commandsExecutePayload(sessionId: string, name: string): Object | undefined {
-  const body: Record<string, Object> = { 'sessionId': sessionId, 'name': name };
+/**
+ * `commands/execute` 的 args 载荷（E219：**按权威契约修正**）。
+ *
+ * 【修正了什么】此前我按"同族端点都要会话"推断成 `{sessionId, name}`，**错了**。
+ * 用 `tools/protocol-contract.mjs` 从上游生成调用描述符提取的真实契约是：
+ *   `commands/execute  params: agentId, line, submittedAttachments`
+ *   `commands/list     params: agentId`
+ * ⇒ 这条端点要的是 **agentId**（不是 sessionId），命令本身叫 **line**，并带一个附件数组。
+ * 【教训】"同族推论"不能替代契约；能生成契约时就去生成（本项目本来就有这个工具）。
+ */
+export function commandsExecutePayload(agentId: string, line: string): Object | undefined {
+  const attachments: Object[] = [];
+  const body: Record<string, Object> = {
+    'agentId': agentId,
+    'line': line,
+    'submittedAttachments': attachments
+  };
   return argsFor(COMMANDS_EXECUTE_ENDPOINT, body as Object);
 }
 

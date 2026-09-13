@@ -2832,14 +2832,19 @@ export class SessionHub {
     if (!this.unaryReady) {
       return noticeWith('offline', 'action', 'commands.execute');
     }
-    const scope: string = this.selectedSessionId;
-    if (scope.length === 0) {
-      return notice('command.needs-session');
+    /*
+     * E219：这条端点要的是 **agentId**（权威契约：`commands/execute: agentId, line, submittedAttachments`），
+     * 不是会话 id。`commandsFor` 正是拉取命令目录时用的那个 agentId ⇒ 复用它。
+     * 没拉过目录就**不发请求**并如实说明（避免又拿一个 undefined 去撞上游的 TypeError）。
+     */
+    const agent: string = this.commandsFor;
+    if (agent.length === 0) {
+      return notice('command.not-loaded');
     }
     if (name.length === 0) {
       return notice('command.no-name');
     }
-    const payload: Object | undefined = commandsExecutePayload(scope, name);
+    const payload: Object | undefined = commandsExecutePayload(agent, name);
     if (payload === undefined) {
       return noticeWith('contract.missing', 'endpoint', commandsExecuteEndpoint());
     }

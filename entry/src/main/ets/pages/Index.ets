@@ -3911,6 +3911,35 @@ struct Index {
     if (n.code === 'preset.deleted') {
       return `已删除预设「${n.params.id}」；已据它组装的会话继续运行。`;
     }
+    /*
+     * E220：命令与模型选择的回执文案。
+     * 这两批码在 E188/E194 引入时**只写了中枢、没接文案**（会落到"码 + 数据"的兜底显示）——
+     * 兜底本身是对的（不撒谎），但能说人话就该说人话。
+     */
+    if (n.code === 'command.executed') {
+      return `已执行「${n.params.name}」。`;
+    }
+    if (n.code === 'command.failed') {
+      return `命令执行失败：${n.params.reason}`;
+    }
+    if (n.code === 'command.not-loaded') {
+      return '命令目录尚未加载（需要先选中一个会话让宿主报告命令），请稍后重试。';
+    }
+    if (n.code === 'command.no-name') {
+      return '未选择要执行的命令。';
+    }
+    if (n.code === 'model.selected') {
+      return `本会话已改用「${n.params.model}」。`;
+    }
+    if (n.code === 'model.select.failed') {
+      return `切换本会话模型失败：${n.params.reason}`;
+    }
+    if (n.code === 'model.needs-session') {
+      return '请先在工作区里选中一个会话，再切换模型。';
+    }
+    if (n.code === 'model.incomplete') {
+      return '切换模型需要提供方与模型名两者。';
+    }
     if (n.code === 'preset.copy.failed') {
       return `复制预设失败：${n.params.reason}`;
     }
