@@ -268,6 +268,43 @@ export struct SettingsPane {
 
   @Builder
   generalTab() {
+    /*
+     * 【权限模式：只读说明，不给假档位（E116）】
+     *
+     * 官方在这三个标签下提供可切换的预设（仅可查看 / 工作区内修改 / 完全权限），
+     * 但端侧**实测**：启用 `dsh-permission-presets` 会让整棵插件树启动失败——
+     * 它需要 `shell` 服务，而 shell 只能由 bash/pwsh 沙箱提供，两者在鸿蒙上没有对应物
+     * （无法创建进程，E15）。官方规则也写明"宿主没有权限组合时，选择器与设置行都不显示"。
+     *
+     * 于是这里既**不隐藏**（用户明确问过这三档，藏起来等于让他以为没有这个概念），
+     * 也**不给可点的假档位**：只读地说明当前生效的是什么、另外两档为什么不可选。
+     */
+    Column({ space: 2 }) {
+      Row({ space: Sp.XS }) {
+        Text('权限模式')
+          .fontSize(Fs.BODY)
+        Text('宿主默认')
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.font_tertiary'))
+          .padding({ left: 6, right: 6, top: 1, bottom: 1 })
+          .borderRadius(Radius.S)
+          .backgroundColor($r('sys.color.background_primary'))
+      }
+      .width('100%')
+      Text('工作区内修改（workspace-write）')
+        .fontSize(Fs.SECONDARY)
+        .fontColor($r('sys.color.font_secondary'))
+        .width('100%')
+      Text('官方的另外两档是「仅可查看」与「完全权限」。端侧暂不可选：把它们捆绑成可切换预设的插件需要 shell 服务，而鸿蒙不允许应用创建进程（E15）。当前生效的是宿主自带的文件策略 workspace-write。')
+        .fontSize(Fs.CAPTION)
+        .fontColor($r('sys.color.font_tertiary'))
+        .width('100%')
+    }
+    .width('100%')
+    .padding(Sp.M)
+    .borderRadius(Radius.M)
+    .backgroundColor($r('sys.color.background_secondary'))
+
     ForEach(this.groups, (group: SettingGroup) => {
       Column({ space: Sp.XS }) {
         Text(group.title)
