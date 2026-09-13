@@ -54,6 +54,8 @@ interface HostReadyRuntime {
 interface HostReadyFile {
   /** 入口脚本写下的本机启动链接（含 token） */
   url?: string;
+  /** 入口脚本准备好的**可写工作区**（E98：建会话时传给 Host，避免默认工作区落在 `/`） */
+  workspace?: string;
   runtime?: HostReadyRuntime;
 }
 
@@ -355,6 +357,17 @@ export class DshHost {
    * **不做健康检查的臆测**：健康检查属于"起完之后能不能用"，由上层在拿到句柄后做。
    */
   async start(): Promise<HostStartResult> {
+    /*
+     * 【幂等：已经在跑就直接成功】原生层（`dshhost.cc`）只允许一个 Node 实例，重复启动会
+     * 返回「运行时已经启动过」。那是**正确**的底层约束，但界面把它当失败横幅显示出来
+     * （真机实测：核心页出现「启动失败：运行时已经启动过；同一进程只允许一个 Node 实例」），
+     * 用户会以为核心坏了。而事实是"它本来就在跑"——这正是"启动"的期望结果。
+     */
+    if (this.port.isRunning()) {
+      this.transient = null;
+      this.lastFailureNote = '';
+      return { ok: true, note: `核心已在运行（${this.port.label()}）`, handle: this.handle };
+    }
     const probe: RuntimeProbe = await this.port.probe();
     if (!probe.available) {
       const note: string = probe.note.length > 0 ? probe.note : '运行时载体尚未接线，无法启动核心';
@@ -508,6 +521,28 @@ export class DshHost {
       const parsed = JSON.parse(fs.readTextSync(p)) as HostReadyFile;
       const url: string | undefined = parsed.url;
       return typeof url === 'string' ? url : '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  /**
+   * 入口脚本准备好的**可写工作区**（E98）。
+   *
+   * 【为什么必须有】真机上建出来的会话 `cwd` 是 `/`（宿主进程的工作目录继承自应用进程），
+   * 于是 `session/follow` 折叠工作区投影时抛 `…reading 'kind'`（用户看到的「轨迹流失败」），
+   * `workspaceFiles/list` 也必然失败（`cannot list`）。客户端建会话时把这个沙箱目录显式传下去
+   * 即可绕开。取不到就返回空串——那时**不传 `cwd`**（回到 Host 默认行为），不猜一个路径。
+   */
+  localHostWorkspace(): string {
+    try {
+      const p: string = `${this.store.homeDir()}/host-ready.json`;
+      if (!fs.accessSync(p)) {
+        return '';
+      }
+      const parsed = JSON.parse(fs.readTextSync(p)) as HostReadyFile;
+      const ws: string | undefined = parsed.workspace;
+      return typeof ws === 'string' ? ws : '';
     } catch (e) {
       return '';
     }

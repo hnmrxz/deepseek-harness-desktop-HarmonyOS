@@ -139,6 +139,15 @@ export struct SettingsPane {
   };
   onPickEffort: (effort: string) => void = () => {
   };
+  /**
+   * 选择**默认模型**（provider/model/effort 三个字段一起写 `agent-default-model`）。
+   *
+   * 【为什么是"默认"而不是"当前会话"】官方把"当前会话用哪个模型"放在会话输入区
+   * （`session/selectModel`，按会话生效）；而**设置页**管的是"新会话默认用什么"，
+   * 落在 `agent-default-model` 命名空间。两者都对齐官方：这里写默认，输入区切换单次会话。
+   */
+  onSelectModel: (provider: string, model: string, effort: string) => void = () => {
+  };
   /** 凭据：发起交互式授权（D1 §7.6.3） */
   onAuthorizeCredential: (ref: string) => void = () => {
   };
@@ -176,8 +185,6 @@ export struct SettingsPane {
             this.generalTab()
           } else if (this.tab === 'model') {
             this.modelTab()
-          } else if (this.tab === 'credentials') {
-            this.credentialsTab()
           } else if (this.tab === 'plugins') {
             this.pluginsTab()
           } else {
@@ -201,8 +208,10 @@ export struct SettingsPane {
     Scroll() {
       Row({ space: Sp.S }) {
         this.tabChip('general', '通用')
-        this.tabChip('model', '模型')
-        this.tabChip('credentials', '凭据')
+        // 【为什么没有「凭据」页签（E96）】官方把 API 密钥放在 Models 页（提供方那一行上），
+        // 密钥与模型本来就是一体的：没配密钥的模型根本调不通。分成两页会让人看不出这条因果。
+        // 凭据区已并入模型页顶部（"模型凭据"）。
+        this.tabChip('model', '模型与密钥')
         this.tabChip('plugins', '插件')
         this.tabChip('device', '设备')
       }
@@ -363,10 +372,12 @@ export struct SettingsPane {
       SymbolGlyph($r('sys.symbol.bell')).fontSize(16)
         .fontColor([$r('sys.color.brand')])
       Column({ space: 2 }) {
-        Text('连接诊断')
+        // 原「连接诊断」与「POC 协议验证」合并（E96）：它们都在回答"这台设备上的核心通不通"，
+        // 一个给结论、一个给逐步证据；进同一个页面就能从结论下钻到证据。
+        Text('本地调试')
           .fontSize(Fs.BODY)
           .width('100%')
-        Text('五项判定：端点 / TLS / 认证 / 协议 / Host 版本')
+        Text('连接诊断（五项判定）+ 协议往返验证（token → cookie → /api → WS 逐步证据）')
           .fontSize(Fs.CAPTION)
           .fontColor($r('sys.color.font_tertiary'))
           .width('100%')
@@ -497,7 +508,7 @@ export struct SettingsPane {
       } else {
         Row({ space: Sp.S }) {
           ForEach(this.currentEfforts(), (effort: string) => {
-            // 只展示可选档位与当前取值（同样按会话生效，见上）
+            // 点档位 = 写默认模型的 reasoningEffort（与官方"能力随模型"的语义一致）
             Text(effort)
               .fontSize(Fs.SECONDARY)
               .fontColor(this.selection.effort === effort ? Color.White : $r('sys.color.font_secondary'))
@@ -506,6 +517,9 @@ export struct SettingsPane {
               .backgroundColor(this.selection.effort === effort
                 ? $r('sys.color.brand')
                 : $r('sys.color.background_secondary'))
+              .onClick(() => {
+                this.onSelectModel(this.selection.provider, this.selection.modelId, effort);
+              })
           }, (effort: string) => effort)
         }
         .width('100%')
@@ -567,9 +581,11 @@ export struct SettingsPane {
             .padding(Sp.M)
             .borderRadius(Radius.M)
             .backgroundColor($r('sys.color.background_secondary'))
-            // 【为什么模型行不可点（E96）】官方把"选哪个模型"放在会话输入区（按会话生效），
-            // 设置页只管提供方与密钥；本机核心也没有"改全局默认"的写通道。留一个点了没反应的
-            // 行比不给入口更糟，所以这里只展示（当前项用「当前」标记）。
+            // 点一行模型 = 把它设为**默认模型**（写 agent-default-model；官方的设置页也是这个语义：
+            // "当前会话用哪个"在输入区切换，"默认用哪个"在这里定）
+            .onClick(() => {
+              this.onSelectModel(m.provider, m.modelId, this.effortFor(m));
+            })
           }, (m: ModelOption) => `${m.provider}/${m.modelId}`)
         }
         .width('100%')
@@ -598,6 +614,19 @@ export struct SettingsPane {
       }
     }
     return out;
+  }
+
+  /** 换模型时该带哪个推理强度：沿用当前档位（若新模型支持），否则用它的第一档，都没有则为空串 */
+  private effortFor(m: ModelOption): string {
+    if (m.efforts.length === 0) {
+      return '';
+    }
+    for (let i = 0; i < m.efforts.length; i++) {
+      if (m.efforts[i] === this.selection.effort) {
+        return this.selection.effort;
+      }
+    }
+    return m.efforts[0];
   }
 
   private currentModelDetail(): string {

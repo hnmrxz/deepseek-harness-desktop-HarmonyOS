@@ -523,6 +523,8 @@ function writeHostReady(authUrl) {
       profile: PROFILE,
       pid: process.pid,
       startedAt: new Date().toISOString(),
+      // E98：客户端建会话时要显式带上它（默认工作区不能是 `/`）
+      workspace: WORKSPACE_DIR,
       // E88：给核心页的"运行时事实"提供数据源（全部实测，没有一个默认值）
       runtime: {
         nodeVersion: facts.nodeVersion,
@@ -612,6 +614,28 @@ if (SANDBOX_HOME.length > 0) {
       process.env[key] = tmpDir;
     }
   }
+}
+
+/**
+ * 沙箱工作区（E98）：**默认工作区必须是一个可写目录**。
+ *
+ * 【真机证据】设备上建出来的会话，`session/list` 里 `"cwd":"/"` —— 因为宿主进程的工作目录
+ * 继承自应用进程（`/`）。后果不是"路径难看"，而是**功能性故障**：
+ *   · `session/follow` 在折叠工作区相关投影时抛
+ *     `gateway/internal Cannot read properties of undefined (reading 'kind')`
+ *     （用户看到的就是「轨迹流失败」横幅）；
+ *   · `workspaceFiles/list` 在 `/` 上必然失败（`cannot list`）。
+ * 开发机上一直没暴露，是因为我们本地跑时 cwd 恰好是仓库根（一个可读可写目录）——
+ * 这正是"开发机跑通、设备上才炸"的典型形态。
+ *
+ * 【为什么不 `process.chdir()`】Node 里 `process.chdir` 走的是 POSIX `chdir`，
+ * 在我们这种"Node 跑在应用进程的一个线程里"的形态下它会改**整个进程**的 cwd，
+ * 影响 ArkUI/其它线程。所以不碰 cwd，改为**把这个可写目录作为默认工作区传下去**，
+ * 由客户端在建会话时显式指定（`session/create` 的 `cwd`）。
+ */
+const WORKSPACE_DIR = SANDBOX_HOME.length > 0 ? path.join(SANDBOX_HOME, 'workspace') : '';
+if (WORKSPACE_DIR.length > 0) {
+  ensureDir(WORKSPACE_DIR);
 }
 for (const key of ['NO_PROXY', 'no_proxy']) {
   if (!process.env[key] || process.env[key].length === 0) {

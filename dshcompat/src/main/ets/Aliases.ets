@@ -132,6 +132,16 @@ export const CREDENTIALS_UNSET_ENDPOINT: string = 'credentials/unset';
 
 // ── 0.1.5-rc.1 新增端点（升级时新增；老 Host 上会 404，由能力探测降级） ──
 
+/**
+ * 工作区注册（E98）：**在已有目录上创建或幂等解析一个工作区**，回复 `{workspace, created}`。
+ *
+ * 【为什么必须注册】只给 `session/create` 传 `cwd` 而不注册工作区时，会话没有可折叠的
+ * 工作区条目：真机上表现为打开会话即抛 `gateway/internal …reading 'kind'`
+ * （用户看到的「轨迹流失败」）与 `workspaceFiles/list … cannot list`。
+ * 注册一次之后，建会话带上 `workspaceId`，两者都成立。
+ */
+export const WORKSPACE_CREATE_ENDPOINT: string = 'workspace/create';
+
 /** 工作区文件列表（需要的 `workspaceFileScopeId` 来自会话/工作区上下文） */
 export const WORKSPACE_FILES_LIST_ENDPOINT: string = 'workspaceFiles/list';
 /** 工作区文件元信息 */

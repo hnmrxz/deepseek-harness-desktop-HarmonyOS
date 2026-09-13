@@ -77,7 +77,8 @@ import {
   slotBinding,
   SURFACE,
   WATERFALL_APPROVAL,
-  WATERFALL_QUESTION
+  WATERFALL_QUESTION,
+  WORKSPACE_CREATE_ENDPOINT
 } from 'dshcompat';
 import type { SessionEventShape, SlotBinding } from 'dshcompat';
 import { projectSessionList } from '../model/SessionList';
@@ -109,6 +110,7 @@ import {
   projectModelCatalog,
   projectPluginInventory,
   projectCredentialRefs,
+  CredentialRefInfo,
   settingsMutateArgs,
   settingsUnsetArgs,
   SettingsWriteOutcome,
@@ -444,7 +446,20 @@ export class SessionHub {
   /** `settings/describe` 的顶层 `writable`（Host 是否整体接受写） */
   private describeWritable: boolean = false;
   /** 从 `settings/describe` 取到的凭据引用（`credentials/describe` 的入参） */
-  private credentialRefs: string[] = [];
+  private credentialRefs: CredentialRefInfo[] = [];
+  /**
+   * 建会话时使用的**默认工作区**（E98）。
+   *
+   * 【为什么需要它】真机上建出来的会话 `cwd` 是 `/`（宿主进程的工作目录继承自应用进程），
+   * 于是打开会话时 `session/follow` 抛 `gateway/internal …reading 'kind'`（用户看到
+   * 「轨迹流失败」），`workspaceFiles/list` 也必然失败。入口脚本会把沙箱里的可写目录
+   * 写进 `host-ready.json`，由页面注入到这里；**空串表示不传 `cwd`**（回到 Host 默认行为），
+   * 绝不猜一个路径。
+   */
+  private defaultWorkspace: string = '';
+  /** 已注册的工作区 id / 路径（E98；空串 = 尚未注册） */
+  private workspaceId: string = '';
+  private workspacePath: string = '';
   /** 斜杠命令目录（来自 `commands/list`，按当前会话的 agentId） */
   private commands: CommandCandidate[] = [];
   /** 命令目录是为哪个会话拉的（切会话后必须重拉，否则命令集是别人的） */
@@ -1067,7 +1082,7 @@ export class SessionHub {
         // 同一次回复同时喂设置页与凭据页：两者都来自 settings/describe，
         // 再拉一次只为了「一个函数做一件事」是浪费一次 RPC。
         this.applySettingsDescribe(described.value);
-        const refs: string[] = this.credentialRefs;
+        const refs: CredentialRefInfo[] = this.credentialRefs;
         let itemCount: number = 0;
         for (let i = 0; i < this.settingsGroups.length; i++) {
           itemCount += this.settingsGroups[i].items.length;
@@ -1075,7 +1090,7 @@ export class SessionHub {
         this.record(`settings/describe ok, ${refs.length} 个凭据引用, ${itemCount} 个设置项`);
         if (refs.length > 0) {
           const credArgs: Record<string, Object> = {};
-          credArgs['refs'] = refs;
+          credArgs['refs'] = this.refNames(refs);
           const creds: RpcResult = await this.conn.call(CREDENTIALS_DESCRIBE_ENDPOINT, credArgs as Object);
           if (creds.ok) {
             this.credentials = projectCredentials(creds.value, refs);
@@ -1282,6 +1297,48 @@ export class SessionHub {
     };
   }
 
+  /**
+   * 设置**默认模型**（E96，对齐官方 web）。
+   *
+   * 【为什么是这三个字段】`settings/describe` 里 `agent-default-model` 是一个**结构化命名空间**：
+   * `{"provider": string(required), "model": string(required), "reasoningEffort": string}`，
+   * `value/base/user` 三层合并。它不像其它命名空间那样暴露成一串"设置项"，
+   * 所以设置页的通用渲染看不到它——**这就是模型页此前"选不了模型"的根因**。
+   *
+   * 【为什么分三次写】上游 `settings/mutate` 的语义就是"一次一个字段的 set"
+   * （官方的编辑卡片也是每个改动字段一次 set）。每次失败都**如实回报**，
+   * 不做乐观更新：半写成功的状态由 Host 的 revision 与随后的 describe 兜住。
+   *
+   * 【推理强度为什么跟模型一起写】它是**模型的能力**（`reasoningEfforts` 因模型而异），
+   * 换模型时把旧档位带过去可能不被接受，所以调用方应在换模型时给出该模型支持的档位。
+   */
+  async setDefaultModel(provider: string, model: string, effort: string): Promise<string> {
+    if (provider.length === 0 || model.length === 0) {
+      return '未选择模型：provider 与 model 都不能为空。';
+    }
+    const fields: string[] = ['provider', 'model'];
+    const values: string[] = [provider, model];
+    if (effort.length > 0) {
+      fields.push('reasoningEffort');
+      values.push(effort);
+    }
+    const done: string[] = [];
+    for (let i = 0; i < fields.length; i++) {
+      const res: SettingsWriteResult = await this.writeSetting(`agent-default-model.${fields[i]}`, values[i]);
+      if (res.outcome !== SettingsWriteOutcome.OK) {
+        this.lastError = res.message;
+        this.notify();
+        return `默认模型只写成了 ${done.length > 0 ? done.join('、') : '0'} 个字段：${res.message}`;
+      }
+      done.push(fields[i]);
+    }
+    // 默认模型变了 ⇒ 模型目录里的 defaultSelection 也会变：重拉静态事实让界面同步
+    await this.loadStaticFacts();
+    this.record(`默认模型 → ${provider}/${model}${effort.length > 0 ? ` · ${effort}` : ''}`);
+    this.notify();
+    return `默认模型已设为 ${provider} / ${model}${effort.length > 0 ? ` · 推理强度 ${effort}` : ''}。新会话会用它。`;
+  }
+
   /** 重新拉一次 `settings/describe`（只刷新设置页与凭据，不做其它副作用） */
   async refreshSettings(): Promise<void> {    const empty: Record<string, Object> = {};
     const args: Object | undefined = argsFor(SETTINGS_DESCRIBE_ENDPOINT, empty as Object);
@@ -1392,7 +1449,7 @@ export class SessionHub {
       return;
     }
     const credArgs: Record<string, Object> = {};
-    credArgs['refs'] = this.credentialRefs;
+    credArgs['refs'] = this.refNames(this.credentialRefs);
     const creds: RpcResult = await this.conn.call(CREDENTIALS_DESCRIBE_ENDPOINT, credArgs as Object);
     if (creds.ok) {
       this.credentials = projectCredentials(creds.value, this.credentialRefs);
@@ -1446,8 +1503,93 @@ export class SessionHub {
     this.settingsGroups = groups;
     this.namespaceStates = states;
     this.describeWritable = value === undefined ? false : getBoolean(value, 'writable') === true;
-    const refs: string[] = projectCredentialRefs(value);
+    const refs: CredentialRefInfo[] = projectCredentialRefs(value);
     this.credentialRefs = refs;
+  }
+
+  /**
+   * 线协议只认**引用名数组**（`credentials/describe` 的 `refs`），而内存里我们多带了
+   * 命名空间与提供方 id（E96：用来把密钥挂到"提供方"上）。这个映射只此一处，
+   * 免得两处各写一遍、日后又对不上。
+   */
+  private refNames(refs: CredentialRefInfo[]): string[] {
+    const out: string[] = [];
+    for (let i = 0; i < refs.length; i++) {
+      out.push(refs[i].ref);
+    }
+    return out;
+  }
+
+  /**
+   * 设置建会话用的默认工作区并**向 Host 注册它**（E98）。
+   *
+   * 【为什么必须注册，而不只是传 cwd】`workspace/create` 的语义是"在已有目录上创建或
+   * 幂等解析一个工作区"。只给 `session/create` 传 `cwd` 时，会话没有可折叠的工作区条目：
+   * 真机上表现为打开会话即抛 `gateway/internal Cannot read properties of undefined
+   * (reading 'kind')`（用户看到的「轨迹流失败」），`workspaceFiles/list` 也必然 `cannot list`。
+   * 注册一次、把 `workspaceId` 带进建会话请求，两处都成立。
+   *
+   * 幂等：同一目录重复调用只会 resolve 已有工作区（回复里的 `created` 区分是新注册还是复用）。
+   */
+  async ensureWorkspace(dir: string): Promise<string> {
+    if (dir.length === 0) {
+      return '未提供工作区目录：保持 Host 默认行为。';
+    }
+    if (this.workspaceId.length > 0 && this.workspacePath === dir) {
+      return `工作区已就绪：${dir}`;
+    }
+    if (!this.unaryReady) {
+      return '尚未连接 Host，工作区未注册。';
+    }
+    /*
+     * 【不要把 body 手工包成 `{request: …}`】`dshcompat.buildArgs` 对 `ArgsShape.REQUEST`
+     * 的端点**自己会包一层**（`{'request': body}`）。这里若再包一次，宿主收到的是
+     * `request.request`，于是 `path` 变成 undefined —— 真机实测报错：
+     *   `workspace/invalid-path cannot create a Workspace at "undefined"`
+     * 所以这里传**内层请求对象**本身。
+     */
+    const inner: Record<string, Object> = {};
+    inner['path'] = dir;
+    const args: Object | undefined = argsFor(WORKSPACE_CREATE_ENDPOINT, inner as Object);
+    if (args === undefined) {
+      return '兼容面缺少工作区注册端点的参数契约（上表未生成？）。';
+    }
+    const result: RpcResult = await this.conn.call(WORKSPACE_CREATE_ENDPOINT, args);
+    if (!result.ok) {
+      const f = result.error;
+      const code: string = f === undefined ? 'unknown' : f.code;
+      this.record(`workspace/create fail ${code}`);
+      return `工作区注册失败：${friendlyFailure(code, f === undefined ? '' : f.message)}`;
+    }
+    const value: Object | undefined = result.value;
+    const ws: Object | undefined = value === undefined ? undefined : getRecord(value, 'workspace');
+    const id: string = ws === undefined ? '' : (getString(ws, 'workspaceId') ?? '');
+    const created: boolean = value === undefined ? false : getBoolean(value, 'created') === true;
+    if (id.length === 0) {
+      // 注册"看起来成功"但拿不到 id：如实回报，并且**不假装**后续建会话会带上它
+      this.record('workspace/create ok 但没有 workspaceId');
+      return '工作区注册回复里没有 workspaceId，后续建会话将退回 Host 默认行为。';
+    }
+    this.workspaceId = id;
+    this.workspacePath = dir;
+    this.record(`workspace ${created ? 'created' : 'resolved'} ${id.substring(0, 12)}`);
+    this.notify();
+    return `工作区已${created ? '注册' : '就绪'}：${dir}`;
+  }
+
+  /**
+   * 设置建会话用的默认工作区（E98）。空串 = 交回 Host 的默认行为。
+   */
+  setDefaultWorkspace(dir: string): void {
+    if (this.defaultWorkspace !== dir) {
+      this.record(`默认工作区 ${dir.length > 0 ? dir : '(未设)'}`);
+      this.defaultWorkspace = dir;
+    }
+  }
+
+  /** 当前生效的默认工作区（诊断用；空串表示未设） */
+  defaultWorkspaceDir(): string {
+    return this.defaultWorkspace;
   }
 
   /**
@@ -1470,6 +1612,14 @@ export class SessionHub {
     }
     // 空对象也要有声明类型：ArkTS 禁止无类型对象字面量
     const inner: Record<string, Object> = {};
+    // E98：注册过的工作区是**权威**（cwd 一并带上，便于 Host 校验/回退）。
+    // 真机上只传 cwd 而不注册工作区时，打开会话会抛 `…reading 'kind'`（轨迹流失败）。
+    if (this.workspaceId.length > 0) {
+      inner['workspaceId'] = this.workspaceId;
+    }
+    if (this.defaultWorkspace.length > 0) {
+      inner['cwd'] = this.defaultWorkspace;
+    }
     const body: Record<string, Object> = {};
     body['request'] = inner as Object;
     const args: Object | undefined = argsFor(SESSION_CREATE_ENDPOINT, body as Object);

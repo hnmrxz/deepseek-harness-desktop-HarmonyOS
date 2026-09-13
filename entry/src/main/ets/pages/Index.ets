@@ -284,6 +284,8 @@ struct Index {
   @State coreNotice: string = '';
   /** 端侧核心的生命周期句柄（懒建；只有一个，与"单一状态机"的纪律一致） */
   private host: DshHost | null = null;
+  /** 本机沙箱里可写的工作区目录（E98：连接后注册进 Host，建会话带上 workspaceId） */
+  private localWorkspaceDir: string = '';
   /** 插件启停操作的即时反馈（重启后生效这类事实必须让用户看到） */
   @State pluginNotice: string = '';
   @State workspaces: WorkspaceItem[] = [];
@@ -909,6 +911,26 @@ struct Index {
     }
     if (state === 'found' && this.rememberedToken.length > 0) {
       const hub: SessionHub = SessionHub.shared();
+      /*
+       * 【E98】把入口脚本准备好的**可写工作区**交给中枢：建会话时它会被当成 `cwd` 传下去。
+       *
+       * 真机证据：不设它时，设备上建出来的会话 `cwd` 是 `/`（宿主进程工作目录继承自应用进程），
+       * 于是打开会话时轨迹流抛 `gateway/internal …reading 'kind'`、文件列表 `cannot list`。
+       * 取不到就**不设**（回到 Host 默认行为），绝不猜一个路径。
+       */
+      try {
+        const wsCtx = getContext(this) as common.UIAbilityContext;
+        const wsHost: DshHost = this.coreHost(wsCtx.filesDir, wsCtx.resourceDir, wsCtx.cacheDir);
+        const ws: string = wsHost.localHostWorkspace();
+        if (ws.length > 0) {
+          hub.setDefaultWorkspace(ws);
+          this.localWorkspaceDir = ws;
+          hilog.info(DOMAIN, TAG, 'HDSH-CONN 默认工作区：%{public}s', ws);
+        }
+      } catch (e) {
+        const err = e as Error;
+        hilog.warn(DOMAIN, TAG, 'HDSH-CONN 读默认工作区失败（不设 cwd）：%{public}s', err.message);
+      }
       // 【token 必须拼回 URL】`SessionHub.configure(address, name)` 的第二个参数是
       // **显示名**，不是 token——token 是从地址串里解析出来的（`parseTarget`）。
       // 只传裸 baseUrl 会让认证拿着空 token 去请求，Host 回
@@ -950,6 +972,17 @@ struct Index {
           // 由阶段决定，所以连上的这一刻必须把阶段刷新一次，否则空态会一直停留在
           // 「还没有安装核心」，把用户指向一个完全错误的方向。
           this.refreshCoreView();
+          // 【连上就把沙箱工作区注册进 Host（E98）】注册后建会话会带上 `workspaceId`：
+          // 真机上只传 cwd 而不注册时，打开会话会抛 `…reading 'kind'`（轨迹流失败）、
+          // 文件列表也 `cannot list`。这一步是"能真正在某个目录里干活"的前提。
+          if (this.localWorkspaceDir.length > 0) {
+            hub.ensureWorkspace(this.localWorkspaceDir).then((note: string) => {
+              hilog.info(DOMAIN, TAG, 'HDSH-CONN 工作区注册：%{public}s', note);
+            }).catch((e: Object) => {
+              const err = e as Error;
+              hilog.warn(DOMAIN, TAG, 'HDSH-CONN 工作区注册异常：%{public}s', err.message);
+            });
+          }
         }
       });
       return;
@@ -2264,17 +2297,17 @@ struct Index {
 
       Blank()
 
-      // 二级入口：诊断 / 远程 Host（可选）/ POC
-      // 注意「远程 Host」的措辞：端侧自足运行后，连接别人的 Host 是**可选项**而不是前提（D7 §3）
-      this.navPanelAction('连接诊断', () => {
+      /*
+       * 二级入口：**本地调试**（原「连接诊断」与「POC 协议验证」合并，E96）。
+       *
+       * 【为什么合并】两者回答的是同一个问题——"这台设备上的核心到底通不通"：
+       *   · 连接诊断：跑五项判定并给出可执行结论（面向"哪里断了"）；
+       *   · POC：把 token→cookie→`/api`→WS 的往返逐步打出来（面向"哪一步错了"）。
+       * 分成两个入口时，用户会先点一个、发现信息不够、再退出去点另一个；合并后进一个页面
+       * 就能从"结论"下钻到"逐步证据"。它们本来就都是**给本地调试用的**，不是产品功能。
+       */
+      this.navPanelAction('本地调试', () => {
         this.openDiagnostics();
-      })
-      // 【D7 §3 第 1 项的收尾】「远程 Host」不再出现在二级导航面板里：
-      // 它属于"配置一个可选的远端"，归位到「设置 → 设备 → 远程 Host（可选）」。
-      // 那条路径的 onPairHost 回调同样打开 ConnectPane（见本文件下方 SettingsPane 的装配），
-      // 因此能力没有消失，只是不再占据主流程的入口位置。
-      this.navPanelAction('POC 协议验证', () => {
-        this.openPoc();
       })
     }
     .width(Sz.NAV_PANEL)
@@ -2360,6 +2393,9 @@ struct Index {
           this.exportDiagnostics();
         },
         onClearCache: () => {
+        },
+        onOpenPoc: () => {
+          this.openPoc();
         },
         onBack: () => {
           this.stackPage = StackPage.MAIN;
@@ -2929,6 +2965,24 @@ struct Index {
    * 这里不写任何状态，只说明原因。
    */
   /**
+   * 写入**默认模型**（E96）：provider / model / reasoningEffort 三个字段一起落到
+   * `agent-default-model` 命名空间，由 `SessionHub.setDefaultModel` 负责逐个 set 并处理
+   * revision 冲突。结果（含失败原因）通过 `settingWriteNote` 就地回显——设置页顶部那行
+   * 就是用户唯一能看到"Host 到底接受了没有"的地方。
+   */
+  private applyDefaultModel(provider: string, model: string, effort: string): void {
+    this.settingWriteNote = `正在写入默认模型 ${provider} / ${model}…`;
+    SessionHub.shared().setDefaultModel(provider, model, effort).then((note: string) => {
+      this.settingWriteNote = note;
+      hilog.info(DOMAIN, TAG, 'HDSH-MODEL 默认模型写入结果：%{public}s', note);
+    }).catch((e: Object) => {
+      const err = e as Error;
+      this.settingWriteNote = `写入默认模型失败：${err.message}`;
+      hilog.warn(DOMAIN, TAG, 'HDSH-MODEL 默认模型写入异常：%{public}s', err.message);
+    });
+  }
+
+  /**
    * 插件行启停（E91）。
    *
    * 【这件事在端侧的真实边界】安装/卸载插件做不到（上游经 pnpm 创建进程，鸿蒙不允许），
@@ -3198,6 +3252,9 @@ struct Index {
           this.selection = {
             provider: this.selection.provider, modelId: this.selection.modelId, effort: effort
           };
+        },
+        onSelectModel: (provider: string, model: string, effort: string) => {
+          this.applyDefaultModel(provider, model, effort);
         },
         onAuthorizeCredential: (ref: string) => {
           this.openCredentialSheet(ref);

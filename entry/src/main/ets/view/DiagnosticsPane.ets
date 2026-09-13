@@ -48,6 +48,15 @@ export struct DiagnosticsPane {
   };
   onClearCache: () => void = () => {
   };
+  /**
+   * 打开**协议往返验证（POC-1）**（E96）。
+   *
+   * 【为什么放在这里】用户要求把「连接诊断」与「POC」整合成一个"本地调试"入口：
+   * 诊断页给的是**结论**（哪一项没过），POC 给的是**逐步证据**（token→cookie→/api→WS）。
+   * 从结论页一键下钻到证据页，才叫整合；否则用户还是要在两个入口之间来回走。
+   */
+  onOpenPoc: () => void = () => {
+  };
   onBack: () => void = () => {
   };
 
@@ -340,6 +349,14 @@ export struct DiagnosticsPane {
           .layoutWeight(1)
           .onClick(() => {
             this.onClearCache();
+          })
+        // 本地调试第二步：从"哪一项没过"下钻到"哪一步错了"（token→cookie→/api→WS 逐步证据）
+        Button('协议往返验证')
+          .buttonStyle(ButtonStyleMode.NORMAL)
+          .fontSize(Fs.CAPTION)
+          .layoutWeight(1)
+          .onClick(() => {
+            this.onOpenPoc();
           })
       }
       .width('100%')

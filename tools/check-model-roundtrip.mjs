@@ -44,7 +44,9 @@ const arg = (n, d) => {
 };
 
 const CORE_DIR = join(ROOT, 'dist', 'core', 'work', 'dsh-core-0.1.5-rc.2');
-const HOME = arg('--home', process.env.DSH_HOME ?? join(homedir(), '.dsh'));
+const HOME = args.includes('--fresh-home')
+  ? join(ROOT, 'dist', 'localtest', 'fresh-home')
+  : arg('--home', process.env.DSH_HOME ?? join(homedir(), '.dsh'));
 const SANDBOX = join(ROOT, 'dist', 'localtest', 'model-sandbox');
 const PORT = Number(arg('--port', String(3100 + (process.pid % 400))));
 const PROMPT = arg('--prompt', 'Reply with exactly: pong');
@@ -75,10 +77,20 @@ if (!existsSync(CORE_DIR)) {
   console.error(`FAIL: core tree not found: ${CORE_DIR}`);
   process.exit(2);
 }
-if (!existsSync(join(HOME, '.credentials.yaml')) && !existsSync(join(HOME, 'settings.yaml'))) {
+/*
+ * `--fresh-home`：用一个**全新的空 HOME**（没有工作区注册、没有设置、没有凭据）。
+ * 为什么需要：设备上正是这个形态——应用沙箱里的 home 是空的，用户新建会话走的是
+ * "默认工作区"这条路径；要复现设备上的报错，就必须在同一种 home 形态下跑。
+ */
+if (!args.includes('--fresh-home')
+  && !existsSync(join(HOME, '.credentials.yaml')) && !existsSync(join(HOME, 'settings.yaml'))) {
   console.error(`FAIL: --home ${HOME} does not look like a dsh home (no settings.yaml/.credentials.yaml)`);
   process.exit(2);
 }
+if (args.includes('--fresh-home')) {
+  rmSync(HOME, { recursive: true, force: true });
+}
+mkdirSync(HOME, { recursive: true });
 mkdirSync(SANDBOX, { recursive: true });
 
 /*
@@ -311,11 +323,61 @@ try {
    * `--list`：先列出 Host 上的会话（含 id）。配合 `--session`，就能对**真实会话**做只读诊断：
    * 设备上报错时，我们必须能用设备自己的数据复现，而不是靠猜。
    */
+  /*
+   * `--workspace <dir>`：注册一个工作区（`workspace/create`）并打印结果。
+   * 用途：确认这个端点的**线协议形状**（真机上出现过 path 传成 undefined 的情形），
+   * 以及"注册之后建会话能否带上 workspaceId"。
+   */
+  if (args.includes('--workspace')) {
+    const dir = arg('--workspace', '');
+    const created = await rpc('workspace/create', { request: { path: dir } }, cookie);
+    const value = created.parsed?.result?.value ?? created.parsed?.result?.error;
+    console.log(`workspace ${created.status} ${JSON.stringify(value).slice(0, 600)}`);
+    finish(created.status === 200 ? 0 : 1);
+  }
+
   if (args.includes('--list')) {
     const listed = await rpc('session/list', {}, cookie);
     const value = listed.parsed?.result?.value ?? listed.parsed?.result?.error;
     console.log(`list     ${JSON.stringify(value).slice(0, 1500)}`);
     if (SESSION.length === 0 && !args.includes('--follow')) {
+      finish(0);
+    }
+  }
+
+  /*
+   * `--settings`：把 Host 的设置清单按 `命名空间 / 键 / 是否用户显式设置 / 当前值` 打出来。
+   *
+   * 【为什么要这一眼】「通用页该显示什么」不能靠猜：设置里有相当一部分是**已经填好默认值、
+   * 用户根本不需要改**的内部参数（重试策略、模型数组、内部超时…）。要隐藏它们，先得看清
+   * 有哪些项、哪些是用户设过的（`userSet`）、哪些是继承默认值。零成本、本地可跑。
+   */
+  if (args.includes('--settings')) {
+    const described = await rpc('settings/describe', {}, cookie);
+    const value = described.parsed?.result?.value;
+    if (args.includes('--raw')) {
+      console.log(`raw      ${JSON.stringify(value).slice(0, 2500)}`);
+      finish(0);
+    }
+    const namespaces = value?.namespaces ?? value?.settings ?? [];
+    let total = 0;
+    let userSetCount = 0;
+    for (const ns of namespaces) {
+      const nsName = String(ns.ns ?? ns.name ?? ns.namespace ?? '?');
+      const items = ns.items ?? ns.settings ?? ns.entries ?? [];
+      console.log(`[${nsName}] ${items.length} 项`);
+      for (const item of items) {
+        total += 1;
+        const key = String(item.key ?? item.path ?? '?');
+        const userSet = item.userSet === true;
+        if (userSet) userSetCount += 1;
+        const kind = String(item.kind ?? item.type ?? '');
+        const raw = item.value === undefined ? '' : JSON.stringify(item.value);
+        console.log(`  ${userSet ? 'SET ' : 'def '} ${key} <${kind}> ${raw.slice(0, 90)}`);
+      }
+    }
+    console.log(`settings ${total} 项，其中用户显式设置 ${userSetCount} 项`);
+    if (!args.includes('--follow') && SESSION.length === 0) {
       finish(0);
     }
   }

@@ -901,6 +901,25 @@ export interface CredentialItem {
   source: string;
   /** 是否支持交互式授权 flow（如 OAuth / 粘贴码） */
   interactive: boolean;
+  /** 所属设置命名空间（E96：官方按"提供方"组织模型与密钥，命名空间是这条线索的来源） */
+  namespace: string;
+  /** 提供方 id（当引用路径形如 `providers.<id>.…` 时非空） */
+  providerId: string;
+}
+
+/**
+ * 一条凭据引用的**来源信息**（E96）。
+ *
+ * 【为什么要带 namespace / providerId】官方 Models 页是"一个提供方一行、行上带密钥状态"，
+ * 而这条关联只能从 `settings/describe` 的引用路径里读出来：
+ * `namespaces[].secrets[].path` 形如 `["providers", "<providerId>", "apiKey"]`。
+ * 早先的投影只留了 `path.join('.')`，**把命名空间与提供方 id 丢掉了**，
+ * 于是界面只能看到一个孤零零的 `apiKey`，说不出它属于谁。
+ */
+export interface CredentialRefInfo {
+  ref: string;
+  namespace: string;
+  providerId: string;
 }
 
 // ─────────────────────────── 插件 ───────────────────────────
@@ -989,8 +1008,8 @@ export function projectPluginInventory(value: Object | undefined): PluginItem[] 
  * 不是「是否已配置」。拿它当配置状态用会让界面**永远显示未配置**，
  * 而真正的状态在 `credentials/describe`（那一份会如实变化）。
  */
-export function projectCredentialRefs(value: Object | undefined): string[] {
-  const out: string[] = [];
+export function projectCredentialRefs(value: Object | undefined): CredentialRefInfo[] {
+  const out: CredentialRefInfo[] = [];
   if (value === undefined) {
     return out;
   }
@@ -999,6 +1018,7 @@ export function projectCredentialRefs(value: Object | undefined): string[] {
     return out;
   }
   for (let i = 0; i < namespaces.length; i++) {
+    const ns: string = getString(namespaces[i], 'ns') ?? getString(namespaces[i], 'name') ?? '';
     const secrets: Object[] | undefined = getArray(namespaces[i], 'secrets');
     if (secrets === undefined) {
       continue;
@@ -1014,8 +1034,22 @@ export function projectCredentialRefs(value: Object | undefined): string[] {
         parts.push(typeof seg === 'string' ? seg as string : '');
       }
       const ref: string = parts.join('.');
-      if (ref.length > 0 && out.indexOf(ref) < 0) {
-        out.push(ref);
+      if (ref.length === 0) {
+        continue;
+      }
+      // 提供方 id：路径形如 `providers.<id>.…` 时取第二段（官方也是按提供方组织密钥）
+      let providerId: string = '';
+      if (parts.length >= 2 && parts[0] === 'providers') {
+        providerId = parts[1];
+      }
+      let known: boolean = false;
+      for (let m = 0; m < out.length; m++) {
+        if (out[m].ref === ref) {
+          known = true;
+        }
+      }
+      if (!known) {
+        out.push({ ref: ref, namespace: ns, providerId: providerId });
       }
     }
   }
@@ -1044,14 +1078,18 @@ export function projectCredentialRefs(value: Object | undefined): string[] {
  *   - Host 未描述某条 ref 时**保留一个「未配置」条目**而不是丢掉：
  *     丢掉会让用户以为 Host 上根本没有这项凭据。
  */
-export function projectCredentials(value: Object | undefined, refs: string[]): CredentialItem[] {
+export function projectCredentials(value: Object | undefined, refs: CredentialRefInfo[]): CredentialItem[] {
   const out: CredentialItem[] = [];
   const map: Record<string, Object> = (value === undefined ? {} : value) as Record<string, Object>;
   for (let i = 0; i < refs.length; i++) {
-    const ref: string = refs[i];
+    const info0: CredentialRefInfo = refs[i];
+    const ref: string = info0.ref;
     const info: Object | undefined = map[ref];
     if (info === undefined || info === null) {
-      out.push({ ref: ref, configured: false, writable: false, source: '', interactive: false });
+      out.push({
+        ref: ref, configured: false, writable: false, source: '', interactive: false,
+        namespace: info0.namespace, providerId: info0.providerId
+      });
       continue;
     }
     out.push({
@@ -1059,7 +1097,9 @@ export function projectCredentials(value: Object | undefined, refs: string[]): C
       configured: getBoolean(info, 'configured') === true,
       writable: getBoolean(info, 'writable') === true,
       source: getString(info, 'source') ?? '',
-      interactive: false
+      interactive: false,
+      namespace: info0.namespace,
+      providerId: info0.providerId
     });
   }
   return out;
