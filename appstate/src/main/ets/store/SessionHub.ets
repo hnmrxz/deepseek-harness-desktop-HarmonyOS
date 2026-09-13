@@ -364,6 +364,9 @@ export interface HubSnapshot {
   settingsStates: SettingsNamespaceState[];
   /** 斜杠命令目录（**全部来自 Host**；未连接或未拉到时为空数组） */
   commands: CommandCandidate[];
+  /** 计划模式（E201：`plan` 投影的 active/pending） */
+  planActive: boolean;
+  planPending: boolean;
   /** `@` 引用候选（来自 Host 的两个候选端点；只对应当前查询串） */
   references: ReferenceCandidate[];
   /** 当前会话工作区的根层文件节点（子层挂在 `children` 上，按需加载） */
@@ -567,6 +570,15 @@ export class SessionHub {
   private commands: CommandCandidate[] = [];
   /** 命令目录是为哪个会话拉的（切会话后必须重拉，否则命令集是别人的） */
   private commandsFor: string = '';
+  /**
+   * 计划模式状态（E201：宿主计算的 `plan` 投影）。
+   *
+   * 官方 `ui-plan` 的 chip 判据是"**生效目标**是计划模式"=`pending ? !active : active`
+   * （`pending` = 用户刚切换、等宿主确认）。我们原样读这两个布尔值，由视图层用同一条公式推导显示。
+   * **没有专用端点**：切换走 `plan` 命令（命令面板已能执行，E190）。
+   */
+  private planActive: boolean = false;
+  private planPending: boolean = false;
   /** `@` 引用候选（来自 `fileReferences/list` + `sessionReferenceResolver/candidates`） */
   private references: ReferenceCandidate[] = [];
   /** 引用候选对应的查询串（回包只对得上这个查询，用于丢弃过期回包） */
@@ -861,6 +873,8 @@ export class SessionHub {
       settings: this.settingsGroups,
       settingsStates: this.namespaceStates,
       commands: this.commands,
+      planActive: this.planActive,
+      planPending: this.planPending,
       references: this.references,
       fileNodes: this.fileNodes,
       fileTruncated: this.fileTruncated,
@@ -2422,6 +2436,18 @@ export class SessionHub {
      * 这里按结构取出来（`options` 允许缺失：缺失表示这一档没有可选集合），
      * 让界面显示**宿主真正报告的档位**。
      */
+    /*
+     * E201：`plan` 投影（计划模式）。
+     *
+     * 官方 chip 的判据是"**生效目标**是计划模式"=`pending ? !active : active`
+     * （`pending` 表示用户刚切换、等宿主确认）。我们原样读这两个布尔值，
+     * 由视图层用同一条公式推导显示——**不自己发明状态**。
+     */
+    const plan: Object | undefined = typed['plan'];
+    if (plan !== undefined) {
+      this.planActive = getBoolean(plan, 'active') === true;
+      this.planPending = getBoolean(plan, 'pending') === true;
+    }
     const permissions: Object | undefined = typed[PROJECTION_PERMISSIONS];
     if (permissions !== undefined) {
       const current: string = getString(permissions, 'currentValue') ?? '';
