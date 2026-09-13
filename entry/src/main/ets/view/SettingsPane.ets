@@ -1483,24 +1483,8 @@ export struct SettingsPane {
   }
 
   /** 该函数原先的实现（保留在注释里，便于回退与查阅派生规则） */
-  private providerKeyRefsLegacy(): string[] {
-    const out: string[] = [];
-    const groups: ModelProviderGroup[] = this.providerGroups();
-    for (let i = 0; i < groups.length; i++) {
-      const head: string = groups[i].provider.split('-')[0];
-      const ref: string = `${head.toUpperCase()}_API_KEY`;
-      let known: boolean = false;
-      for (let j = 0; j < this.credentials.length; j++) {
-        if (this.credentials[j].ref === ref) {
-          known = true;
-        }
-      }
-      if (!known && out.indexOf(ref) < 0) {
-        out.push(ref);
-      }
-    }
-    return out;
-  }
+  /* E158 的旧实现（providerKeyRefsLegacy）已删除：它无人调用（E228 自检发现），
+     且 git 历史里查得到，不需要在代码里留一份不调用的副本。 */
 
   /**
    * 按提供方把模型目录分组（保持 Host 给的顺序，不重排——顺序本身是 Host 的偏好）。
