@@ -425,6 +425,33 @@ export class DshHost {
     if (!installed.includes(version)) {
       return { ok: false, message: `版本 ${version} 不在已安装列表里（${installed.length > 0 ? installed.join('、') : '空'}）` };
     }
+    /*
+     * 【E151：端侧切换改为"安排激活 + 重启应用生效"】
+     *
+     * 真机取证（E149）：`switchTo` 的健康检查是"把候选**真起一次**"，而同一进程内第二次
+     * `node::Start` 会让进程 **SIGABRT**（libnode 在一个应用进程里只被设计为启动一次）。
+     * 而激活本身只是 `store.activate()` **写状态** ⇒ 没必要在本进程里起候选：
+     * 这里记录激活并明确告知"完全退出应用后重新打开生效"。
+     * 下次启动时入口脚本读到的 `current` 就是新版本——与"切换成功"等价，
+     * 只是把"重启"交给用户，而不是让应用崩掉。
+     *
+     * 宿主**未运行**时仍走原路径（那时"起一次"是本进程的第一次启动，不会崩）。
+     */
+    if (this.port.isRunning()) {
+      const before: string = this.store.readState().current;
+      if (before === version) {
+        return { ok: true, message: `当前已是 ${version}，无需切换。` };
+      }
+      const decision: ActivationDecision = this.store.activate(version, CoreHealth.PASS,
+        '端侧：同进程二次启动 Node 会崩，改为重启应用生效（E151）');
+      if (decision.action === ActivationAction.REFUSE) {
+        return { ok: false, message: `拒绝激活 ${version}：${decision.reason}` };
+      }
+      return {
+        ok: true,
+        message: `已安排切换到 ${version}（当前 ${before}）：请完全退出应用后重新打开，新版本即生效。`
+      };
+    }
     const wasRunning: boolean = this.handle !== null || this.port.isRunning();
     if (wasRunning) {
       const stopped: OpResult = await this.stop();
