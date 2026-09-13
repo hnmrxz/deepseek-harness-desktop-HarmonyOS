@@ -3542,6 +3542,18 @@ struct Index {
   // ───────────────────── 工作区视图（E108：会话与待决并入）─────────────────────
 
   /** 某个工作区下的会话（按 `cwd` 归一化匹配：工作区本来就是由会话的 cwd 归并出来的） */
+  /** 已归档的会话（E134：按注册表归档集过滤；用于归档分组） */
+  private archivedSessions(): SessionListItem[] {
+    const out: SessionListItem[] = [];
+    for (let i = 0; i < this.sessions.length; i++) {
+      const s: SessionListItem = this.sessions[i];
+      if (this.archivedSessionIds.indexOf(s.id) >= 0) {
+        out.push(s);
+      }
+    }
+    return out;
+  }
+
   /**
    * 工作区 → 注册表 id（E132）。
    *
@@ -3680,6 +3692,47 @@ struct Index {
         .constraintSize({ maxHeight: 320 })
       }
 
+      /*
+       * E134：归档列表（官方语义：注册表全局归档集）。
+       *
+       * 【为什么是只读】线协议只给了 `workspace/archiveSession`，**没有反向端点**——
+       * 所以这里列出它们、可以点开看，但不提供"恢复"（那会是个点不动的按钮）。
+       * 归档集为空时整段不出现，不占版面。
+       */
+      if (this.archivedSessionIds.length > 0) {
+        Column({ space: Sp.XS }) {
+          Text(`归档 · ${this.archivedSessionIds.length}`)
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.font_tertiary'))
+            .width('100%')
+          ForEach(this.archivedSessions(), (s: SessionListItem) => {
+            Row({ space: Sp.S }) {
+              SymbolGlyph($r('sys.symbol.archivebox')).fontSize(16)
+                .fontColor([$r('sys.color.font_secondary')])
+              Text(s.title.length > 0 ? s.title : '（未命名会话）')
+                .fontSize(Fs.SECONDARY)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .layoutWeight(1)
+              Text(formatClock(s.updatedAt))
+                .fontSize(Fs.CAPTION)
+                .fontColor($r('sys.color.font_tertiary'))
+            }
+            .width('100%')
+            .padding(Sp.M)
+            .borderRadius(Radius.S)
+            .backgroundColor($r('sys.color.background_primary'))
+            .onClick(() => {
+              this.openSession(s.id);
+            })
+          }, (s: SessionListItem) => s.id)
+        }
+        .width('100%')
+        .padding(Sp.M)
+        .borderRadius(Radius.M)
+        .backgroundColor($r('sys.color.background_secondary'))
+      }
+
       if (this.workspaces.length === 0) {
         // 空态按核心阶段分档（D7 §3 第 7 项）：把"看不到会话"引向正确的排查方向
         Column({ space: Sp.S }) {
@@ -3782,6 +3835,22 @@ struct Index {
                 .fontSize(Fs.CAPTION)
                 .fontColor($r('sys.color.brand'))
             }
+            /*
+             * E134：归档会话（官方语义是"注册表全局归档集"）。
+             * 【为什么没有"取消归档"】线协议里只有 `workspace/archiveSession`，
+             * **没有反向端点**——所以这里只提供归档，不造一个点不动的"恢复"。
+             */
+            Text('归档')
+              .fontSize(Fs.CAPTION)
+              .fontColor($r('sys.color.font_tertiary'))
+              .onClick(() => {
+                SessionHub.shared().archiveSession(s.id).then((note: string) => {
+                  this.settingWriteNote = note;
+                }).catch((e: Object) => {
+                  const err = e as Error;
+                  this.settingWriteNote = `归档失败：${err.message}`;
+                });
+              })
           }
           .width('100%')
           Text(s.blank ? '还没有说话' : `${relativeTime(s.updatedAt, Date.now())} · ${formatClock(s.updatedAt)}`)
