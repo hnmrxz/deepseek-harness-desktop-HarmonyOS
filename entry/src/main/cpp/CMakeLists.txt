@@ -41,8 +41,11 @@ target_link_libraries(dshhost PUBLIC libace_napi.z.so)
 # 独立编译时用 -lhilog_ndk.z，CMake 里要显式列出来，否则 --no-undefined 会直接报 undefined symbol。
 target_link_libraries(dshhost PUBLIC hilog_ndk.z)
 
-# libnode.so.127 是**预编译**产物（自建 Node，见 tools/node-runtime/），这里只链接不重编。
-# 用绝对路径链接：链接器会按它的 SONAME 记 NEEDED，所以 HAP 里必须同时带上这个文件。
-# 文件名不能改：`libdshhost.so` 的 NEEDED 就是 `libnode.so.127`。
-target_link_libraries(dshhost PUBLIC
-    ${NATIVE_ROOT}/../../../libs/arm64-v8a/libnode.so.127)
+# libnode.so.127 是**预编译**产物（自建 Node，见 tools/node-runtime/）。
+#
+# 【为什么**不**链接它，而是运行期 dlopen】见 dshhost.cc 构造函数里的说明：
+# 若写进 DT_NEEDED，动态加载器会先以**局部作用域**把它载入，之后原生模块（koffi/node-pty/sharp）
+# 就解析不到 `napi_*` 符号——musl 不支持事后把已载入的库提升为全局（实测：dlopen 带 RTLD_GLOBAL
+# 返回 ok，符号依然 not found）。所以改为在构造函数里**首次** dlopen 并带 RTLD_GLOBAL，
+# 并用 dlsym 取 `node::Start`（mangled 名 `_ZN4node5StartEiPPc`）。
+# 代价：链接期不再校验 libnode —— 这是**有意的**取舍，换来 `.node` 能加载。

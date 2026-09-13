@@ -45,6 +45,18 @@ std::atomic<bool> g_started{false};
 std::vector<std::string> g_argStore;
 std::vector<char*> g_argv;
 
+/*
+ * libnode 的句柄与 `node::Start` 的函数指针。
+ *
+ * 【为什么要 dlsym 而不是直接调 `node::Start`】见构造函数里的说明：为了让 libnode 的符号
+ * 从一开始就进**全局作用域**（后续 dlopen 的 `.node` 模块要解析 `napi_*`），libdshhost
+ * **不能**在 `DT_NEEDED` 里带 libnode —— 一旦带了，它就会被动态加载器以**局部作用域**先载入，
+ * 之后再 dlopen 提升为 RTLD_GLOBAL 在 musl 上无效（实测：返回 ok 但符号依然解析不到）。
+ */
+void* g_libnode = nullptr;
+using NodeStartFn = int (*)(int, char*[]);
+NodeStartFn g_nodeStart = nullptr;
+
 void SetString(napi_env env, napi_value obj, const char* key, const std::string& value) {
   napi_value v = nullptr;
   napi_create_string_utf8(env, value.c_str(), value.length(), &v);
@@ -169,7 +181,13 @@ napi_value StartHost(napi_env env, napi_callback_info info) {
       }
     }
 
-    int rc = node::Start(static_cast<int>(g_argv.size()), g_argv.data());
+    if (g_nodeStart == nullptr) {
+      OH_LOG_Print(LOG_APP, LOG_ERROR, 0x0000, "HDSH-SHIM",
+                   "node::Start 未解析到（libnode 未首载成功），无法启动 Node");
+      g_running.store(false);
+      return;
+    }
+    int rc = g_nodeStart(static_cast<int>(g_argv.size()), g_argv.data());
     g_running.store(false);
 
     // Node 退出后，把抓到的输出**转成 hilog**——这是设备上唯一能读到的通道。
@@ -360,8 +378,14 @@ extern "C" __attribute__((constructor)) void RegisterDshHostModule() {
    * 失败也不致命（只是回到原来的症状），所以只记录、不中止。
    */
   void* handle = ::dlopen("libnode.so.127", RTLD_NOW | RTLD_GLOBAL);
+  if (handle != nullptr) {
+    g_libnode = handle;
+    // mangled 名由 `nm -D libdshhost.so` 里那条未定义符号确认过
+    g_nodeStart = reinterpret_cast<NodeStartFn>(::dlsym(handle, "_ZN4node5StartEiPPc"));
+  }
   OH_LOG_Print(LOG_APP, LOG_INFO, 0x0000, "HDSH-SHIM",
-               "RTLD_GLOBAL promote libnode.so.127: %{public}s", handle != nullptr ? "ok" : "failed");
+               "first-load libnode.so.127 (RTLD_GLOBAL): handle=%{public}s node::Start=%{public}s",
+               handle != nullptr ? "ok" : "failed", g_nodeStart != nullptr ? "ok" : "missing");
   OH_LOG_Print(LOG_APP, LOG_INFO, 0x0000, "HDSH-SHIM",
                "constructor ran: registering 4 name forms (dshhost / libdshhost.so / libdshhost / dshhost.so)");
   napi_module_register(&g_dshHostModule);
