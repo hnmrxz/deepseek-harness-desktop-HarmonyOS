@@ -75,6 +75,18 @@ export class HttpClient {
     }
 
     let outcome: HttpOutcome;
+    /*
+     * 【请求侧取证（E73）】dsh 对 `session/list` 回 **400 且响应体为空**（E72 实测），
+     * 说明拒绝发生在 **HTTP/WS 层或路由层**、进 JSON gateway 之前，响应侧已经取不到原因。
+     * 于是把**请求本身**打出来：方法、完整 URL、头、体长度与前 120 字节。
+     * 用 `console.info` 而不是 `hilog`：本文件没有 hilog 导入，而 console 同样进 hilog
+     * （此前几轮因"用了没导入的 hilog"把构建打挂过两次，这里避开该坑）。
+     */
+    console.info(`HDSH-REQ ${post ? 'POST' : 'GET'} ${url}`
+      + ` content-type=${header['content-type'] ?? '(none)'}`
+      + ` cookie=${cookie === undefined ? '(none)' : `${cookie.length}B`}`
+      + ` bodyLen=${body === undefined ? 0 : body.length}`
+      + (body === undefined ? '' : ` body=${body.substring(0, 120)}`));
     try {
       const options: http.HttpRequestOptions = {
         method: post ? http.RequestMethod.POST : http.RequestMethod.GET,
