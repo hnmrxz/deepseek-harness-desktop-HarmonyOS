@@ -97,6 +97,24 @@ export struct ConversationPane {
   @State expanded: string[] = [];
 
   /**
+   * 毫秒时间戳 → **钟点**（E204，官方 `ui-trajectory` 的 `toolbar.actualTime`「实际时间」）。
+   *
+   * 【为什么不做一个开关】官方那三项里，"实际时长/等宽操作"控制的是**时间轴条宽**——
+   * 我们没有时间轴，照搬就是点了没效果的开关（§13.3 的结论）；而"实际时间"提供的是
+   * **信息**（这件事发生在几点），对列表同样有意义 ⇒ 直接**与时长并列显示**：
+   * 少一份状态、少一个入口，信息一点不少。
+   */
+  private clockOf(ms: number): string {
+    if (ms <= 0) {
+      return '';
+    }
+    const d: Date = new Date(ms);
+    const hh: string = d.getHours() < 10 ? `0${d.getHours()}` : `${d.getHours()}`;
+    const mm: string = d.getMinutes() < 10 ? `0${d.getMinutes()}` : `${d.getMinutes()}`;
+    return `${hh}:${mm}`;
+  }
+
+  /**
    * 展开/收起**全部**条目（E197，官方轨迹工具栏的 `expandTurns`/`collapseTurns` 与
    * `expandCalls`/`collapseCalls`）。
    *
@@ -492,7 +510,10 @@ export struct ConversationPane {
           .fontSize(Fs.CAPTION)
           .fontColor($r('sys.color.font_tertiary'))
         if (item.elapsedMs > 0) {
-          Text(formatDuration(item.elapsedMs))
+          // E204：钟点 + 时长并列（官方"实际时间"的信息，不额外做开关）
+          Text(this.clockOf(item.at).length > 0
+            ? `${this.clockOf(item.at)} · ${formatDuration(item.elapsedMs)}`
+            : formatDuration(item.elapsedMs))
             .fontSize(Fs.CAPTION)
             .fontColor($r('sys.color.font_tertiary'))
         }
@@ -626,7 +647,10 @@ export struct ConversationPane {
           .fontSize(Fs.CAPTION)
           .fontColor(this.toolColor(item.toolState))
         if (item.elapsedMs > 0) {
-          Text(formatDuration(item.elapsedMs))
+          // E204：钟点 + 时长并列（官方"实际时间"的信息，不额外做开关）
+          Text(this.clockOf(item.at).length > 0
+            ? `${this.clockOf(item.at)} · ${formatDuration(item.elapsedMs)}`
+            : formatDuration(item.elapsedMs))
             .fontSize(Fs.CAPTION)
             .fontColor($r('sys.color.font_tertiary'))
         }
@@ -697,7 +721,10 @@ export struct ConversationPane {
           .fontWeight(FontWeight.Medium)
           .layoutWeight(1)
         if (item.elapsedMs > 0) {
-          Text(formatDuration(item.elapsedMs))
+          // E204：钟点 + 时长并列（官方"实际时间"的信息，不额外做开关）
+          Text(this.clockOf(item.at).length > 0
+            ? `${this.clockOf(item.at)} · ${formatDuration(item.elapsedMs)}`
+            : formatDuration(item.elapsedMs))
             .fontSize(Fs.CAPTION)
             .fontColor($r('sys.color.font_tertiary'))
         }
