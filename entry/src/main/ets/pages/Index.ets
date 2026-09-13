@@ -3825,6 +3825,8 @@ struct Index {
         // 引擎参数不在其中。这里做同样的策展：白名单命名空间整组显示，
         // 其余命名空间里**用户改过**的项收进「其他已修改项」，既不占版面又撤得回。
         groups: projectGeneralGroups(this.settings),
+        // E128：模型页要能编辑提供方的设置分区（baseURL / 模型目录），所以另传全量
+        allGroups: this.settings,
         credentials: this.credentials,
         plugins: this.plugins,
         hosts: this.hosts,

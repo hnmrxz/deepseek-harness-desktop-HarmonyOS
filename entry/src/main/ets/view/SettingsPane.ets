@@ -654,8 +654,141 @@ export struct SettingsPane {
 
   // ───────────── 模型 ─────────────
 
+  /** 模型页「自定义设置」展开到哪个提供方（官方：一次只展开一张卡） */
+  @State expandedProvider: string = '';
+  /**
+   * **全部**设置分区（含被「通用」策展隐藏的 `llm-*` 等）。
+   *
+   * 官方 Models 页的编辑卡片直接读写提供方的设置分区（`baseURL`、模型目录…），
+   * 所以模型页必须能看到这些分区；「通用」页继续用策展后的 `groups`（见 E114）。
+   */
+  @Prop allGroups: SettingGroup[] = [];
+
+  /** 提供方 → 适配器默认凭据引用（官方派生规则 `<ROUTE>_API_KEY`，见 E106） */
+  private providerKeyRefOf(provider: string): string {
+    const head: string = provider.split('-')[0];
+    return `${head.toUpperCase()}_API_KEY`;
+  }
+
+  /**
+   * 密钥状态点的颜色语义（官方：**只有确认已配置才是绿**，**只有确认缺失才是红**，
+   * 其余一律"未知"——不把未知渲染成任一种结论）。
+   */
+  private providerKeyColor(provider: string): Resource {
+    const ref: string = this.providerKeyRefOf(provider);
+    for (let i = 0; i < this.credentials.length; i++) {
+      const c: CredentialItem = this.credentials[i];
+      if (c.ref === ref) {
+        return c.configured ? $r('sys.color.confirm') : $r('sys.color.alert');
+      }
+    }
+    return $r('sys.color.font_tertiary');
+  }
+
+  /** 提供方的设置分区（先试 `llm-<提供方首段>`，再退到通用 pi-ai 分区；找不到就返回 undefined，不猜） */
+  private providerSettingGroup(provider: string): SettingGroup | undefined {
+    const head: string = provider.split('-')[0];
+    const candidates: string[] = [`llm-${head}`, 'llm-pi-ai'];
+    for (let i = 0; i < candidates.length; i++) {
+      for (let j = 0; j < this.allGroups.length; j++) {
+        if (this.allGroups[j].title === candidates[i]) {
+          return this.allGroups[j];
+        }
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * 提供方卡片（E128：对齐官方 Models 页的形态）。
+   *
+   * 官方规格（`dsh-client-ui-settings-models` 的说明）：**每个已配置的提供方一行**，
+   * 主字段是**单独一个 API 密钥输入框**（只写，页面从不询问环境变量名），
+   * 折叠的「自定义设置」里放 `baseURL` 与**该适配器的模型目录**；
+   * **推理等级刻意不在可编辑之列**（它是按模型的能力，提供方级控件只会被某些模型拒绝）。
+   * 这里照此组织：状态点 + 密钥动作 + 可展开的自定义设置（直接复用设置项编辑器）。
+   */
+  @Builder
+  providerCards() {
+    Text('提供方')
+      .fontSize(Fs.CAPTION)
+      .fontColor($r('sys.color.font_tertiary'))
+      .width('100%')
+
+    ForEach(this.providerGroups(), (g: ModelProviderGroup) => {
+      Column({ space: Sp.XS }) {
+        Row({ space: Sp.S }) {
+          Circle({ width: 8, height: 8 })
+            .fill(this.providerKeyColor(g.provider))
+          Column({ space: 2 }) {
+            Text(g.providerName.length > 0 ? g.providerName : g.provider)
+              .fontSize(Fs.BODY)
+              .width('100%')
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+            Text(`${g.provider} · ${g.models.length} 个模型`)
+              .fontSize(Fs.CAPTION)
+              .fontColor($r('sys.color.font_tertiary'))
+              .width('100%')
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+          .layoutWeight(1)
+          Text('配置密钥')
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.brand'))
+            .onClick(() => {
+              this.onAuthorizeCredential(this.providerKeyRefOf(g.provider));
+            })
+        }
+        .width('100%')
+
+        Row({ space: Sp.XS }) {
+          Text('自定义设置')
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.font_secondary'))
+          Blank()
+          Text(this.expandedProvider === g.provider ? '收起' : '展开')
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.brand'))
+        }
+        .width('100%')
+        .onClick(() => {
+          this.expandedProvider = this.expandedProvider === g.provider ? '' : g.provider;
+        })
+
+        if (this.expandedProvider === g.provider) {
+          if (this.providerSettingGroup(g.provider) === undefined) {
+            Text('宿主没有为这个提供方暴露可编辑的设置分区——端侧只显示它确实报告的东西，不造一个空编辑器。')
+              .fontSize(Fs.CAPTION)
+              .fontColor($r('sys.color.font_tertiary'))
+              .width('100%')
+          } else {
+            ForEach((this.providerSettingGroup(g.provider) as SettingGroup).items, (item: SettingItem) => {
+              this.settingRow(item)
+            }, (item: SettingItem) => item.key)
+          }
+          Text('推理等级属于**模型的能力**，官方也不在提供方级编辑（会被部分模型拒绝）；请在下面「新会话默认」里按模型选择。')
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.font_tertiary'))
+            .width('100%')
+        }
+      }
+      .width('100%')
+      .padding(Sp.M)
+      .borderRadius(Radius.M)
+      .backgroundColor($r('sys.color.background_secondary'))
+    }, (g: ModelProviderGroup) => g.provider)
+  }
+
   @Builder
   modelTab() {
+    /*
+     * E128：先按官方形态列出**提供方卡片**（状态点 + 首要的密钥动作 + 可展开的自定义设置），
+     * 下面的「模型凭据」「新会话默认」「全部模型」是我们已有的补充信息，保持向后兼容。
+     */
+    this.providerCards()
+
     /*
      * 【为什么模型页要带"凭据"区（E96）】官方 Models 页把 **API 密钥**放在编辑卡片的
      * 首要位置（见 `dsh-client-ui-settings-models` 的说明：密钥是每个提供方第一件要配的事，
