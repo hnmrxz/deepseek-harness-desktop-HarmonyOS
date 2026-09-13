@@ -25,7 +25,7 @@
  *   --revert  从 <so>.orig 备份还原
  * 幂等：已是目标值时直接跳过；原值不存在时报错而非静默成功。
  */
-import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 
 const ELF_MAGIC = 0x7f454c46;
 const SHT_STRTAB = 3;
@@ -118,6 +118,56 @@ if (mode === '--check') {
   const ok = already !== undefined || target !== undefined;
   console.log(ok ? '补丁可用（原值存在或已是目标值）' : `原值 ${oldNeeded} 不存在，无法改写`);
   process.exit(ok ? 0 : 1);
+}
+
+if (mode === '--set-soname') {
+  /*
+   * 用法：patch-native-needed.mjs <so> <原 SONAME> <新 SONAME> --set-soname [--rename-file]
+   *
+   * 【为什么需要它】鸿蒙的 hvigor **只打包 `libs/<abi>/*.so`**（E40 实测），而 vips/glib 这类
+   * 依赖库的文件名与 SONAME **都带版本号**（`libglib-2.0.so.0.8800.2`，见 E64）。
+   * 要把它搬进 HAP 就必须改名成 `*.so`；而**改名后必须同步改它自己的 SONAME**，
+   * 否则依赖方按新名字 DT_NEEDED 去加载时，加载器拿库内旧 SONAME 对不上 ⇒
+   * `cannot open shared object`。所以"改名 + 改 SONAME + 改依赖方 NEEDED"是一组三件套。
+   */
+  const DT_SONAME = 14;
+  let soname = undefined;
+  for (let off = dynamic.offset; off + 16 <= dynamic.offset + dynamic.size; off += 16) {
+    const tag = Number(buf.readBigUInt64LE(off));
+    if (tag === DT_NULL) break;
+    if (tag !== DT_SONAME) continue;
+    const value = Number(buf.readBigUInt64LE(off + 8));
+    const strOffset = dynstr.offset + value;
+    let end = strOffset;
+    while (end < buf.length && buf[end] !== 0) end += 1;
+    soname = { strOffset, name: buf.toString('utf8', strOffset, end) };
+    break;
+  }
+  if (soname === undefined) fail('该文件没有 DT_SONAME（静态库或可执行文件？）');
+  if (soname.name !== oldNeeded) {
+    console.log(`注意：实际 SONAME 是 ${soname.name}（你给的原值 ${oldNeeded} 不符），按实际值继续`);
+  }
+  if (soname.name === newNeeded) {
+    console.log(`SONAME 已是 ${newNeeded}，跳过`);
+    process.exit(0);
+  }
+  if (newNeeded.length > soname.name.length) {
+    fail(`新 SONAME 更长（${newNeeded.length} > ${soname.name.length}），原地改写放不下`);
+  }
+  if (!existsSync(backupPath)) {
+    copyFileSync(soPath, backupPath);
+    console.log(`已备份 → ${backupPath}`);
+  }
+  buf.write(newNeeded, soname.strOffset, 'utf8');
+  buf.fill(0, soname.strOffset + newNeeded.length, soname.strOffset + soname.name.length);
+  writeFileSync(soPath, buf);
+  console.log(`SONAME: ${soname.name} → ${newNeeded}  (${soPath})`);
+  if (process.argv.includes('--rename-file')) {
+    const renamed = soPath.replace(/[^/\\]+$/, newNeeded);
+    renameSync(soPath, renamed);
+    console.log(`文件已改名 → ${renamed}`);
+  }
+  process.exit(0);
 }
 
 if (already !== undefined && target === undefined) {
