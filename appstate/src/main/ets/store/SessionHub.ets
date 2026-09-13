@@ -3274,6 +3274,27 @@ function firstStringOf(container: Object, keys: string[]): string {
   return '';
 }
 
+/**
+ * 操作结果的**结构化回执**（E143 方案①的样板）。
+ *
+ * 【为什么不让中枢直接给字符串】中枢是纯 TS 模块、没有 UI 上下文 ⇒ 既拿不到资源、
+ * 也不知道用户在用哪种语言。让中枢产出**码 + 参数**、由视图层本地化，是唯一
+ * 不把 UI 依赖倒灌进状态层的做法（与"协议事实集中在 dshcompat、展示逻辑归视图"同一条纪律）。
+ *
+ * `code` 用点分命名（`workspace.deleted`），`params` 只放**数据**（名字、id、Host 给的原因），
+ * 不放任何整句文案。视图层若遇到不认识的码，必须回落到"显示码本身 + 数据"，
+ * 而不是显示空白——那会让人以为操作没发生。
+ */
+export interface ActionNotice {
+  code: string;
+  params: Record<string, string>;
+}
+
+/** 构造回执（唯一的构造点，避免各处手写对象字面量） */
+export function notice(code: string, params: Record<string, string>): ActionNotice {
+  return { code: code, params: params };
+}
+
 /** 工作区注册表的一行（E132：`workspace/follow` 投影） */
 export interface WorkspaceRow {
   id: string;

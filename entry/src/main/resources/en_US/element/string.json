@@ -143,6 +143,26 @@
     {
       "name": "confirm_delete_workspace_note",
       "value": "Press “Confirm delete” again to remove this workspace registration; the folder and its files on disk are not deleted."
+    },
+    {
+      "name": "note_workspace_deleted",
+      "value": "Removed from the workspace list (the folder and its files were not deleted)."
+    },
+    {
+      "name": "note_session_archived",
+      "value": "Archived (see “Archived”)."
+    },
+    {
+      "name": "note_no_workspace_id",
+      "value": "This workspace is not in the host registry (the list is derived from session directories), so there is no registration to delete."
+    },
+    {
+      "name": "note_archive_no_session",
+      "value": "No session selected."
+    },
+    {
+      "name": "note_offline",
+      "value": "Not connected to the host; nothing was executed."
     }
   ]
 }
