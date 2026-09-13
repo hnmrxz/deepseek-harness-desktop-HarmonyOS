@@ -239,8 +239,6 @@ export struct SettingsPane {
    */
   onResetSetting: (key: string) => void = () => {
   };
-  onPickModel: () => void = () => {
-  };
   onPickEffort: (effort: string) => void = () => {
   };
   /**

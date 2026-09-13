@@ -32,10 +32,12 @@ export struct ConnectPane {
   /** 认证并保存 */
   onSubmit: () => void = () => {
   };
-  onSelectHost: (id: string) => void = () => {
-  };
-  onRemoveHost: (id: string) => void = () => {
-  };
+  /*
+   * E130/E144：`onSelectHost` / `onRemoveHost` 已删除。
+   * 它们对应的「使用 / 移除」控件在 E130 就被移除了——本应用**只记一个 Host**，
+   * "使用某一个 / 移除某一个"没有对应动作。留着这两个 prop 只会让下一个读代码的人
+   * 以为存在多 Host 管理（而且扫描器会一直把它们报成"空实现"）。
+   */
   onStartDiscovery: () => void = () => {
   };
   onOpenDiagnostics: () => void = () => {

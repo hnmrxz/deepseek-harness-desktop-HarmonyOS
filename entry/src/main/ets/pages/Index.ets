@@ -2852,10 +2852,6 @@ struct Index {
             }
           });
         },
-        onSelectHost: (id: string) => {
-        },
-        onRemoveHost: (id: string) => {
-        },
         onStartDiscovery: () => {
         },
         onOpenDiagnostics: () => {
@@ -4105,8 +4101,6 @@ struct Index {
         },
         onResetSetting: (key: string) => {
           this.resetSetting(key);
-        },
-        onPickModel: () => {
         },
         onPickEffort: (effort: string) => {
           this.selection = {
