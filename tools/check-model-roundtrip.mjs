@@ -422,7 +422,7 @@ try {
     await sleep(4000);
     console.log(`follow   打开 ${sessionId}`);
     console.log(`frames   ${frames.length}`);
-    for (const f of frames.slice(0, 3)) console.log(`frame    ${f.slice(0, 900)}`);
+    for (const f of frames.slice(0, 3)) console.log(`frame    ${f}`);
     finish(0);
   }
 

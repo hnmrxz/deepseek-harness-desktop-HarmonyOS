@@ -455,6 +455,42 @@ export struct SettingsPane {
           .backgroundColor($r('sys.color.background_secondary'))
         }, (c: CredentialItem) => credentialRowKey(c))
       }
+      /*
+       * 【适配器默认读取的引用（E106，真机踩到）】设置里声明的槽位（`apiKey`）**不是**模型适配器
+       * 实际读取的名字：DeepSeek 适配器查的是 `DEEPSEEK_API_KEY`。只按槽位写，界面显示"已配置"，
+       * 而模型调用仍然报 `MISSING_CREDENTIAL`（用户看到的仍是"发消息没回复"）。
+       * 这里按"提供方 id 的首段 + _API_KEY"给出适配器默认引用（deepseek-official → DEEPSEEK_API_KEY），
+       * 与官方 Models 页派生 `<ROUTE>_API_KEY` 的做法一致；写入仍走同一个 `credentials/set`。
+       */
+      ForEach(this.providerKeyRefs(), (ref: string) => {
+        Row({ space: Sp.M }) {
+          SymbolGlyph($r('sys.symbol.key')).fontSize(16)
+            .fontColor([$r('sys.color.brand')])
+          Column({ space: 2 }) {
+            Text(ref)
+              .fontSize(Fs.SECONDARY)
+              .width('100%')
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+            Text('模型适配器默认读取的引用（Host 报 MISSING_CREDENTIAL 时说的就是它）')
+              .fontSize(Fs.CAPTION)
+              .fontColor($r('sys.color.font_tertiary'))
+              .width('100%')
+              .maxLines(2)
+          }
+          .layoutWeight(1)
+          Text('配置')
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.brand'))
+            .onClick(() => {
+              this.onAuthorizeCredential(ref);
+            })
+        }
+        .width('100%')
+        .padding(Sp.M)
+        .borderRadius(Radius.M)
+        .backgroundColor($r('sys.color.background_secondary'))
+      }, (ref: string) => ref)
     }
     .width('100%')
 
@@ -592,6 +628,35 @@ export struct SettingsPane {
       }, (g: ModelProviderGroup) => g.provider)
     }
     .width('100%')
+  }
+
+  /**
+   * 适配器**默认读取**的凭据引用（E106）。
+   *
+   * 【为什么必须有这一行】设置里声明的槽位（`apiKey`）不是模型适配器实际查的名字：
+   * 真机上按槽位写完之后，轮次仍然报
+   *   `llm-deepseek: no API key for provider route "deepseek-official"; store DEEPSEEK_API_KEY …`
+   * 即"界面说已配置、模型说没有密钥"。这里按"提供方 id 首段 + `_API_KEY`"给出适配器默认引用
+   * （`deepseek-official` → `DEEPSEEK_API_KEY`），与官方 Models 页派生 `<ROUTE>_API_KEY` 一致；
+   * 写入走同一个 `credentials/set`（真机实测该引用可写且立刻生效）。
+   */
+  private providerKeyRefs(): string[] {
+    const out: string[] = [];
+    const groups: ModelProviderGroup[] = this.providerGroups();
+    for (let i = 0; i < groups.length; i++) {
+      const head: string = groups[i].provider.split('-')[0];
+      const ref: string = `${head.toUpperCase()}_API_KEY`;
+      let known: boolean = false;
+      for (let j = 0; j < this.credentials.length; j++) {
+        if (this.credentials[j].ref === ref) {
+          known = true;
+        }
+      }
+      if (!known && out.indexOf(ref) < 0) {
+        out.push(ref);
+      }
+    }
+    return out;
   }
 
   /**
