@@ -2832,6 +2832,52 @@ struct Index {
             })
         }
         .width('100%')
+        /*
+         * E195（§13 第 3 项）：**本会话的模型**。
+         *
+         * 官方把它做成会话输入区的选择器（`dsh-client-ui-model-selection`，写 `session/selectModel`）。
+         * 这里放在同一个面板里而不是再造入口：面板本就是"会话操作"的地方、快捷键已绑定
+         * ⇒ **可发现、不新增状态**。选中即调 `hub.selectSessionModel`（E194）；
+         * 未选会话时如实说明（那条端点也要会话）。
+         */
+        Text('本会话的模型')
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.font_tertiary'))
+          .width('100%')
+        if (this.selectedSessionId.length === 0) {
+          Text('请先在工作区里选中一个会话，再切换模型。')
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.font_tertiary'))
+            .width('100%')
+        } else {
+          ForEach(this.models, (m: ModelOption) => {
+            Row({ space: Sp.S }) {
+              Text(m.modelId)
+                .fontSize(Fs.CAPTION)
+                .layoutWeight(1)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+              Text(m.provider)
+                .fontSize(Fs.CAPTION)
+                .fontColor($r('sys.color.font_tertiary'))
+            }
+            .width('100%')
+            .padding(Sp.S)
+            .borderRadius(Radius.S)
+            .backgroundColor(this.selection.modelId === m.modelId
+              ? $r('sys.color.background_secondary')
+              : $r('sys.color.background_primary'))
+            .onClick(() => {
+              this.paletteOpen = false;
+              SessionHub.shared().selectSessionModel(m.provider, m.modelId, m.defaultEffort)
+                .then((n: ActionNotice) => {
+                  this.settingWriteNote = this.noticeText(n);
+                }).catch((e: Object) => {
+                  this.settingWriteNote = '切换会话模型失败：' + (e as Error).message;
+                });
+            })
+          }, (m: ModelOption) => m.provider + '/' + m.modelId)
+        }
         if (this.commands.length === 0) {
           Text(this.selectedSessionId.length === 0
             ? '命令取决于具体会话：请先在工作区里选中一个会话。'
