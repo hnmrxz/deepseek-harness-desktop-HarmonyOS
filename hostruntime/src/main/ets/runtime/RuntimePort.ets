@@ -126,6 +126,15 @@ export function buildHostArgv(entryScript: string): string[] {
     // 不可用，而且报错形式往往是"某个东西是 undefined"而不是"缺了 WASM"。
     // 这是 jitless 路线已知且接受的代价（换的是不申请特殊权限、可正常上架）。
     '--jitless',
+    // 【实验】不安装 globalThis.fetch，从而**不初始化 undici 的全局 dispatcher**。
+    // 理由是实测出来的因果链（D6 E34/E35）：runProfile 期间加载了 undici
+    // （lib/global.js → agent → pool → client → client-h1 → lazyllhttp），而
+    // `lazyllhttp` 需要 `WebAssembly`；jitless 下它是 undefined ⇒ require 抛错 ⇒
+    // profile 启动中断 ⇒ `runProfile 返回了但没有 webServer`，端口从未绑定。
+    // 关掉 fetch 能让这条 wasm 路径根本不被 require。**代价**：若 dsh 的对外 HTTP
+    // （LLM 调用）依赖 fetch，那部分会不可用——所以这是一次**隔离变量的实验**，
+    // 不是最终方案；结论出来后再决定对外 HTTP 怎么走。
+    '--no-experimental-fetch',
     entryScript,
   ];
 }

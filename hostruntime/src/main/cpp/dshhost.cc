@@ -176,7 +176,10 @@ napi_value StartHost(napi_env env, napi_callback_info info) {
     if (!logPath.empty()) {
       FILE* f = ::fopen(logPath.c_str(), "r");
       if (f != nullptr) {
-        char buf[3000];
+        // 【必须读全量】先前只读了前 2999 字节，而 Host 打印的 `dsh web: <带 token 的 URL>`
+        // 与"最后一条错误"都在**输出末尾**——被截掉后我们无法判断服务到底有没有绑定端口。
+        // static：64 KB 放在栈上不合适。
+        static char buf[262144];
         size_t n = ::fread(buf, 1, sizeof(buf) - 1, f);
         buf[n] = '\0';
         ::fclose(f);
