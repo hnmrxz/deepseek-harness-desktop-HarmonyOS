@@ -64,6 +64,8 @@ import {
   PLUGIN_INVENTORY_ENDPOINT,
   PROJECTION_TITLE,
   PROJECTION_PERMISSIONS,
+  PROJECTION_SESSION_STATS,
+  PROJECTION_TOKEN_USAGE,
   SETTINGS_DESCRIBE_ENDPOINT,
   SETTINGS_CONFLICT,
   SETTINGS_MUTATE_ENDPOINT,
@@ -302,6 +304,19 @@ export interface HubSnapshot {
    */
   permissionsCurrent: string;
   permissionsOptions: string[];
+  /** 会话统计与 Token 用量（E125；字段缺失一律 0，表示"没有"而不是"未探测"） */
+  statsTurns: number;
+  statsSteps: number;
+  statsLlmMs: number;
+  statsToolMs: number;
+  statsTtftMs: number;
+  statsTtftSteps: number;
+  statsDecodeMs: number;
+  statsDecodeTokens: number;
+  tokensUncachedInput: number;
+  tokensOutput: number;
+  tokensCacheRead: number;
+  tokensCacheWrite: number;
   /** 插件清单（来自 `pluginInventory/list`） */
   plugins: PluginItem[];
   /** 凭据状态（来自 `settings/describe` 取 refs + `credentials/describe` 取状态）。**永不含明文** */
@@ -463,6 +478,23 @@ export class SessionHub {
    */
   private permissionsCurrent: string = '';
   private permissionsOptions: string[] = [];
+  /**
+   * 会话统计与 Token 用量（E125）：官方 web 在会话里显示「N 轮 M 步」「缓存命中 X%」
+   * 以及统计面板（模型用时 / 工具调用用时 / TTFT / TPS）。这些数字**早就在投影里**，
+   * 我们此前只读 `title` ⇒ 界面上完全缺席。这里按结构取出来，缺字段一律按 0（不是猜，是"没有"）。
+   */
+  private statsTurns: number = 0;
+  private statsSteps: number = 0;
+  private statsLlmMs: number = 0;
+  private statsToolMs: number = 0;
+  private statsTtftMs: number = 0;
+  private statsTtftSteps: number = 0;
+  private statsDecodeMs: number = 0;
+  private statsDecodeTokens: number = 0;
+  private tokensUncachedInput: number = 0;
+  private tokensOutput: number = 0;
+  private tokensCacheRead: number = 0;
+  private tokensCacheWrite: number = 0;
   /**
    * 建会话时使用的**默认工作区**（E98）。
    *
@@ -746,6 +778,18 @@ export class SessionHub {
       defaultSelection: this.defaultSelection,
       permissionsCurrent: this.permissionsCurrent,
       permissionsOptions: this.permissionsOptions,
+      statsTurns: this.statsTurns,
+      statsSteps: this.statsSteps,
+      statsLlmMs: this.statsLlmMs,
+      statsToolMs: this.statsToolMs,
+      statsTtftMs: this.statsTtftMs,
+      statsTtftSteps: this.statsTtftSteps,
+      statsDecodeMs: this.statsDecodeMs,
+      statsDecodeTokens: this.statsDecodeTokens,
+      tokensUncachedInput: this.tokensUncachedInput,
+      tokensOutput: this.tokensOutput,
+      tokensCacheRead: this.tokensCacheRead,
+      tokensCacheWrite: this.tokensCacheWrite,
       plugins: this.plugins,
       credentials: this.credentials,
       settings: this.settingsGroups,
@@ -2312,6 +2356,26 @@ export class SessionHub {
         this.notify();
       }
     }
+    // E125：会话统计与 Token 用量（同样"投影里本来就有，只是没读"）
+    const stats: Object | undefined = typed[PROJECTION_SESSION_STATS];
+    if (stats !== undefined) {
+      this.statsTurns = getNumber(stats, 'turns') ?? 0;
+      this.statsSteps = getNumber(stats, 'steps') ?? 0;
+      this.statsLlmMs = getNumber(stats, 'llmMs') ?? 0;
+      this.statsToolMs = getNumber(stats, 'toolMs') ?? 0;
+      this.statsTtftMs = getNumber(stats, 'ttftMs') ?? 0;
+      this.statsTtftSteps = getNumber(stats, 'ttftSteps') ?? 0;
+      this.statsDecodeMs = getNumber(stats, 'decodeMs') ?? 0;
+      this.statsDecodeTokens = getNumber(stats, 'decodeTokens') ?? 0;
+    }
+    const usage: Object | undefined = typed[PROJECTION_TOKEN_USAGE];
+    if (usage !== undefined) {
+      this.tokensUncachedInput = getNumber(usage, 'uncachedInputTokens') ?? 0;
+      this.tokensOutput = getNumber(usage, 'outputTokens') ?? 0;
+      this.tokensCacheRead = getNumber(usage, 'cacheReadTokens') ?? 0;
+      this.tokensCacheWrite = getNumber(usage, 'cacheWriteTokens') ?? 0;
+    }
+    this.notify();
   }
 
   private updateSessionTitle(sessionId: string, title: string): void {

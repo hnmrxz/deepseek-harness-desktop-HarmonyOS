@@ -377,6 +377,17 @@ export const PROJECTION_TITLE: string = 'title';
  * 而不是假装我们能在三档之间切。
  */
 export const PROJECTION_PERMISSIONS: string = 'permissions';
+/**
+ * 会话统计所在的**投影键**（E125）。
+ *
+ * 实测形状（`Wire.ets` 的投影样例 + 真机读数）：
+ *   `sessionStats: {turns, steps, llmMs, toolMs, ttftMs, ttftSteps, decodeMs, decodeTokens}`
+ * 官方 web 用它显示「{turns} 轮 {steps} 步」「模型用时」「工具调用用时」「首 token 平均（TTFT）」
+ * 「输出速度（TPS）」——我们此前同样只读了 `title`，于是这些数字在界面上完全缺席。
+ */
+export const PROJECTION_SESSION_STATS: string = 'sessionStats';
+/** Token 用量所在的**投影键**（E125）：`{uncachedInputTokens, outputTokens, cacheReadTokens, cacheWriteTokens}` */
+export const PROJECTION_TOKEN_USAGE: string = 'tokenUsage';
 /** 会话待发队列所在的投影键（`dsh-session` 的 inbox 投影） */
 export const PROJECTION_INBOX: string = 'inbox';
 /** 会话 Agent 预设所在的投影键 */

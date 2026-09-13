@@ -312,6 +312,8 @@ struct Index {
   /** 宿主报告的权限组合（E124：`currentValue` + `options`；空串=宿主没投影，界面不显示） */
   @State permissionCurrent: string = '';
   @State permissionOptions: string[] = [];
+  /** 会话统计行（E125：官方措辞「N 轮 M 步 · 缓存命中 X%」；空串=没有可显示的统计） */
+  @State statsLine: string = '';
   @State fileTree: FileNode[] = [];
   /** 文件预览结果；undefined = 未选择文件（@State 必须给默认值） */
   @State preview: FilePreview | undefined = undefined;
@@ -553,6 +555,22 @@ struct Index {
     // E124：宿主报告的权限组合（真实事实，不是我们写死的默认值）
     this.permissionCurrent = s.permissionsCurrent;
     this.permissionOptions = s.permissionsOptions;
+    /*
+     * E125：官方在会话里显示「{turns} 轮 {steps} 步」「缓存命中 {percent}%」。
+     * 这里在应用快照时**算成一行**（把 13 个数字塞进 13 个 @State 只会让状态面变大，
+     * 而界面需要的本来就是这一行字）。缓存命中率 = 缓存读取 /（未缓存输入 + 缓存读取）。
+     */
+    {
+      const turns: number = s.statsTurns;
+      const steps: number = s.statsSteps;
+      const cached: number = s.tokensCacheRead;
+      const totalIn: number = s.tokensUncachedInput + cached;
+      const percent: number = totalIn > 0 ? Math.round((cached / totalIn) * 100) : 0;
+      const counts: string = turns > 0 ? `${turns} 轮 ${steps} 步` : '';
+      const hit: string = totalIn > 0 ? `缓存命中 ${percent}%` : '';
+      this.statsLine = counts.length > 0 && hit.length > 0 ? `${counts} · ${hit}`
+        : (counts.length > 0 ? counts : hit);
+    }
     this.queuedCount = s.outbox;
     // 附件列表由中枢拥有（回执是会话作用域的），这里只跟随
     this.attachments = s.attachments;
@@ -2813,6 +2831,14 @@ struct Index {
         }
       })
     } else if (this.showsConversation() && this.stackPage === StackPage.CONVERSATION) {
+      // E125：会话统计行（官方措辞），贴在会话页头部——数据来自投影，没有就不占位置
+      if (this.statsLine.length > 0) {
+        Text(this.statsLine)
+          .fontSize(Fs.CAPTION)
+          .fontColor(('sys.color.font_tertiary'))
+          .width('100%')
+          .padding({ left: Sp.M, right: Sp.M, top: Sp.XS })
+      }
       ConversationPane({
         itemCount: this.trajectoryItems.length,
         // E115：审批/提问直接弹在会话里（官方 web 的形态），一次点击即可放行
