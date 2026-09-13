@@ -29,6 +29,7 @@ import {
   argsFor,
   COMMANDS_LIST_ENDPOINT,
   COMMANDS_EXECUTE_ENDPOINT,
+  SESSION_SELECT_MODEL_ENDPOINT,
   FILE_REFERENCES_LIST_ENDPOINT,
   FILE_UPLOAD_ENDPOINT,
   SESSION_CANCEL_ENDPOINT,
@@ -2164,6 +2165,33 @@ export function commandsExecutePayload(sessionId: string, name: string): Object 
 /** `commands/execute` 的端点。 */
 export function commandsExecuteEndpoint(): string {
   return COMMANDS_EXECUTE_ENDPOINT;
+}
+
+/**
+ * `session/selectModel` 的 args 载荷（E193）：**按会话**切换模型与推理强度。
+ *
+ * 官方把这个控件放在**会话输入区**（`dsh-client-ui-model-selection`），写的就是这条端点；
+ * 设置页那边管的是"新会话默认用什么"（`agent-default-model`，见 `setDefaultModel`）。
+ *
+ * 【字段交宿主裁决】`sessionId` 是确定的（同族端点都要会话）；`provider` / `model` / `effort`
+ * 与 `setDefaultModel` 的命名保持一致，但**执行端的完整字段表没有真机证据** ⇒
+ * 交给 `argsFor` 按端点契约（`Endpoints.ets:683`，REQUEST 形态）映射/校验，
+ * 不符时返回 `undefined`，调用方如实说"缺少参数契约"，不把不确定的字段发出去碰运气。
+ */
+export function sessionSelectModelPayload(sessionId: string, provider: string, model: string,
+  effort: string): Object | undefined {
+  const body: Record<string, Object> = {
+    'sessionId': sessionId,
+    'provider': provider,
+    'model': model,
+    'effort': effort
+  };
+  return argsFor(SESSION_SELECT_MODEL_ENDPOINT, body as Object);
+}
+
+/** `session/selectModel` 的端点。 */
+export function sessionSelectModelEndpoint(): string {
+  return SESSION_SELECT_MODEL_ENDPOINT;
 }
 /**
  * 投影命令目录。
