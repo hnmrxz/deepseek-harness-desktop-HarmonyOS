@@ -270,6 +270,36 @@ function embedProfile() {
  * 端侧要能回答"我装的这版是什么、哪个 profile、平台对不对"，就必须把答案放进树里。
  * 因此这里只写不依赖产物哈希的字段——容器的 sha256 仍然只在外层清单（否则自指）。
  */
+/**
+ * 平台别名：让原生包的**加载器**能按它算出来的目录名找到原生件。
+ *
+ * 【为什么需要】实测真机（D6 E39）：我们自建的 Node 在设备上 `process.platform === 'linux'`
+ * （与 E22 同源：gyp 的 `OS` 是 linux，Node 就按 linux 编译），而 `arch === 'arm64'`。
+ * 但 `@ohos-ports/*` 移植件把它们的产品放在 **`openharmony_arm64`** 这类目录下
+ * （koffi 的加载器按 `process.platform + '_' + process.arch` 拼路径，见
+ * node_modules/koffi/index.js:468-499，所以它会去找 `build/koffi/linux_arm64/koffi.node`）。
+ * 结果就是：文件明明在包里，加载器却说 "Cannot find the native Koffi module"。
+ *
+ * 【为什么是复制而不是符号链接】鸿蒙沙箱**禁止符号链接**（实测 `13900012 Permission denied`），
+ * 而且 HAP 也不能携带符号链接。所以只能复制——代价是每个原生件多占一份体积。
+ */
+function addPlatformAliases() {
+  const nm = join(STAGE, 'node_modules');
+  const aliases = [
+    ['koffi/build/koffi/openharmony_arm64', 'koffi/build/koffi/linux_arm64'],
+    ['koffi/build/koffi/openharmony_arm64', 'koffi/build/koffi/musl_arm64'],
+    ['node-pty/prebuilds/openharmony-arm64', 'node-pty/prebuilds/linux-arm64'],
+  ];
+  for (const [from, to] of aliases) {
+    const src = join(nm, from);
+    const dst = join(nm, to);
+    if (!existsSync(src)) continue;
+    if (existsSync(dst)) continue;
+    cpSync(src, dst, { recursive: true });
+    log(`[pack-core]   平台别名 ${from} → ${to}`);
+  }
+}
+
 function embedTreeInfo() {
   // 插件与原生模块清单：**在构建期算一次**，写进树里给端侧读。
   //
@@ -568,6 +598,7 @@ log(`[pack-core] 宿主 Node ${process.version} / ${process.platform}`);
 materialize();
 prune();
 const sig = verify();
+addPlatformAliases();
 embedTreeInfo();
 verifyTreeInfoContract();
 embedProfile();

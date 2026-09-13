@@ -91,6 +91,10 @@ function diag(line) {
 
 diag(`--- boot pid=${process.pid} execPath=${process.execPath} argv=${JSON.stringify(process.argv)}`);
 diag(`userData=${USER_DATA} DSH_BASE=${DSH_BASE}`);
+// koffi 按 `${root}/build/koffi/${process.platform}_${process.arch}/koffi.node` 找原生模块
+// （见 node_modules/koffi/index.js:468-499）。我们随包放的是 `openharmony_arm64`，
+// 所以要如实打印这两个值，才能判断它到底在找哪个目录名。
+diag(`platform=${process.platform} arch=${process.arch} versions=${JSON.stringify(process.versions)}`);
 
 const realExit = process.exit.bind(process);
 process.exit = (code) => {
@@ -112,28 +116,32 @@ process.on('exit', (code) => {
 });
 
 /*
- * 【实验】在任何人碰 `fetch` 之前把它换掉。
+ * 【实验】阻断 `node:http` 的惰性 undici。
  *
- * 根因链（D6 E35）：jitless ⇒ `WebAssembly` 为 undefined ⇒ Node 自带的 undici 在被
- * **第一次访问 `globalThis.fetch`** 时才惰性初始化（Node 用 getter 装它），其
- * `lazyllhttp` 需要 WASM ⇒ 抛错 ⇒ dsh 的 profile 加载失败（`dsh: fatal load failure`）。
+ * 关键栈帧（D6 E38）：`at lazyUndici (node:http:123:21)` —— 触发 undici 初始化的不是 `fetch`
+ * （覆盖 fetch 无效，E36），而是 **`node:http` 自己的惰性 undici 加载器**（Node 22 用 undici
+ * 实现 `http.Agent` / `globalAgent`）。所以只要**在任何人访问之前**把这两个属性定义掉，
+ * 那条 getter 就永远不会被触发，也就不需要 WebAssembly。
  *
- * 【关键点】**不能先读原值**：`const f = globalThis.fetch` 这一读就会触发 undici 初始化。
- * 用 `Object.defineProperty` 直接覆盖，才能绕过那个 getter。
- * 于是这里放一个**自己的 fetch**：本次实验先用"明确失败"的版本，用来验证
- * "只要不触发 undici，Web 服务能否起来"；确认之后再换成基于 node:http 的真实实现。
+ * 与 fetch 同理：**不能先读原值**（读一下就触发初始化）。用 `getOwnPropertyDescriptor`
+ * 判断它是不是惰性 getter，再用 `defineProperty` 直接覆盖。
  */
 try {
-  Object.defineProperty(globalThis, 'fetch', {
-    value: function () {
-      return Promise.reject(new Error('HDSH: fetch 被替换（jitless 下无 WASM，undici 不可用）'));
-    },
-    writable: true,
-    configurable: true,
-  });
-  diag('已用 defineProperty 覆盖 globalThis.fetch（不触发 undici 初始化）');
+  for (const modName of ['node:http', 'node:https']) {
+    const mod = require(modName);
+    const getters = [];
+    for (const name of Object.getOwnPropertyNames(mod)) {
+      const desc = Object.getOwnPropertyDescriptor(mod, name);
+      // 不能读原值（读一下就触发惰性初始化），只能看描述符
+      if (desc !== undefined && desc.get !== undefined) {
+        getters.push(name);
+        Object.defineProperty(mod, name, { value: {}, writable: true, configurable: true });
+      }
+    }
+    diag(`${modName} 的惰性 getter（已全部封掉）：${getters.join(', ') || '(无)'}`);
+  }
 } catch (e) {
-  diag(`覆盖 fetch 失败：${String(e)}`);
+  diag(`封掉惰性 getter 失败：${String(e)}`);
 }
 
 /** 读我们自己的 state.json，得到"当前版本"，据此拼出核心树目录。 */
