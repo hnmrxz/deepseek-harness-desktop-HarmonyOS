@@ -118,6 +118,7 @@ dsh 那边仍然一个字节都没改。
 | `fix-cxx-std.sh` | `common.gypi` 里 linux/openharmony 分支的 `-std=gnu++17` → `gnu++20` | `deps/ncrypto/ncrypto.cc` 用了 C++20 三路比较，报 `'operator<=' cannot be the name of a variable or data member` |
 | `fix-zlib-crc32.sh` | 把 `CRC32_ARMV8_CRC32` 这个宏名整体改名，使 zlib 的 ARMv8 CRC32 SIMD 路径不参与编译 | OHOS clang 15 报 `fatal error: error in backend: Cannot select: intrinsic %llvm.aarch64.crc32b`；实测补 `-march=armv8-a+crc` 只能消掉 `crc32b`，同一函数里的内联 `pmull` 仍报 `instruction requires: aes`，因为 `+aes` 只存在于被 OHOS clang 忽略的函数级 target 属性里。详见脚本头部注释 |
 | `fix-latomic.sh` | 从**目标**链接行去掉 `-latomic`（保留宿主工具的） | `node.gyp:507` 的 `['OS=="linux" and clang==1', {'libraries': ['-latomic']}]` 把 OHOS 当成了 linux，而 **OHOS SDK 没有 libatomic**（`find $SDK/native/sysroot -name '*atomic*'` 只有头文件），链接报 `ld.lld: error: unable to find library -latomic`。aarch64 的 1/2/4/8 字节原子操作由 clang 内联下发，`libatomic` 只在 16 字节原子时才需要——真需要的话链接会**响亮地**报未定义 `__atomic_*_16`，不会静默产出坏库 |
+| `fix-cares-ohos-config.sh` | 让 c-ares 用 `config/openharmony`（而不是 `config/linux`）的 `ares_config.h` | `libnode.so` 链接能过，但任何可执行文件链接它就报 `undefined reference … getservbyport_r`——**glibc 专有、musl/OHOS 没有**，共享库允许带未定义符号，所以它是一颗"到设备上加载才炸"的雷。根因：`deps/cares/cares.gyp:252` 是全树**唯一**严格的 `OS=="openharmony"` 分支（别处都写成 `linux or openharmony` 的**列表**，靠 linux 命中），而 `--dest-os=openharmony` **不会**改变 gyp 的 `OS`（后者由构建宿主机决定）⇒ 该分支从未命中。详见 D6 E22 与脚本头 |
 
 关于第二条的取舍（**写清楚，免得以后被当成"漏了一个优化"**）：
 zlib 会退回可移植 C 的 CRC32。**正确性不变**，只影响 gzip CRC 吞吐；
