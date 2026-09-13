@@ -171,6 +171,23 @@ export const WORKSPACE_ARCHIVE_SESSION_ENDPOINT: string = 'workspace/archiveSess
  */
 export const SKILLS_LIST_ENDPOINT: string = 'skills/list';
 
+/*
+ * ── Agent 预设（E156 纠正语义后接线）──────────────────────────────────────
+ *
+ * 【语义】预设 = **一个会话的 Agent 所运行的插件组装**（它的工具、提示词与能力），
+ * 不是"模型设置"。官方流程：**复制一份既有预设**改成自己的（复制对话框是**唯一**创建入口，
+ * 浏览器不编辑任何组装文本），或用「创造模式」让 Agent 帮你创建。
+ * 宿主侧 `dsh-agent-presets` 有 `typert.host.js` ⇒ 这四个端点是真实存在的表面。
+ */
+/** 预设名单 */
+export const AGENT_PRESETS_LIST_ENDPOINT: string = 'agentPresets/list';
+/** **复制**一个既有预设（创建自定义预设的唯一入口） */
+export const AGENT_PRESETS_COPY_ENDPOINT: string = 'agentPresets/copy';
+/** 删除一个**自定义**预设（随附预设不可删；已据其组装的会话继续运行） */
+export const AGENT_PRESETS_DELETE_ENDPOINT: string = 'agentPresets/deletePreset';
+/** 读取一个预设的内容（只读查看器用） */
+export const AGENT_PRESETS_READ_ENDPOINT: string = 'agentPresets/read';
+
 /** 工作区文件列表（需要的 `workspaceFileScopeId` 来自会话/工作区上下文） */
 export const WORKSPACE_FILES_LIST_ENDPOINT: string = 'workspaceFiles/list';
 /** 工作区文件元信息 */
