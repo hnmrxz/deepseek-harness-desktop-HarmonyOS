@@ -87,6 +87,26 @@
     {
       "name": "settings_local_debug",
       "value": "Local diagnostics"
+    },
+    {
+      "name": "composer_placeholder",
+      "value": "Send a message or create a task, / for commands, @ for files or conversations"
+    },
+    {
+      "name": "composer_placeholder_offline",
+      "value": "Session unavailable"
+    },
+    {
+      "name": "composer_commands",
+      "value": "Commands"
+    },
+    {
+      "name": "composer_stop",
+      "value": "Stop generating"
+    },
+    {
+      "name": "composer_send",
+      "value": "Send message"
     }
   ]
 }

@@ -87,6 +87,26 @@
     {
       "name": "settings_local_debug",
       "value": "本地调试"
+    },
+    {
+      "name": "composer_placeholder",
+      "value": "发消息或创建任务, / 调用指令, @ 文件或对话"
+    },
+    {
+      "name": "composer_placeholder_offline",
+      "value": "会话不可用"
+    },
+    {
+      "name": "composer_commands",
+      "value": "指令"
+    },
+    {
+      "name": "composer_stop",
+      "value": "停止生成"
+    },
+    {
+      "name": "composer_send",
+      "value": "发送消息"
     }
   ]
 }

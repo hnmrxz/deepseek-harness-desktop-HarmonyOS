@@ -159,7 +159,14 @@ export struct Composer {
       this.toolRow()
 
       Row({ space: Sp.S }) {
-        TextArea({ text: this.draft, placeholder: '输入消息…（Enter 发送，Shift+Enter 换行）' })
+        // E123：占位文案改用官方措辞（「发消息或创建任务, / 调用指令, @ 文件或对话」），
+        // 走资源 ⇒ 跟随系统语言，默认中文
+        TextArea({
+          text: this.draft,
+          placeholder: this.offline
+            ? $r('app.string.composer_placeholder_offline')
+            : $r('app.string.composer_placeholder')
+        })
           .onChange((value: string) => {
             this.onDraftChange(value);
             this.updateOverlay(value);

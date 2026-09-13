@@ -488,14 +488,14 @@ export struct SettingsPane {
           // 只看 value 无法区分「继承默认」与「用户设成了同一个值」。
           // E114 对齐官方：官方在这一行标明"用户覆盖过哪些值"，并允许**重置为部署默认**。
           if (item.userSet) {
-            Text('已覆盖')
+            Text($r('app.string.badge_overridden'))
               .fontSize(Fs.CAPTION)
               .fontColor($r('sys.color.brand'))
               .padding({ left: 6, right: 6, top: 1, bottom: 1 })
               .borderRadius(Radius.S)
               .backgroundColor($r('sys.color.background_primary'))
           } else {
-            Text('默认')
+            Text($r('app.string.badge_default'))
               .fontSize(Fs.CAPTION)
               .fontColor($r('sys.color.font_tertiary'))
               .padding({ left: 6, right: 6, top: 1, bottom: 1 })
@@ -534,7 +534,7 @@ export struct SettingsPane {
 
       // 重置为部署默认（只对"已覆盖"的项出现，见 `onResetSetting` 的说明）
       if (item.userSet && item.hostWritable && !item.readOnly) {
-        Text('重置')
+        Text($r('app.string.action_reset'))
           .fontSize(Fs.CAPTION)
           .fontColor($r('sys.color.brand'))
           .onClick(() => {

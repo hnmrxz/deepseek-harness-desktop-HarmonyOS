@@ -257,7 +257,7 @@ export struct ConversationPane {
   }
 
   @Builder
-  viewChip(value: string, label: string) {
+  viewChip(value: string, label: ResourceStr) {
     Text(label)
       .fontSize(Fs.SECONDARY)
       .fontColor(this.view === value ? Color.White : $r('sys.color.font_secondary'))
@@ -323,8 +323,8 @@ export struct ConversationPane {
        * 而"想查某次工具参数"的人又要在气泡之间翻找。
        */
       Row({ space: Sp.S }) {
-        this.viewChip('chat', '对话')
-        this.viewChip('trajectory', '轨迹')
+        this.viewChip('chat', $r('app.string.view_chat'))
+        this.viewChip('trajectory', $r('app.string.view_trajectory'))
         Blank()
         if (this.view === 'trajectory') {
           Text(`${this.items.length} 条事件`)

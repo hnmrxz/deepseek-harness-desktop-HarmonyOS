@@ -2641,7 +2641,7 @@ struct Index {
        * 分成两个入口时，用户会先点一个、发现信息不够、再退出去点另一个；合并后进一个页面
        * 就能从"结论"下钻到"逐步证据"。它们本来就都是**给本地调试用的**，不是产品功能。
        */
-      this.navPanelAction('本地调试', () => {
+      this.navPanelAction($r('app.string.settings_local_debug'), () => {
         this.openDiagnostics();
       })
     }
@@ -2652,7 +2652,7 @@ struct Index {
   }
 
   @Builder
-  navPanelAction(label: string, action: () => void) {
+  navPanelAction(label: ResourceStr, action: () => void) {
     Text(label)
       .fontSize(Fs.CAPTION)
       .fontColor($r('sys.color.font_secondary'))
@@ -3530,21 +3530,24 @@ struct Index {
         this.hubBanner()
       }
 
-      Row({ space: Sp.S }) {
-        Text('+ 新建会话')
+      Row({ space: 4 }) {
+        Text('+')
           .fontSize(Fs.BODY)
           .fontColor($r('sys.color.brand'))
-          .onClick(() => {
-            SessionHub.shared().createSession();
-          })
-        Blank()
-        Text('选择文件夹')
-          .fontSize(Fs.CAPTION)
+        Text($r('app.string.action_new_session'))
+          .fontSize(Fs.BODY)
           .fontColor($r('sys.color.brand'))
-          .onClick(() => {
-            this.openFolderPicker();
-          })
       }
+      .onClick(() => {
+        SessionHub.shared().createSession();
+      })
+      Blank()
+      Text($r('app.string.action_choose_folder'))
+        .fontSize(Fs.CAPTION)
+        .fontColor($r('sys.color.brand'))
+        .onClick(() => {
+          this.openFolderPicker();
+        })
       .width('100%')
       .height(Sz.TOUCH_MIN)
 
@@ -3625,7 +3628,7 @@ struct Index {
             .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
         .layoutWeight(1)
-        Text('文件')
+        Text($r('app.string.action_files'))
           .fontSize(Fs.CAPTION)
           .fontColor($r('sys.color.brand'))
           .onClick(() => {
