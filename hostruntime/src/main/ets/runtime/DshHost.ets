@@ -431,6 +431,18 @@ export class DshHost {
       if (!stopped.ok) {
         return { ok: false, message: `切换前必须停下当前核心，但停止失败：${stopped.message}` };
       }
+      /*
+       * 【必须确认它真的退了（E99）】原生层只允许一个 Node 实例；若上一个实例还在退出过程中，
+       * 直接起候选会撞「运行时已经启动过」。这里如实等一次，等到就继续，等不到就**明确告诉
+       * 用户稍后重试**，而不是把一个底层限制当作"切换失败"抛出去。
+       */
+      if (this.port.isRunning()) {
+        return {
+          ok: false,
+          message: '上一个核心实例还在退出（原生层同一进程只允许一个 Node 实例），'
+            + '请稍等几秒后重试切换。'
+        };
+      }
     }
     const currentBefore: string = this.store.readState().current;
     this.transient = HostState.STARTING;
@@ -484,6 +496,9 @@ export class DshHost {
       const stopped: OpResult = await this.stop();
       if (!stopped.ok) {
         return { ok: false, message: `回滚前停止当前核心失败：${stopped.message}` };
+      }
+      if (this.port.isRunning()) {
+        return { ok: false, message: '上一个核心实例还在退出，请稍等几秒后重试回滚。' };
       }
     }
     const decision: ActivationDecision = this.store.rollback();

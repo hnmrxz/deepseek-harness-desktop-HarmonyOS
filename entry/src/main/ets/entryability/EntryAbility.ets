@@ -106,6 +106,8 @@ const KEY_THEME_APPLIED: string = 'dshThemeApplied';
  *     D3 §4 要求文案指出「发生了什么 + 可以做什么」，这两种情况的可做之事不同。
  */
 const KEY_HOST_URL: string = 'dshLastHostUrl';
+/** 内置核心正在解包（跨实例广播，见 autoStartHostForDiagnosis 的说明） */
+const KEY_CORE_INSTALLING: string = 'hdsh.core.installing';
 const KEY_HOST_TOKEN: string = 'dshLastHostToken';
 const KEY_HOST_TOKEN_STATE: string = 'dshLastHostTokenState';
 const KEY_HOST_AUTOCONNECT: string = 'dshHostAutoConnect';
@@ -262,6 +264,14 @@ export default class EntryAbility extends UIAbility {
    */
   private autoStartHostForDiagnosis(): void {
     const ctx = this.context;
+    /*
+     * 【首启阶段必须让界面看得见（E99）】内置核心的解包是**几十秒级**的操作（66 MB zip /
+     * 2.5 万个文件），而它发生在一个**与页面不同的 `DshHost` 实例**里（这里一个，Index 里一个），
+     * 所以 `installBundled` 设的 `transient = EXTRACTING` 页面根本看不到。
+     * 结果是首启时会话页显示「还没有安装核心」——**事实正相反**，它正在解包。
+     * 用一个 AppStorage 标志把这个阶段跨实例广播出去。
+     */
+    AppStorage.setOrCreate<boolean>(KEY_CORE_INSTALLING, true);
     // 入口脚本随包放在 resources/resfile/resources/app/main.js（见 coreHost 的注释）
     // 沙箱 HOME 用 filesDir：hdc 对 cacheDir 无读权限，而诊断日志要能被取回（见 NodeRuntime 注释）
     const runtime = new NodeRuntime(`${ctx.resourceDir}/resources/app/main.js`, ctx.filesDir);
@@ -276,6 +286,7 @@ export default class EntryAbility extends UIAbility {
         p.available ? 'true' : 'false', p.nodeVersion, p.note);
       return host.installBundled(ctx.resourceDir, ctx.cacheDir);
     }).then((r) => {
+      AppStorage.setOrCreate<boolean>(KEY_CORE_INSTALLING, false);
       hilog.info(DOMAIN, TAG, 'HDSH-AUTO 安装内置核心：installed=%{public}s failed=%{public}d note=%{public}s',
         JSON.stringify(r.installed), r.failed.length, r.note);
       return host.start();

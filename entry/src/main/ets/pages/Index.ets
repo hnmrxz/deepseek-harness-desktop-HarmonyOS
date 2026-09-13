@@ -445,6 +445,11 @@ struct Index {
   @StorageProp('dshLastHostTokenState') rememberedTokenState: string = 'pending';
   @StorageProp('dshHostAutoConnect') shouldAutoConnect: boolean = false;
   /**
+   * 内置核心是否正在解包（EntryAbility 广播；E99）。
+   * 首启时它必须让页面显示「正在解包核心」而不是「还没有安装核心」。
+   */
+  @StorageProp('hdsh.core.installing') coreInstalling: boolean = false;
+  /**
    * 启动参数里的**路由**（通知点击直达的那一半）。
    *
    * 【为什么必须有它】`NotificationCenter` 会给通知挂一个携带 `dshRoute` 的 WantAgent，
@@ -2756,13 +2761,25 @@ struct Index {
       this.pluginInventoryFact(status.plugins)
     ];
 
+    /*
+     * 【首启阶段：解包中优先于"未安装"（E99）】内置核心的解包发生在 EntryAbility 的
+     * `DshHost` 实例里，而页面用的是另一个实例 ⇒ `transient` 看不到，`installed` 又还是空，
+     * 于是首启时会话页显示「还没有安装核心」——事实正相反。用 AppStorage 里那个
+     * 跨实例标志把阶段纠正为 EXTRACTING（空态文案随之变成「正在解包核心」）。
+     */
+    const phase: CorePhase = (this.coreInstalling && status.installed.length === 0)
+      ? CorePhase.EXTRACTING
+      : corePhaseOfHostState(status.state);
+
     this.coreView = buildCoreView({
-      phase: corePhaseOfHostState(status.state),
-      title: status.note,
+      phase: phase,
+      title: this.coreInstalling && status.installed.length === 0
+        ? '正在解包内置核心（首次启动只需一次）'
+        : status.note,
       detail: probe.available
         ? ''
         : '版本仓库与运行时事实现在就能看；载体接线后即可在这里起 Host。',
-      busy: hostStateIsTransient(status.state),
+      busy: this.coreInstalling || hostStateIsTransient(status.state),
       installed: status.installed,
       currentVersion: status.currentVersion,
       previousVersion: status.previousVersion,
