@@ -1190,6 +1190,55 @@ export struct SettingsPane {
               this.settingRow(item)
             }, (item: SettingItem) => item.key)
           }
+          /*
+           * E213（先搬后拆的第一步："搬"）：**该提供方的模型目录进到展开区里**。
+           *
+           * 官方 `dsh-client-ui-settings-models` 的形态就是"一行一个提供方，展开才是它的模型与设置"。
+           * 本轮先在展开区**新增**这份渲染（原区块暂不动，等这里验证无误再收）——
+           * 这是 E212 换来的纪律：**先搬后拆，不先拆后搬**。
+           * 语义：模型名 + 「当前」标记 + 档位数量 + 描述；**点选 = 设为新会话默认**。
+           */
+          Text(`模型目录 · ${g.models.length}`)
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.font_tertiary'))
+            .width('100%')
+          ForEach(g.models, (m: ModelOption) => {
+            Column({ space: 2 }) {
+              Row({ space: Sp.S }) {
+                Text(m.modelName.length > 0 ? m.modelName : m.modelId)
+                  .fontSize(Fs.SECONDARY)
+                  .layoutWeight(1)
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                if (m.provider === this.selection.provider && m.modelId === this.selection.modelId) {
+                  Text('当前')
+                    .fontSize(Fs.CAPTION)
+                    .fontColor($r('sys.color.brand'))
+                }
+                if (m.efforts.length > 0) {
+                  Text(`${m.efforts.length} 档推理`)
+                    .fontSize(Fs.CAPTION)
+                    .fontColor($r('sys.color.font_tertiary'))
+                }
+              }
+              .width('100%')
+              if (m.description.length > 0) {
+                Text(m.description)
+                  .fontSize(Fs.CAPTION)
+                  .fontColor($r('sys.color.font_tertiary'))
+                  .width('100%')
+                  .maxLines(2)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+              }
+            }
+            .width('100%')
+            .padding(Sp.S)
+            .borderRadius(Radius.S)
+            .backgroundColor($r('sys.color.background_primary'))
+            .onClick(() => {
+              this.onSelectModel(m.provider, m.modelId, this.effortFor(m));
+            })
+          }, (m: ModelOption) => `${m.provider}/${m.modelId}`)
           Text('推理等级属于**模型的能力**，官方也不在提供方级编辑（会被部分模型拒绝）；请在下面「新会话默认」里按模型选择。')
             .fontSize(Fs.CAPTION)
             .fontColor($r('sys.color.font_tertiary'))
