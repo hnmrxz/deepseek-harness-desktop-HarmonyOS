@@ -89,6 +89,7 @@ import {
   WORKSPACE_ARCHIVE_SESSION_ENDPOINT,
   SKILLS_LIST_ENDPOINT,
   WORKSPACE_FILES_CHANGES_ENDPOINT,
+  GOALS_GET_ENDPOINT,
   AGENT_PRESETS_LIST_ENDPOINT,
   AGENT_PRESETS_COPY_ENDPOINT,
   AGENT_PRESETS_DELETE_ENDPOINT,
@@ -365,6 +366,9 @@ export interface HubSnapshot {
   settingsStates: SettingsNamespaceState[];
   /** 斜杠命令目录（**全部来自 Host**；未连接或未拉到时为空数组） */
   commands: CommandCandidate[];
+  /** 长期任务目标（E242：`goals/get`；空串=该会话没有目标） */
+  goalText: string;
+  goalNote: string;
   /** 计划模式（E201：`plan` 投影的 active/pending） */
   planActive: boolean;
   planPending: boolean;
@@ -592,6 +596,14 @@ export class SessionHub {
   private fileTreeFor: string = '';
   /** 文件变更流的取消句柄（E226：`workspaceFiles/changes`） */
   private cancelFileChanges: (() => void) | undefined = undefined;
+  /**
+   * 长期任务目标（E242：官方 `ui-goal` 的目标栏数据源）。
+   *
+   * 契约（已核对）：`goals/get` 参数只有 `agentId`；同一族还有 `create/edit/pause/complete/clear`
+   * （`agentId` + `ref`/`request`）。**回复形状未确证** ⇒ 解析容忍多种可能，都不中就把真实顶层键记账（不猜）。
+   */
+  private goalText: string = '';
+  private goalNote: string = '';
   /** 当前预览的文件（未打开时为 undefined） */
   private filePreview: FilePreview | undefined = undefined;
   /** 待发附件（回执 + 展示信息；字节不留在端侧） */
@@ -876,6 +888,8 @@ export class SessionHub {
       settings: this.settingsGroups,
       settingsStates: this.namespaceStates,
       commands: this.commands,
+      goalText: this.goalText,
+      goalNote: this.goalNote,
       planActive: this.planActive,
       planPending: this.planPending,
       references: this.references,
@@ -2946,6 +2960,62 @@ export class SessionHub {
     return noticeWith('model.selected', 'model', provider + '/' + model);
   }
 
+  /**
+   * 读取**长期任务目标**（E242：官方 `ui-goal` 的目标栏）。
+   *
+   * 【为什么用 `commandsFor` 当 agentId】契约里 `goals/get` 只要 `agentId`，而我们拉命令目录时
+   * 记下的 `commandsFor` 正是当前会话的 agentId（同族端点的作用域口径一致）。
+   * 【形状未确证】回复可能是 `{goal:{…}}`、`{goal:"…"}` 或直接含 `text/objective/title`
+   * ⇒ 三种都试；都不中就把**真实顶层键**记账并如实告知，**不猜键名**。
+   */
+  async refreshGoal(): Promise<void> {
+    if (!this.unaryReady) {
+      this.goalNote = '尚未连接 Host，目标未读取。';
+      this.notify();
+      return;
+    }
+    const agent: string = this.commandsFor;
+    if (agent.length === 0) {
+      this.goalText = '';
+      this.goalNote = '目标取决于具体会话：请先选中一个会话。';
+      this.notify();
+      return;
+    }
+    const inner: Record<string, Object> = {};
+    inner['agentId'] = agent;
+    const args: Object | undefined = argsFor(GOALS_GET_ENDPOINT, inner as Object);
+    if (args === undefined) {
+      this.goalNote = '兼容面缺少目标端点的参数契约。';
+      this.notify();
+      return;
+    }
+    const result: RpcResult = await this.conn.call(GOALS_GET_ENDPOINT, args);
+    if (!result.ok) {
+      const f = result.error;
+      const code: string = f === undefined ? 'unknown' : f.code;
+      this.goalText = '';
+      this.goalNote = '目标读取失败：' + friendlyFailure(code, f === undefined ? '' : f.message);
+      this.record('goals/get fail ' + code);
+      this.notify();
+      return;
+    }
+    const value: Object | undefined = result.value;
+    const parsed: string | undefined = goalTextFromReply(value);
+    if (parsed === undefined) {
+      const keys: string = value === undefined ? '(空回复)' : Object.keys(value as Record<string, Object>).join(', ');
+      this.goalText = '';
+      this.goalNote = '宿主返回的目标形状未识别（顶层键：' + keys + '）；已记账，待按真实形状收紧解析。';
+      this.record('goals/get shape unknown keys=' + keys);
+      this.notify();
+      return;
+    }
+    this.goalText = parsed;
+    // 空串是**合法结果**（该会话没有设定目标），不是错误——如实说明，别让用户以为坏了
+    this.goalNote = parsed.length === 0 ? '该会话当前没有长期目标。' : '';
+    this.record('goals/get ok len=' + parsed.length);
+    this.notify();
+  }
+
   /** 从"提供方目录"类端点取名字数组；形状不识别时返回空数组并记账（不猜） */
   private async providerNamesFrom(endpoint: string): Promise<string[]> {
     const inner: Record<string, Object> = {};
@@ -3920,6 +3990,40 @@ function skillsFromReply(value: Object): SkillRow[] | undefined {
   }
   return out;
 }
+
+/**
+ * 从 `goals/get` 的回复里取目标文本（E242）。
+ *
+ * 形状未确证 ⇒ 依次尝试：`value` 是字符串；`goal` 是字符串；`goal` 是对象里的
+ * `text`/`objective`/`title`/`description`；顶层直接带这些键。**都不中返回 undefined**，
+ * 由调用方把真实顶层键记账——不猜键名（本会话已用这条纪律避过多次误判）。
+ */
+function goalTextFromReply(value: Object | undefined): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value === 'string') {
+    return value as string;
+  }
+  const GOAL_TEXT_KEYS: string[] = ['text', 'objective', 'title', 'description', 'content'];
+  const goal: Object | undefined = getRecord(value, 'goal');
+  if (goal !== undefined) {
+    const nested: string = firstStringOf(goal, GOAL_TEXT_KEYS);
+    if (nested.length > 0) {
+      return nested;
+    }
+    // goal 是对象但没有可读文本 ⇒ 仍算"读到了、只是为空"
+    return '';
+  }
+  const direct: string = firstStringOf(value, GOAL_TEXT_KEYS);
+  if (direct.length > 0) {
+    return direct;
+  }
+  return undefined;
+}
+
+/* E242 备注：原本我还写了一个 firstStringOf，但**它已经存在**（构建报重复实现）——已删除并复用既有的那个。
+   这正是本项目"先查再写"的纪律：新增辅助函数前先搜一遍，否则同一功能会有两份实现（本会话已因此返工数次）。 */
 
 export function projectWireRecord(record: Object): TrajectoryItem | undefined {
   const type: string = getString(record, 'type') ?? '';
