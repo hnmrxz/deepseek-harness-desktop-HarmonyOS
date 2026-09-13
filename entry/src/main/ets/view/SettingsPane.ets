@@ -30,6 +30,7 @@ import {
   SettingItem,
   SettingKind,
   SettingOrigin,
+  SkillRow,
   splitSettingKey,
   Sp,
   Sz
@@ -284,7 +285,71 @@ export struct SettingsPane {
 
       Scroll() {
         Column({ space: Sp.L }) {
-          if (this.tab === 'preset') {
+          if (this.tab === 'skills') {
+            /*
+             * E135：技能分区。
+             *
+             * 【读不到就说读不到】`skills/list` 的回复外层键我们没有确证（类型定义只给了单个
+             * 技能摘要的形状）⇒ 数据层容忍三种形状，都不中时把**真实顶层键**记进旁路日志、
+             * 并在这里显示结论。绝不把"没读出来"渲染成"没有技能"——那会让人以为宿主没装技能。
+             */
+            if (this.skillNote.length > 0) {
+              Text(this.skillNote)
+                .fontSize(Fs.CAPTION)
+                .fontColor($r('sys.color.font_secondary'))
+                .width('100%')
+                .padding(Sp.M)
+                .borderRadius(Radius.M)
+                .backgroundColor($r('sys.color.background_secondary'))
+            }
+            if (this.skills.length === 0) {
+              if (this.skillNote.length === 0) {
+                Text('宿主报告没有可用技能。')
+                  .fontSize(Fs.CAPTION)
+                  .fontColor($r('sys.color.font_tertiary'))
+                  .width('100%')
+              }
+            } else {
+              ForEach(this.skills, (s: SkillRow) => {
+                Column({ space: 2 }) {
+                  Row({ space: Sp.S }) {
+                    Text(s.name)
+                      .fontSize(Fs.SECONDARY)
+                      .fontWeight(FontWeight.Medium)
+                      .layoutWeight(1)
+                      .maxLines(1)
+                      .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    if (s.provider.length > 0) {
+                      Text(s.provider)
+                        .fontSize(Fs.CAPTION)
+                        .fontColor($r('sys.color.font_tertiary'))
+                    }
+                  }
+                  .width('100%')
+                  if (s.description.length > 0) {
+                    Text(s.description)
+                      .fontSize(Fs.CAPTION)
+                      .fontColor($r('sys.color.font_secondary'))
+                      .width('100%')
+                  }
+                  if (s.whenToUse.length > 0) {
+                    Text(`适用：${s.whenToUse}`)
+                      .fontSize(Fs.CAPTION)
+                      .fontColor($r('sys.color.font_tertiary'))
+                      .width('100%')
+                  }
+                }
+                .width('100%')
+                .padding(Sp.M)
+                .borderRadius(Radius.M)
+                .backgroundColor($r('sys.color.background_secondary'))
+              }, (s: SkillRow) => `${s.provider}/${s.name}`)
+            }
+            Text('技能由宿主的技能提供方给出（`dsh-skill` / `dsh-skill-filesystem`）；端侧只读展示，不在这里编辑技能正文。')
+              .fontSize(Fs.CAPTION)
+              .fontColor($r('sys.color.font_tertiary'))
+              .width('100%')
+          } else if (this.tab === 'preset') {
             /*
              * E129：Agent 预设分区（对齐官方「设置分区把名单呈现为卡片」的**一半**）。
              *
@@ -405,6 +470,8 @@ export struct SettingsPane {
         this.tabChip('core', $r('app.string.settings_core'))
         // E129：Agent 预设分区（官方把它放在设置里，用于管理名单与设默认）
         this.tabChip('preset', '预设')
+        // E135：技能（官方为 dsh-skill + dsh-client-ui-skill；我们的兼容面已有 skills/list）
+        this.tabChip('skills', '技能')
         this.tabChip('device', $r('app.string.settings_device'))
       }
       .padding({ left: Sp.M, right: Sp.M })
@@ -697,6 +764,9 @@ export struct SettingsPane {
    * 所以模型页必须能看到这些分区；「通用」页继续用策展后的 `groups`（见 E114）。
    */
   @Prop allGroups: SettingGroup[] = [];
+  /** 技能清单（E135）与读取结论：结论非空必须显示，不假装"没有技能" */
+  @Prop skills: SkillRow[] = [];
+  @Prop skillNote: string = '';
 
   /** 提供方 → 适配器默认凭据引用（官方派生规则 `<ROUTE>_API_KEY`，见 E106） */
   private providerKeyRefOf(provider: string): string {

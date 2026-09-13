@@ -160,6 +160,17 @@ export const WORKSPACE_DELETE_ENDPOINT: string = 'workspace/delete';
  */
 export const WORKSPACE_ARCHIVE_SESSION_ENDPOINT: string = 'workspace/archiveSession';
 
+/**
+ * 技能清单（E135）。请求 `{request:{scope?}}`（REQUEST 形态），回复为技能摘要列表。
+ *
+ * 摘要字段（`dsh-skill` 的 `SkillSummary`）：
+ * `{name, description, whenToUse?, invocation, source, provider, resourceBase?}`。
+ * **外层键未确证**：类型定义里只给了单个摘要的形状，没说列表挂在哪个键下
+ * （`skills` / `items` / 裸数组都有可能）⇒ 解析层两种都收，都不中就如实记账，
+ * 等真机把真实形状打出来再收紧（不猜一个键名然后当它是对的）。
+ */
+export const SKILLS_LIST_ENDPOINT: string = 'skills/list';
+
 /** 工作区文件列表（需要的 `workspaceFileScopeId` 来自会话/工作区上下文） */
 export const WORKSPACE_FILES_LIST_ENDPOINT: string = 'workspaceFiles/list';
 /** 工作区文件元信息 */

@@ -86,7 +86,8 @@ import {
   WORKSPACE_CREATE_ENDPOINT,
   WORKSPACE_FOLLOW_ENDPOINT,
   WORKSPACE_DELETE_ENDPOINT,
-  WORKSPACE_ARCHIVE_SESSION_ENDPOINT
+  WORKSPACE_ARCHIVE_SESSION_ENDPOINT,
+  SKILLS_LIST_ENDPOINT
 } from 'dshcompat';
 import type { SessionEventShape, SlotBinding } from 'dshcompat';
 import { projectSessionList } from '../model/SessionList';
@@ -327,6 +328,9 @@ export interface HubSnapshot {
   workspaceRows: WorkspaceRow[];
   /** 注册表全局归档集合（E132）：常规列表按它过滤，归档视图按它列出 */
   archivedSessionIds: string[];
+  /** 技能清单（E135）与其读取结论（结论非空时界面必须显示它，不能假装"没有技能"） */
+  skills: SkillRow[];
+  skillNote: string;
   /** 插件清单（来自 `pluginInventory/list`） */
   plugins: PluginItem[];
   /** 凭据状态（来自 `settings/describe` 取 refs + `credentials/describe` 取状态）。**永不含明文** */
@@ -520,6 +524,10 @@ export class SessionHub {
   /** 注册表全局的**归档集合**（`workspace/follow` 基线与 `workspace/archiveSession` 回复都给） */
   private archivedIds: string[] = [];
   private cancelWorkspace: (() => void) | undefined = undefined;
+  /** 技能清单（E135：来自 `skills/list`；失败或形状未知时为空 + 一条诊断记录） */
+  private skillRows: SkillRow[] = [];
+  /** 技能清单的读取结论（面向界面的一句话，空串=未读/正常） */
+  private skillNote: string = '';
   /**
    * 建会话时使用的**默认工作区**（E98）。
    *
@@ -820,6 +828,8 @@ export class SessionHub {
       agentPreset: this.agentPresetId,
       workspaceRows: this.workspaceRows,
       archivedSessionIds: this.archivedIds,
+      skills: this.skillRows,
+      skillNote: this.skillNote,
       plugins: this.plugins,
       credentials: this.credentials,
       settings: this.settingsGroups,
@@ -2604,6 +2614,52 @@ export class SessionHub {
     return '已归档（可在「归档」里查看）。';
   }
 
+  /**
+   * 读取技能清单（E135）。
+   *
+   * 【为什么解析要容忍三种形状】见 `skillsFromReply` 的说明：外层键未确证。
+   * 都不中时**不猜**：把回复的键名打进旁路日志（`record`），界面上如实显示"宿主返回的形状未识别"——
+   * 下一次连真机时这一条就会把真实形状写出来，然后收紧解析。
+   */
+  async refreshSkills(): Promise<void> {
+    if (!this.unaryReady) {
+      this.skillNote = '尚未连接 Host，技能清单未读取。';
+      this.notify();
+      return;
+    }
+    const inner: Record<string, Object> = {};
+    const args: Object | undefined = argsFor(SKILLS_LIST_ENDPOINT, inner as Object);
+    if (args === undefined) {
+      this.skillNote = '兼容面缺少技能清单端点的参数契约。';
+      this.notify();
+      return;
+    }
+    const result: RpcResult = await this.conn.call(SKILLS_LIST_ENDPOINT, args);
+    if (!result.ok) {
+      const f = result.error;
+      const code: string = f === undefined ? 'unknown' : f.code;
+      this.skillNote = `技能清单读取失败：${friendlyFailure(code, f === undefined ? '' : f.message)}`;
+      this.record(`skills/list fail ${code}`);
+      this.notify();
+      return;
+    }
+    const value: Object | undefined = result.value;
+    const rows: SkillRow[] | undefined = value === undefined ? undefined : skillsFromReply(value);
+    if (rows === undefined) {
+      // 形状未识别：如实记账（含真实键名），界面不假装"没有技能"
+      const keys: string = value === undefined ? '(空回复)' : Object.keys(value as Record<string, Object>).join(', ');
+      this.skillRows = [];
+      this.skillNote = `宿主返回的技能清单形状未识别（顶层键：${keys}）；已记账，待按真实形状收紧解析。`;
+      this.record(`skills/list shape unknown keys=${keys}`);
+      this.notify();
+      return;
+    }
+    this.skillRows = rows;
+    this.skillNote = rows.length === 0 ? '宿主报告没有可用技能。' : '';
+    this.record(`skills/list ok ${rows.length} 项`);
+    this.notify();
+  }
+
   private openControlStream(): void {
     this.cancelControl();
     const sink: StreamSink = {
@@ -3269,6 +3325,50 @@ function getStringArray(container: Object, key: string): string[] {
     if (typeof one === 'string') {
       out.push(one as string);
     }
+  }
+  return out;
+}
+
+/** 技能清单的一行（E135：`dsh-skill` 的 `SkillSummary` 摘出来的可显示字段） */
+export interface SkillRow {
+  name: string;
+  description: string;
+  whenToUse: string;
+  provider: string;
+}
+
+/**
+ * 从 `skills/list` 的回复里取技能数组（E135）。
+ *
+ * 【为什么容忍三种形状】类型定义只给了**单个摘要**的字段，没说列表挂在哪：
+ * `{skills:[…]}` / `{items:[…]}` / 裸数组都可能。这里三种都试，
+ * **都不中就返回 undefined**，由调用方如实记账（把真实键名打进旁路日志），
+ * 而不是猜一个键名然后把它当成事实用一整个版本。
+ */
+function skillsFromReply(value: Object): SkillRow[] | undefined {
+  let raw: Object[] | undefined = getArray(value, 'skills');
+  if (raw === undefined) {
+    raw = getArray(value, 'items');
+  }
+  if (raw === undefined && Array.isArray(value)) {
+    raw = value as Object[];
+  }
+  if (raw === undefined) {
+    return undefined;
+  }
+  const out: SkillRow[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const one: Object = raw[i];
+    const name: string = getString(one, 'name') ?? '';
+    if (name.length === 0) {
+      continue;
+    }
+    out.push({
+      name: name,
+      description: getString(one, 'description') ?? '',
+      whenToUse: getString(one, 'whenToUse') ?? '',
+      provider: getString(one, 'provider') ?? ''
+    });
   }
   return out;
 }

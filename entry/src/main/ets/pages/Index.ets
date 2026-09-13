@@ -99,7 +99,8 @@ relativeTime,
   Sz,
   TrajectoryItem,
   WorkspaceItem,
-  WorkspaceRow
+  WorkspaceRow,
+  SkillRow
 } from 'appstate';
 /**
  * 类型单独用 `import type` 引入。
@@ -321,6 +322,9 @@ struct Index {
   @State workspaceRows: WorkspaceRow[] = [];
   /** 注册表全局归档集合（E132）：常规列表按它过滤 */
   @State archivedSessionIds: string[] = [];
+  /** 技能清单与其读取结论（E135） */
+  @State skills: SkillRow[] = [];
+  @State skillNote: string = '';
   /** 已按过一次「删除」、等待确认的工作区路径（两步确认） */
   @State confirmingDeletePath: string = '';
   @State fileTree: FileNode[] = [];
@@ -597,6 +601,8 @@ struct Index {
     // E132：工作区注册表与归档集合（删除/归档的依据）
     this.workspaceRows = s.workspaceRows;
     this.archivedSessionIds = s.archivedSessionIds;
+    this.skills = s.skills;
+    this.skillNote = s.skillNote;
     this.queuedCount = s.outbox;
     // 附件列表由中枢拥有（回执是会话作用域的），这里只跟随
     this.attachments = s.attachments;
@@ -3996,6 +4002,9 @@ struct Index {
         groups: projectGeneralGroups(this.settings),
         // E128：模型页要能编辑提供方的设置分区（baseURL / 模型目录），所以另传全量
         allGroups: this.settings,
+        // E135：技能清单（数据层已就绪；形状未识别时界面如实显示结论）
+        skills: this.skills,
+        skillNote: this.skillNote,
         credentials: this.credentials,
         plugins: this.plugins,
         hosts: this.hosts,
