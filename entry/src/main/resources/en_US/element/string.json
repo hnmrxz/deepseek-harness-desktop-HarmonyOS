@@ -135,6 +135,14 @@
     {
       "name": "label_unnamed_session",
       "value": "(untitled session)"
+    },
+    {
+      "name": "connecting_local_core",
+      "value": "Connecting to the on-device core…"
+    },
+    {
+      "name": "confirm_delete_workspace_note",
+      "value": "Press “Confirm delete” again to remove this workspace registration; the folder and its files on disk are not deleted."
     }
   ]
 }

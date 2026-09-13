@@ -3670,7 +3670,7 @@ struct Index {
       // 启动时要等本机核心就绪（几十秒），这段时间中枢的 lastError 可能带着中间态文本；
       // 无条件渲染它，用户就会看到「无法连接核心」闪一下——那是假报错。
       if (this.connectBusy || !this.connectSettled) {
-        Text('正在连接本机核心…')
+        Text($r('app.string.connecting_local_core'))
           .fontSize(Fs.CAPTION)
           .fontColor($r('sys.color.font_tertiary'))
           .width('100%')
