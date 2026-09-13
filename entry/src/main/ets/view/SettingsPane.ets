@@ -1342,19 +1342,18 @@ export struct SettingsPane {
 
     Column({ space: Sp.XS }) {
       /*
-       * E209（用户要求：全部模型不单独放出来）：**该列表已收编**。
+       * E212（修复 E209 引入的回退）：**模型行必须可见**。
        *
-       * 原来这里是"按提供方分组的模型目录 + 点选设为默认"，但它独立出现在模型页底部；
-       * 官方 `dsh-client-ui-settings-models` 的形态是"**一行一个提供方，展开才是它的模型与设置**"
-       * ——密钥、端点、计费口径都挂在提供方上，拉平/独立列出会让人看不出"这个模型要用哪把密钥"。
-       * 我们已按官方实现（提供方卡片 + 展开区），所以这里**不再独立列出**：
-       * 数据源置空（结构保留、便于回退），标题改为指引。
+       * E209 把本区块数据源置空、打算"以后再搬进提供方展开"，结果模型目录在界面上整段消失
+       * ——这是比"位置不理想"严重得多的缺陷。故**先恢复渲染**（数据源回到 `providerGroups()`），
+       * 标题改成能说清语义的「各提供方的模型（点选设为新会话默认）」；
+       * 搬进提供方展开（官方形态）作为后续改进，**先搬后拆、不再先拆后搬**。
        */
-      Text('各提供方的模型目录在其「自定义设置」展开里（与官方一致：模型属于提供方）。')
+      Text('各提供方的模型（点选设为新会话默认）')
         .fontSize(Fs.CAPTION)
         .fontColor($r('sys.color.font_tertiary'))
         .width('100%')
-      ForEach(this.nothingToGroup(), (g: ModelProviderGroup) => {
+      ForEach(this.providerGroups(), (g: ModelProviderGroup) => {
         Column({ space: Sp.XS }) {
           Row({ space: Sp.S }) {
             Text(g.providerName.length > 0 ? g.providerName : g.provider)
