@@ -2524,7 +2524,14 @@ export class SessionHub {
       }
       this.workspaceRows = projectWorkspaceRows(baseline);
       this.archivedIds = getStringArray(baseline, 'archivedSessionIds');
-      this.record(`workspace baseline items=${this.workspaceRows.length} archived=${this.archivedIds.length}`);
+      /*
+       * E166：**把 id 打出来**，而不是只报个数。
+       * 反馈②（归档会话仍出现在工作区）卡在"分组里那些行到底在不在归档集里"——
+       * 只报 `archived=3` 无法回答这个问题。这一行让下一次真机运行直接给出答案
+       * （E164 修好了 hilog 通道，记账才真正可用于排障）。
+       */
+      this.record(`workspace baseline items=${this.workspaceRows.length} archived=${this.archivedIds.length}`
+        + ` ids=${this.archivedIds.map((v: string) => v.substring(0, 12)).join(',')}`);
       this.notify();
       return;
     }

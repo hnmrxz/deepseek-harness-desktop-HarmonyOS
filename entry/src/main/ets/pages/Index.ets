@@ -665,7 +665,27 @@ struct Index {
     this.fileTree = s.fileNodes;
     this.preview = s.filePreview;
     if (s.defaultSelection !== undefined) {
-      this.selection = s.defaultSelection;
+      /*
+       * E167（用户反馈⑤）：**宿主默认里没有推理强度**。
+       * 实测 `session/modelCatalog` 的 `default` 只有 `{provider, model}`（没有 effort）
+       * ⇒ `selection.effort` 为空 ⇒ 推理强度一排档位**没有任何一个被选中**，
+       * 用户看到"默认 high 却没被选中"。用**目录里该模型的 `defaultEffort`** 兜底：
+       * 它同样是宿主给的事实（模型自己的能力默认），不是我们编的。
+       */
+      const selection: ModelSelection = s.defaultSelection;
+      if (selection.effort.length === 0) {
+        for (let i = 0; i < this.models.length; i++) {
+          const m: ModelOption = this.models[i];
+          if (m.provider === selection.provider && m.modelId === selection.modelId
+            && m.defaultEffort.length > 0) {
+            this.selection = {
+              provider: selection.provider, modelId: selection.modelId, effort: m.defaultEffort
+            };
+            break;
+          }
+        }
+      }
+      this.selection = this.selection.effort.length > 0 ? this.selection : selection;
     }
     this.selectedSessionTitle = s.selectedTitle;
     if (s.selectedSessionId === this.selectedSessionId) {
@@ -3182,11 +3202,10 @@ struct Index {
         : unknownFact('Node 运行时', '运行时载体接线后显示实际版本（要求 ≥ 22.17.0）'),
       probe.zstd === null
         ? unknownFact('zlib zstd 能力', '会话持久化依赖 node:zlib 的 zstd，接线后自动探测')
-        : fact('zlib zstd 能力', probe.zstd ? '可用' : '不可用', probe.zstd ? 'ok' : 'warn',
-          probe.zstd ? '' : '缺少 zstd 会让会话持久化不可用'),
+        : fact('zlib zstd 能力', probe.zstd ? '可用' : '不可用', probe.zstd ? 'ok' : 'warn',          probe.zstd ? '' : '缺少 zstd 会让会话持久化不可用'),
       probe.jitless === null
         ? unknownFact('JIT 状态', '本项目统一按 jitless 运行，不申请任何特殊权限')
-        : fact('JIT 状态', probe.jitless ? 'jitless（无 JIT）' : '启用了 JIT', probe.jitless ? 'ok' : 'warn',
+        : fact('JIT 状态', probe.jitless ? '未启用' : '已启用', probe.jitless ? 'ok' : 'warn',
           probe.jitless ? '' : '本项目要求 jitless：不申请特殊权限以保证顺利上架（D6 §4.4）'),
       this.nativeFact(probe),
       probe.listenAddress.length > 0

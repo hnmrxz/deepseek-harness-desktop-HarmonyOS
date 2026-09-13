@@ -163,7 +163,7 @@ export class DshHost {
       // 进程级事实：页面每次刷新都会 new 一个 DshHost，用 handle 判断就会在
       // "端口已经在监听"的情况下报"未启动"（端侧实测症状：端口通了，页面说没有启动核心）。
       phase = HostState.READY;
-      note = `核心已在运行（${this.port.label()}）`;
+      note = '核心已在运行';
     } else if (this.lastFailureNote.length > 0) {
       phase = HostState.FAILED;
       note = this.lastFailureNote;
@@ -366,7 +366,7 @@ export class DshHost {
     if (this.port.isRunning()) {
       this.transient = null;
       this.lastFailureNote = '';
-      return { ok: true, note: `核心已在运行（${this.port.label()}）`, handle: this.handle };
+      return { ok: true, note: '核心已在运行', handle: this.handle };
     }
     const probe: RuntimeProbe = await this.port.probe();
     if (!probe.available) {
