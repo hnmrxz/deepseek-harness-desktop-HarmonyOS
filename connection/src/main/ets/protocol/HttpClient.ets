@@ -73,6 +73,18 @@ export class HttpClient {
     if (cookie !== undefined) {
       header['cookie'] = cookie;
     }
+    /*
+     * 【为什么要显式给 content-length（E74）】dsh 的 `/api` 处理器是 **buffered** 模式
+     * （`dsh-client-connection/lib/index.js:637`），而它内部只有两条 400 路径、**都会带非空响应体**
+     * （`"body is not JSON"` 或 JSON 错误）。可我们实测到的 400 **响应体为空、dsh 无任何日志**
+     * ⇒ 请求**根本没走到那个处理器**，是在 HTTP 层就被拒的。最可能的原因就是请求体的大小没被声明
+     * （ArkTS 的 `extraData` 可能以 chunked 发送），libwebsockets 于是在处理前回空体 400。
+     * 这里对**纯 ASCII** 体显式声明字节数（我们的 JSON 封装是 ASCII；含非 ASCII 时先不声明，
+     * 避免写错长度反而更糟——那种情况需要按 UTF-8 计算字节数）。
+     */
+    if (body !== undefined && /^[\x00-\x7F]*$/.test(body)) {
+      header['content-length'] = String(body.length);
+    }
 
     let outcome: HttpOutcome;
     /*
