@@ -1614,15 +1614,24 @@ export class SessionHub {
     const inner: Record<string, Object> = {};
     // E98：注册过的工作区是**权威**（cwd 一并带上，便于 Host 校验/回退）。
     // 真机上只传 cwd 而不注册工作区时，打开会话会抛 `…reading 'kind'`（轨迹流失败）。
+    /*
+     * 【E101】注册过的工作区是**权威**，而且二者**只能给一个**：真机实测 Host 会直接拒绝
+     *   `gateway/bad-request session.create accepts workspaceId or cwd, not both`
+     * 所以有 `workspaceId` 就只送它；没有才退回 `cwd`（都没设则不送，交回 Host 默认行为）。
+     */
     if (this.workspaceId.length > 0) {
       inner['workspaceId'] = this.workspaceId;
-    }
-    if (this.defaultWorkspace.length > 0) {
+    } else if (this.defaultWorkspace.length > 0) {
       inner['cwd'] = this.defaultWorkspace;
     }
-    const body: Record<string, Object> = {};
-    body['request'] = inner as Object;
-    const args: Object | undefined = argsFor(SESSION_CREATE_ENDPOINT, body as Object);
+    /*
+     * 【不要把 body 手工包成 `{request: …}`（E101，真机根因）】`dshcompat.buildArgs` 对
+     * `ArgsShape.REQUEST` 的端点**自己会包一层**（`{'request': body}`，见 CompatIndex.buildArgs）。
+     * 这里再包一次 ⇒ 线上是 `request.request` ⇒ Host 看不到 `workspaceId`/`cwd`/`prompt` 等字段，
+     * 一切"参数没生效"的现象都由此而来（真机取证：会话 `cwd` 始终是 `/`，而请求体里确实带了路径）。
+     * 所以这里传**内层请求对象**本身。
+     */
+    const args: Object | undefined = argsFor(SESSION_CREATE_ENDPOINT, inner as Object);
     if (args === undefined) {
       this.lastError = '兼容面缺少会话创建端点的参数契约（上表未生成？）';
       this.notify();
@@ -1736,9 +1745,11 @@ export class SessionHub {
     // assistantStream:true 让 Host 额外推送「正在进行中的助手输出」，
     // 这样流式光标与逐字输出才有数据（否则只能等整条消息落盘）。
     request['assistantStream'] = true;
-    const body: Record<string, Object> = {};
-    body['request'] = request as Object;
-    const args: Object | undefined = argsFor(SESSION_FOLLOW_ENDPOINT, body as Object);
+    // 【E101】不要再手工包 `request`：`argsFor` 会按端点形态自己包（`session/follow` 是 REQUEST）。
+    // 双重包裹会让 Host 收到 `request.request`，服务端随后在折叠快照时抛
+    // `gateway/internal Cannot read properties of undefined (reading 'kind')`
+    // —— 这正是用户看到的「轨迹流失败」。
+    const args: Object | undefined = argsFor(SESSION_FOLLOW_ENDPOINT, request as Object);
     if (args === undefined) {
       this.lastError = '兼容面缺少轨迹流端点的参数契约';
       this.notify();
@@ -2628,9 +2639,8 @@ export class SessionHub {
     }
     const request: Record<string, Object> = {};
     request['sessionId'] = sessionId;
-    const body: Record<string, Object> = {};
-    body['request'] = request as Object;
-    const args: Object | undefined = argsFor(SESSION_CANCEL_ENDPOINT, body as Object);
+    // 【E101】同前：不要手工包 `request`（`argsFor` 按端点形态自己包）
+    const args: Object | undefined = argsFor(SESSION_CANCEL_ENDPOINT, request as Object);
     if (args === undefined) {
       return false;
     }

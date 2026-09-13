@@ -408,7 +408,20 @@ try {
   }
 
   if (sessionId.length === 0) {
-    const created = await rpc('session/create', { request: {} }, cookie);
+    /*
+     * `--with-workspace`：像**应用现在这样**先注册工作区、再带 `workspaceId` 建会话。
+     * 用途：复现设备上的 `session/follow … reading 'kind'`（本地不带 workspaceId 时不触发），
+     * 从而能在开发机上快速二分定位，而不是在设备上盲试。
+     */
+    let workspaceId = '';
+    if (args.includes('--with-workspace')) {
+      const dir = arg('--dir', join(ROOT, 'dist', 'localtest'));
+      const ws = await rpc('workspace/create', { request: { path: dir } }, cookie);
+      workspaceId = ws.parsed?.result?.value?.workspace?.workspaceId ?? '';
+      console.log(`workspace ${workspaceId.length > 0 ? workspaceId : '(注册失败)'} ${dir}`);
+    }
+    const createRequest = workspaceId.length > 0 ? { workspaceId } : {};
+    const created = await rpc('session/create', { request: createRequest }, cookie);
     sessionId = created.parsed?.result?.value?.sessionId
       ?? created.parsed?.value?.sessionId;
     if (typeof sessionId !== 'string' || sessionId.length === 0) {

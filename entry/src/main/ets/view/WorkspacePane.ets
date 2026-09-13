@@ -50,6 +50,9 @@ export struct WorkspacePane {
 
   onSelectWorkspace: (id: string) => void = () => {
   };
+  /** 打开"选择文件夹"（在设备上挑一个可读写目录作为工作区；E100） */
+  onPickFolder: () => void = () => {
+  };
   onToggleDirectory: (path: string) => void = () => {
   };
   onOpenFile: (node: FileNode) => void = () => {
@@ -161,9 +164,15 @@ export struct WorkspacePane {
           .fontSize(Fs.SECONDARY)
           .fontWeight(FontWeight.Medium)
           .layoutWeight(1)
-        Text('添加')
+        Text('选择文件夹')
           .fontSize(Fs.CAPTION)
           .fontColor($r('sys.color.brand'))
+          // 【为什么是"选择文件夹"而不是"添加"（E100）】原来这里是个**点了没反应的**「添加」——
+          // 典型的假入口。端侧真正需要的能力是"在设备上挑一个可读写目录作为工作区"，
+          // 挑中后注册给 Host（`workspace/create`），会话与文件树都落在它上面。
+          .onClick(() => {
+            this.onPickFolder();
+          })
       }
       .width('100%')
       .height(Sz.TOUCH_MIN)
