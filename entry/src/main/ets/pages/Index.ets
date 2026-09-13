@@ -2768,6 +2768,11 @@ struct Index {
           this.exportDiagnostics();
         },
         onClearCache: () => {
+          // E130：此前是空实现（点了没反应）。清理的是**我们自己缓存的东西**：
+          // 旁路日志 / 未识别事件清单 / 缓存的会话与轨迹。
+          // **不碰 Host 上的任何数据**——诊断页不该有"顺手删远端东西"的按钮。
+          SessionHub.shared().clearLocalCache();
+          hilog.info(DOMAIN, TAG, 'HDSH-DIAG 已清理本机缓存');
         },
         onOpenPoc: () => {
           this.openPoc();

@@ -1649,6 +1649,25 @@ export class SessionHub {
   }
 
   /**
+   * 清理**本机缓存**（E130：诊断页「清理离线缓存」此前是空实现）。
+   *
+   * 【清什么、不清什么】只清我们自己攒下的东西：旁路日志、未识别事件清单、
+   * 缓存的会话/轨迹/待决视图。**不碰 Host 侧任何数据**——诊断页不该有
+   * "顺手删远端东西"的按钮；那类动作必须由用户在明确的语境里发起。
+   * 清完立即 notify，界面读到的就是"清空后的真实状态"。
+   */
+  clearLocalCache(): void {
+    this.traceLines = [];
+    this.unknownTypes = [];
+    this.trajectoryList = [];
+    this.pendingList = [];
+    this.fileNodes = [];
+    this.filePreview = undefined;
+    this.record('已清理本机缓存');
+    this.notify();
+  }
+
+  /**
    * 设置建会话用的默认工作区（E98）。空串 = 交回 Host 的默认行为。
    */
   setDefaultWorkspace(dir: string): void {
