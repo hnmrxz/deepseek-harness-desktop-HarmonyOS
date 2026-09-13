@@ -3758,6 +3758,25 @@ struct Index {
     if (n.code === 'workspace.delete.failed') {
       return `${this.localized($r('app.string.note_workspace_delete_failed'))}${n.params.reason}`;
     }
+    // E170：预设的复制/删除回执（宿主原因原样透传；随附预设的只读由宿主强制）
+    if (n.code === 'preset.copied') {
+      return `已复制为预设「${n.params.id}」。会话创建时固定用哪一份，改默认只影响此后新建的会话。`;
+    }
+    if (n.code === 'preset.deleted') {
+      return `已删除预设「${n.params.id}」；已据它组装的会话继续运行。`;
+    }
+    if (n.code === 'preset.copy.failed') {
+      return `复制预设失败：${n.params.reason}`;
+    }
+    if (n.code === 'preset.delete.failed') {
+      return `删除预设失败：${n.params.reason}`;
+    }
+    if (n.code === 'preset.copy.missing') {
+      return '复制预设需要"来源 + 新标识 + 名称"三项，缺一不可（宿主 schema 如此）。';
+    }
+    if (n.code === 'preset.delete.missing') {
+      return '未指定要删除的预设。';
+    }
     if (n.code === 'archive.failed') {
       return `${this.localized($r('app.string.note_archive_failed'))}${n.params.reason}`;
     }
@@ -4218,6 +4237,29 @@ struct Index {
         // E161：预设名单（数据层已按真机实测契约接线）
         presets: this.presets,
         presetNote: this.presetNote,
+        /*
+         * E170：预设的**复制**（官方唯一创建入口）与**删除**（仅自定义项）。
+         * 【为什么自动命名而不弹输入框】官方用复制对话框让我们填"标识 + 名称"；
+         * 端侧先做**一步完成**的版本（`<id>-copy` / `<名称> 副本`）——它是一个完整可用的动作，
+         * 而不是半成品表单；需要改名时再走查看/编辑那条线（`read` 已就绪）。
+         */
+        onPresetCopy: (from: string, name: string) => {
+          const id: string = `${from}-copy`;
+          SessionHub.shared().copyAgentPreset(from, id, `${name.length > 0 ? name : from} 副本`)
+            .then((n: ActionNotice) => {
+              this.settingWriteNote = this.noticeText(n);
+            }).catch((e: Object) => {
+              this.settingWriteNote = `复制预设失败：${(e as Error).message}`;
+            });
+        },
+        onPresetDelete: (id: string) => {
+          SessionHub.shared().deleteAgentPreset(id)
+            .then((n: ActionNotice) => {
+              this.settingWriteNote = this.noticeText(n);
+            }).catch((e: Object) => {
+              this.settingWriteNote = `删除预设失败：${(e as Error).message}`;
+            });
+        },
         credentials: this.credentials,
         plugins: this.plugins,
         hosts: this.hosts,

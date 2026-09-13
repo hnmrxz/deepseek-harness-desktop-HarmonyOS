@@ -429,6 +429,43 @@ export struct SettingsPane {
                     .fontSize(Fs.CAPTION)
                     .fontColor($r('sys.color.font_tertiary'))
                     .width('100%')
+                  /*
+                   * E170：卡片动作。
+                   * · 「复制」**每张都有**——官方只读预设也能被复制来自定义（这就是创建的唯一入口）；
+                   * · 「删除」**只有自定义预设才有**（`trust !== 'system'`）——随附预设删不掉，
+                   *   连入口都不该给（宿主也会拒绝，见 deletePreset 的实测返回）。
+                   * · 删除走**两步确认**：先变成「确认删除 / 取消」。
+                   */
+                  Row({ space: Sp.M }) {
+                    Text('复制')
+                      .fontSize(Fs.CAPTION)
+                      .fontColor($r('sys.color.brand'))
+                      .onClick(() => {
+                        this.onPresetCopy(p.id, p.name);
+                      })
+                    if (!presetIsBundled(p)) {
+                      Text(this.confirmingPresetId === p.id ? '确认删除' : '删除')
+                        .fontSize(Fs.CAPTION)
+                        .fontColor($r('sys.color.alert'))
+                        .onClick(() => {
+                          if (this.confirmingPresetId === p.id) {
+                            this.confirmingPresetId = '';
+                            this.onPresetDelete(p.id);
+                          } else {
+                            this.confirmingPresetId = p.id;
+                          }
+                        })
+                      if (this.confirmingPresetId === p.id) {
+                        Text('取消')
+                          .fontSize(Fs.CAPTION)
+                          .fontColor($r('sys.color.font_tertiary'))
+                          .onClick(() => {
+                            this.confirmingPresetId = '';
+                          })
+                      }
+                    }
+                  }
+                  .width('100%')
                 }
                 .width('100%')
                 .padding(Sp.M)
@@ -866,6 +903,16 @@ export struct SettingsPane {
    */
   @Prop presets: AgentPresetRow[] = [];
   @Prop presetNote: string = '';
+  /**
+   * 预设动作（E170）。**复制**是官方唯一的创建入口；**删除**只对自定义预设开放，
+   * 且"随附预设不可写"由**宿主**强制（我们只是把它的原话转达给用户）。
+   */
+  onPresetCopy: (from: string, name: string) => void = () => {
+  };
+  onPresetDelete: (id: string) => void = () => {
+  };
+  /** 已按过一次「删除」、等待确认的预设 id（两步确认；状态留在组件内，不牵动宿主页） */
+  @State confirmingPresetId: string = '';
 
   /** 提供方 → 适配器默认凭据引用（官方派生规则 `<ROUTE>_API_KEY`，见 E106） */
   private providerKeyRefOf(provider: string): string {
