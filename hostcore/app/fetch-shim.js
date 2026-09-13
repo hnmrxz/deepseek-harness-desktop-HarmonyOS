@@ -244,6 +244,25 @@ class HdshResponse {
   async json() { return JSON.parse(await this.text()); }
   async blob() { return new HdshBlob([await this._readAll()], { type: this.headers.get('content-type') || '' }); }
   clone() { throw new Error('HdshResponse.clone() 未实现（jitless fetch 垫片）'); }
+  /*
+   * 【静态构造器（E78）】dsh 的端点处理器用标准 Fetch 的静态方法构造响应：
+   *   `Response.json(data, init)` / 可能还有 `Response.redirect` / `Response.error`。
+   * 缺它们时的症状是 **HTTP 500 + `TypeError: Response.json is not a function`**
+   * （dsh-client-connection 的处理器把异常包成 500 "handler failure: …"）。
+   * 本机实测就是这一条——补上后 /api 才真正可用。
+   */
+  static json(data, init = {}) {
+    const headers = init.headers instanceof HdshHeaders ? init.headers : new HdshHeaders(init.headers);
+    if (!headers.has('content-type')) headers.set('content-type', 'application/json');
+    const merged = Object.assign({}, init, { headers });
+    return new HdshResponse(JSON.stringify(data), merged);
+  }
+  static redirect(url, status = 302) {
+    return new HdshResponse(null, { status: status, headers: new HdshHeaders({ location: String(url) }) });
+  }
+  static error() {
+    return new HdshResponse(null, { status: 0 });
+  }
 }
 
 // ── fetch ─────────────────────────────────────────────────────────────────
@@ -368,6 +387,20 @@ class HdshRequest {
     else if (raw instanceof ArrayBuffer) this._body = Buffer.from(raw);
     else if (ArrayBuffer.isView(raw)) this._body = Buffer.from(raw.buffer, raw.byteOffset, raw.byteLength);
     else this._body = null; // 流式 body 不支持：dsh 的 /api 走 buffered 模式，用不到
+    /*
+     * 【诊断（E77）】dsh 的 `bridge` 读请求体后应传 `body: Buffer`；若这里拿到的是空，
+     * 就说明体在到达处理器前就没了（或桥没传）。打一行到 Host 输出（本机可直接看到），
+     * 用于区分"体丢失"与"体传了但我的解析有误"。
+     */
+    if (this.method === 'POST') {
+      const kind = raw === undefined ? 'undefined' : (raw === null ? 'null'
+        : (Buffer.isBuffer(raw) ? 'Buffer' : (typeof raw === 'string' ? 'string'
+        : (raw instanceof ArrayBuffer ? 'ArrayBuffer' : (ArrayBuffer.isView(raw) ? 'ArrayBufferView'
+        : (raw !== null && typeof raw === 'object' ? `object:${raw.constructor === undefined ? '?' : raw.constructor.name}` : typeof raw))))));
+      console.error(`HDSH-REQDIAG body kind=${kind} bodyNull=${this._body === null}`
+        + ` content-length=${this.headers.get('content-length') ?? 'none'} url=${this.url}`
+        + ` preview=${this._body === null ? '(null)' : JSON.stringify(this._body.toString('utf8').substring(0, 120))}`);
+    }
   }
   async text() {
     this.bodyUsed = true;
