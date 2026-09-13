@@ -3299,7 +3299,24 @@ struct Index {
         missing.push(`${n.name}：${why}`);
       }
     }
-    return fact('原生件加载', `${loaded}/${probe.natives.length} 已加载`,
+    /*
+     * 【E121 修正：缺失件必须写进**值**，不能只放 note】
+     * 真机验收时发现：`fact()` 的第三个参数（note）在核心页这一版式里**不渲染**，
+     * 于是"2/3 已加载"照旧，缺的是谁、为什么缺，用户仍然看不到——等于没改。
+     * 与"界面不撒谎"同一条纪律：**信息要出现在真正被渲染的位置**。
+     * 值里只放名字（短），完整原因仍留在 note 里供将来有版式时使用。
+     */
+    const names: string[] = [];
+    for (let i = 0; i < probe.natives.length; i++) {
+      const n = probe.natives[i];
+      if (!n.loaded) {
+        names.push(n.name);
+      }
+    }
+    const value: string = names.length === 0
+      ? `${loaded}/${probe.natives.length} 已加载`
+      : `${loaded}/${probe.natives.length} 已加载 · 缺 ${names.join(' / ')}`;
+    return fact('原生件加载', value,
       all ? 'ok' : 'warn',
       all ? '' : `未加载：${missing.join('；')}`);
   }
