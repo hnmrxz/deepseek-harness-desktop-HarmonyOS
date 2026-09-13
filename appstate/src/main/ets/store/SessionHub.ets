@@ -148,6 +148,8 @@ import {
   commandsListPayload,
   commandsExecuteEndpoint,
   commandsExecutePayload,
+  sessionSelectModelEndpoint,
+  sessionSelectModelPayload,
   ControlFrameType,
   filePart,
   fileReferencesEndpoint,
@@ -2826,6 +2828,44 @@ export class SessionHub {
     this.record('commands/execute ok ' + name);
     return noticeWith('command.executed', 'name', name);
   }
+  /**
+   * **按会话切换模型与推理强度**（E194；官方把该控件放在会话输入区）。
+   *
+   * 【与 `setDefaultModel` 的分工】后者写 `agent-default-model`（**新会话默认用什么**，
+   * 设置页的职责）；本方法写 `session/selectModel`（**这个会话从现在起用什么**）。
+   * 官方也是这样分成两处的——此前我们只有前者，等于"已存在的会话改不了模型"。
+   *
+   * 前置与失败处理沿用 `executeCommand` 的分档：未连接 / 未选会话 / 参数不全 / 契约缺失
+   * 各自返回结构化回执；执行失败把宿主原文作为 `reason` 带回并记账（字段名若与宿主不符，
+   * 那条 `arguments-invalid` 就是唯一能告诉我们正确形状的东西）。
+   */
+  async selectSessionModel(provider: string, model: string, effort: string): Promise<ActionNotice> {
+    if (!this.unaryReady) {
+      return noticeWith('offline', 'action', 'session.selectModel');
+    }
+    const scope: string = this.selectedSessionId;
+    if (scope.length === 0) {
+      return notice('model.needs-session');
+    }
+    if (provider.length === 0 || model.length === 0) {
+      return notice('model.incomplete');
+    }
+    const payload: Object | undefined = sessionSelectModelPayload(scope, provider, model, effort);
+    if (payload === undefined) {
+      return noticeWith('contract.missing', 'endpoint', sessionSelectModelEndpoint());
+    }
+    const result: RpcResult = await this.conn.call(sessionSelectModelEndpoint(), payload);
+    if (!result.ok) {
+      const f = result.error;
+      const code: string = f === undefined ? 'unknown' : f.code;
+      const why: string = friendlyFailure(code, f === undefined ? '' : f.message);
+      this.record('session/selectModel fail ' + code + ' ' + (f === undefined ? '' : f.message));
+      return noticeWith('model.select.failed', 'reason', why);
+    }
+    this.record('session/selectModel ok ' + provider + '/' + model + ' effort=' + effort);
+    return noticeWith('model.selected', 'model', provider + '/' + model);
+  }
+
   /** 从"提供方目录"类端点取名字数组；形状不识别时返回空数组并记账（不猜） */
   private async providerNamesFrom(endpoint: string): Promise<string[]> {
     const inner: Record<string, Object> = {};
