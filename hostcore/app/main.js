@@ -140,6 +140,59 @@ try {
 }
 
 /*
+ * 【诊断（E81）】入站请求观测：把 WS 升级与普通请求的**原始事实**打出来。
+ *
+ * 【为什么分两档】`upgrade` 事件**罕见且决定性**（一次握手一行），所以永远打；
+ * 普通请求每个 RPC 都来一行，长期开着会把 hilog 冲掉——实测它曾经把真正要看的
+ * 模型报错挤出窗口。于是普通请求那档用 `HDSH_IN_LOG=1` 显式打开。
+ *
+ * 为什么要在 `node:http` 这一层做：`dsh-host-webserver` 的升级路由在**未匹配**时
+ * 只 `socket.destroy()`（日志里什么都没有），匹配到普通路由时也不打印任何东西。
+ * 于是端侧只看到「客户端报 ws 升级响应不是 101、状态码 200」这个**二手的结论**，
+ * 无法区分三种完全不同的原因：
+ *   (a) 客户端根本没发升级头（服务端按普通 GET 处理，落到 SPA 回退 → 200）；
+ *   (b) 升级头发了、路径不对（未匹配路由 → destroy，客户端看到"连接被断"）；
+ *   (c) 升级头与路径都对、只是 cookie 没带上（fence 回 401）。
+ * 只有服务端侧的原始读数能把它们分开，所以在 `createServer` 上挂自己的监听器
+ * ——不改 dsh 一行代码，也不影响任何既有行为。
+ */
+try {
+  for (const modName of ['node:http', 'node:https']) {
+    const mod = require(modName);
+    const origCreate = mod.createServer;
+    if (typeof origCreate === 'function' && origCreate.__hdshWrapped !== true) {
+      const wrapped = function (...args) {
+        const server = origCreate.apply(this, args);
+        try {
+          server.on('upgrade', (req) => {
+            const h = req.headers || {};
+            diag(`IN-UPGRADE ${req.method} ${req.url} conn=${h.connection} upgrade=${h.upgrade}` +
+              ` key=${h['sec-websocket-key'] === undefined ? 'no' : 'yes'}` +
+              ` ver=${h['sec-websocket-version']} cookie=${h.cookie === undefined ? '(none)' : h.cookie.length + 'B'}` +
+              ` origin=${h.origin}`);
+          });
+          server.on('request', (req) => {
+            if (process.env.HDSH_IN_LOG !== '1') return;
+            const h = req.headers || {};
+            diag(`IN-REQ ${req.method} ${req.url} conn=${h.connection} upgrade=${h.upgrade}` +
+              ` cookie=${h.cookie === undefined ? '(none)' : h.cookie.length + 'B'}` +
+              ` origin=${h.origin} ua=${h['user-agent']}`);
+          });
+        } catch (e) {
+          diag(`IN-LOG 挂载失败：${String(e)}`);
+        }
+        return server;
+      };
+      wrapped.__hdshWrapped = true;
+      mod.createServer = wrapped;
+    }
+  }
+  diag('入站请求诊断已安装（IN-UPGRADE / IN-REQ）');
+} catch (e) {
+  diag(`入站请求诊断安装失败：${String(e)}`);
+}
+
+/*
  * 【关键】把"沙箱里的 .node"重定向到 HAP 的 libs/ 下加载。
  *
  * 问题（D6 E39，真机实测）：运行时解包到**沙箱**里的原生库，`dlopen` 会被系统拦：
@@ -430,6 +483,35 @@ process.env.DSH_HOME = HOME_DIR;
 process.env.DSH_DISABLE_HMR = '1';
 process.env.DSH_TELEMETRY_DISABLED = '1';
 
+/*
+ * ── 临时目录与代理例外（E84）─────────────────────────────────────────────
+ *
+ * 【临时目录为什么必须钉死在沙箱内】鸿蒙下 `os.homedir()` 会指向沙箱外目录（EPERM），
+ * `os.tmpdir()` 是**同一类**探测。而 dsh 里真的有人用它：
+ *   - `dsh-spill-local`（大工具输出落盘）
+ *   - `dsh-workflow-worker-thread` / `dsh-code-runtime-worker-thread`
+ * 一旦它解析到沙箱外，这些路径的失败会以"随机某个功能不好用"的形态出现，
+ * 而不是一条清晰的启动错误。dsh 自己在 Node 侧看这三个变量，所以设在这里就够。
+ *
+ * 【NO_PROXY 为什么也要设】回环上的所有流量（HTTP RPC + WS mux）都不该经过任何代理；
+ * 开发机或设备若配了系统代理，`127.0.0.1` 被代理走会表现成"端口通了但连不上"。
+ * 这是**防御性**设置：没有代理时它没有任何作用。
+ */
+if (SANDBOX_HOME.length > 0) {
+  const tmpDir = path.join(SANDBOX_HOME, 'tmp');
+  ensureDir(tmpDir);
+  for (const key of ['TMPDIR', 'TMP', 'TEMP']) {
+    if (!process.env[key] || process.env[key].length === 0) {
+      process.env[key] = tmpDir;
+    }
+  }
+}
+for (const key of ['NO_PROXY', 'no_proxy']) {
+  if (!process.env[key] || process.env[key].length === 0) {
+    process.env[key] = '127.0.0.1,localhost,::1';
+  }
+}
+
 /**
  * 让 dsh 走"ESM proxy 目录"而不是"符号链接"来建模块回退。
  *
@@ -467,6 +549,103 @@ function ensureDir(p) {
       log('mkdir 失败 ' + p + ' : ' + e.message);
     }
   }
+}
+
+/**
+ * 清理**孤儿写锁**（`<file>.lock`）——不清理，下一次启动就会直接失败（E84）。
+ *
+ * 【问题（上游的明确设计，不是 bug）】`dsh-atomic-write` 的 `withFileLock` 用
+ * `flag:'wx'` 建一个同级 `<file>.lock`，内容就是持有者 pid，释放写在 `finally` 里。
+ * 上游注释把边界说得很清楚：
+ *
+ *     The contender never removes an existing lock because file age cannot prove
+ *     that its owner stopped; orphan recovery is an operator action.
+ *
+ * 也就是说：**锁的持有者被强杀（SIGKILL / 系统回收应用）时，锁会永久留下**，
+ * 之后每个新进程都会在 `waitMs` 之后失败，并且失败信息是
+ * `atomic-write: timed out waiting for the writer lock at …`。
+ *
+ * 【为什么端侧必须自己处理】这条在开发机上只是"手工删一下"，在端侧却是**用户级故障**：
+ * 用户划掉应用、或系统因内存压力回收应用，宿主进程被直接杀死 → 下次启动起不来，
+ * 而用户没有任何手段去删那个文件。所以这一步不是优化，是把一个必然发生的
+ * "起不来"变成"自愈"。
+ *
+ * 【判据为什么是 pid 而不是文件年龄】年龄无法区分"持有者还在慢慢写"和"持有者已死"；
+ * 而 pid 可以直接问操作系统。三条保守规则：
+ *   1. 内容读不出 pid → **不动**（可能是别的格式/正在写）；
+ *   2. pid 就是本进程 → 不动；
+ *   3. pid 仍存活（含 EPERM：进程在但不属于我们）→ 不动。
+ * 只有"pid 明确已不存在"才删。误判方向永远是"少删"，代价只是回到上游行为。
+ */
+function recoverOrphanLocks(homeDir) {
+  if (homeDir.length === 0) {
+    return;
+  }
+  const locks = [];
+  let visited = 0;
+  const walk = (dir, depth) => {
+    if (depth > 3 || locks.length >= 200 || visited >= 20000) {
+      return;
+    }
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (e) {
+      return;
+    }
+    for (const entry of entries) {
+      visited++;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        // node_modules 是唯一确定巨大的子树；其余目录都值得看一眼
+        if (entry.name === 'node_modules') {
+          continue;
+        }
+        walk(full, depth + 1);
+      } else if (entry.isFile() && entry.name.endsWith('.lock')) {
+        locks.push(full);
+      }
+    }
+  };
+  walk(homeDir, 0);
+  if (locks.length === 0) {
+    return;
+  }
+  let removed = 0;
+  let kept = 0;
+  for (const lock of locks) {
+    let ownerText = '';
+    try {
+      ownerText = fs.readFileSync(lock, 'utf8');
+    } catch (e) {
+      kept++;
+      continue;
+    }
+    const owner = Number.parseInt(ownerText.trim(), 10);
+    if (!Number.isInteger(owner) || owner <= 0 || owner === process.pid) {
+      kept++;
+      continue;
+    }
+    let alive = true;
+    try {
+      process.kill(owner, 0);
+    } catch (e) {
+      // ESRCH = 没有这个进程；EPERM = 进程存在但不属于我们（仍算存活）
+      alive = !!(e && e.code === 'EPERM');
+    }
+    if (alive) {
+      kept++;
+      continue;
+    }
+    try {
+      fs.rmSync(lock, { force: true });
+      removed++;
+      diag(`孤儿写锁已清理：${lock}（持有者 pid=${owner} 已不存在）`);
+    } catch (e) {
+      kept++;
+    }
+  }
+  diag(`写锁巡检：发现 ${locks.length} 个，清理孤儿 ${removed} 个，保留 ${kept} 个`);
 }
 
 /** 找到 dsh CLI 的 profile-boot 薄入口（re-export runProfile）。 */
@@ -620,6 +799,7 @@ async function start() {
   // 只装不卸：匹配成功后它只是把 write 原样透传，开销可以忽略；而"URL 恰好晚一拍打印"
   // 这种情况比"卸载时机"更容易出错。
   watchdogAuthUrl();
+  recoverOrphanLocks(HOME_DIR);
   const result = await profileBoot.runProfile({
     environment: appBootMod.loadLayeredEnv('dsh'),
     profile: PROFILE,

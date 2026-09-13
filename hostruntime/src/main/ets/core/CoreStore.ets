@@ -26,6 +26,14 @@ import { TREE_INFO_FILE, isSafeVersion, topDirOf } from './Naming';
 const TAG: string = 'HDSH-CoreStore';
 const DOMAIN: number = 0x0000;
 
+/**
+ * 端侧 profile 名（必须与 `DshHost.PROFILE` 一致）。
+ *
+ * 这里单独定义是为了让**解包校验**能确认"树里带着可运行的 profile"；
+ * 两处一旦漂移，`DshHost` 会在启动时找不到 profile 而报错，哨兵反而会先一步发现。
+ */
+const ON_DEVICE_PROFILE: string = 'ondevice';
+
 export interface OpResult {
   ok: boolean;
   message: string;
@@ -355,6 +363,12 @@ export class CoreStore {
         await this.dropStaging(staging);
         return fail(`容器内缺少元数据 ${TREE_INFO_FILE}`);
       }
+      // 关键件哨兵：解压"成功"不等于树是完整的（E87）
+      const sentinels: OpResult = this.verifyStagedTree(inner);
+      if (!sentinels.ok) {
+        await this.dropStaging(staging);
+        return sentinels;
+      }
     } catch (e) {
       const err: BusinessError = e as BusinessError;
       await this.dropStaging(staging);
@@ -380,6 +394,51 @@ export class CoreStore {
       return fail(`落位到 ${target} 失败：${err.code} ${err.message}`);
     }
     return ok(`已落位 ${version}`);
+  }
+
+  /**
+   * 解包后的**关键件哨兵**校验（E87）：几件"缺了宿主必然起不来"的东西。
+   *
+   * 【为什么需要它，而不是"解压成功就算成功"】
+   * `@ohos.zlib.decompressFile` 会校验每个条目的 CRC，所以"截断的 zip"通常在那一步就失败。
+   * 但"解压成功、树却不对"仍有真实可能：容器不是我们的、打包时漏了某类文件、
+   * 或磁盘空间不足时提前返回。这类失败的症状是最难查的一种——**装上了、也激活了，
+   * 直到启动时才以"某个插件加载失败"的形态出现**，而用户看到的是"核心已安装却起不来"。
+   *
+   * 【为什么只挑几件，不做全树计数】全树 2.5 万个文件的遍历正是端侧要避免的事
+   * （E45/E47 都是"同步大目录操作把 ArkUI 主线程锁死"）。哨兵只做几次 accessSync，
+   * 代价可忽略，而它拦下的正是"树不完整"这一类。
+   */
+  private verifyStagedTree(inner: string): OpResult {
+    let info: CoreTreeInfo;
+    try {
+      info = JSON.parse(fs.readTextSync(`${inner}/${TREE_INFO_FILE}`)) as CoreTreeInfo;
+    } catch (e) {
+      return fail(`树内元数据 ${TREE_INFO_FILE} 无法解析（容器不完整或不是我们的树）`);
+    }
+    if (info === null || info === undefined
+      || typeof info.coreVersion !== 'string' || info.coreVersion.length === 0) {
+      return fail(`树内元数据缺少 coreVersion`);
+    }
+    // 哨兵 1：宿主本体（profile-boot / dsh CLI 都在这个包里）
+    if (!fs.accessSync(`${inner}/node_modules/@deepseek-ai/dsh/package.json`)) {
+      return fail(`解包结果缺少宿主包 @deepseek-ai/dsh`);
+    }
+    // 哨兵 2：原生件 koffi（装错平台/漏拷时立刻暴露，而不是等模型跑第一转时才发现）
+    let koffiFound: boolean = false;
+    for (const abi of ['openharmony_arm64', 'linux_arm64']) {
+      if (fs.accessSync(`${inner}/node_modules/koffi/build/koffi/${abi}/koffi.node`)) {
+        koffiFound = true;
+      }
+    }
+    if (!koffiFound) {
+      return fail(`解包结果缺少原生件 koffi.node（abis 里一个都没有）`);
+    }
+    // 哨兵 3：端侧 profile（没有它 Host 起不到 webServer，见 D6 §5.3）
+    if (!fs.accessSync(`${inner}/profiles/${ON_DEVICE_PROFILE}/cordis.patch.yml`)) {
+      return fail(`解包结果缺少端侧 profile profiles/${ON_DEVICE_PROFILE}/cordis.patch.yml`);
+    }
+    return ok('关键件哨兵齐备');
   }
 
   private async dropStaging(staging: string): Promise<void> {

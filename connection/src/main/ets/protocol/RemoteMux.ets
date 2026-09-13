@@ -25,9 +25,14 @@
 
 import { webSocket } from '@kit.NetworkKit';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import { getString, getRecord, parseJson, stringifyJson } from './JsonValue';
 import { ProtocolSurface, FALLBACK_SURFACE } from './Surface';
 import { StreamSink } from './Types';
+
+/** hilog 域与标签（E81 诊断用） */
+const DOMAIN: number = 0x0000;
+const TAG: string = 'HDSH-Mux';
 
 /** 一条逻辑流的本地记账 */
 interface LogicalStream {
@@ -219,16 +224,35 @@ export class RemoteMux {
       header['cookie'] = cookie;
     }
     /*
-     * 【为什么要补 Origin（E66，待真机验证）】dsh 的 `/api` 前是 browser-trust fence，
-     * 而 dsh-web 的启动参数里有 `--trusted-host <authority...>`（我们的 Host 只传了
-     * `--host 127.0.0.1`）。浏览器发起的 WS 升级**一定**带 `Origin`，原生客户端默认**不带**——
-     * 实测症状正是：HTTP 侧 token→cookie 兑换成功（`HDSH-AUTH ok=true`），
-     * 而 WS 升级一律 `403`（dsh 的 lws 日志：`lws_client_ws_upgrade: got bad HTTP response '403'`）。
-     * 所以这里按"以本端 base 为 Origin"的浏览器等价钱发送；若 fence 并不看它，行为与现在一致，
-     * 属于可验证的低风险改动。
+     * 【Origin：真机读数与真相（E81）】
+     * dsh 的 `/api` 前面是 browser-trust fence：**带了 `Origin` 就必须与 `Host` 同源**，
+     * 否则 403（`isTrustedApiRequest`，`dsh-client-connection/lib/index.js`）。
+     *
+     * 端侧两侧原始读数（服务端 `IN-UPGRADE` + 客户端 `HDSH-MUX`，同一次握手）：
+     *   HDSH-MUX     connect url=ws://127.0.0.1:3120/api/remote.mux
+     *                headerKeys=cookie,origin cookieLen=224
+     *   IN-UPGRADE   GET /api/remote.mux conn=Upgrade upgrade=websocket key=yes ver=13
+     *                cookie=224B origin=http://127.0.0.1, ws://127.0.0.1:3120
+     *
+     * 两条结论，都是"看到线上值"才能得出的事实：
+     *   1. **libwebsockets 一定会自己附 `Origin`**，并且它按 URL 推导时**丢掉端口**
+     *      （`ws://127.0.0.1:3120` → `Origin: http://127.0.0.1`）。所以"原生客户端不带
+     *      Origin"这个早先的判断是错的——它一直带着，只是带错了形态。
+     *   2. `WebSocketRequestOptions.header` 里的 `origin` 是**追加**而不是替换，
+     *      于是线上成为逗号列表。fence 按整串解析 ⇒ 永远不等 ⇒ **每一次升级都 403**。
+     *      客户端把这个失败报成 `error code=200`，长期把人误导到"链路是好的"上。
+     *
+     * 修法分两侧，缺一不可：
+     *   - 宿主侧（`tools/pack-core.mjs` 的 `allowOriginList()`）：接受逗号分隔的
+     *     Origin 列表，**任一项**同源即通过（跨源项一律不认，语义不变）；
+     *   - 本处：注入的 Origin 用 **http(s) 形态**（浏览器发 WS 升级时 `Origin` 就是
+     *     http(s) 源，不是 `ws:`），让列表里至少有一项是语义正确的同源值。
+     * 回归检查：`node tools/check-origin-fence.mjs`（本地无设备，含正/反控制组）。
      */
-    if (this.baseUrl.length > 0) {
-      header['origin'] = this.baseUrl;
+    if (this.baseUrl.startsWith('wss://')) {
+      header['origin'] = `https://${this.baseUrl.substring('wss://'.length)}`;
+    } else if (this.baseUrl.startsWith('ws://')) {
+      header['origin'] = `http://${this.baseUrl.substring('ws://'.length)}`;
     }
     /**
      * 连接选项：**刻意不设客户端心跳**。
@@ -250,8 +274,21 @@ export class RemoteMux {
       header: header
     };
 
+    /*
+     * 【诊断（E81）】把**实际发出的** WS 地址与头打进 hilog。
+     *
+     * 为什么要打：端侧只报「升级响应不是 101、状态码 200」，这个二手结论无法区分
+     * 三种完全不同的原因——路径不对 / 升级头没发出去 / 升级头与路径都对但 cookie 没带上。
+     * 服务端侧同一时刻的原始读数（Host 的 IN-UPGRADE / IN-REQ）与本行按时间戳对齐即可定案。
+     * 打的是 `target`，也是下面真正用来 connect 的同一个值，避免"日志与行为不一致"。
+     */
+    const target: string = `${this.baseUrl}${this.surface.muxPath}`;
+    hilog.info(DOMAIN, TAG,
+      'HDSH-MUX connect url=%{public}s headerKeys=%{public}s cookieLen=%{public}d',
+      target, Object.keys(header).join(','), cookie === undefined ? 0 : cookie.length);
+
     try {
-      const opened: boolean = await socket.connect(`${this.baseUrl}${this.surface.muxPath}`, options);
+      const opened: boolean = await socket.connect(target, options);
       if (!opened) {
         // 【诊断（E65）】WS 升级被 fence 拒 403 时，必须能区分"cookie 是空的"与
         // "cookie 有值但没被发出去（ArkTS webSocket.connect 是否转发自定义 header）"。

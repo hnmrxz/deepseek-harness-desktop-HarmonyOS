@@ -27,6 +27,25 @@
 
 # ── 永久禁用（鸿蒙上无法直接实现）────────────────────────────────────────
 
+# ⓪ web-runtime 的三个默认值里有两个与本应用不符（E85）
+#
+# 依据（`dsh-web-app/lib/index.js`）：`openBrowser` / `printUrl` / `surfaceContext` 的
+# 默认值都是 **true**。
+#   · `surfaceContext: true` 会**注入一段系统提示**，内容是"你正在通过 DeepSeek Harness
+#     Web GUI 与用户交互……浏览器不提供隐式 DOM/路由/截图上下文"（`lib/index.js:177`）。
+#     我们的端侧页面是**原生 ArkUI**，不是 Web GUI——留着它等于对模型说了一句假话，
+#     而且它会塑造模型对"界面能力"的判断（E85 引用实现的同一处）。
+#   · `printUrl: true` **必须保留**：我们的 token 正是从这行 stdout 抓的
+#     （`hostcore/app/main.js` 的 `watchdogAuthUrl`）。关掉它等于关掉自己的凭据来源。
+#   · `openBrowser: false` 显式写死：端侧没有可打开的浏览器；虽然启动参数里已有
+#     `--no-open`，但那是**命令行**层的约定，写在 profile 里的是**部署**层的事实，
+#     两者都写，任何一侧被改动时另一侧仍然成立。
+- id: web-runtime
+  config:
+    surfaceContext: false
+    printUrl: true
+    openBrowser: false
+
 # ① PTY / 进程创建链：node-pty + spawn-helper 需要创建进程（D6 E15）
 #    证据：`dsh-subprocess-local` 与 `dsh-sandbox-local` 在真机上因
 #    `koffi.struct(...).size === undefined`（E47）先失败；即使 koffi 换成 3.x，

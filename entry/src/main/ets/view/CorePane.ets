@@ -227,7 +227,11 @@ export struct CorePane {
         .fontSize(Fs.SECONDARY)
         .fontWeight(FontWeight.Medium)
         .width('100%')
-      Text('纯 JS 插件可以在运行时安装/停用；含原生模块（.node）的插件受鸿蒙签名策略约束，只能随应用发版提供。')
+      // 【为什么不能承诺"运行时安装"（E86）】上游的插件安装通道是 `dsh plugin add`，
+      // 而它的实现就是创建进程：`dsh/lib/plugin-Ddi42qoW.js:109` → `spawnSync("pnpm", …)`。
+      // 鸿蒙不允许应用创建进程（D6 E15），所以"运行时安装/卸载插件"在端侧**永远不成立**——
+      // 无论插件是纯 JS 还是含 .node。这里如实说清，并指出真正能改插件的地方在打包侧。
+      Text('插件不能在端侧运行时安装或卸载：上游安装通道 `dsh plugin add` 的实现是创建子进程执行 pnpm，而鸿蒙不允许应用创建进程（D6 E15）。下面列出的是随核心包发版提供的插件与它们的启停状态。')
         .fontSize(Fs.CAPTION)
         .fontColor($r('sys.color.font_tertiary'))
         .width('100%')

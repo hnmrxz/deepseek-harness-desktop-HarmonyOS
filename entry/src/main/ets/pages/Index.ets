@@ -868,6 +868,11 @@ struct Index {
           // 自动重连也报告一次：地址可能没变但 token 被轮换过（Host 重启），
           // 报告让存储里始终是**最近一次真正有效的**token。
           reportConnectedHost(this.rememberedUrl, this.rememberedToken);
+          // 【连上就重读核心阶段（E83）】核心起来与"页面渲染完"是两件事，先后不定：
+          // 首启时页面往往先渲染（阶段"未安装"），核心随后才 READY。会话页的空态文案
+          // 由阶段决定，所以连上的这一刻必须把阶段刷新一次，否则空态会一直停留在
+          // 「还没有安装核心」，把用户指向一个完全错误的方向。
+          this.refreshCoreView();
         }
       });
       return;
@@ -1053,8 +1058,17 @@ struct Index {
     }
     // 核心页每次进入都重读仓库：解包/切换可能发生在别处（别的窗口、别的页面），
     // 不该让用户看到一个过期的"当前版本"
-    if (tab === NavTab.CORE) {
-      this.coreNotice = '';
+    //
+    // 【会话页为什么也必须重读（E83）】会话页的空态文案不是写死的，而是**由核心阶段决定**的
+    // （`sessionEmptyCopy(this.coreView.phase)`）。首启的真实时序是：页面先渲染（此时核心还在解包
+    // 或还没起来 → 阶段是"未安装"），**之后**核心才就绪。若不重读，用户会一直看到
+    // 「还没有安装核心 / 核心随应用内置，首次启动会自动解包」，而事实正相反。
+    // 真机实测过这一对自相矛盾的读数：核心页写着「就绪 · 已安装 1 个版本」，
+    // 会话页却写着「还没有安装核心」。空态文案是给人指路的，指错方向比不写更糟。
+    if (tab === NavTab.CORE || tab === NavTab.SESSIONS) {
+      if (tab === NavTab.CORE) {
+        this.coreNotice = '';
+      }
       this.refreshCoreView();
     }
   }

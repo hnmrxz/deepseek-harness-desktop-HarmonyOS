@@ -24,7 +24,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  closeSync, cpSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync,
+  closeSync, cpSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync,
   writeFileSync, writeSync,
 } from 'node:fs';
 import { deflateRawSync } from 'node:zlib';
@@ -344,9 +344,140 @@ function addPlatformAliases() {
   }
 }
 
+/**
+ * 让 `/api` 的 Origin 栅栏接受**逗号分隔的 Origin 列表**（E81）。
+ *
+ * ─────────────────────── 为什么必须改这一处 ───────────────────────
+ * dsh 的 `isTrustedApiRequest()` 只做一件事：带了 `Origin` 就必须与 `Host` 同源，
+ * 否则 403。它按**整串**解析，于是 `new URL(整串).host` 必须恰好等于 `hostUrl.host`。
+ *
+ * 鸿蒙的 WebSocket 客户端（netstack → libwebsockets）有两条我们控制不了的行为：
+ *   1. 它**一定会**自己附一个 `Origin`，并且是按 URL 推导时**丢掉端口**的形态
+ *      （`ws://127.0.0.1:3120` → `Origin: http://127.0.0.1`）；
+ *   2. 调用方在 `WebSocketRequestOptions.header` 里再给一个 `origin` 时，它**追加**
+ *      而不是替换，于是线上值是 `http://127.0.0.1, ws://127.0.0.1:3120`。
+ *
+ * 真机读数（E81，`IN-UPGRADE` 服务端侧原始日志）：
+ *   IN-UPGRADE GET /api/remote.mux conn=Upgrade upgrade=websocket key=yes ver=13
+ *              cookie=224B origin=http://127.0.0.1, ws://127.0.0.1:3120
+ * 这个值永远不可能等于 `127.0.0.1:3120`，所以**每一次** WS 升级都被判 403；
+ * 而 ArkTS 客户端把这个失败报成 `error code=200`（"升级响应不是 101"），
+ * 让人长期以为"链路是好的、只是握手后掉了"。
+ *
+ * ─────────────────────── 改动的语义边界 ───────────────────────
+ * 仍然是「不得跨源」：只有当**某一项**与 Host 同源时才放行，跨源项一律不认。
+ * 也就是说，这补的不是安全策略的洞，而是**多值形态**带来的误判——
+ * 浏览器（单值 Origin）行为完全不变；纯原生客户端从"必被拒"变成"可同源"。
+ *
+ * 上游若改了这段实现，这里会**报错退出**而不是静默跳过：悄悄发出一个
+ * "WS 永远连不上"的包，比打包失败难查得多。
+ */
+function allowOriginList() {
+  const target = join(
+    STAGE, 'node_modules', '@deepseek-ai', 'dsh-client-connection', 'lib', 'index.js',
+  );
+  if (!existsSync(target)) {
+    die(`Origin 栅栏补丁：找不到 ${target}`);
+  }
+  let text = readFileSync(target, 'utf8');
+  if (text.includes('HDSH_ORIGIN_LIST')) {
+    log('[pack-core]   Origin 栅栏补丁已存在（跳过）');
+    return;
+  }
+  const before = `\tconst origin = header$1(request.headers, "origin");
+\tif (origin === void 0) return true;
+\ttry {
+\t\treturn new URL(origin).host === hostUrl.host;
+\t} catch {
+\t\treturn false;
+\t}`;
+  const after = `\tconst origin = header$1(request.headers, "origin");
+\tif (origin === void 0) return true;
+\t/* HDSH_ORIGIN_LIST: 多值 Origin（鸿蒙客户端 libwebsockets 附加的无端口 Origin +
+\t * 调用方注入值）只要**任一项**同源即通过。原实现按整串解析，导致每一次端侧 WS 升级
+\t * 都被判 403。详见 tools/pack-core.mjs 的 allowOriginList()。 */
+\tfor (const rawOrigin of String(origin).split(",")) {
+\t\tconst candidate = rawOrigin.trim();
+\t\tif (candidate.length === 0) continue;
+\t\ttry {
+\t\t\tif (new URL(candidate).host === hostUrl.host) return true;
+\t\t} catch {
+\t\t\t/* 单个非法候选不足以否决整条请求，继续看下一项 */
+\t\t}
+\t}
+\treturn false;`;
+  if (!text.includes(before)) {
+    die('Origin 栅栏补丁：上游实现已变化（未找到待替换片段），拒绝静默跳过');
+  }
+  text = text.replace(before, after);
+  writeFileSync(target, text, 'utf8');
+  log('[pack-core]   Origin 栅栏补丁：已允许逗号分隔的 Origin 列表');
+}
+
+/**
+ * 用**最小 sharp stub**替换真 sharp（E79），并把当初的手工操作固化为可复现的构建步骤。
+ *
+ * 【为什么必须有这一步】`dsh-attachment-local` 只需要 `import sharp` **加载成功**
+ * （真正的图像调用只在图片路径触发）⇒ stub 让 attachments → fileUploads →
+ * sessionController 整条服务链成立，会话列表与对话 UI 才可用。
+ * 代价（明确的、写进 UI 的诚实降级）：图片附件在**使用时**报错，直到 E64 把
+ * libvips 及其 46 个依赖库搬进 HAP libs 并处理带版本号的 SONAME 之后才恢复。
+ *
+ * 【为什么真件要留成 `sharp.real`】将来恢复时直接换回名字即可，不用重新 npm install。
+ * 【幂等】以 package.json 里的版本号 `0.0.0-hdsh-stub` 为标记；已打过就跳过。
+ */
+function stubSharp() {
+  const nm = join(STAGE, 'node_modules');
+  const sharpDir = join(nm, 'sharp');
+  const realDir = join(nm, 'sharp.real');
+  if (!existsSync(sharpDir)) {
+    log('[pack-core]   sharp 不在树里（跳过 stub）');
+    return;
+  }
+  const pkgFile = join(sharpDir, 'package.json');
+  if (existsSync(pkgFile)) {
+    try {
+      const pkg = JSON.parse(readFileSync(pkgFile, 'utf8'));
+      if (pkg.version === '0.0.0-hdsh-stub') {
+        log('[pack-core]   sharp stub 已存在（跳过）');
+        return;
+      }
+    } catch {
+      die('sharp stub：现有 sharp/package.json 不可解析，拒绝盲目覆盖');
+    }
+  }
+  if (existsSync(realDir)) {
+    rmSync(realDir, { recursive: true, force: true });
+  }
+  renameSync(sharpDir, realDir);
+  mkdirSync(sharpDir, { recursive: true });
+  writeFileSync(
+    pkgFile,
+    JSON.stringify({ name: 'sharp', version: '0.0.0-hdsh-stub', main: 'index.js', private: true }) + '\n',
+    'utf8',
+  );
+  writeFileSync(
+    join(sharpDir, 'index.js'),
+    [
+      '/* HDSH 端侧 sharp stub（E79）：只保证 import 成功，图像处理路径在使用时明确报错。',
+      ' * 目的：让 dsh-attachment-local 能在鸿蒙上挂载 ⇒ attachments/fileUploads/sessionController',
+      ' * 整条服务链成立 ⇒ 会话列表与对话 UI 可用。',
+      ' * 图片附件能力需按 E64 把 libvips 全套搬进 HAP libs 后再恢复。',
+      ' * 本文件由 tools/pack-core.mjs 的 stubSharp() 生成，不要手改。 */',
+      'function sharpStub() {',
+      "  throw new Error('sharp stub（HDSH 端侧）：图片处理暂不可用——需按 D6 E64 恢复 libvips 后再启用');",
+      '}',
+      'module.exports = sharpStub;',
+      'module.exports.default = sharpStub;',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  log('[pack-core]   sharp stub：真件已移至 node_modules/sharp.real');
+}
+
 function embedTreeInfo() {
   // 插件与原生模块清单：**在构建期算一次**，写进树里给端侧读。
-  //
   // 【为什么不在端侧现算】端侧要算同一件事，得在 27250 个文件 / 4000 个目录上递归
   // （实测规模），那是一秒级的目录遍历 + 一堆错误分支，纯风险。而这件事的答案在**打包这一刻
   // 就已经确定**，且能在一台能跑 Node 的机器上核对。端侧只需读一个小 JSON。
@@ -643,6 +774,8 @@ materialize();
 prune();
 const sig = verify();
 addPlatformAliases();
+allowOriginList();
+stubSharp();
 addOnDevicePreset();
 embedTreeInfo();
 verifyTreeInfoContract();
