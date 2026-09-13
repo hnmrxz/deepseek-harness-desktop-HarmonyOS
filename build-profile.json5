@@ -1,6 +1,20 @@
 {
   "app": {
-    "signingConfigs": [],
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "C:\\Users\\hnzy1\\.ohos\\config\\default_deepseek-harness-desktop-HarmonyOS_6uVUHWv-K-Blv3m6azkrVABNDYReiPEm9QILaGlqUJA=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001B6C9B83ADE55692108D4EDFF4F4D34BB9E0B836B4F00F5AF0237F85F12E639D24494ECF8DF1281E",
+          "profile": "C:\\Users\\hnzy1\\.ohos\\config\\default_deepseek-harness-desktop-HarmonyOS_6uVUHWv-K-Blv3m6azkrVABNDYReiPEm9QILaGlqUJA=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "C:\\Users\\hnzy1\\.ohos\\config\\default_deepseek-harness-desktop-HarmonyOS_6uVUHWv-K-Blv3m6azkrVABNDYReiPEm9QILaGlqUJA=.p12",
+          "storePassword": "0000001B34C7A1BA9449C34F5137A18D556999D0F9A68BAA06A52433C797EC83DD037CA3C0A7B6527A9F50"
+        }
+      }
+    ],
     "products": [
       {
         "name": "default",

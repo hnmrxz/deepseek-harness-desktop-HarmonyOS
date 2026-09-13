@@ -46,7 +46,7 @@ python3 - "$HAP" "$OUT" <<'PY'
 import sys, zipfile, os
 hap, out = sys.argv[1], sys.argv[2]
 z = zipfile.ZipFile(hap)
-names = [n for n in z.namelist() if n.startswith('libs/') and n.endswith('.so')]
+names = [n for n in z.namelist() if n.startswith('libs/') and (n.endswith('.so') or '.so.' in n)]
 print("--- libs/*.so in HAP ---")
 for n in sorted(names):
     print("   %-52s %10d" % (n, z.getinfo(n).file_size))
