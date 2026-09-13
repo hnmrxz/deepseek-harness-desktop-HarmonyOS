@@ -722,6 +722,81 @@ struct Index {
   }
 
   /**
+   * 系统返回键（E94）：**有东西可退就先消费，真的到根了才交给系统**。
+   *
+   * 【为什么要自己处理】本页的导航是**自绘状态机**（`tab` / `stackPage` / `wsDrill` /
+   * 各种浮层），不经过 router 栈 ⇒ 系统返回事件没有任何人消费，默认行为是
+   * **直接把应用退回桌面**。用户实测报告："许多页面用系统返回会直接退回桌面"。
+   *
+   * 【顺序 = 从最上面那层往回退】返回键的语义是"关掉当前这一层"，所以：
+   *   浮层/编辑态 → 二级页 → 会话详情 → 工作区下钻 → 文件预览 → 非首页签 → 交给系统。
+   * 只有**确实停在首页、且没有任何浮层**时才返回 false——那时系统把应用切到后台
+   * 才是正确行为，不该被应用吞掉（吞掉会变成"按返回没反应"）。
+   *
+   * 每一步都写 hilog：真机上核对"到底哪一层没退掉"时，这行日志就是答案。
+   */
+  onBackPress(): boolean {
+    // ① 浮层/编辑态最先关：它们在视觉上盖在页面上
+    if (this.credentialRef.length > 0 || this.credentialDraft.length > 0) {
+      this.credentialRef = '';
+      this.credentialDraft = '';
+      this.credentialNote = '';
+      hilog.info(DOMAIN, TAG, 'HDSH-BACK 关闭凭据编辑浮层');
+      return true;
+    }
+    if (this.textSettingDraft.length > 0 || this.structSettingDraft.length > 0) {
+      this.textSettingDraft = '';
+      this.structSettingDraft = '';
+      hilog.info(DOMAIN, TAG, 'HDSH-BACK 关闭设置编辑浮层');
+      return true;
+    }
+    if (this.searchOpen) {
+      this.searchOpen = false;
+      hilog.info(DOMAIN, TAG, 'HDSH-BACK 关闭搜索');
+      return true;
+    }
+    if (this.choosing !== undefined) {
+      this.choosing = undefined;
+      hilog.info(DOMAIN, TAG, 'HDSH-BACK 关闭选择浮层');
+      return true;
+    }
+    // ② 二级页（会话 / 详情 / 诊断 / 添加 Host）→ 回主列表
+    if (this.stackPage !== StackPage.MAIN) {
+      const from: string = this.stackPage;
+      this.stackPage = StackPage.MAIN;
+      hilog.info(DOMAIN, TAG, 'HDSH-BACK 二级页回主列表：%{public}s', from);
+      return true;
+    }
+    // ③ 会话详情（说明/轨迹/诊断抽屉）
+    if (this.detailOpen) {
+      this.detailOpen = false;
+      hilog.info(DOMAIN, TAG, 'HDSH-BACK 关闭会话详情');
+      return true;
+    }
+    // ④ 工作区目录下钻：退一层
+    if (this.tab === NavTab.WORKSPACES && this.wsDrill > 0) {
+      this.wsDrill -= 1;
+      hilog.info(DOMAIN, TAG, 'HDSH-BACK 工作区上退一层，drill=%{public}d', this.wsDrill);
+      return true;
+    }
+    // ⑤ 文件预览
+    if (this.preview !== undefined) {
+      this.preview = undefined;
+      hilog.info(DOMAIN, TAG, 'HDSH-BACK 关闭文件预览');
+      return true;
+    }
+    // ⑥ 不在首页签 → 回会话（首页）
+    if (this.tab !== NavTab.SESSIONS) {
+      this.selectTab(NavTab.SESSIONS);
+      hilog.info(DOMAIN, TAG, 'HDSH-BACK 回首页签（会话）');
+      return true;
+    }
+    // ⑦ 已经在首页、没有浮层：交给系统（最小化应用），而不是假装消费掉
+    hilog.info(DOMAIN, TAG, 'HDSH-BACK 已在根层，交给系统');
+    return false;
+  }
+
+  /**
    * 消费通知点击携带的路由。
    *
    * 【为什么消费后要清掉它】不清掉的话，用户此后每次把应用切到前台
@@ -1502,6 +1577,9 @@ struct Index {
           .type(InputType.Password)
           .enableAutoFill(false)
           .width('100%')
+          // 【显式高度（E95）】不给高度时，输入框会跟着父级约束变化；真机上出现过
+          // "凭据值铺满整屏"的观感。44vp 是单行输入的标准高度，明确写出来最省事。
+          .height(44)
           .onChange((v: string) => {
             this.credentialDraft = v;
           })
@@ -1543,6 +1621,9 @@ struct Index {
         }
       }
       .width('86%')
+      // 浮层自身也不该铺满：最多占屏高 80%（凭据浮层通常很短；这条是防止
+      // "某个字段把面板撑开"这类观感再次发生）
+      .constraintSize({ maxHeight: '80%' })
       .padding(Sp.L)
       .borderRadius(Radius.L)
       .backgroundColor($r('sys.color.background_secondary'))

@@ -97,6 +97,18 @@ function credentialRowKey(c: CredentialItem): string {
   return `${c.ref}|${c.configured}|${c.writable}|${c.interactive}|${c.source}`;
 }
 
+/**
+ * 模型目录按提供方分组后的一组（E96）。
+ *
+ * 【为什么要有这个类型】官方 Models 页以"提供方"为单位组织（密钥、端点、模型清单都挂它上面）；
+ * 拉平成一个模型列表就看不出"这个模型要用哪把密钥"。
+ */
+export interface ModelProviderGroup {
+  provider: string;
+  providerName: string;
+  models: ModelOption[];
+}
+
 @Component
 export struct SettingsPane {
   @Prop groups: SettingGroup[] = [];
@@ -377,8 +389,66 @@ export struct SettingsPane {
 
   @Builder
   modelTab() {
+    /*
+     * 【为什么模型页要带"凭据"区（E96）】官方 Models 页把 **API 密钥**放在编辑卡片的
+     * 首要位置（见 `dsh-client-ui-settings-models` 的说明：密钥是每个提供方第一件要配的事，
+     * 且只写不读）。而我们的模型页此前只有"选哪个模型"，用户看到"当前模型"却不知道
+     * "这个模型现在根本调不通，因为没配密钥"——能力与前置条件分居两页，是最容易让人卡住的地方。
+     * 所以这里把可写的凭据引用直接列在模型页顶部，配置动作与「凭据」页共用同一条通道。
+     */
     Column({ space: Sp.XS }) {
-      Text('当前模型')
+      Text('模型凭据')
+        .fontSize(Fs.CAPTION)
+        .fontColor($r('sys.color.font_tertiary'))
+        .width('100%')
+      if (this.credentials.length === 0) {
+        Text('Host 没有报告任何凭据引用')
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.font_tertiary'))
+          .width('100%')
+          .padding(Sp.M)
+          .borderRadius(Radius.M)
+          .backgroundColor($r('sys.color.background_secondary'))
+      } else {
+        ForEach(this.credentials, (c: CredentialItem) => {
+          Row({ space: Sp.M }) {
+            SymbolGlyph(c.configured ? $r('sys.symbol.checkmark_circle') : $r('sys.symbol.exclamationmark_triangle'))
+              .fontSize(16)
+              .fontColor([c.configured ? $r('sys.color.confirm') : $r('sys.color.warning')])
+            Column({ space: 2 }) {
+              Text(c.ref)
+                .fontSize(Fs.SECONDARY)
+                .width('100%')
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+              Text(this.credentialHint(c))
+                .fontSize(Fs.CAPTION)
+                .fontColor($r('sys.color.font_tertiary'))
+                .width('100%')
+                .maxLines(2)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+            }
+            .layoutWeight(1)
+            Text(credentialActionLabel(c))
+              .fontSize(Fs.CAPTION)
+              .fontColor(c.writable ? $r('sys.color.brand') : $r('sys.color.font_tertiary'))
+              .onClick(() => {
+                if (c.writable && !c.interactive) {
+                  this.onAuthorizeCredential(c.ref);
+                }
+              })
+          }
+          .width('100%')
+          .padding(Sp.M)
+          .borderRadius(Radius.M)
+          .backgroundColor($r('sys.color.background_secondary'))
+        }, (c: CredentialItem) => credentialRowKey(c))
+      }
+    }
+    .width('100%')
+
+    Column({ space: Sp.XS }) {
+      Text('当前模型（Host 的默认选择）')
         .fontSize(Fs.CAPTION)
         .fontColor($r('sys.color.font_tertiary'))
         .width('100%')
@@ -395,22 +465,24 @@ export struct SettingsPane {
             .width('100%')
         }
         .layoutWeight(1)
-        Text('切换')
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.brand'))
-          .onClick(() => {
-            this.onPickModel();
-          })
       }
       .width('100%')
       .padding(Sp.M)
       .borderRadius(Radius.M)
       .backgroundColor($r('sys.color.background_secondary'))
+      // 【为什么这里没有"切换"按钮（E96）】官方把"选哪个模型"放在**会话输入区**
+      // （`dsh-client-ui-model-selection`），写的是 `session/selectModel`——**按会话生效**；
+      // 而设置页管的是提供方与密钥。本机核心的默认选择来自 Host 配置，客户端没有"改全局默认"
+      // 的写通道。所以这里**只展示**，并在下面说清去哪改，而不是留一个点了没反应的按钮。
+      Text('切换模型在「会话」页的输入区进行（本机核心按会话记录模型选择）。这里显示的是 Host 为未配置会话准备的默认值。')
+        .fontSize(Fs.CAPTION)
+        .fontColor($r('sys.color.font_tertiary'))
+        .width('100%')
     }
     .width('100%')
 
     Column({ space: Sp.XS }) {
-      Text('推理强度')
+      Text('推理强度（当前默认）')
         .fontSize(Fs.CAPTION)
         .fontColor($r('sys.color.font_tertiary'))
         .width('100%')
@@ -425,6 +497,7 @@ export struct SettingsPane {
       } else {
         Row({ space: Sp.S }) {
           ForEach(this.currentEfforts(), (effort: string) => {
+            // 只展示可选档位与当前取值（同样按会话生效，见上）
             Text(effort)
               .fontSize(Fs.SECONDARY)
               .fontColor(this.selection.effort === effort ? Color.White : $r('sys.color.font_secondary'))
@@ -433,9 +506,6 @@ export struct SettingsPane {
               .backgroundColor(this.selection.effort === effort
                 ? $r('sys.color.brand')
                 : $r('sys.color.background_secondary'))
-              .onClick(() => {
-                this.onPickEffort(effort);
-              })
           }, (effort: string) => effort)
         }
         .width('100%')
@@ -448,29 +518,86 @@ export struct SettingsPane {
         .fontSize(Fs.CAPTION)
         .fontColor($r('sys.color.font_tertiary'))
         .width('100%')
-      ForEach(this.models, (m: ModelOption) => {
-        Column({ space: 2 }) {
+      /*
+       * 【为什么按提供方分组（E96）】官方 Models 页是**以提供方为单位**的：一行一个提供方，
+       * 展开才是它的模型与设置。理由很实在——模型总是"某个提供方的模型"，密钥、端点、
+       * 计费口径都挂在提供方上；拉平成一个列表会让人看不出"这个模型要用哪把密钥"。
+       */
+      ForEach(this.providerGroups(), (g: ModelProviderGroup) => {
+        Column({ space: Sp.XS }) {
           Row({ space: Sp.S }) {
-            Text(m.modelName.length > 0 ? m.modelName : m.modelId)
+            Text(g.providerName.length > 0 ? g.providerName : g.provider)
               .fontSize(Fs.SECONDARY)
+              .fontWeight(FontWeight.Medium)
               .layoutWeight(1)
-            Text(m.providerName.length > 0 ? m.providerName : m.provider)
+            Text(`${g.models.length} 个模型`)
               .fontSize(Fs.CAPTION)
               .fontColor($r('sys.color.font_tertiary'))
           }
           .width('100%')
-          Text(m.description)
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_tertiary'))
+
+          ForEach(g.models, (m: ModelOption) => {
+            Column({ space: 2 }) {
+              Row({ space: Sp.S }) {
+                Text(m.modelName.length > 0 ? m.modelName : m.modelId)
+                  .fontSize(Fs.SECONDARY)
+                  .layoutWeight(1)
+                if (m.provider === this.selection.provider && m.modelId === this.selection.modelId) {
+                  Text('当前')
+                    .fontSize(Fs.CAPTION)
+                    .fontColor($r('sys.color.brand'))
+                }
+                if (m.efforts.length > 0) {
+                  Text(`${m.efforts.length} 档推理`)
+                    .fontSize(Fs.CAPTION)
+                    .fontColor($r('sys.color.font_tertiary'))
+                }
+              }
+              .width('100%')
+              if (m.description.length > 0) {
+                Text(m.description)
+                  .fontSize(Fs.CAPTION)
+                  .fontColor($r('sys.color.font_tertiary'))
+                  .width('100%')
+                  .maxLines(3)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+              }
+            }
             .width('100%')
+            .padding(Sp.M)
+            .borderRadius(Radius.M)
+            .backgroundColor($r('sys.color.background_secondary'))
+            // 【为什么模型行不可点（E96）】官方把"选哪个模型"放在会话输入区（按会话生效），
+            // 设置页只管提供方与密钥；本机核心也没有"改全局默认"的写通道。留一个点了没反应的
+            // 行比不给入口更糟，所以这里只展示（当前项用「当前」标记）。
+          }, (m: ModelOption) => `${m.provider}/${m.modelId}`)
         }
         .width('100%')
-        .padding(Sp.M)
-        .borderRadius(Radius.M)
-        .backgroundColor($r('sys.color.background_secondary'))
-      }, (m: ModelOption) => `${m.provider}/${m.modelId}`)
+      }, (g: ModelProviderGroup) => g.provider)
     }
     .width('100%')
+  }
+
+  /**
+   * 按提供方把模型目录分组（保持 Host 给的顺序，不重排——顺序本身是 Host 的偏好）。
+   */
+  private providerGroups(): ModelProviderGroup[] {
+    const out: ModelProviderGroup[] = [];
+    for (let i = 0; i < this.models.length; i++) {
+      const m: ModelOption = this.models[i];
+      let found: ModelProviderGroup | undefined = undefined;
+      for (let j = 0; j < out.length; j++) {
+        if (out[j].provider === m.provider) {
+          found = out[j];
+        }
+      }
+      if (found === undefined) {
+        out.push({ provider: m.provider, providerName: m.providerName, models: [m] });
+      } else {
+        found.models.push(m);
+      }
+    }
+    return out;
   }
 
   private currentModelDetail(): string {
@@ -511,12 +638,19 @@ export struct SettingsPane {
         Column({ space: 2 }) {
           Text(c.ref)
             .fontSize(Fs.SECONDARY)
-            .layoutWeight(1)
+            // 【不要在这里写 layoutWeight（E95，真机实测）】外层 Column 里再嵌一层
+            // `layoutWeight`，会让内层 Column / 外层 Row 被**撑到父级最大高度**：
+            // 真机上的表现是"凭据那一行卡片纵向铺满整屏、ref 居中、说明被挤到底边"。
+            // 文本不需要权重——宽度用 width('100%') 就够。模型页没有这层嵌套，所以它是正常的。
             .width('100%')
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
           Text(this.credentialHint(c))
             .fontSize(Fs.CAPTION)
             .fontColor($r('sys.color.font_tertiary'))
             .width('100%')
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
         .layoutWeight(1)
 

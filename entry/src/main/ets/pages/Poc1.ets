@@ -15,6 +15,10 @@
 
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { pasteboard } from '@kit.BasicServicesKit';
+import { common } from '@kit.AbilityKit';
+import { DshHost } from 'hostruntime';
+// NodeRuntime 是**本模块（entry）**的运行时实现，不在 hostruntime 里（分层：机制在 entry）
+import { NodeRuntime } from '../runtime/NodeRuntime';
 import {
   AuthOutcome,
   Connection,
@@ -48,8 +52,11 @@ interface LogLine {
 @Entry
 @Component
 struct Poc1 {
-  @State address: string = '127.0.0.1:3000';
+  // 默认地址用**真实默认端口**（HOST_DEFAULT_PORT=3120）；曾经写成 3000 是误导
+  @State address: string = '127.0.0.1:3120';
   @State token: string = '';
+  /** 本页自动填值的来源说明（空串 = 没填过，不显示） */
+  @State prefillNote: string = '';
   @State stateText: string = '未连接';
   @State busy: boolean = false;
   @State lines: LogLine[] = [];
@@ -65,6 +72,68 @@ struct Poc1 {
   aboutToDisappear(): void {
     this.stopHeartbeatWatch();
     this.conn.stop();
+  }
+
+  aboutToAppear(): void {
+    this.prefillFromLocalHost();
+  }
+
+  /**
+   * 进入本页时**自动填好本机核心**（E94）。
+   *
+   * 【为什么必须自动填，而不是留两个空输入框】这一页要的是"这台设备上正在跑的那个 Host
+   * 的地址与令牌"；而 **令牌每个进程都会重新生成**（dsh 每次启动换一个，绑进程）。
+   * 让人去 hilog 里找、再手抄进输入框，既容易错也没有信息量——用户已经明确说过
+   * "不知道填什么"。这里直接读入口脚本写下的 `host-ready.json`（与客户端自动接入用的是
+   * **同一份来源**），拆成地址与令牌填进去。
+   *
+   * 【读不到就如实说】而不是留一个看起来像"默认值"的地址让人以为配好了。
+   * 本页仍然可手工改成**别的** Host（远程/局域网），自动填值不会覆盖已经改过的手工输入。
+   */
+  private prefillFromLocalHost(): void {
+    try {
+      const ctx = getContext(this) as common.UIAbilityContext;
+      const host: DshHost = new DshHost(ctx.filesDir,
+        new NodeRuntime(`${ctx.resourceDir}/resources/app/main.js`, ctx.filesDir));
+      const url: string = host.localHostReadyUrl();
+      if (url.length === 0) {
+        this.prefillNote = '本机核心还没写下启动链接（未启动？）。地址已按默认端口 3120 填好；'
+          + '核心起来后再回到本页会自动补上令牌。';
+        return;
+      }
+      // 不用全局 URL（ArkTS 里它不是全局对象）：手工拆 `?token=`，这段格式由入口脚本决定
+      const q: number = url.indexOf('?');
+      const base: string = q >= 0 ? url.substring(0, q) : url;
+      const query: string = q >= 0 ? url.substring(q + 1) : '';
+      const authorityRaw: string = base.replace(/^https?:\/\//, '');
+      // host-ready.json 的 url 形如 `http://127.0.0.1:3120/?token=…`：去掉 scheme 后
+      // 还会带一个尾斜杠。它不算错（客户端的地址解析会在 `/` 处截断），但填进输入框
+      // 会让人以为"地址要带斜杠"，所以这里清掉。
+      const authority: string = authorityRaw.endsWith('/')
+        ? authorityRaw.substring(0, authorityRaw.length - 1)
+        : authorityRaw;
+      let parsedToken: string = '';
+      for (const pair of query.split('&')) {
+        const eq: number = pair.indexOf('=');
+        if (eq > 0 && pair.substring(0, eq) === 'token') {
+          parsedToken = decodeURIComponent(pair.substring(eq + 1));
+        }
+      }
+      if (authority.length > 0) {
+        this.address = authority;
+      }
+      if (parsedToken.length > 0) {
+        this.token = parsedToken;
+      }
+      this.prefillNote = `已自动填入本机核心：${this.address}`
+        + `（令牌 ${parsedToken.length} 字符，来自设备上正在运行的核心；可直接点「① 认证并跑通」）`;
+      hilog.info(DOMAIN, TAG, 'POC 已预填本机核心：authority=%{public}s tokenLen=%{public}d',
+        this.address, parsedToken.length);
+    } catch (e) {
+      const err = e as Error;
+      this.prefillNote = `自动填值失败（不影响手工填写）：${err.message}`;
+      hilog.warn(DOMAIN, TAG, 'POC 预填失败：%{public}s', err.message);
+    }
   }
 
   // ─────────────────────────── 日志 ───────────────────────────
@@ -265,7 +334,14 @@ struct Poc1 {
         .fontWeight(FontWeight.Bold)
         .width('100%')
 
-      TextInput({ text: this.address, placeholder: 'Host 地址，如 127.0.0.1:3000' })
+      if (this.prefillNote.length > 0) {
+        Text(this.prefillNote)
+          .fontSize(12)
+          .fontColor($r('sys.color.font_tertiary'))
+          .width('100%')
+      }
+
+      TextInput({ text: this.address, placeholder: 'Host 地址，如 127.0.0.1:3120' })
         .onChange((value: string) => { this.address = value; })
         .width('100%')
 

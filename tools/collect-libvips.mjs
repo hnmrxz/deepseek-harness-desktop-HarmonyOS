@@ -78,6 +78,24 @@ if (!existsSync(SRC)) die(`libvips 源目录不存在：${SRC}（先跑 tools/pa
 if (!existsSync(PATCH_TOOL)) die(`缺少 ${PATCH_TOOL}`);
 mkdirSync(DEST, { recursive: true });
 
+/*
+ * 播种 sharp 原生件（全新克隆时 `entry/libs` 是空的）。
+ *
+ * `entry/libs/` 在 .gitignore 里（体积与签名考虑），所以这些库必须**能从核心树重建**。
+ * sharp 的 `.node` 由我们的原生重定向按 `lib<stem>.so` 规则加载（见 hostcore/app/main.js），
+ * 所以这里按那个约定落位；已存在时不覆盖（避免把手工调过的版本冲掉）。
+ */
+const SHARP_NODE_SRC = join(ROOT, 'dist', 'core', 'work', 'dsh-core-0.1.5-rc.2', 'node_modules',
+  '@ohos-ports', 'img-sharp-openharmony-arm64', 'lib', 'sharp-openharmony-arm64.node');
+const SHARP_DEST = join(DEST, 'libsharp-openharmony-arm64.so');
+if (!existsSync(SHARP_DEST)) {
+  if (!existsSync(SHARP_NODE_SRC)) {
+    die(`缺少 sharp 原生件源：${SHARP_NODE_SRC}（先跑 tools/pack-core.mjs）`);
+  }
+  copyFileSync(SHARP_NODE_SRC, SHARP_DEST);
+  console.log(`collect-libvips: 播种 ${SHARP_DEST}`);
+}
+
 /** 扁平名：SONAME 截到 `.so` 为止（`libglib-2.0.so.0` → `libglib-2.0.so`）。 */
 function flatNameOf(soname) {
   const at = soname.indexOf('.so');
@@ -175,6 +193,36 @@ for (const consumer of consumers) {
     } catch (e) {
       die(`改 RPATH 失败：${consumer}：${String(e.stderr ?? e.message)}`);
     }
+  }
+}
+
+// ── 3.5 sharp 原生件必须把 libnode 拉进自己的依赖闭包（E44 的同一课，真机实测） ──
+//
+// 真机读数（E93 首次上设备）：
+//   W MUSL-LDSO: relocating failed: symbol not found.
+//     dso=/data/storage/el1/bundle/libs/arm64/libsharp-openharmony-arm64.so
+//     s=napi_open_escapable_handle_scope
+// 与 koffi 当年**完全同一类**问题：dlopen 出来的对象只按「自身 + 自身依赖闭包 + 全局组」
+// 解析符号，而 libnode **既不（有效地）进全局组，也不在 sharp 的闭包里** ⇒ 所有 napi 符号
+// 都找不到。修法也同一套：把 `DT_NEEDED libc++_shared.so`（16 字节）原地改成
+// `libnode.so.127`（14 字节，更短 ⇒ 零结构风险）；libc++ 不会丢——libnode 自己就
+// NEEDED libc++_shared.so，会随之进入闭包。
+//
+// 【为什么必须写在这里而不是靠"反正是 dlopen"】这一步不做，sharp 在设备上永远加载不了，
+// 而症状只有一行 MUSL-LDSO 警告 + 图片附件静默降级——正是最难查的那种。
+for (const consumer of consumers) {
+  if (!consumer.endsWith('libsharp-openharmony-arm64.so')) continue;
+  const info = elfInfo(consumer);
+  if (info.needed.includes('libnode.so.127')) continue;
+  if (!info.needed.includes('libc++_shared.so')) {
+    die('sharp 原生件的 NEEDED 里既没有 libnode.so.127 也没有 libc++_shared.so，无法原地改写（需人工核对）');
+  }
+  try {
+    execFileSync(process.execPath, [PATCH_TOOL, consumer, 'libc++_shared.so', 'libnode.so.127'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    neededRewrites += 1;
+  } catch (e) {
+    die(`把 libnode 拉进 sharp 依赖闭包失败：${String(e.stderr ?? e.message)}`);
   }
 }
 

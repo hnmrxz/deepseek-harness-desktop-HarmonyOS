@@ -175,6 +175,8 @@ if (REMOTE_URL.length === 0) {
 }
 
 const LOG_PATH = join(ROOT, 'dist', 'localtest', 'model-roundtrip-host.log');
+/** 小工具：等待（多处用到，避免各写一遍 Promise 包装） */
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let done = false;
 /** 失败时最该看的不是"最后 30 行"，而是**与失败有关的那几行**。 */
 function interestingLines() {
@@ -304,6 +306,45 @@ try {
   let t0 = Date.now();
   let mux;
   const frames = [];
+
+  /*
+   * `--list`：先列出 Host 上的会话（含 id）。配合 `--session`，就能对**真实会话**做只读诊断：
+   * 设备上报错时，我们必须能用设备自己的数据复现，而不是靠猜。
+   */
+  if (args.includes('--list')) {
+    const listed = await rpc('session/list', {}, cookie);
+    const value = listed.parsed?.result?.value ?? listed.parsed?.result?.error;
+    console.log(`list     ${JSON.stringify(value).slice(0, 1500)}`);
+    if (SESSION.length === 0 && !args.includes('--follow')) {
+      finish(0);
+    }
+  }
+
+  /*
+   * `--follow`：对**已有**会话开一次轨迹流（不建会话、不发 prompt）。
+   * 端侧报的 `轨迹流失败：gateway/internal …` 就发生在这一步；要修它，先得能复现它。
+   */
+  if (SESSION.length > 0 && args.includes('--follow')) {
+    const wsMod = await import(pathToFileURL(join(CORE_DIR, 'node_modules', 'ws', 'index.js')).href);
+    mux = new wsMod.default(`ws://127.0.0.1:${PORT}/api/remote.mux`, { headers: { cookie } });
+    mux.on('message', (data) => { frames.push(data.toString()); });
+    await new Promise((resolve, reject) => {
+      mux.once('open', resolve);
+      mux.once('error', reject);
+    });
+    mux.send(JSON.stringify({
+      type: 'open',
+      streamId: 'follow-1',
+      endpoint: 'session/follow',
+      payload: { args: { request: { address: { kind: 'session', sessionId }, maxMessages: 60, assistantStream: true } } },
+    }));
+    await sleep(4000);
+    console.log(`follow   打开 ${sessionId}`);
+    console.log(`frames   ${frames.length}`);
+    for (const f of frames.slice(0, 3)) console.log(`frame    ${f.slice(0, 900)}`);
+    finish(0);
+  }
+
   if (sessionId.length === 0) {
     const created = await rpc('session/create', { request: {} }, cookie);
     sessionId = created.parsed?.result?.value?.sessionId
@@ -316,7 +357,6 @@ try {
 
     /*
      * 4. **像真实客户端那样先 follow，再 prompt**。
-     *
      * 【为什么这一步不能省】只发 `session/prompt`（HTTP 一元 RPC）时，prompt 会被
      * 收下（`accepted:true`），但 **Agent 那一转并没有跑**：真机与本机都出现过
      * "prompt accepted、此后宿主日志里没有任何模型请求、会话也没有任何持久化记录"。
@@ -342,6 +382,27 @@ try {
       endpoint: 'session/follow',
       payload: { args: { request: { address: { kind: 'session', sessionId }, assistantStream: true } } },
     }));
+
+    /*
+     * `--no-prompt`（诊断用）：只建会话 + 打开轨迹流 + 看**开帧**，不发模型请求。
+     * 为什么需要它：端侧报的 `轨迹流失败：gateway/internal Cannot read properties of undefined
+     * (reading 'kind')` 与 `page skip: 取不到游标（projections.asOfSeq）` 都发生在**打开帧/首页**
+     * 这一步，与模型无关；能零成本复现才谈得上修。
+     */
+    if (args.includes('--no-prompt')) {
+      const until = Date.now() + 8000;
+      while (Date.now() < until && !args.includes('--dump-frames')) {
+        await sleep(500);
+      }
+      await sleep(2500);
+      const page = await rpc('session/page', {
+        request: { address: { kind: 'session', sessionId }, throughSeq: -1, maxMessages: 5 },
+      }, cookie);
+      console.log(`page     ${page.text.slice(0, 700)}`);
+      console.log(`mux frames ${frames.length}`);
+      for (const f of frames.slice(0, 4)) console.log(`frame    ${f.slice(0, 700)}`);
+      finish(0);
+    }
 
     // 5. send the prompt
     //
