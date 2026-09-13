@@ -314,18 +314,61 @@ async function hdshFetch(input, init = {}, options = {}) {
 }
 
 /**
- * 安装垫片。**只在原生 fetch 不可用时安装**（例如带 `--no-experimental-fetch` 启动）：
- * 原生实现可用时就该用原生的。
- * @returns 是否真的安装（用于入口脚本打日志）
+ * 最小的 `Request` 实现。
+ *
+ * 【为什么必须有它（E75，本次 400 的真因）】dsh 的 `/api` 挂载点会构造 Fetch 的 `Request`：
+ *   dsh-client-connection/lib/index.js:68
+ *     request = new Request(url, { method, headers, body: Buffer.concat(chunks), signal });
+ * 而 Host 用 `--no-experimental-fetch` 启动（为避开 undici 的 WASM 初始化），此时
+ * `globalThis.Request` **不存在** ⇒ `new Request(...)` 抛 `ReferenceError`
+ * ⇒ 被 `dsh-host-webserver` 的 catch-all 兜成 **空体 400**（`res.writeHead(400); res.end()`）。
+ * 这正是实测现象：`GET /` 正常 200，而**所有** `POST /api/<endpoint>` 都是 400 空体，
+ * dsh 侧无可用日志，换封装/cookie/头一律无效。
+ * 只实现 dsh 用到的部分：`url/method/headers/signal` 与 `text()/json()/arrayBuffer()`。
+ */
+class HdshRequest {
+  constructor(input, init = {}) {
+    this.url = typeof input === 'string' ? input : (input !== null && typeof input === 'object' && typeof input.url === 'string' ? input.url : String(input));
+    this.method = init.method === undefined ? 'GET' : String(init.method).toUpperCase();
+    this.headers = init.headers instanceof HdshHeaders ? init.headers : new HdshHeaders(init.headers);
+    this.signal = init.signal;
+    this.bodyUsed = false;
+    const raw = init.body;
+    if (raw === undefined || raw === null) this._body = null;
+    else if (Buffer.isBuffer(raw)) this._body = raw;
+    else if (typeof raw === 'string') this._body = Buffer.from(raw, 'utf8');
+    else if (raw instanceof ArrayBuffer) this._body = Buffer.from(raw);
+    else if (ArrayBuffer.isView(raw)) this._body = Buffer.from(raw.buffer, raw.byteOffset, raw.byteLength);
+    else this._body = null; // 流式 body 不支持：dsh 的 /api 走 buffered 模式，用不到
+  }
+  async text() {
+    this.bodyUsed = true;
+    return this._body === null ? '' : this._body.toString('utf8');
+  }
+  async json() { return JSON.parse(await this.text()); }
+  async arrayBuffer() {
+    const b = this._body === null ? Buffer.alloc(0) : this._body;
+    return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
+  }
+}
+
+/**
+ * 安装垫片。
+ *
+ * 【为什么改成"缺哪个补哪个"】原先以"原生 fetch 是否可用"为唯一开关，于是
+ * `--no-experimental-fetch` 之外若缺 `Request`/`Response` 也不会补——而 dsh 的 `/api`
+ * 挂载点**必须**有 `Request`（E75）。现在这几个全局只要缺失就补；只有 `fetch` 本身
+ * 在原生可用时才不覆盖。
+ * @returns 是否安装了 `fetch` 本身（供入口脚本打日志）
  */
 function installFetchShim() {
-  const missing = typeof globalThis.fetch !== 'function';
-  if (!missing) return false;
-  globalThis.Headers = globalThis.Headers === undefined ? HdshHeaders : globalThis.Headers;
-  globalThis.FormData = globalThis.FormData === undefined ? HdshFormData : globalThis.FormData;
-  globalThis.Blob = globalThis.Blob === undefined ? HdshBlob : globalThis.Blob;
-  globalThis.File = globalThis.File === undefined ? HdshFile : globalThis.File;
-  globalThis.Response = globalThis.Response === undefined ? HdshResponse : globalThis.Response;
+  if (globalThis.Headers === undefined) globalThis.Headers = HdshHeaders;
+  if (globalThis.Request === undefined) globalThis.Request = HdshRequest;
+  if (globalThis.Response === undefined) globalThis.Response = HdshResponse;
+  if (globalThis.FormData === undefined) globalThis.FormData = HdshFormData;
+  if (globalThis.Blob === undefined) globalThis.Blob = HdshBlob;
+  if (globalThis.File === undefined) globalThis.File = HdshFile;
+  if (typeof globalThis.fetch === 'function') return false;
   globalThis.fetch = hdshFetch;
   return true;
 }
