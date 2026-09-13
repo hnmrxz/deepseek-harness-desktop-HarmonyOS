@@ -33,7 +33,9 @@ import {
   toolStateIsProblem,
   toolStateLabel,
   TrajectoryItem,
-  TrajectoryKind
+  TrajectoryKind,
+  SessionHub,
+  FeedbackRow,
 } from 'appstate';
 import { Composer } from './Composer';
 import { PendingPane } from './PendingPane';
@@ -527,8 +529,41 @@ export struct ConversationPane {
       .width('100%')
 
       /*
+       * E255：**消息级反馈**（官方 `ui-message-feedback`；契约取值 `positive` | `negative`）。
+       *
+       * 只对**助手消息**提供（上游语义就是"对某一条助手消息的判断"）。已评则高亮当前选择——
+       * 高亮值取自中枢的 `feedbackOf(item.id)`（它来自 `messageFeedback/list`，每次写成功后重读 ⇒
+       * 界面显示的是**宿主记录的状态**，不是"我以为点了什么"）。
+       * 说明文字留空：官方那套还有 categories/note 的提交面板，我们先把"好评/差评"这步做成可用的。
+       */
+      if (item.speaker === Speaker.ASSISTANT) {
+        Row({ space: Sp.M }) {
+          Text('有帮助')
+            .fontSize(Fs.CAPTION)
+            .fontColor(SessionHub.shared().feedbackOf(item.id) !== undefined
+              && (SessionHub.shared().feedbackOf(item.id) as FeedbackRow).rating === 'positive'
+              ? $r('sys.color.brand')
+              : $r('sys.color.font_tertiary'))
+            .onClick(() => {
+              // 结果由中枢记账（`messageFeedback/put ok …`），这里不重复打日志
+              SessionHub.shared().putFeedback(item.id, 'positive', '');
+            })
+          Text('没帮助')
+            .fontSize(Fs.CAPTION)
+            .fontColor(SessionHub.shared().feedbackOf(item.id) !== undefined
+              && (SessionHub.shared().feedbackOf(item.id) as FeedbackRow).rating === 'negative'
+              ? $r('sys.color.brand')
+              : $r('sys.color.font_tertiary'))
+            .onClick(() => {
+              SessionHub.shared().putFeedback(item.id, 'negative', '');
+            })
+          Blank()
+        }
+        .width('100%')
+      }
+
+      /*
        * 【思考单独成块（E107）】助手消息常把"思考"与"正文"作为两个内容块一起发来。
-       * 官方 web 把思考收进**折叠块**（标题给字数/耗时，默认收起），正文单独成段。
        * 这里照做：思考块在上、默认收起、点击展开；正文保持主字号。
        */
       if (item.reasoning.length > 0) {

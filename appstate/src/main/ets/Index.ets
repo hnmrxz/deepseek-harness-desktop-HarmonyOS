@@ -62,6 +62,8 @@ export type { FileNode, FilePreview, WorkspaceItem } from './model/Workspace';
 export type { WorkspaceRow } from './store/SessionHub';
 /** E160：Agent 预设名单行与其"随附只读"判定 */
 export type { AgentPresetRow } from './store/SessionHub';
+/** E253：消息反馈行（供界面按 messageId 取用） */
+export type { FeedbackRow } from './store/SessionHub';
 export { presetIsBundled } from './store/SessionHub';
 /** E135：技能清单行 */
 export type { SkillRow } from './store/SessionHub';
