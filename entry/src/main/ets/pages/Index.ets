@@ -847,6 +847,16 @@ struct Index {
       hub.connect().then((ok: boolean) => {
         this.connectBusy = false;
         const snap: HubSnapshot = hub.snapshot();
+        /*
+         * 【为什么这里一定要打日志（E62/E63）】`connect()` 内部会先做 token→cookie 兑换
+         * （`SessionHub.connect` 无条件调 `authenticate()`，失败即 `DEGRADED` 返回），
+         * 而端侧实测到 3120 的流量只有"就绪探测 401 + 8 次 POST 400"、**没有兑换请求**。
+         * 失败原因就在 `snap.lastError`（例如"未提供 token"）——不打出来，外面只能看到
+         * "端口通了但界面没连上"，与真实原因隔着一层。
+         */
+        hilog.info(DOMAIN, TAG, 'HDSH-AUTH connect 结果：ok=%{public}s sessions=%{public}d err=%{public}s',
+          ok ? 'true' : 'false', snap.sessions.length,
+          snap.lastError.length > 0 ? snap.lastError : '(none)');
         this.connectResult = ok
           ? `已自动重连 ${snap.authority}，收到 ${snap.sessions.length} 个会话`
           : '自动重连失败，请检查 Host 是否仍在运行。';
