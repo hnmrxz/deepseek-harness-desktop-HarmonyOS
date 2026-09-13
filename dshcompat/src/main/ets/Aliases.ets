@@ -202,6 +202,20 @@ export const LLM_LIST_PROVIDERS_ENDPOINT: string = 'llm/listProviders';
 /** 声明出来的**可配置**提供方（"添加提供方"的目录；NONE 形态，无参数） */
 export const LLM_LIST_CONFIGURABLE_PROVIDERS_ENDPOINT: string = 'llm/listConfigurableProviders';
 
+/*
+ * ── 命令面板（E184：官方 `dsh-client-ui-commands` 的能力来源）──────────────
+ *
+ * 【关键事实（E182 取证）】这两个端点**本来就在兼容表里**，属"没接"而不是"没有"。
+ * 官方客户端的调用形态是 `ctx.remote.commands.list(sessionId)` ⇒ **会话范围**
+ * （与 `skills/list` 同一族：能力随会话而定；E174 的 `failed to observe session "undefined"`
+ * 就是漏了会话）。命令的**名字与描述由宿主提供**（官方用 `description.<id>` 渲染），
+ * 所以我们**不硬编码**任何命令名——列表里有什么就渲染什么。
+ */
+/** 会话可用的命令清单（**必须带 sessionId**） */
+export const COMMANDS_LIST_ENDPOINT: string = 'commands/list';
+/** 执行一个命令（带 sessionId + 命令 id） */
+export const COMMANDS_EXECUTE_ENDPOINT: string = 'commands/execute';
+
 /** 工作区文件列表（需要的 `workspaceFileScopeId` 来自会话/工作区上下文） */
 export const WORKSPACE_FILES_LIST_ENDPOINT: string = 'workspaceFiles/list';
 /** 工作区文件元信息 */
