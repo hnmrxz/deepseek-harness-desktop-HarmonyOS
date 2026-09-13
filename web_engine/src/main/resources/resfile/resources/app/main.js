@@ -327,7 +327,21 @@ async function start() {
   const profileBoot = await import(pathToFileURL(entry).href);
   const appBootMod = await import(pathToFileURL(appBoot).href);
 
-  const args = ['--port', PORT, '--host', '127.0.0.1', '--no-open', '--skip-auth'];
+  /*
+   * 【参数表以 dsh-web-app 的 startup.js 为准】
+   *   new Command().name("dsh --profile web")
+   *     .option("--host <host>").option("--no-open").option("--port <port>")
+   *     .option("--trusted-host <authority...>")
+   * —— 合法的就这四个。
+   *
+   * 【曾经写过一个不存在的 `--skip-auth`】实测真机读数（D6 E33）：
+   *     error: unknown option '--skip-auth'   → runProfile 直接拒绝，Host 从未起监听（rc=1）
+   * 而 dsh 的"认证"不是可以关掉的开关：它是 `/api` 的 **browser-trust fence**，
+   * 且 Host 会把**带 token 的 authenticatedUrl** 打到 stdout（startup/index.js 里
+   * `if (config.printUrl) console.log(...)`）——我们把 stdout 抓到 hilog 后即可读到那个 URL。
+   * 所以端侧客户端该做的是"从 Host 输出里取 URL"，而不是试图关掉认证。
+   */
+  const args = ['--port', PORT, '--host', '127.0.0.1', '--no-open'];
   log('runProfile profile=' + PROFILE + ' args=' + args.join(' '));
 
   const result = await profileBoot.runProfile({
