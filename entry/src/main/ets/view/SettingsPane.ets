@@ -1505,18 +1505,6 @@ export struct SettingsPane {
   /**
    * 按提供方把模型目录分组（保持 Host 给的顺序，不重排——顺序本身是 Host 的偏好）。
    */
-  /**
-   * 恒空列表（E209）：用于把「全部模型」区块的数据源置空——结构保留、渲染为空。
-   *
-   * 【为什么用"置空"而不是删除】该区块的闭合边界在 ArkUI 深度嵌套的 builder 里难以用
-   * 行区间启发式安全判定（本会话两次尝试分别过界 167 行与 262 行，均靠 git 回退）。
-   * 置空是**零删除风险**的等价做法：不渲染任何内容，且随时可改回 `providerGroups()` 回退。
-   */
-  private nothingToGroup(): ModelProviderGroup[] {
-    const none: ModelProviderGroup[] = [];
-    return none;
-  }
-
   private providerGroups(): ModelProviderGroup[] {
     const out: ModelProviderGroup[] = [];
     for (let i = 0; i < this.models.length; i++) {
