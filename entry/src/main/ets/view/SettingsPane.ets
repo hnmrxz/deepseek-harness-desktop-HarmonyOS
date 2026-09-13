@@ -1310,16 +1310,20 @@ export struct SettingsPane {
      */
 
     Column({ space: Sp.XS }) {
-      Text('全部模型')
+      /*
+       * E209（用户要求：全部模型不单独放出来）：**该列表已收编**。
+       *
+       * 原来这里是"按提供方分组的模型目录 + 点选设为默认"，但它独立出现在模型页底部；
+       * 官方 `dsh-client-ui-settings-models` 的形态是"**一行一个提供方，展开才是它的模型与设置**"
+       * ——密钥、端点、计费口径都挂在提供方上，拉平/独立列出会让人看不出"这个模型要用哪把密钥"。
+       * 我们已按官方实现（提供方卡片 + 展开区），所以这里**不再独立列出**：
+       * 数据源置空（结构保留、便于回退），标题改为指引。
+       */
+      Text('各提供方的模型目录在其「自定义设置」展开里（与官方一致：模型属于提供方）。')
         .fontSize(Fs.CAPTION)
         .fontColor($r('sys.color.font_tertiary'))
         .width('100%')
-      /*
-       * 【为什么按提供方分组（E96）】官方 Models 页是**以提供方为单位**的：一行一个提供方，
-       * 展开才是它的模型与设置。理由很实在——模型总是"某个提供方的模型"，密钥、端点、
-       * 计费口径都挂在提供方上；拉平成一个列表会让人看不出"这个模型要用哪把密钥"。
-       */
-      ForEach(this.providerGroups(), (g: ModelProviderGroup) => {
+      ForEach(this.nothingToGroup(), (g: ModelProviderGroup) => {
         Column({ space: Sp.XS }) {
           Row({ space: Sp.S }) {
             Text(g.providerName.length > 0 ? g.providerName : g.provider)
@@ -1422,6 +1426,18 @@ export struct SettingsPane {
   /**
    * 按提供方把模型目录分组（保持 Host 给的顺序，不重排——顺序本身是 Host 的偏好）。
    */
+  /**
+   * 恒空列表（E209）：用于把「全部模型」区块的数据源置空——结构保留、渲染为空。
+   *
+   * 【为什么用"置空"而不是删除】该区块的闭合边界在 ArkUI 深度嵌套的 builder 里难以用
+   * 行区间启发式安全判定（本会话两次尝试分别过界 167 行与 262 行，均靠 git 回退）。
+   * 置空是**零删除风险**的等价做法：不渲染任何内容，且随时可改回 `providerGroups()` 回退。
+   */
+  private nothingToGroup(): ModelProviderGroup[] {
+    const none: ModelProviderGroup[] = [];
+    return none;
+  }
+
   private providerGroups(): ModelProviderGroup[] {
     const out: ModelProviderGroup[] = [];
     for (let i = 0; i < this.models.length; i++) {
