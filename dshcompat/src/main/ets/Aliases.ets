@@ -226,6 +226,23 @@ export const GOALS_GET_ENDPOINT: string = 'goals/get';
 /** 记录会话反馈 */
 export const SESSION_FEEDBACK_RECORD_ENDPOINT: string = 'sessionFeedback/record';
 
+/*
+ * ── 消息级反馈（E252：官方 `ui-message-feedback`）─────────────────────────
+ *
+ * 权威契约（`dsh-message-feedback` 的 `types.d.ts`，E251 取证）：
+ *   · `list`   = `{ sessionId }` → `{ items: MessageFeedbackItem[] }`（按首次创建顺序）
+ *   · `put`    = `{ sessionId, messageId, rating, note?, category? }`
+ *                —— 上游注释原文："Create or replace feedback for one assistant message"
+ *   · `delete` = 删除某条消息的反馈
+ * 语义：`rating` 是**总体判断**，`note` 是可选说明，`category` 可选（缺省即未分类）。
+ */
+/** 读某会话的全部消息反馈 */
+export const MESSAGE_FEEDBACK_LIST_ENDPOINT: string = 'messageFeedback/list';
+/** 创建或替换**某一条助手消息**的反馈 */
+export const MESSAGE_FEEDBACK_PUT_ENDPOINT: string = 'messageFeedback/put';
+/** 删除某条消息的反馈 */
+export const MESSAGE_FEEDBACK_DELETE_ENDPOINT: string = 'messageFeedback/delete';
+
 /** 斜杠命令执行（参数名在上游发生过改名，见 `PARAM_ALIASES`） */
 export const COMMANDS_EXECUTE_ENDPOINT: string = 'commands/execute';
 /**
