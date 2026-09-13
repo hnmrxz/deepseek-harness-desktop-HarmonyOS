@@ -413,11 +413,77 @@ function watchdogAuthUrl() {
   };
 }
 
+/**
+ * 运行时的**真实事实**（E88）：把核心页上那几项"未探测"变成实测值。
+ *
+ * 【为什么由入口脚本提供，而不是 ArkTS 侧自己猜】
+ * 这些都是**只有宿主进程内部才知道**的事实：Node 版本、`process.platform/arch`、
+ * 是否真的跑在 jitless 下、`node:zlib` 有没有 zstd、以及三个硬原生依赖到底能不能加载。
+ * ArkTS 侧（`libdshhost`）只有 `runtimeVersion/startHost/isHostRunning/stopHost` 四个 API，
+ * 拿不到这些；而"猜"正是本项目一直在拆的坑（`未探测` 比一个可能错的数字诚实）。
+ * 入口脚本本来就要写 `host-ready.json`（token 的主通道），顺手把这几个事实一起落盘。
+ *
+ * 【zstd 为什么要单独探】会话持久化（`session.v3.jsonl.zstd`）依赖它；实测 Node 22.22
+ * 默认就有 `zlib.zstdCompressSync`（`--experimental-zstd` 在这个版本上反而是**非法选项**），
+ * 所以这一项在本项目里预期恒为 true——但**探一次**比假定它成立强：换 libnode 版本时
+ * 这一行会立刻给出结论。
+ */
+let RUNTIME_FACTS_CACHE = null;
+function runtimeFacts() {
+  if (RUNTIME_FACTS_CACHE !== null) {
+    return RUNTIME_FACTS_CACHE;
+  }
+  const facts = {
+    nodeVersion: process.version,
+    platform: `${process.platform}/${process.arch}`,
+    jitless: process.execArgv.includes('--jitless'),
+    zstd: false,
+    listenAddress: `127.0.0.1:${PORT}`,
+    natives: [],
+  };
+  try {
+    const zlib = require('node:zlib');
+    facts.zstd = typeof zlib.zstdCompressSync === 'function';
+  } catch (e) {
+    facts.zstd = false;
+  }
+  /*
+   * 三个硬原生依赖：**当场 require 一次**并把结论（含失败原因）带上。
+   * 这比在 UI 上写"未探测"有用得多：装错平台 / DT_NEEDED 不对 / 少拷了 .so，
+   * 都会在这里留下人话，而不用等到某个功能被使用时才炸。
+   */
+  const probes = [
+    ['koffi', 'koffi'],
+    ['sharp', 'sharp'],
+    ['node-pty', 'node-pty'],
+  ];
+  for (const [label, mod] of probes) {
+    try {
+      const loaded = require(path.join(CORE_DIR, 'node_modules', mod));
+      let note = '';
+      if (mod === 'sharp') {
+        note = '端侧为 stub：仅保证 import 成功，图片处理不可用（见 D6 E79/E64）';
+      }
+      facts.natives.push({ name: label, ok: loaded !== undefined, note: note });
+    } catch (e) {
+      facts.natives.push({
+        name: label,
+        ok: false,
+        note: (e && e.message ? String(e.message) : String(e)).slice(0, 200),
+      });
+    }
+  }
+  // 缓存：这三个 require 是**一次性的重活**，而 `runtimeFacts()` 会在
+  // "拦截 stdout 写"的路径上被调用——那条路径上绝不能每次都重新加载原生件。
+  RUNTIME_FACTS_CACHE = facts;
+  return facts;
+}
 /** 把 authenticatedUrl 拆成 baseUrl + token，写 `<HOME_DIR>/host-ready.json`。 */
 function writeHostReady(authUrl) {
   try {
     const parsed = new URL(authUrl);
     const token = parsed.searchParams.get('token') || '';
+    const facts = runtimeFacts();
     const payload = {
       url: authUrl,
       baseUrl: `${parsed.protocol}//${parsed.host}`,
@@ -426,9 +492,19 @@ function writeHostReady(authUrl) {
       profile: PROFILE,
       pid: process.pid,
       startedAt: new Date().toISOString(),
+      // E88：给核心页的"运行时事实"提供数据源（全部实测，没有一个默认值）
+      runtime: {
+        nodeVersion: facts.nodeVersion,
+        platform: facts.platform,
+        jitless: facts.jitless,
+        zstd: facts.zstd,
+        listenAddress: facts.listenAddress,
+        natives: facts.natives,
+      },
     };
     fs.writeFileSync(path.join(HOME_DIR, 'host-ready.json'), JSON.stringify(payload, null, 2) + '\n', 'utf8');
-    stage('BOOT_65_AUTH_URL', `port=${payload.port} tokenLen=${token.length} → host-ready.json`);
+    stage('BOOT_65_AUTH_URL', `port=${payload.port} tokenLen=${token.length} → host-ready.json`
+      + ` node=${facts.nodeVersion} zstd=${facts.zstd} jitless=${facts.jitless}`);
   } catch (e) {
     console.error('[hdsh-host] 写 host-ready.json 失败：' + (e && e.message));
   }
@@ -800,6 +876,9 @@ async function start() {
   // 这种情况比"卸载时机"更容易出错。
   watchdogAuthUrl();
   recoverOrphanLocks(HOME_DIR);
+  // 预热运行时事实：把三个原生 require 挪到写 host-ready.json **之前**，
+  // 这样拦截 stdout 写的那条路径上只读缓存（那里不适合做重活）。
+  runtimeFacts();
   const result = await profileBoot.runProfile({
     environment: appBootMod.loadLayeredEnv('dsh'),
     profile: PROFILE,

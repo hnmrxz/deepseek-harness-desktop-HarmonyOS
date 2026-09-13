@@ -16,10 +16,38 @@
  * 分层：本层不依赖 appstate / UI；核心页的阶段由 appstate 的
  * `corePhaseOfHostState()` 映射（纯函数，可单测）。
  */
+import { fileIo as fs } from '@kit.CoreFileKit';
 import { ActivationDecision, ActivationAction, CoreState, CoreVersionRecord } from '../core/Types';
 import { CoreStore, CorePluginRow, CorePluginTotals, CoreTreeInfo, OpResult } from '../core/CoreStore';
 import { BundledInstallResult, installBundledCores } from '../core/BundledCore';
-import { HostHandle, RuntimePort, RuntimeProbe, RuntimeKind } from '../runtime/RuntimePort';
+import { HostHandle, NativeFact, RuntimePort, RuntimeProbe, RuntimeKind } from '../runtime/RuntimePort';
+
+/**
+ * 入口脚本写进 `host-ready.json` 的**实测运行时事实**（E88）。
+ *
+ * 【为什么由宿主自己报】Node 版本、`process.platform/arch`、是否真的 jitless、
+ * `node:zlib` 有没有 zstd、三个硬原生依赖能不能加载——这些只有宿主进程内部知道，
+ * 而 ArkTS 侧的原生模块只暴露 `runtimeVersion/startHost/isHostRunning/stopHost`。
+ * 于是核心页上那几项长期写着「未探测」：**那是对的**（不猜），但现在有了一份实测来源。
+ */
+interface HostReadyNative {
+  name: string;
+  ok: boolean;
+  note: string;
+}
+
+interface HostReadyRuntime {
+  nodeVersion: string;
+  platform: string;
+  jitless: boolean;
+  zstd: boolean;
+  listenAddress: string;
+  natives: HostReadyNative[];
+}
+
+interface HostReadyFile {
+  runtime?: HostReadyRuntime;
+}
 
 /** 端侧 Host 的状态。字符串值与 appstate 的 CorePhase 一一对应（映射见 appstate）。 */
 export enum HostState {
@@ -102,7 +130,9 @@ export class DshHost {
 
   /** 查状态。**先探测运行时**——没接线就如实说未接线，不看仓库里有没有版本。 */
   async status(): Promise<HostStatus> {
-    const probe: RuntimeProbe = await this.port.probe();
+    const probed: RuntimeProbe = await this.port.probe();
+    // E88：宿主在跑时，用他自己写下的实测事实补齐 probe 里"只有宿主知道"的几项
+    const probe: RuntimeProbe = this.mergeRuntimeFacts(probed);
     const state: CoreState = this.store.readState();
     const installed: string[] = this.store.listInstalled();
 
@@ -143,6 +173,61 @@ export class DshHost {
       handle: this.handle,
       plugins: this.plugins(),
     };
+  }
+
+  /**
+   * 把入口脚本落盘的**实测事实**并进 probe（E88）。规则：**已有的读数优先**。
+   *
+   * 【为什么必须判 isRunning 才读文件】`host-ready.json` 是**上一次启动**留下的文件：
+   * 宿主没在跑时读它，等于把上一版核心的事实当成现在的事实——那正是本项目一直在拆的
+   * "看似有值、其实错位"的坑。所以：没在跑就原样返回 probe（那几项如实保持"未探测"）。
+   *
+   * 【为什么原生件读数也带进来】koffi / sharp / node-pty 能不能加载，是"端侧核心能不能
+   * 真正干活"的硬前提（图片附件、进程类工具都系在这上面）。把它显示出来，
+   * 比留一句"未探测"有用得多，也让"端侧能力边界"这件事在界面上可见。
+   */
+  private mergeRuntimeFacts(probe: RuntimeProbe): RuntimeProbe {
+    if (!this.port.isRunning()) {
+      return probe;
+    }
+    const raw: HostReadyRuntime | undefined = this.readHostReadyRuntime();
+    if (raw === undefined) {
+      return probe;
+    }
+    const natives: NativeFact[] = [];
+    for (const n of raw.natives) {
+      natives.push({ name: n.name, loaded: n.ok, note: n.note });
+    }
+    return {
+      kind: probe.kind,
+      available: probe.available,
+      note: probe.note,
+      // Node 版本以原生模块的读数为准：那是"被链接进来的运行时"本身，
+      // 而文件里的 process.version 是同一个进程的自述，两者一致时无差别，冲突时前者更硬。
+      nodeVersion: probe.nodeVersion.length > 0 ? probe.nodeVersion : raw.nodeVersion,
+      platform: probe.platform.length > 0 ? probe.platform : raw.platform,
+      zstd: probe.zstd === null ? raw.zstd : probe.zstd,
+      jitless: probe.jitless === null ? raw.jitless : probe.jitless,
+      natives: probe.natives.length > 0 ? probe.natives : natives,
+      listenAddress: probe.listenAddress.length > 0 ? probe.listenAddress : raw.listenAddress,
+    };
+  }
+
+  /** 读 `<home>/host-ready.json` 里的 runtime 段；任何异常都返回 undefined（不猜）。 */
+  private readHostReadyRuntime(): HostReadyRuntime | undefined {
+    try {
+      const p: string = `${this.store.homeDir()}/host-ready.json`;
+      if (!fs.accessSync(p)) {
+        return undefined;
+      }
+      const parsed = JSON.parse(fs.readTextSync(p)) as HostReadyFile;
+      if (parsed === null || parsed === undefined || parsed.runtime === undefined) {
+        return undefined;
+      }
+      return parsed.runtime;
+    } catch (e) {
+      return undefined;
+    }
   }
 
   /**
