@@ -2547,7 +2547,7 @@ struct Index {
             SymbolGlyph(navTabSymbol(tab))
               .fontSize(22)
               .fontColor([this.tab === tab ? $r('sys.color.brand') : $r('sys.color.font_secondary')])
-            if (tab === NavTab.PENDING && this.pendingBadge.length > 0) {
+            if (tab === NavTab.WORKSPACES && this.pendingBadge.length > 0) {
               this.badge(this.pendingBadge)
             }
           }
@@ -2601,7 +2601,7 @@ struct Index {
             SymbolGlyph(navTabSymbol(tab))
               .fontSize(22)
               .fontColor([this.tab === tab ? $r('sys.color.brand') : $r('sys.color.font_secondary')])
-            if (tab === NavTab.PENDING && this.pendingBadge.length > 0) {
+            if (tab === NavTab.WORKSPACES && this.pendingBadge.length > 0) {
               this.badge(this.pendingBadge)
             }
           }
@@ -2667,7 +2667,7 @@ struct Index {
             .fontSize(Fs.SECONDARY)
             .fontColor(this.tab === tab ? $r('sys.color.brand') : $r('sys.color.font_primary'))
             .layoutWeight(1)
-          if (tab === NavTab.PENDING && this.pendingBadge.length > 0) {
+          if (tab === NavTab.WORKSPACES && this.pendingBadge.length > 0) {
             Text(this.pendingBadge)
               .fontSize(Fs.CAPTION)
               .fontColor(Color.White)
