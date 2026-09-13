@@ -128,39 +128,54 @@ class HdshFormData {
   keys() { return this._entries.map((e) => e.name); }
   values() { return this._entries.map((e) => e.value); }
   [Symbol.iterator]() { return this.entries()[Symbol.iterator](); }
-  /** 编成 multipart/form-data 的字节流 + boundary（够 dsh 上传附件用）。 */
-  _encode() {
+  /** 编成 multipart/form-data 的字节流 + boundary（够 dsh 上传附件用）。异步：原生 Blob 取字节是异步的。 */
+  async _encode() {
     const boundary = `----hdsh${Date.now().toString(16)}${Math.floor(Math.random() * 1e9).toString(16)}`;
     const chunks = [];
     const crlf = Buffer.from('\r\n');
     for (const entry of this._entries) {
-      const isFile = entry.value instanceof HdshBlob || entry.filename !== undefined;
-      const value = entry.value instanceof HdshBlob
-        ? entry.value
-        : new HdshBlob([typeof entry.value === 'string' ? entry.value : String(entry.value)]);
+      const value = entry.value;
       const filename = entry.filename === undefined
-        ? (entry.value instanceof HdshFile ? entry.value.name : undefined)
+        ? (value instanceof HdshFile ? value.name : (typeof value === 'object' && value !== null && typeof value.name === 'string' ? value.name : undefined))
         : entry.filename;
+      const isFile = entry.filename !== undefined || isBlobLike(value);
       let head = `--${boundary}\r\nContent-Disposition: form-data; name="${entry.name}"`;
       if (isFile) head += `; filename="${filename === undefined ? 'blob' : filename}"`;
       head += '\r\n';
-      if (isFile) head += `Content-Type: ${value.type === '' ? 'application/octet-stream' : value.type}\r\n`;
-      chunks.push(Buffer.from(head, 'utf8'), crlf, value._buffer(), crlf);
+      if (isFile) {
+        const type = typeof value === 'object' && value !== null && typeof value.type === 'string' && value.type !== '' ? value.type : 'application/octet-stream';
+        head += `Content-Type: ${type}\r\n`;
+      }
+      chunks.push(Buffer.from(head, 'utf8'), crlf);
+      chunks.push(isFile ? await blobBytes(value) : Buffer.from(String(value), 'utf8'));
+      chunks.push(crlf);
     }
     chunks.push(Buffer.from(`--${boundary}--\r\n`, 'utf8'));
-    return { data: Buffer.concat(chunks), type: `multipart/form-data; boundary=${boundary}` };
+    return { data: Buffer.concat(chunks), type: `multipart/form-data; boundary=${boundary}`, stream: null };
   }
 }
 
-// ── body 编码 ─────────────────────────────────────────────────────────────
-function encodeRequestBody(body) {
+/** 像 Blob 就行（**不能只用 instanceof**：Node 原生就有 `Blob`/`File`，来自 `node:buffer`，
+ *  它们与 undici 无关，因此 `--no-experimental-fetch` 下依然存在，dsh 可能直接把原生 Blob 传进来）。*/
+function isBlobLike(value) {
+  return value !== null && typeof value === 'object' && typeof value.arrayBuffer === 'function' && typeof value.size === 'number';
+}
+
+/** 取 Blob 的字节：自家实现是同步的；原生 Blob 只能异步取。 */
+async function blobBytes(value) {
+  if (value instanceof HdshBlob) return value._buffer();
+  return Buffer.from(await value.arrayBuffer());
+}
+
+// ── body 编码（异步：原生 Blob 的字节只能异步取）─────────────────────────────
+async function encodeRequestBody(body) {
   if (body === undefined || body === null) return { data: null, type: null, stream: null };
   if (typeof body === 'string') return { data: Buffer.from(body, 'utf8'), type: 'text/plain;charset=UTF-8', stream: null };
   if (Buffer.isBuffer(body)) return { data: body, type: null, stream: null };
   if (body instanceof ArrayBuffer) return { data: Buffer.from(body), type: null, stream: null };
   if (ArrayBuffer.isView(body)) return { data: Buffer.from(body.buffer, body.byteOffset, body.byteLength), type: null, stream: null };
-  if (body instanceof HdshFormData) return body._encode();
-  if (body instanceof HdshBlob) return { data: body._buffer(), type: body.type === '' ? null : body.type, stream: null };
+  if (body instanceof HdshFormData) return await body._encode();
+  if (isBlobLike(body)) return { data: await blobBytes(body), type: body.type === '' ? null : body.type, stream: null };
   if (typeof body.getReader === 'function') return { data: null, type: null, stream: body };
   return { data: Buffer.from(String(body), 'utf8'), type: null, stream: null };
 }
@@ -290,7 +305,7 @@ function onceFetch(url, init, headers, encoded, signal, redirectsLeft, timeoutMs
 async function hdshFetch(input, init = {}, options = {}) {
   const url = typeof input === 'string' ? input : (input !== null && typeof input === 'object' && typeof input.url === 'string' ? input.url : String(input));
   const headers = new HdshHeaders(init.headers);
-  const encoded = encodeRequestBody(init.body);
+  const encoded = await encodeRequestBody(init.body);
   if (encoded !== undefined && encoded !== null && encoded.type !== null && !headers.has('content-type')) {
     headers.set('content-type', encoded.type);
   }
