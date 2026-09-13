@@ -218,6 +218,18 @@ export class RemoteMux {
     if (cookie !== undefined) {
       header['cookie'] = cookie;
     }
+    /*
+     * 【为什么要补 Origin（E66，待真机验证）】dsh 的 `/api` 前是 browser-trust fence，
+     * 而 dsh-web 的启动参数里有 `--trusted-host <authority...>`（我们的 Host 只传了
+     * `--host 127.0.0.1`）。浏览器发起的 WS 升级**一定**带 `Origin`，原生客户端默认**不带**——
+     * 实测症状正是：HTTP 侧 token→cookie 兑换成功（`HDSH-AUTH ok=true`），
+     * 而 WS 升级一律 `403`（dsh 的 lws 日志：`lws_client_ws_upgrade: got bad HTTP response '403'`）。
+     * 所以这里按"以本端 base 为 Origin"的浏览器等价钱发送；若 fence 并不看它，行为与现在一致，
+     * 属于可验证的低风险改动。
+     */
+    if (this.baseUrl.length > 0) {
+      header['origin'] = this.baseUrl;
+    }
     /**
      * 连接选项：**刻意不设客户端心跳**。
      *
