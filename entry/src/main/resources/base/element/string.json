@@ -107,6 +107,34 @@
     {
       "name": "composer_send",
       "value": "发送消息"
+    },
+    {
+      "name": "action_delete",
+      "value": "删除"
+    },
+    {
+      "name": "action_delete_confirm",
+      "value": "确认删除"
+    },
+    {
+      "name": "action_archive",
+      "value": "归档"
+    },
+    {
+      "name": "section_archive",
+      "value": "归档"
+    },
+    {
+      "name": "status_running",
+      "value": "运行中"
+    },
+    {
+      "name": "status_not_started",
+      "value": "还没有说话"
+    },
+    {
+      "name": "label_unnamed_session",
+      "value": "（未命名会话）"
     }
   ]
 }

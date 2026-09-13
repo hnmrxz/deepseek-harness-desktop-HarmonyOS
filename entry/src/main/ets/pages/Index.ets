@@ -3731,7 +3731,7 @@ struct Index {
        */
       if (this.archivedSessionIds.length > 0) {
         Column({ space: Sp.XS }) {
-          Text(`归档 · ${this.archivedSessionIds.length}`)
+          Text(`${$r('app.string.section_archive')} · ${this.archivedSessionIds.length}`)
             .fontSize(Fs.CAPTION)
             .fontColor($r('sys.color.font_tertiary'))
             .width('100%')
@@ -3739,7 +3739,7 @@ struct Index {
             Row({ space: Sp.S }) {
               SymbolGlyph($r('sys.symbol.archivebox')).fontSize(16)
                 .fontColor([$r('sys.color.font_secondary')])
-              Text(s.title.length > 0 ? s.title : '（未命名会话）')
+              Text(s.title.length > 0 ? s.title : $r('app.string.label_unnamed_session'))
                 .fontSize(Fs.SECONDARY)
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -3836,7 +3836,9 @@ struct Index {
          * 只有注册表里登记过的才有 id。没有 id 就**不显示**这个入口（而不是给一个点了没反应的）。
          */
         if (this.registryIdOf(w).length > 0) {
-          Text(this.confirmingDeletePath === w.path ? '确认删除' : '删除')
+          Text(this.confirmingDeletePath === w.path
+            ? $r('app.string.action_delete_confirm')
+            : $r('app.string.action_delete'))
             .fontSize(Fs.CAPTION)
             .fontColor($r('sys.color.alert'))
             .onClick(() => {
@@ -3855,13 +3857,13 @@ struct Index {
       ForEach(this.sessionsOf(w), (s: SessionListItem) => {
         Column({ space: 2 }) {
           Row({ space: Sp.S }) {
-            Text(s.title.length > 0 ? s.title : '（未命名会话）')
+            Text(s.title.length > 0 ? s.title : $r('app.string.label_unnamed_session'))
               .fontSize(Fs.SECONDARY)
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .layoutWeight(1)
             if (s.running) {
-              Text('运行中')
+              Text($r('app.string.status_running'))
                 .fontSize(Fs.CAPTION)
                 .fontColor($r('sys.color.brand'))
             }
@@ -3870,7 +3872,7 @@ struct Index {
              * 【为什么没有"取消归档"】线协议里只有 `workspace/archiveSession`，
              * **没有反向端点**——所以这里只提供归档，不造一个点不动的"恢复"。
              */
-            Text('归档')
+            Text($r('app.string.action_archive'))
               .fontSize(Fs.CAPTION)
               .fontColor($r('sys.color.font_tertiary'))
               .onClick(() => {
@@ -3883,7 +3885,8 @@ struct Index {
               })
           }
           .width('100%')
-          Text(s.blank ? '还没有说话' : `${relativeTime(s.updatedAt, Date.now())} · ${formatClock(s.updatedAt)}`)
+          Text(s.blank ? $r('app.string.status_not_started')
+            : `${relativeTime(s.updatedAt, Date.now())} · ${formatClock(s.updatedAt)}`)
             .fontSize(Fs.CAPTION)
             .fontColor($r('sys.color.font_tertiary'))
             .width('100%')
