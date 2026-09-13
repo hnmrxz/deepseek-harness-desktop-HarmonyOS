@@ -267,6 +267,10 @@ export default class EntryAbility extends UIAbility {
     const runtime = new NodeRuntime(`${ctx.resourceDir}/resources/app/main.js`, ctx.filesDir);
     const host = new DshHost(ctx.filesDir, runtime);
     hilog.info(DOMAIN, TAG, 'HDSH-AUTO 开始：入口=%{public}s', `${ctx.resourceDir}/resources/app/main.js`);
+    // 把三个目录的**真实字符串**打出来：入口脚本的诊断日志要落在一个我们能用 hdc 取回的
+    // 目录里，而 `filesDir` / `cacheDir` 在设备上到底映射到哪条路径，靠猜已经错过一次。
+    hilog.info(DOMAIN, TAG, 'HDSH-AUTO 目录：files=%{public}s cache=%{public}s temp=%{public}s resource=%{public}s',
+      ctx.filesDir, ctx.cacheDir, ctx.tempDir, ctx.resourceDir);
     runtime.probe().then((p) => {
       hilog.info(DOMAIN, TAG, 'HDSH-AUTO 探测：available=%{public}s node=%{public}s note=%{public}s',
         p.available ? 'true' : 'false', p.nodeVersion, p.note);

@@ -28,9 +28,11 @@
 #include <hilog/log.h>
 
 #include <atomic>
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <thread>
+#include <unistd.h>
 #include <vector>
 
 namespace {
@@ -145,11 +147,65 @@ napi_value StartHost(napi_env env, napi_callback_info info) {
   g_started.store(true);
   g_running.store(true);
   g_nodeThread = std::thread([]() {
+    /*
+     * 把 Node 的 stdout/stderr 抓进一个文件。
+     *
+     * 【为什么必须这么做】应用进程的 stdout 在设备上**看不见**（D6 E23：hilog 里没有，
+     * 也没人去读它），而 `node::Start` 返回时把失败原因（例如入口脚本抛错、配置缺失）
+     * 全打在 stdout/stderr 上。实测症状就是"Node 线程起来又退出、端口从未应答"，
+     * 而**原因完全不可见**——这正是当前卡住的地方。
+     * 目录用调用方传进来的 HDSH_SANDBOX_HOME（buildHostEnv 会设），那是应用自己的可写目录。
+     */
+    std::string logPath;
+    const char* home = ::getenv("HDSH_SANDBOX_HOME");
+    if (home != nullptr && home[0] != '\0') {
+      logPath = std::string(home) + "/node-output.log";
+    }
+    if (!logPath.empty()) {
+      if (FILE* f = ::freopen(logPath.c_str(), "w", stdout)) {
+        ::setvbuf(f, nullptr, _IOLBF, 0);
+        ::dup2(::fileno(f), 2);  // stderr 也指向同一个文件
+      }
+    }
+
     int rc = node::Start(static_cast<int>(g_argv.size()), g_argv.data());
     g_running.store(false);
-    // 只记录退出码；调用方通过 isHostRunning() 观察到"不跑了"。
-    // 不在这里做任何恢复动作：静默重启会把"Host 崩了"伪装成"还好好的"。
-    (void)rc;
+
+    // Node 退出后，把抓到的输出**转成 hilog**——这是设备上唯一能读到的通道。
+    ::fflush(stdout);
+    if (!logPath.empty()) {
+      FILE* f = ::fopen(logPath.c_str(), "r");
+      if (f != nullptr) {
+        char buf[3000];
+        size_t n = ::fread(buf, 1, sizeof(buf) - 1, f);
+        buf[n] = '\0';
+        ::fclose(f);
+        OH_LOG_Print(LOG_APP, LOG_ERROR, 0x0000, "HDSH-SHIM",
+                     "node::Start returned rc=%{public}d, captured output (%{public}zu bytes):",
+                     rc, n);
+        // 逐行打，避免 hilog 单条过长被截断丢掉关键信息
+        std::string all(buf);
+        size_t pos = 0;
+        while (pos < all.size()) {
+          size_t nl = all.find('\n', pos);
+          std::string line = all.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos);
+          if (!line.empty()) {
+            OH_LOG_Print(LOG_APP, LOG_ERROR, 0x0000, "HDSH-NODEOUT", "%{public}s", line.c_str());
+          }
+          if (nl == std::string::npos) {
+            break;
+          }
+          pos = nl + 1;
+        }
+      } else {
+        OH_LOG_Print(LOG_APP, LOG_ERROR, 0x0000, "HDSH-SHIM",
+                     "node::Start returned rc=%{public}d, but could not reopen %{public}s",
+                     rc, logPath.c_str());
+      }
+    } else {
+      OH_LOG_Print(LOG_APP, LOG_ERROR, 0x0000, "HDSH-SHIM",
+                   "node::Start returned rc=%{public}d (no HDSH_SANDBOX_HOME, output not captured)", rc);
+    }
   });
   // **必须 detach**：全局 std::thread 若在进程退出时仍是 joinable，它的析构函数会调用
   // std::terminate —— 表现为"退出时崩溃"。而 node::Start 是永不返回的阻塞调用
