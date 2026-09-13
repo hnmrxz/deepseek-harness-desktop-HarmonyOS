@@ -241,7 +241,11 @@ export class RemoteMux {
     try {
       const opened: boolean = await socket.connect(`${this.baseUrl}${this.surface.muxPath}`, options);
       if (!opened) {
-        this.lastError = 'ws connect 返回 false';
+        // 【诊断（E65）】WS 升级被 fence 拒 403 时，必须能区分"cookie 是空的"与
+        // "cookie 有值但没被发出去（ArkTS webSocket.connect 是否转发自定义 header）"。
+        // 不引入新导入：把结论并进 lastError，它会经 SessionHub.lastError 显示到
+        // `HDSH-AUTH connect 结果 … err=` 上。
+        this.lastError = `ws connect 返回 false（cookie=${cookie === undefined ? '无' : `${cookie.length}B`}）`;
         this.state = MuxState.CLOSED;
         this.resolveOpenWaiters(false, this.lastError);
         return false;
@@ -252,7 +256,8 @@ export class RemoteMux {
       return true;
     } catch (error) {
       const businessError: BusinessError = error as BusinessError;
-      this.lastError = `ws connect 失败 code=${businessError.code} message=${businessError.message}`;
+      this.lastError = `ws connect 失败 code=${businessError.code} message=${businessError.message}`
+        + `（cookie=${cookie === undefined ? '无' : `${cookie.length}B`}）`;
       this.state = MuxState.CLOSED;
       this.resolveOpenWaiters(false, this.lastError);
       return false;
