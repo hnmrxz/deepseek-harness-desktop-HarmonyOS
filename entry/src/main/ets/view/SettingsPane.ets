@@ -181,7 +181,9 @@ export struct SettingsPane {
 
       Scroll() {
         Column({ space: Sp.L }) {
-          if (this.tab === 'general') {
+          if (this.tab === 'core') {
+            this.coreSlot()
+          } else if (this.tab === 'general') {
             this.generalTab()
           } else if (this.tab === 'model') {
             this.modelTab()
@@ -203,10 +205,24 @@ export struct SettingsPane {
     .height('100%')
   }
 
+  /**
+   * 核心分区（E110：原「核心」一级页签并入这里）。
+   *
+   * 用 `@BuilderParam` 由宿主注入内容，而不是把十几个回调再串一遍：
+   * 核心页的状态与动作都在宿主（Index）手里，串一遍只会多出一层容易接错的透传。
+   */
+  @BuilderParam coreSlot: () => void = this.coreSlotEmpty;
+
+  @Builder
+  coreSlotEmpty() {
+  }
+
   @Builder
   tabBar() {
     Scroll() {
       Row({ space: Sp.S }) {
+        // E110：核心（版本/插件/运行时事实）作为设置的第一项——它与"这台设备怎么跑"同类
+        this.tabChip('core', '核心')
         this.tabChip('general', '通用')
         // 【为什么没有「凭据」页签（E96）】官方把 API 密钥放在 Models 页（提供方那一行上），
         // 密钥与模型本来就是一体的：没配密钥的模型根本调不通。分成两页会让人看不出这条因果。

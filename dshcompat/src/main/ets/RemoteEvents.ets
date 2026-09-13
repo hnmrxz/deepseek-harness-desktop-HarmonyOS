@@ -323,6 +323,19 @@ export function isUserAuthoredEvent(name: string): boolean {
   return name === 'user/message';
 }
 
+/**
+ * 是否为**系统侧**写进会话记录的消息（E109）。
+ *
+ * 【为什么需要】`system/message` 与 `user/message` 同属 `EventFamily.MESSAGE`，
+ * 而系统提示词（"You are an AI agent powered by DeepSeek Harness…"）就是这样落进会话日志的。
+ * 真机上表现为：**对话视图里出现一条"助手"消息，内容却是系统提示词**——用户会以为模型
+ * 在自言自语。官方 web 不把系统上下文放进对话；这里给出与 `isUserAuthoredEvent` 同源的判定，
+ * 让上层把角色标成 `Speaker.SYSTEM`，从而在对话视图里隐去、只在轨迹视图里可查。
+ */
+export function isSystemAuthoredEvent(name: string): boolean {
+  return name === 'system/message';
+}
+
 /** 转发事件流 `$events` 的下行帧判别值 */
 export enum RemoteEventFrameType {
   /** 首帧：证明事件源就绪，并给出 clientId（后续应答必须带上它） */

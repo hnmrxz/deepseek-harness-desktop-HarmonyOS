@@ -53,6 +53,7 @@ import {
   isKnownEventType,
   isSessionListEvent,
   isUserAuthoredEvent,
+  isSystemAuthoredEvent,
   mayChangeSessionTitle,
   mayChangeTurnState,
   CREDENTIALS_DESCRIBE_ENDPOINT,
@@ -1866,9 +1867,10 @@ export class SessionHub {
     // 追加会与流式通路已写入的内容重复（用户会看到每条消息两遍）。
     const items: TrajectoryItem[] = [];
     for (let i = 0; i < page.records.length; i++) {
-      const projected: TrajectoryItem | undefined = projectWireRecord(page.records[i]);
-      if (projected !== undefined) {
-        appendOrMerge(items, projected);
+      // E112：一条记录可能展开成多条（消息 + 它夹带的工具调用）
+      const projected: TrajectoryItem[] = projectWireRecords(page.records[i]);
+      for (let j = 0; j < projected.length; j++) {
+        appendOrMerge(items, projected[j]);
       }
     }
     // 期间用户切走了会话：这批记录不属于当前视图，丢弃（否则会把别人的内容显示在他的会话里）
@@ -2187,9 +2189,9 @@ export class SessionHub {
       const items: TrajectoryItem[] = [];
       if (records !== undefined) {
         for (let i = 0; i < records.length; i++) {
-          const projected: TrajectoryItem | undefined = projectWireRecord(records[i]);
-          if (projected !== undefined) {
-            appendOrMerge(items, projected);
+          const projected: TrajectoryItem[] = projectWireRecords(records[i]);
+          for (let j = 0; j < projected.length; j++) {
+            appendOrMerge(items, projected[j]);
           }
         }
       }
@@ -2200,10 +2202,13 @@ export class SessionHub {
       return;
     }
     if (type === 'event') {
-      const projected: TrajectoryItem | undefined = projectWireRecord(value);
-      if (projected !== undefined) {
+      // E112：一条事件可能展开成多条（消息 + 夹带的工具调用）
+      const projected: TrajectoryItem[] = projectWireRecords(value);
+      if (projected.length > 0) {
         const next: TrajectoryItem[] = this.trajectoryList.slice();
-        appendOrMerge(next, projected);
+        for (let i = 0; i < projected.length; i++) {
+          appendOrMerge(next, projected[i]);
+        }
         this.trajectoryList = next;
       }
       const event: Object | undefined = getRecord(value, 'event');
@@ -2813,6 +2818,95 @@ export class SessionHub {
  *   `data` 并标记展开，同时由 `noteUnknown()` 汇总到诊断页，
  *   让下次升级时能回填形状表。宁可多一行「未识别」，也不要让对话少一截。
  */
+/**
+ * 把一条记录投影成**一组**条目（E112：一条消息里可以夹带多个工具调用）。
+ *
+ * 【为什么需要它】真机截图暴露了旧行为：助手消息的 `content` 里除了思考与正文，
+ * 还夹着 `tool-call` 块，而 `splitBlocks` 只认识文本 ⇒ 界面出现 `[tool-call]` 占位，
+ * 甚至把一整段 `{"id":…,"toolName":"write","callId":…}` 当成助手正文显示出来。
+ * 官方 web 把这类块渲染成**工具卡**（名字 + 参数 + 状态 + 结果），这里就在数据层分出条目，
+ * 视图层无需再猜。
+ *
+ * 兼容：`projectWireRecord`（单条）保持原样导出，老调用点不受影响。
+ */
+export function projectWireRecords(record: Object): TrajectoryItem[] {
+  const primary: TrajectoryItem | undefined = projectWireRecord(record);
+  const out: TrajectoryItem[] = [];
+  if (primary !== undefined) {
+    out.push(primary);
+  }
+  const tools: TrajectoryItem[] = toolItemsOfRecord(record);
+  for (let i = 0; i < tools.length; i++) {
+    out.push(tools[i]);
+  }
+  return out;
+}
+
+/**
+ * 记录里夹带的工具调用块 → 工具卡条目。
+ *
+ * 认得的块类型：`tool-call` / `tool_call` / `tool-use` / `tool_use`。
+ * 工具名与参数按**多个候选字段**取（上游不同适配器用 `toolName`/`name`、`arguments`/`args`/`input`），
+ * 取到哪个算哪个——取不到名字就不造条目（宁可少一行，也不要一张没有名字的工具卡）。
+ */
+function toolItemsOfRecord(record: Object): TrajectoryItem[] {
+  const out: TrajectoryItem[] = [];
+  const event: Object | undefined = getRecord(record, 'event');
+  if (event === undefined) {
+    return out;
+  }
+  const data: Object | undefined = getRecord(event, 'data');
+  if (data === undefined) {
+    return out;
+  }
+  const time: number = getNumber(event, 'time') ?? 0;
+  const seq: number = getNumber(event, 'seq') ?? 0;
+  // 消息块可能直接放在 data.content，也可能在 data.message.content
+  const message: Object | undefined = getRecord(data, 'message');
+  const blocks: Object[] | undefined = getArray(data, 'content')
+    ?? (message === undefined ? undefined : getArray(message, 'content'));
+  if (blocks === undefined) {
+    return out;
+  }
+  for (let i = 0; i < blocks.length; i++) {
+    const block: Object = blocks[i];
+    const blockType: string = getString(block, 'type') ?? '';
+    if (!isToolCallBlock(blockType)) {
+      continue;
+    }
+    const name: string = firstStringOf(block, ['toolName', 'name', 'tool']);
+    if (name.length === 0) {
+      continue;
+    }
+    const item: TrajectoryItem = makeItem(`ev-tool-${seq}-${i}`, TrajectoryKind.TOOL, time);
+    item.speaker = Speaker.ASSISTANT;
+    item.toolName = name;
+    item.toolArgs = firstStringOf(block, ['arguments', 'args', 'input', 'parameters']);
+    item.callId = firstStringOf(block, ['callId', 'id', 'toolCallId']);
+    if (item.callId.length > 0) {
+      item.id = `ev-call-${item.callId}`;
+    }
+    item.toolState = ToolState.RUNNING;
+    out.push(item);
+  }
+  return out;
+}
+
+function isToolCallBlock(type: string): boolean {
+  return type === 'tool-call' || type === 'tool_call' || type === 'tool-use' || type === 'tool_use';
+}
+
+/** 依次尝试多个字段名，返回第一个非空字符串（上游字段名不统一，这是实测的应对） */
+function firstStringOf(container: Object, keys: string[]): string {
+  for (let i = 0; i < keys.length; i++) {
+    const value: string | undefined = getString(container, keys[i]);
+    if (value !== undefined && value.length > 0) {
+      return value;
+    }
+  }
+  return '';
+}
+
 export function projectWireRecord(record: Object): TrajectoryItem | undefined {
   const type: string = getString(record, 'type') ?? '';
   if (type !== 'event') {
@@ -2840,7 +2934,16 @@ export function projectWireRecord(record: Object): TrajectoryItem | undefined {
   const family: EventFamily = classifyEventType(eventType);
   const kind: TrajectoryKind = familyKind(family);
   const item: TrajectoryItem = makeItem(`ev-${seq}`, kind, time);
-  item.speaker = isUserAuthoredEvent(eventType) ? Speaker.USER : Speaker.ASSISTANT;
+  /*
+   * 角色三分（E109）：用户 / 系统 / 助手。
+   *
+   * 以前只有"用户或助手"两分，于是 `system/message`（系统提示词）被标成**助手**，
+   * 真机截图里就出现了一条"助手说：You are an AI agent powered by DeepSeek Harness…"。
+   * 官方 web 不把系统上下文放进对话视图——这里标对角色，视图层才能在对话里隐去、
+   * 在轨迹里可查。
+   */
+  item.speaker = isUserAuthoredEvent(eventType) ? Speaker.USER
+    : (isSystemAuthoredEvent(eventType) ? Speaker.SYSTEM : Speaker.ASSISTANT);
 
   if (shape === undefined) {
     // 未识别类型：如实呈现原始载荷（不是猜测，也不丢弃）
@@ -2848,10 +2951,12 @@ export function projectWireRecord(record: Object): TrajectoryItem | undefined {
     item.expanded = true;
     return item;
   }
-
   const text: ResolvedSlot = resolveSlot(data, shape, ContentSlot.CONTENT_BLOCKS);
   if (text.found) {
-    item.body = textFromBlocks(text.value);
+    // E107：按块类型拆分——思考进 `reasoning`（折叠块），正文进 `body`
+    const split: BlockText = splitBlocks(text.value);
+    item.reasoning = split.reasoning;
+    item.body = split.body;
   }
   const model: ResolvedSlot = resolveSlot(data, shape, ContentSlot.MODEL);
   if (model.found) {
@@ -3041,6 +3146,76 @@ function resolveSlot(data: Object | undefined, shape: SessionEventShape,
     return { found: false, value: undefined };
   }
   return { found: true, value: value };
+}
+
+/** 按块类型拆开的文本（E107）：思考与正文分开，视图层才能分开展示 */
+interface BlockText {
+  reasoning: string;
+  body: string;
+}
+
+/**
+ * 判断一个内容块是否为**思考**块。
+ *
+ * 上游用过的类型名不止一个（`reasoning` / `thinking` / `analysis`），所以按**集合**判断，
+ * 而不是只认一个字符串——漏认的后果是思考又混回正文里，界面上看不出区别。
+ */
+function isReasoningBlock(type: string): boolean {
+  return type === 'reasoning' || type === 'thinking' || type === 'analysis'
+    || type === 'reasoning-text' || type === 'reasoning_text';
+}
+
+/**
+ * `content` 块数组 → `{reasoning, body}`（E107）。
+ *
+ * 真机取证：助手消息常常是 `[{type:'reasoning',…},{type:'text',…}]`，早先的 `textFromBlocks`
+ * 把它们**拼成一段**，于是界面上"思考"和"回答"糊在同一个气泡里（截图可见：先一段英文自述、
+ * 再一句回答）。官方 web 把思考收进**折叠块**、正文单独成段；这里先把两者分开。
+ */
+function splitBlocks(value: Object | undefined): BlockText {
+  if (typeof value === 'string') {
+    return { reasoning: '', body: value as string };
+  }
+  if (!Array.isArray(value)) {
+    return { reasoning: '', body: asText(value) };
+  }
+  const blocks: Object[] = value as Object[];
+  const reasoning: string[] = [];
+  const body: string[] = [];
+  for (let i = 0; i < blocks.length; i++) {
+    const block: Object = blocks[i];
+    const blockType: string = getString(block, 'type') ?? '';
+    if (isReasoningBlock(blockType)) {
+      const text: string | undefined = getString(block, 'text');
+      if (text !== undefined && text.length > 0) {
+        reasoning.push(text);
+      }
+      continue;
+    }
+    // 工具调用块由 `toolItemsOfRecord` 单独出条目（工具卡），正文里不再留 `[tool-call]` 占位
+    if (isToolCallBlock(blockType)) {
+      continue;
+    }
+    // 工具结果块：正文在内层 content 里（实测）
+    const nested: Object[] | undefined = getArray(block, 'content');
+    if (nested !== undefined && blockType === 'tool-result') {
+      const inner: string = textFromBlocks(nested);
+      if (inner.length > 0) {
+        body.push(inner);
+      }
+      continue;
+    }
+    const text: string | undefined = getString(block, 'text');
+    if (text !== undefined) {
+      body.push(text);
+      continue;
+    }
+    if (blockType.length > 0 && blockType !== 'text') {
+      // 非文本块：显示类型占位，不猜内部结构
+      body.push(`[${blockType}]`);
+    }
+  }
+  return { reasoning: reasoning.join('\n'), body: body.join('\n') };
 }
 
 /**

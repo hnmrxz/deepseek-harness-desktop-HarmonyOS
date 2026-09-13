@@ -127,6 +127,7 @@ export {
   isKnownEventType,
   KNOWN_EVENT_TYPE_COUNT,
   isUserAuthoredEvent,
+  isSystemAuthoredEvent,
   FORWARDED_EVENTS,
   ForwardedEventMode,
   forwardedModeOf,

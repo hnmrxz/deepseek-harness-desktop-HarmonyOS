@@ -43,6 +43,16 @@ export interface TrajectoryItem {
   at: number;
   /** 正文（Markdown；仅 MESSAGE / REASONING / ERROR 使用） */
   body: string;
+  /**
+   * 思考内容（仅 MESSAGE；E107）。
+   *
+   * 【为什么单独一个字段】真实事件里的助手消息是**多块**的：
+   *   `content: [{type:'reasoning', text:…}, {type:'text', text:…}]`
+   * 早先的解析把所有块**拼成一段**塞进 `body`，于是界面上"思考"与"正文"糊在一个气泡里
+   * （真机截图就是这样：先一段英文自述、再一句回答）。官方 web 把思考放进**折叠块**、
+   * 正文单独成段——在这里把两者分开，视图层才能照做。
+   */
+  reasoning: string;
   /** 角色（仅 MESSAGE） */
   speaker: Speaker;
   /** 模型名（仅 ASSISTANT 消息显示为次要信息） */
@@ -90,6 +100,7 @@ export function makeItem(id: string, kind: TrajectoryKind, at: number): Trajecto
     kind: kind,
     at: at,
     body: '',
+    reasoning: '',
     speaker: Speaker.ASSISTANT,
     model: '',
     elapsedMs: 0,

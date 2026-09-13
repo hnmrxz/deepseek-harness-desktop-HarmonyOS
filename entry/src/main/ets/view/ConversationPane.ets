@@ -98,6 +98,72 @@ export struct ConversationPane {
   @State matchPos: number = -1;
   private scroller: Scroller = new Scroller();
 
+  /**
+   * 是否**跟随最新**（E113）。
+   *
+   * 【为什么需要它】官方 web 的行为是"贴底跟随"，而朴素做法（每条新消息都 `scrollEdge`）
+   * 会在用户**正在往上翻历史**时把他拽回底部——那是最令人恼火的一类交互缺陷。
+   * 规则三条：
+   *   1. 默认跟随：进入会话、发消息、模型流式输出时都停在最新；
+   *   2. 用户手动上翻 ⇒ **解除跟随**，新内容只追加不抢焦点；
+   *   3. 用户自己拉回底部 ⇒ **恢复跟随**，此后新内容继续自动滚。
+   * 判定用可见区间（`onScrollIndex` 的 `end` 是否覆盖最后一条），它对"手滑一下又停住"
+   * 这种情况也稳：只要最后一条重新可见，就认为用户回到了底部。
+   */
+  @State stickToBottom: boolean = true;
+  /** 渲染条数（宿主传入；@Watch 用于"有新条目就贴底"） */
+  @Prop @Watch('onItemsChanged') itemCount: number = 0;
+  private followTimer: number = -1;
+
+  /** 可见区间变化：最后一条可见 ⇔ 用户在底部 ⇒ 恢复跟随；否则解除跟随 */
+  private onVisibleRange(start: number, end: number): void {
+    const last: number = this.visibleItems().length - 1;
+    this.stickToBottom = last < 0 || end >= last;
+  }
+
+  private onItemsChanged(): void {
+    if (this.stickToBottom) {
+      this.scrollToLatest();
+    }
+  }
+
+  /** 贴到底部；失败不该让页面崩（列表未就绪/尺寸为 0 时会抛） */
+  private scrollToLatest(): void {
+    try {
+      this.scroller.scrollEdge(Edge.Bottom);
+    } catch (err) {
+      // 忽略：下一次内容变化会再试
+    }
+  }
+
+  /**
+   * 运行中定时贴底：流式输出时**条目数不变而正文在长**，只靠 `itemCount` 会停在半截。
+   * 只在自己跟随（`stickToBottom`）时定时；用户上翻时立刻停。
+   */
+  private syncFollowTimer(): void {
+    const shouldRun: boolean = this.running && this.stickToBottom;
+    if (shouldRun && this.followTimer < 0) {
+      this.followTimer = setInterval(() => {
+        this.scrollToLatest();
+      }, 900);
+    } else if (!shouldRun && this.followTimer >= 0) {
+      clearInterval(this.followTimer);
+      this.followTimer = -1;
+    }
+  }
+
+  aboutToAppear(): void {
+    // 进入会话先贴到底部（用户要看到的是最新一条，而不是最老一条）
+    this.scrollToLatest();
+  }
+
+  aboutToDisappear(): void {
+    if (this.followTimer >= 0) {
+      clearInterval(this.followTimer);
+      this.followTimer = -1;
+    }
+  }
+
   /** 当前命中集合（每次渲染按关键词算一次；轨迹长度是几十到几百条，代价可忽略） */
   private hits(): number[] {
     return matchTrajectoryIndices(this.items, this.searchQuery);
@@ -145,6 +211,53 @@ export struct ConversationPane {
     this.jumpTo(stepMatch(this.matchPos, list.length, delta));
   }
 
+  /**
+   * 视图模式（E108）：`chat` = 只看问答；`trajectory` = 全过程（工具/子代理/目标…）。
+   *
+   * 默认落在 `chat`：日常是"读答案"，把工具卡默认糊在脸上会淹没对话。
+   */
+  @State view: string = 'chat';
+
+  /**
+   * 当前视图下要渲染的条目。
+   *
+   * `chat` 只留**用户可见的对话**：消息与错误（错误必须留在这里——它是"为什么没有回答"的唯一说明）。
+   * `trajectory` 保留全部条目：工具、子代理、目标/任务、交付物都在这里可查。
+   */
+  private visibleItems(): TrajectoryItem[] {
+    if (this.view === 'trajectory') {
+      return this.items;
+    }
+    const out: TrajectoryItem[] = [];
+    for (let i = 0; i < this.items.length; i++) {
+      const item: TrajectoryItem = this.items[i];
+      if (item.kind === TrajectoryKind.MESSAGE || item.kind === TrajectoryKind.ERROR) {
+        // 系统消息（系统提示词等内部上下文）不进对话视图：官方 web 也不显示，
+        // 它会让用户以为模型在自言自语（真机截图里出现过）。轨迹视图里仍可查。
+        if (item.speaker === Speaker.SYSTEM) {
+          continue;
+        }
+        out.push(item);
+      }
+    }
+    return out;
+  }
+
+  @Builder
+  viewChip(value: string, label: string) {
+    Text(label)
+      .fontSize(Fs.SECONDARY)
+      .fontColor(this.view === value ? Color.White : $r('sys.color.font_secondary'))
+      .padding({ left: Sp.M, right: Sp.M, top: Sp.XS, bottom: Sp.XS })
+      .borderRadius(Radius.L)
+      .backgroundColor(this.view === value
+        ? $r('sys.color.brand')
+        : $r('sys.color.background_secondary'))
+      .onClick(() => {
+        this.view = value;
+      })
+  }
+
   @Builder
   searchBar() {
     Row({ space: Sp.S }) {
@@ -187,12 +300,34 @@ export struct ConversationPane {
 
   build() {
     Column() {
+      /*
+       * 对话 / 轨迹 两个视图（E108，与官方 web 一致）。
+       *
+       * 【为什么分开】同一条会话流里有两种读者需求：
+       *   - **对话**：只看问答（人说的话 + 模型的回答，思考折叠在回答上方）——日常使用；
+       *   - **轨迹**：看全过程（工具调用、子代理、目标/任务、交付物、错误）——排查与复盘。
+       * 官方 web 也是这两个视图；混在一起会让"想安静读答案"的人被工具卡刷屏，
+       * 而"想查某次工具参数"的人又要在气泡之间翻找。
+       */
+      Row({ space: Sp.S }) {
+        this.viewChip('chat', '对话')
+        this.viewChip('trajectory', '轨迹')
+        Blank()
+        if (this.view === 'trajectory') {
+          Text(`${this.items.length} 条事件`)
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.font_tertiary'))
+        }
+      }
+      .width('100%')
+      .padding({ left: Sp.M, right: Sp.M, top: Sp.S })
+
       if (this.searchOpen) {
         this.searchBar()
       }
 
       List({ space: Sp.M, scroller: this.scroller }) {
-        ForEach(this.items, (item: TrajectoryItem) => {
+        ForEach(this.visibleItems(), (item: TrajectoryItem) => {
           ListItem() {
             this.trajectoryItem(item)
           }
@@ -205,6 +340,11 @@ export struct ConversationPane {
       .layoutWeight(1)
       .width('100%')
       .padding({ left: Sp.M, right: Sp.M, top: Sp.M })
+      // E113：可见区间决定"是否跟随最新"；贴底跟随由 `stickToBottom` + 定时器实现
+      .onScrollIndex((start: number, end: number) => {
+        this.onVisibleRange(start, end);
+        this.syncFollowTimer();
+      })
       .scrollBar(BarState.Auto)
 
       Divider().color($r('sys.color.comp_divider'))
@@ -262,7 +402,8 @@ export struct ConversationPane {
   messageItem(item: TrajectoryItem) {
     Column({ space: Sp.XS }) {
       Row({ space: Sp.S }) {
-        Text(item.speaker === Speaker.USER ? '我' : '助手')
+        Text(item.speaker === Speaker.USER ? '我'
+          : (item.speaker === Speaker.SYSTEM ? '系统' : '助手'))
           .fontSize(Fs.CAPTION)
           .fontColor($r('sys.color.font_tertiary'))
         Text(formatClock(item.at))
@@ -281,6 +422,46 @@ export struct ConversationPane {
         }
       }
       .width('100%')
+
+      /*
+       * 【思考单独成块（E107）】助手消息常把"思考"与"正文"作为两个内容块一起发来。
+       * 官方 web 把思考收进**折叠块**（标题给字数/耗时，默认收起），正文单独成段。
+       * 这里照做：思考块在上、默认收起、点击展开；正文保持主字号。
+       */
+      if (item.reasoning.length > 0) {
+        Column({ space: Sp.XS }) {
+          Row({ space: Sp.S }) {
+            SymbolGlyph($r('sys.symbol.lightbulb'))
+              .fontSize(14)
+              .fontColor([$r('sys.color.font_tertiary')])
+            Text(`思考过程 · ${item.reasoning.length} 字`)
+              .fontSize(Fs.CAPTION)
+              .fontColor($r('sys.color.font_tertiary'))
+              .layoutWeight(1)
+            Text(this.isExpanded(`${item.id}:r`) ? '收起' : '展开')
+              .fontSize(Fs.CAPTION)
+              .fontColor($r('sys.color.brand'))
+          }
+          .width('100%')
+
+          if (this.isExpanded(`${item.id}:r`)) {
+            Text(item.reasoning)
+              .fontSize(Fs.SECONDARY)
+              .fontColor($r('sys.color.font_secondary'))
+              .width('100%')
+              .textAlign(TextAlign.Start)
+              .copyOption(CopyOptions.LocalDevice)
+          }
+        }
+        .width('100%')
+        .padding(Sp.S)
+        .borderRadius(Radius.S)
+        .borderWidth(1)
+        .borderColor($r('sys.color.comp_divider'))
+        .onClick(() => {
+          this.toggle(`${item.id}:r`);
+        })
+      }
 
       Text(item.body + (item.streaming ? ' ▌' : ''))
         .fontSize(Fs.BODY)

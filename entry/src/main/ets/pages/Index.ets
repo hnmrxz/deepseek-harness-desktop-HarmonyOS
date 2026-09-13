@@ -84,6 +84,8 @@ import {
   filterDiagEntries,
   fact,
   sessionEmptyCopy,
+formatClock,
+relativeTime,
   unknownFact,
   mergeSettingsGroups,
   normalizePathKey,
@@ -251,7 +253,8 @@ enum StackPage {
 
 /** 一级导航顺序 */
 // 「核心」放在工作区与设置之间：它属于"能力/运维"一类，紧邻设置但不与设置混在一起
-const TABS: NavTab[] = [NavTab.PENDING, NavTab.SESSIONS, NavTab.WORKSPACES, NavTab.CORE, NavTab.SETTINGS];
+// E110：收敛为两项——核心并入设置（它是"这台设备上 DSH 怎么跑"的配置，不该另开一级）
+const TABS: NavTab[] = [NavTab.WORKSPACES, NavTab.SETTINGS];
 
 /** 自动连接路径的诊断日志（前缀 HDSH-CONN）：端侧只有 hilog 可看，而这条路径
  *  "既不发请求也不报错"的失败模式极难从外部定位（见 E55/E56）。 */
@@ -445,6 +448,15 @@ struct Index {
   @StorageProp('dshLastHostToken') rememberedToken: string = '';
   @StorageProp('dshLastHostTokenState') rememberedTokenState: string = 'pending';
   @StorageProp('dshHostAutoConnect') shouldAutoConnect: boolean = false;
+  /**
+   * 是否已经**结束过一次**连接尝试（E111）。
+   *
+   * 【为什么需要】启动时应用要先等本机核心就绪，再完成 token→cookie 兑换；
+   * 这几十秒里中枢的 `lastError` 可能带着"尚未连接"这类中间态文本，而状态条是无条件渲染的
+   * ⇒ 用户看到「无法连接核心」**闪一下再消失**（真机反馈）。判据不能是"有没有错误文本"，
+   * 只能是"有没有真的试过并且失败了"。
+   */
+  @State connectSettled: boolean = false;
   /**
    * 内置核心是否正在解包（EntryAbility 广播；E99）。
    * 首启时它必须让页面显示「正在解包核心」而不是「还没有安装核心」。
@@ -949,8 +961,11 @@ struct Index {
       }
       this.connectBusy = true;
       this.connectResult = `正在自动重连 ${this.rememberedUrl}…`;
+      this.connectSettled = false;
       hub.connect().then((ok: boolean) => {
         this.connectBusy = false;
+        // 尝试已结束（成功或失败都算"结束"）：从这里开始，错误文本才是**结论**而不是中间态
+        this.connectSettled = true;
         const snap: HubSnapshot = hub.snapshot();
         /*
          * 【为什么这里一定要打日志（E62/E63）】`connect()` 内部会先做 token→cookie 兑换
@@ -1164,7 +1179,20 @@ struct Index {
     }
   }
 
+  /**
+   * 切换一级页签（E108：待决已并入工作区，这里做一次归一化）。
+   *
+   * `NavTab.PENDING` 还留在枚举里（历史调用点仍会传它，例如"有待决时跳过去看"），
+   * 但页签栏里已经没有它——统一落到工作区视图，那里有内联的待决区。
+   */
   private selectTab(tab: NavTab): void {
+    if (tab === NavTab.PENDING) {
+      tab = NavTab.WORKSPACES;
+    }
+    // E110：核心页并入设置——历史调用点（"启动核心后跳过去看"）统一落到设置页
+    if (tab === NavTab.CORE) {
+      tab = NavTab.SETTINGS;
+    }
     this.tab = tab;
     this.stackPage = StackPage.MAIN;
     this.wsDrill = 0;
@@ -1181,10 +1209,10 @@ struct Index {
     // 「还没有安装核心 / 核心随应用内置，首次启动会自动解包」，而事实正相反。
     // 真机实测过这一对自相矛盾的读数：核心页写着「就绪 · 已安装 1 个版本」，
     // 会话页却写着「还没有安装核心」。空态文案是给人指路的，指错方向比不写更糟。
-    if (tab === NavTab.CORE || tab === NavTab.SESSIONS) {
-      if (tab === NavTab.CORE) {
-        this.coreNotice = '';
-      }
+    //
+    // E110 之后 `NavTab.CORE` 只是 `SETTINGS` 的别名（核心并入设置），所以这里不再单列它：
+    // 设置页里的核心分区同样需要新鲜的阶段读数，因此**进设置页也重读**。
+    if (tab !== NavTab.WORKSPACES) {
       this.refreshCoreView();
     }
   }
@@ -2764,6 +2792,7 @@ struct Index {
       })
     } else if (this.showsConversation() && this.stackPage === StackPage.CONVERSATION) {
       ConversationPane({
+        itemCount: this.trajectoryItems.length,
         sessionId: this.selectedSessionId,
         items: this.trajectoryItems,
         running: this.running,
@@ -3384,46 +3413,260 @@ struct Index {
     });
   }
 
+  // ───────────────────── 工作区视图（E108：会话与待决并入）─────────────────────
+
+  /** 某个工作区下的会话（按 `cwd` 归一化匹配：工作区本来就是由会话的 cwd 归并出来的） */
+  private sessionsOf(w: WorkspaceItem): SessionListItem[] {
+    const key: string = normalizePathKey(w.path);
+    const out: SessionListItem[] = [];
+    for (let i = 0; i < this.sessions.length; i++) {
+      const s: SessionListItem = this.sessions[i];
+      if (s.cwd.length > 0 && normalizePathKey(s.cwd) === key) {
+        out.push(s);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * 打开某个工作区的**文件**视图（下钻一层）。
+   *
+   * 文件接口的作用域是**会话级**（`workspaceFileScopeId` = 会话 id），所以必须先在这个目录下
+   * 有会话才看得到文件——这就是原实现里那条空态文案的由来。这里直接取该工作区的第一个会话当作用域。
+   */
+  private openWorkspaceFiles(w: WorkspaceItem): void {
+    const scope: SessionListItem[] = this.sessionsOf(w);
+    this.pendingWorkspacePick = true;
+    if (scope.length === 0) {
+      this.treeEmptyTitle = '该工作区下还没有会话';
+      this.treeEmptyHint = '文件浏览的作用域是会话级（workspaceFileScopeId = 会话 id），请先在这个目录里新建一个会话。';
+      this.wsDrill = 1;
+      return;
+    }
+    this.treeEmptyTitle = '该目录暂无文件';
+    this.treeEmptyHint = '目录确实为空，或 Host 拒绝列出它的内容（详见连接诊断）。';
+    if (this.hubConnected) {
+      SessionHub.shared().openWorkspace(scope[0].id);
+    }
+    this.wsDrill = 1;
+  }
+
+  /**
+   * 工作区视图：动作行 → 待决（若有）→ 工作区分组（组内列会话）。
+   *
+   * 【为什么把待决放在最上面】它属于"现在就需要你动手"的东西，藏在别处等于拖延；
+   * 而官方 web 也是把审批/提问直接摆在对话流里，不另开页签。
+   */
   @Builder
-  tabContent(compact: boolean) {
-    if (this.tab === NavTab.PENDING) {
-      PendingPane({
-        items: this.pending,
-        onDecide: (item: PendingItem, choiceId: string, reason: string) => {
-          this.decidePending(item, choiceId, reason);
-        },
-        onAnswer: (item: PendingItem, selected: string[], custom: string) => {
-          this.answerPending(item, selected, custom);
-        }
-      })
-    } else if (this.tab === NavTab.SESSIONS) {
-      Column() {
-        // 连接状态条：**失败必须可见**（D3 §4）。
-        // 曾经只把错误存进状态而不渲染，结果是「连上了但列表为空」这种
-        // 最容易被误读成「Host 上没有会话」的失败——错误信息被完全吞掉。
-        if (this.hubError.length > 0) {
-          this.hubBanner()
-        }
-        SessionListPane({
-          sessions: this.sessions,
-          pending: this.pending,
-          selectedId: this.selectedSessionId,
-          // 空态按核心阶段分档（D7 §3 第 7 项）：把"看不到会话"引向正确的排查方向
-          emptyTitle: sessionEmptyCopy(this.coreView.phase).title,
-          emptyHint: sessionEmptyCopy(this.coreView.phase).hint,
-          onSelect: (id: string) => {
-            this.openSession(id);
-          },
-          onCreate: () => {
-            // 不在这里判连接状态：中枢会给出「尚未连接 Host，无法新建会话」
-            // 并广播到状态条——单一判定点比在两处各写一遍更不容易走偏
+  workspaceHub(compact: boolean) {
+    Column({ space: Sp.S }) {
+      // 连接状态条（E111）：**先区分"正在连"与"连不上"**。
+      // 启动时要等本机核心就绪（几十秒），这段时间中枢的 lastError 可能带着中间态文本；
+      // 无条件渲染它，用户就会看到「无法连接核心」闪一下——那是假报错。
+      if (this.connectBusy || !this.connectSettled) {
+        Text('正在连接本机核心…')
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.font_tertiary'))
+          .width('100%')
+          .padding(Sp.S)
+          .borderRadius(Radius.S)
+          .backgroundColor($r('sys.color.background_secondary'))
+      } else if (this.hubError.length > 0) {
+        this.hubBanner()
+      }
+
+      Row({ space: Sp.S }) {
+        Text('+ 新建会话')
+          .fontSize(Fs.BODY)
+          .fontColor($r('sys.color.brand'))
+          .onClick(() => {
             SessionHub.shared().createSession();
-          }
-        })
-          .layoutWeight(1)
+          })
+        Blank()
+        Text('选择文件夹')
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.brand'))
+          .onClick(() => {
+            this.openFolderPicker();
+          })
       }
       .width('100%')
-      .height('100%')
+      .height(Sz.TOUCH_MIN)
+
+      if (this.pending.length > 0) {
+        Column({ space: Sp.XS }) {
+          Text(`待你决定 · ${this.pending.length}`)
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.warning'))
+            .width('100%')
+          PendingPane({
+            items: this.pending,
+            onDecide: (item: PendingItem, choiceId: string, reason: string) => {
+              this.decidePending(item, choiceId, reason);
+            },
+            onAnswer: (item: PendingItem, selected: string[], custom: string) => {
+              this.answerPending(item, selected, custom);
+            }
+          })
+        }
+        .width('100%')
+        .constraintSize({ maxHeight: 320 })
+      }
+
+      if (this.workspaces.length === 0) {
+        // 空态按核心阶段分档（D7 §3 第 7 项）：把"看不到会话"引向正确的排查方向
+        Column({ space: Sp.S }) {
+          SymbolGlyph($r('sys.symbol.folder'))
+            .fontSize(36)
+            .fontColor([$r('sys.color.font_tertiary')])
+          Text(sessionEmptyCopy(this.coreView.phase).title)
+            .fontSize(Fs.BODY)
+            .fontColor($r('sys.color.font_secondary'))
+          Text(sessionEmptyCopy(this.coreView.phase).hint)
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.font_tertiary'))
+            .textAlign(TextAlign.Center)
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center)
+      } else {
+        List({ space: Sp.M }) {
+          ForEach(this.workspaces, (w: WorkspaceItem) => {
+            ListItem() {
+              this.workspaceGroup(w)
+            }
+          }, (w: WorkspaceItem) => w.path)
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .scrollBar(BarState.Off)
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .padding(Sp.M)
+  }
+
+  /** 一个工作区：组头（名字/路径/会话数/文件入口）+ 组内会话行 */
+  @Builder
+  workspaceGroup(w: WorkspaceItem) {
+    Column({ space: Sp.XS }) {
+      Row({ space: Sp.S }) {
+        SymbolGlyph($r('sys.symbol.folder')).fontSize(16)
+          .fontColor([w.primary ? $r('sys.color.brand') : $r('sys.color.font_secondary')])
+        Column({ space: 2 }) {
+          Text(w.name.length > 0 ? w.name : w.path)
+            .fontSize(Fs.BODY)
+            .fontWeight(FontWeight.Medium)
+            .width('100%')
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          Text(`${w.path} · ${w.sessionCount} 会话`)
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.font_tertiary'))
+            .width('100%')
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .layoutWeight(1)
+        Text('文件')
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.brand'))
+          .onClick(() => {
+            this.openWorkspaceFiles(w);
+          })
+      }
+      .width('100%')
+
+      ForEach(this.sessionsOf(w), (s: SessionListItem) => {
+        Column({ space: 2 }) {
+          Row({ space: Sp.S }) {
+            Text(s.title.length > 0 ? s.title : '（未命名会话）')
+              .fontSize(Fs.SECONDARY)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .layoutWeight(1)
+            if (s.running) {
+              Text('运行中')
+                .fontSize(Fs.CAPTION)
+                .fontColor($r('sys.color.brand'))
+            }
+          }
+          .width('100%')
+          Text(s.blank ? '还没有说话' : `${relativeTime(s.updatedAt, Date.now())} · ${formatClock(s.updatedAt)}`)
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.font_tertiary'))
+            .width('100%')
+            .maxLines(1)
+        }
+        .width('100%')
+        .padding({ left: Sp.L, right: Sp.M, top: Sp.S, bottom: Sp.S })
+        .borderRadius(Radius.S)
+        .backgroundColor(this.selectedSessionId === s.id
+          ? $r('sys.color.background_secondary')
+          : $r('sys.color.background_primary'))
+        .onClick(() => {
+          this.openSession(s.id);
+        })
+      }, (s: SessionListItem) => s.id)
+    }
+    .width('100%')
+    .padding(Sp.M)
+    .borderRadius(Radius.M)
+    .backgroundColor($r('sys.color.background_secondary'))
+  }
+
+  /**
+   * 核心页内容（E110：原「核心」页签并入设置，作为设置页的第一个页签）。
+   *
+   * 【为什么合并】核心不是"另一个世界"，它就是这台设备上 DSH 的运行配置：版本、插件、运行时事实。
+   * 与"设置"并列成两个一级页签，会让用户在两个地方找同一类东西（官方 web 也没有独立的"核心"页，
+   * 它是设置里的一个分区）。内容原样搬过来，能力一个不少。
+   */
+  @Builder
+  coreTabContent() {
+    Column({ space: Sp.S }) {
+      if (this.coreNotice.length > 0) {
+        Text(this.coreNotice)
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.font_secondary'))
+          .width('100%')
+          .padding(Sp.S)
+          .borderRadius(Radius.S)
+          .backgroundColor($r('sys.color.background_secondary'))
+      }
+      CorePane({
+        view: this.coreView,
+        onAction: (id: string) => {
+          this.onCoreAction(id);
+        },
+        onSelectVersion: (version: string) => {
+          this.onCoreSelectVersion(version);
+        },
+        onTogglePlugin: (id: string, disabled: boolean) => {
+          this.onTogglePlugin(id, disabled);
+        },
+        onResetPluginRows: () => {
+          this.onResetPluginRows();
+        },
+        pluginNotice: this.pluginNotice
+      })
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  @Builder
+  tabContent(compact: boolean) {
+    /*
+     * E108：工作区视图（合并了原来的「会话」与「待决」两个页签）。
+     * 官方 web 的侧栏就是"工作区为组、会话挂在组下"；待决属于**当前这次对话**，显示在列表顶部。
+     * 文件浏览仍是工作区里的下钻（`wsDrill > 0`，见下一个分支）。
+     */
+    if (this.tab === NavTab.WORKSPACES && this.wsDrill === 0) {
+      this.workspaceHub(compact)
     } else if (this.tab === NavTab.WORKSPACES) {
       WorkspacePane({
         workspaces: this.workspaces,
@@ -3468,40 +3711,9 @@ struct Index {
           this.wsDrill = this.wsDrill > 0 ? this.wsDrill - 1 : 0;
         }
       })
-    } else if (this.tab === NavTab.CORE) {
-      Column({ space: Sp.S }) {
-        if (this.coreNotice.length > 0) {
-          Text(this.coreNotice)
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_secondary'))
-            .width('100%')
-            .padding(Sp.S)
-            .borderRadius(Radius.S)
-            .backgroundColor($r('sys.color.background_secondary'))
-        }
-        CorePane({
-          view: this.coreView,
-          onAction: (id: string) => {
-            this.onCoreAction(id);
-          },
-          onSelectVersion: (version: string) => {
-            this.onCoreSelectVersion(version);
-          },
-          onTogglePlugin: (id: string, disabled: boolean) => {
-            this.onTogglePlugin(id, disabled);
-          },
-          onResetPluginRows: () => {
-            this.onResetPluginRows();
-          },
-          pluginNotice: this.pluginNotice
-        })
-          .layoutWeight(1)
-      }
-      .width('100%')
-      .height('100%')
-      .padding({ left: Sp.M, right: Sp.M, top: Sp.S })
     } else {
       SettingsPane({
+        coreSlot: this.coreTabContent,
         groups: this.settings,
         credentials: this.credentials,
         plugins: this.plugins,

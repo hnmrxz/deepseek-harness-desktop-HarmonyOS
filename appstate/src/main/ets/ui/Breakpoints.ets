@@ -28,24 +28,33 @@ export function layoutModeOf(widthVp: number): LayoutMode {
   return LayoutMode.SINGLE;
 }
 
-/** 一级导航项 */
+/**
+ * 一级导航项（E108：收敛为三项）。
+ *
+ * 【为什么删掉「待决」与「会话」两个页签】官方 web 的侧栏就是**工作区为组、会话挂在组下**：
+ * 会话天然属于某个工作区，单独一个"会话"页签会让同一批数据出现两次、还要用户自己想
+ * "这两个列表什么关系"。待决（审批/提问）更不该占一个页签——它属于**当前正在跑的那次对话**，
+ * 官方把它显示在对话里。于是：
+ *   - `SESSIONS` **别名**到 `'workspaces'`：`selectTab(NavTab.SESSIONS)` 这类既有调用
+ *     （建完会话要跳过去）自动落到合并后的工作区视图，不必逐处改；
+ *   - `PENDING` 只保留常量（历史调用点会归一化到 WORKSPACES），不再出现在页签栏。
+ */
 export enum NavTab {
   PENDING = 'pending',
-  SESSIONS = 'sessions',
+  SESSIONS = 'workspaces',
   WORKSPACES = 'workspaces',
   /** 端侧 DSH 核心：运行状态、版本切换/回滚、插件、运行时诊断（D6 §2/§6） */
   CORE = 'core',
   SETTINGS = 'settings'
 }
 
-/** 导航项文案 */
+/**
+ * 导航项文案。
+ *
+ * E108 之后 `SESSIONS` 只是 `WORKSPACES` 的别名（会话并入工作区），
+ * 因此这里**不再单列**「会话」分支——写了也是同一分支，反而会让类型收窄判成"无重叠"。
+ */
 export function navTabLabel(tab: NavTab): string {
-  if (tab === NavTab.PENDING) {
-    return '待决';
-  }
-  if (tab === NavTab.SESSIONS) {
-    return '会话';
-  }
   if (tab === NavTab.WORKSPACES) {
     return '工作区';
   }
@@ -57,12 +66,6 @@ export function navTabLabel(tab: NavTab): string {
 
 /** 导航项图标（用系统符号，避免自造资源） */
 export function navTabSymbol(tab: NavTab): Resource {
-  if (tab === NavTab.PENDING) {
-    return $r('sys.symbol.bell');
-  }
-  if (tab === NavTab.SESSIONS) {
-    return $r('sys.symbol.message');
-  }
   if (tab === NavTab.WORKSPACES) {
     return $r('sys.symbol.folder');
   }
