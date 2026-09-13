@@ -271,6 +271,50 @@ function embedProfile() {
  * 因此这里只写不依赖产物哈希的字段——容器的 sha256 仍然只在外层清单（否则自指）。
  */
 /**
+ * 生成**端侧 agent preset**：`presets/ondevice/`（复制 `standard`，禁用依赖 subprocess 的三行）。
+ *
+ * 【为什么必须固化在这里（D6 E80）】`session/create` 要求挂载 agent preset，而 `standard` 的组成里
+ * 有三行依赖 `ctx.subprocess`：`tool-pwsh`（`condition: process.platform !== 'win32'` ⇒ 端侧 linux 会启用）、
+ * `tool-bash`（同类）、`tool-fs-search`（多行 inject 含 `"subprocess"`，走 ripgrep）。而**鸿蒙不支持
+ * 进程创建**（E15），于是会话创建会以 `agent-preset/invalid: preset "standard" failed to mount:
+ * N row(s) did not activate` 失败。正确解法是**在配置层表达端侧差异**——新增一个禁用这三行的 preset，
+ * 并在 profile 里把 `agent-presets.default` 指向它；而不是让 shell 链假装可用。
+ *
+ * 【为什么是"复制 standard 再改"】preset 是磁盘文件、**目录名即 id**（`preset.yml` 里没有 id）：
+ * 复制保证其余组成与上游 standard 一致（上游新增工具行时端侧也带上），只把这三行改 `disabled: true`。
+ * 这属于**增加一个组合**，不是修改 dsh 自身代码。
+ */
+function addOnDevicePreset() {
+  const presets = join(STAGE, 'node_modules', '@deepseek-ai', 'dsh-agent-presets', 'presets');
+  const from = join(presets, 'standard');
+  const to = join(presets, 'ondevice');
+  if (!existsSync(from)) {
+    log('[pack-core]   ⚠ 未找到 standard preset，跳过端侧 preset 生成');
+    return;
+  }
+  rmSync(to, { recursive: true, force: true });
+  cpSync(from, to, { recursive: true });
+  const agentFile = join(to, 'agent.cordis.yml');
+  let text = readFileSync(agentFile, 'utf8');
+  text = text
+    .replace("disabled: !!js process.platform === 'win32'", 'disabled: true')
+    .replace("disabled: !!js process.platform !== 'win32'", 'disabled: true');
+  const fsSearchRow = "- id: tool-fs-search\n  name: '@deepseek-ai/dsh-tool-fs-search'\n";
+  if (text.includes(fsSearchRow)) {
+    text = text.replace(fsSearchRow,
+      "- id: tool-fs-search\n  name: '@deepseek-ai/dsh-tool-fs-search'\n"
+      + '  # 端侧禁用：经 ctx.subprocess 调 ripgrep，而鸿蒙不支持进程创建（E15）\n  disabled: true\n');
+  }
+  writeFileSync(agentFile, text, 'utf8');
+  writeFileSync(join(to, 'preset.yml'),
+    'name: 端侧模式（无 Shell）\n'
+    + 'description: 端侧编码 Agent：文件编辑、检索、Skills、计划、目标、子代理与工作流；'
+    + '不含 Shell 工具（鸿蒙不支持进程创建）。\n'
+    + 'order: 1\n', 'utf8');
+  log('[pack-core]   端侧 preset 已生成：presets/ondevice（禁用 tool-bash / tool-pwsh / tool-fs-search）');
+}
+
+/**
  * 平台别名：让原生包的**加载器**能按它算出来的目录名找到原生件。
  *
  * 【为什么需要】实测真机（D6 E39）：我们自建的 Node 在设备上 `process.platform === 'linux'`
@@ -599,6 +643,7 @@ materialize();
 prune();
 const sig = verify();
 addPlatformAliases();
+addOnDevicePreset();
 embedTreeInfo();
 verifyTreeInfoContract();
 embedProfile();
