@@ -377,15 +377,35 @@ extern "C" __attribute__((constructor)) void RegisterDshHostModule() {
    * 再 dlopen 一次并带 RTLD_GLOBAL，就把 libnode 的符号提升进全局表，后续的 .node 才能解析。
    * 失败也不致命（只是回到原来的症状），所以只记录、不中止。
    */
-  void* handle = ::dlopen("libnode.so.127", RTLD_NOW | RTLD_GLOBAL);
+  /*
+   * 用**绝对路径**首载 libnode。
+   *
+   * 【为什么不能只写 soname】去掉 DT_NEEDED 之后（见 CMakeLists 的说明），没有任何东西
+   * 会把 libnode 拉进来，而 bundle 的 libs 目录未必在加载器的默认搜索路径里 —— 实测症状是
+   * 应用连一条自己的日志都打不出来（很可能 libdshhost 因解析失败而加载不了）。
+   * 用 `dladdr` 问出**本 .so 自己**的路径，同目录下的 libnode.so.127 就是同一个包里的那份，
+   * 既不硬编码路径，也不受搜索路径影响。
+   */
+  std::string libnodePath = "libnode.so.127";
+  Dl_info selfInfo;
+  if (::dladdr(reinterpret_cast<void*>(&RegisterDshHostModule), &selfInfo) != 0 &&
+      selfInfo.dli_fname != nullptr) {
+    std::string selfPath(selfInfo.dli_fname);
+    const size_t slash = selfPath.find_last_of('/');
+    if (slash != std::string::npos) {
+      libnodePath = selfPath.substr(0, slash + 1) + "libnode.so.127";
+    }
+  }
+  void* handle = ::dlopen(libnodePath.c_str(), RTLD_NOW | RTLD_GLOBAL);
   if (handle != nullptr) {
     g_libnode = handle;
     // mangled 名由 `nm -D libdshhost.so` 里那条未定义符号确认过
     g_nodeStart = reinterpret_cast<NodeStartFn>(::dlsym(handle, "_ZN4node5StartEiPPc"));
   }
   OH_LOG_Print(LOG_APP, LOG_INFO, 0x0000, "HDSH-SHIM",
-               "first-load libnode.so.127 (RTLD_GLOBAL): handle=%{public}s node::Start=%{public}s",
-               handle != nullptr ? "ok" : "failed", g_nodeStart != nullptr ? "ok" : "missing");
+               "first-load %{public}s (RTLD_GLOBAL): handle=%{public}s node::Start=%{public}s",
+               libnodePath.c_str(), handle != nullptr ? "ok" : "failed",
+               g_nodeStart != nullptr ? "ok" : "missing");
   OH_LOG_Print(LOG_APP, LOG_INFO, 0x0000, "HDSH-SHIM",
                "constructor ran: registering 4 name forms (dshhost / libdshhost.so / libdshhost / dshhost.so)");
   napi_module_register(&g_dshHostModule);
