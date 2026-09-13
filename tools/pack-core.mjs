@@ -415,65 +415,87 @@ function allowOriginList() {
 }
 
 /**
- * 用**最小 sharp stub**替换真 sharp（E79），并把当初的手工操作固化为可复现的构建步骤。
+ * 把 sharp 换成**调度器 + 真件**（E93），取代原来的"纯 stub"（E79）。
  *
- * 【为什么必须有这一步】`dsh-attachment-local` 只需要 `import sharp` **加载成功**
- * （真正的图像调用只在图片路径触发）⇒ stub 让 attachments → fileUploads →
- * sessionController 整条服务链成立，会话列表与对话 UI 才可用。
- * 代价（明确的、写进 UI 的诚实降级）：图片附件在**使用时**报错，直到 E64 把
- * libvips 及其 46 个依赖库搬进 HAP libs 并处理带版本号的 SONAME 之后才恢复。
+ * ─────────────────────────── 为什么不能只有 stub ───────────────────────────
+ * E79 的 stub 让 `dsh-attachment-local` 能挂载（整条 attachments 服务链成立），
+ * 代价是**图片附件在使用时报错**。那在当时是唯一诚实的降级——libvips 那 46 个库还没进 HAP。
+ * 现在 `tools/collect-libvips.mjs` 已把真件搬进来（并把 sharp 原生件的 RPATH 改成 `$ORIGIN`、
+ * 依赖闭包静态校验 PASS），所以"能不能用真件"应当由**运行时**决定，而不是构建期一刀切。
  *
- * 【为什么真件要留成 `sharp.real`】将来恢复时直接换回名字即可，不用重新 npm install。
- * 【幂等】以 package.json 里的版本号 `0.0.0-hdsh-stub` 为标记；已打过就跳过。
+ * ─────────────────── 为什么用调度器而不是直接放真件 ───────────────────
+ * 真件是**鸿蒙 arm64** 原生件：设备上能加载，开发机（Windows）上必然失败；而开发机要跑
+ * **同一棵核心树**做本地回归（三个 check 工具全靠它）。直接放真件会让本地 boot fail-loud。
+ * 调度器把两种情形都照顾到：
+ *   · 真件加载成功 → 用它（端侧正常路径，图片附件真的可用）；
+ *   · 真件加载失败 → 退回"会报错但能挂载"的 stub，并把**真实原因**挂在
+ *     `hdshSharpLoadError` 上——入口脚本的运行时事实（E88）会读它，于是界面显示的是
+ *     真实结论，而不是假的"可用"，也不是含糊的"未探测"。
+ *
+ * 【幂等】以 package.json 的版本号 `0.0.0-hdsh-dispatch` 为标记。
  */
-function stubSharp() {
+function wrapSharp() {
   const nm = join(STAGE, 'node_modules');
   const sharpDir = join(nm, 'sharp');
-  const realDir = join(nm, 'sharp.real');
+  const implDir = join(nm, 'sharp.impl');
   if (!existsSync(sharpDir)) {
-    log('[pack-core]   sharp 不在树里（跳过 stub）');
+    log('[pack-core]   sharp 不在树里（跳过调度器）');
     return;
   }
   const pkgFile = join(sharpDir, 'package.json');
   if (existsSync(pkgFile)) {
     try {
       const pkg = JSON.parse(readFileSync(pkgFile, 'utf8'));
-      if (pkg.version === '0.0.0-hdsh-stub') {
-        log('[pack-core]   sharp stub 已存在（跳过）');
+      if (pkg.version === '0.0.0-hdsh-dispatch') {
+        log('[pack-core]   sharp 调度器已存在（跳过）');
         return;
       }
     } catch {
-      die('sharp stub：现有 sharp/package.json 不可解析，拒绝盲目覆盖');
+      die('sharp 调度器：现有 sharp/package.json 不可解析，拒绝盲目覆盖');
     }
   }
-  if (existsSync(realDir)) {
-    rmSync(realDir, { recursive: true, force: true });
+  // 真件挪成 sibling 包：调度器用 require('sharp.impl') 引它，包内相对路径不受影响
+  if (existsSync(implDir)) {
+    rmSync(implDir, { recursive: true, force: true });
   }
-  renameSync(sharpDir, realDir);
+  renameSync(sharpDir, implDir);
   mkdirSync(sharpDir, { recursive: true });
   writeFileSync(
     pkgFile,
-    JSON.stringify({ name: 'sharp', version: '0.0.0-hdsh-stub', main: 'index.js', private: true }) + '\n',
+    JSON.stringify({ name: 'sharp', version: '0.0.0-hdsh-dispatch', main: 'index.js', private: true }) + '\n',
     'utf8',
   );
   writeFileSync(
     join(sharpDir, 'index.js'),
     [
-      '/* HDSH 端侧 sharp stub（E79）：只保证 import 成功，图像处理路径在使用时明确报错。',
-      ' * 目的：让 dsh-attachment-local 能在鸿蒙上挂载 ⇒ attachments/fileUploads/sessionController',
-      ' * 整条服务链成立 ⇒ 会话列表与对话 UI 可用。',
-      ' * 图片附件能力需按 E64 把 libvips 全套搬进 HAP libs 后再恢复。',
-      ' * 本文件由 tools/pack-core.mjs 的 stubSharp() 生成，不要手改。 */',
-      'function sharpStub() {',
-      "  throw new Error('sharp stub（HDSH 端侧）：图片处理暂不可用——需按 D6 E64 恢复 libvips 后再启用');",
+      '/* HDSH 端侧 sharp 调度器（E93）：真件优先；加载失败时退回"会报错但能挂载"的 stub。',
+      ' *',
+      ' * 为什么不是纯 stub：真件（libvips 全套，见 tools/collect-libvips.mjs）已随包发出，',
+      ' * 端侧的图片附件应当真的可用。',
+      ' * 为什么不是直接放真件：它是鸿蒙 arm64 原生件，开发机上必然加载失败，而开发机要跑同一棵树。',
+      ' * 失败原因挂在 hdshSharpLoadError 上，由入口脚本的运行时事实如实上报（不假装可用）。',
+      ' * 本文件由 tools/pack-core.mjs 的 wrapSharp() 生成，不要手改。 */',
+      'let impl;',
+      "let loadError = '';",
+      'try {',
+      "  impl = require('sharp.impl');",
+      '} catch (e) {',
+      "  loadError = e && e.message ? String(e.message) : String(e);",
       '}',
-      'module.exports = sharpStub;',
-      'module.exports.default = sharpStub;',
+      'if (impl === undefined || impl === null) {',
+      "  const reason = loadError.length > 0 ? loadError : '未知原因';",
+      '  impl = function hdshSharpUnavailable() {',
+      "    throw new Error('sharp 不可用：真件加载失败（' + reason + '）——图片附件依赖随包提供的 libvips 全套库');",
+      '  };',
+      '  impl.hdshSharpLoadError = reason;',
+      '}',
+      'module.exports = impl;',
+      'module.exports.default = impl;',
       '',
     ].join('\n'),
     'utf8',
   );
-  log('[pack-core]   sharp stub：真件已移至 node_modules/sharp.real');
+  log('[pack-core]   sharp 调度器：真件在 node_modules/sharp.impl（加载失败时如实降级）');
 }
 
 function embedTreeInfo() {
@@ -775,7 +797,7 @@ prune();
 const sig = verify();
 addPlatformAliases();
 allowOriginList();
-stubSharp();
+wrapSharp();
 addOnDevicePreset();
 embedTreeInfo();
 verifyTreeInfoContract();

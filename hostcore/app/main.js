@@ -474,10 +474,28 @@ function runtimeFacts() {
     try {
       const loaded = require(path.join(CORE_DIR, 'node_modules', mod));
       let note = '';
+      let ok = loaded !== undefined;
       if (mod === 'sharp') {
-        note = '端侧为 stub：仅保证 import 成功，图片处理不可用（见 D6 E79/E64）';
+        /*
+         * sharp 有两层，"require 成功"根本不能证明它可用：
+         *   ① 我们放的是**调度器**（E93）：它 require 成功只说明调度器在；
+         *   ② 真件 `sharp.impl` 的原生绑定是**惰性加载**的——实测在 Windows 上
+         *      `require('sharp.impl')` 同样成功，直到真正处理图片才会炸。
+         * 所以要探就探**原生绑定本身**：那一次 dlopen 才是"这台设备上能不能用"的事实。
+         * 路径正是 sharp 会去找的那个（我们的原生重定向会把它映射到 HAP libs 里）。
+         */
+        try {
+          require(path.join(CORE_DIR, 'node_modules', '@ohos-ports',
+            'img-sharp-openharmony-arm64', 'lib', 'sharp-openharmony-arm64.node'));
+          ok = true;
+          note = '真件原生绑定可加载（libvips 全套随包，图片附件可用）';
+        } catch (e) {
+          ok = false;
+          const message = e && e.message ? String(e.message) : String(e);
+          note = `真件原生绑定加载失败，图片附件已降级：${message.slice(0, 160)}`;
+        }
       }
-      facts.natives.push({ name: label, ok: loaded !== undefined, note: note });
+      facts.natives.push({ name: label, ok: ok, note: note });
     } catch (e) {
       facts.natives.push({
         name: label,

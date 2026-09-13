@@ -31,6 +31,8 @@ const ELF_MAGIC = 0x7f454c46;
 const SHT_STRTAB = 3;
 const DT_NULL = 0;
 const DT_NEEDED = 1;
+const DT_RPATH = 15;
+const DT_RUNPATH = 29;
 
 function fail(message) {
   console.error(`patch-native-needed: ${message}`);
@@ -73,7 +75,7 @@ const [soPath, oldNeeded, newNeeded, mode] = process.argv.slice(2);
 if (!soPath || !oldNeeded || !newNeeded) {
   fail('用法：patch-native-needed.mjs <so 路径> <原 NEEDED> <新 NEEDED> [--check|--revert]');
 }
-if (newNeeded.length > oldNeeded.length) {
+if (newNeeded.length > oldNeeded.length && mode !== '--set-rpath') {
   fail(`新串更长（${newNeeded.length} > ${oldNeeded.length}），原地改写放不下`);
 }
 if (!existsSync(soPath)) fail(`文件不存在：${soPath}`);
@@ -167,6 +169,81 @@ if (mode === '--set-soname') {
     renameSync(soPath, renamed);
     console.log(`文件已改名 → ${renamed}`);
   }
+  process.exit(0);
+}
+
+if (mode === '--set-rpath') {
+  /*
+   * 用法：patch-native-needed.mjs <so> - <新 RPATH> --set-rpath
+   *
+   * 【为什么需要它】鸿蒙的 hvigor 只打包 `libs/<abi>/*.so`，所以 libvips 那 46 个带版本号的
+   * 依赖只能**扁平化**到同一个目录。而 sharp 的原生件（`libsharp-openharmony-arm64.so`）
+   * 里写死的 RPATH 是一串 `$ORIGIN/../../sharp-libvips-openharmony-arm64/lib:…`（指向
+   * npm 安装布局），那个布局在 HAP 里并不存在 ⇒ 即使把库都拷进去，加载器也找不到。
+   * 唯一可行且最干净的形态：**把 RPATH 改成 `$ORIGIN`**，让所有依赖就在它自己旁边解析。
+   * 新串比旧串短得多，原地改写 + NUL 补齐是零结构风险（与 DT_NEEDED/SONAME 同一套做法）。
+   * 找不到 DT_RPATH/DT_RUNPATH 时报错而不是静默——静默会让"改了却没生效"变成设备上才发现的坑。
+   */
+  let found = undefined;
+  for (let off = dynamic.offset; off + 16 <= dynamic.offset + dynamic.size; off += 16) {
+    const tag = Number(buf.readBigUInt64LE(off));
+    if (tag === DT_NULL) break;
+    if (tag !== DT_RPATH && tag !== DT_RUNPATH) continue;
+    const value = Number(buf.readBigUInt64LE(off + 8));
+    const strOffset = dynstr.offset + value;
+    let end = strOffset;
+    while (end < buf.length && buf[end] !== 0) end += 1;
+    found = { tag: tag === DT_RPATH ? 'RPATH' : 'RUNPATH', strOffset, name: buf.toString('utf8', strOffset, end) };
+    break;
+  }
+  if (found === undefined) fail('该文件没有 DT_RPATH / DT_RUNPATH，无需设置');
+  if (found.name === newNeeded) {
+    console.log(`${found.tag} 已是 ${newNeeded}，跳过`);
+    process.exit(0);
+  }
+  if (newNeeded.length > found.name.length) {
+    fail(`新 RPATH 更长（${newNeeded.length} > ${found.name.length}），原地改写放不下`);
+  }
+  if (!existsSync(backupPath)) {
+    copyFileSync(soPath, backupPath);
+    console.log(`已备份 → ${backupPath}`);
+  }
+  buf.write(newNeeded, found.strOffset, 'utf8');
+  buf.fill(0, found.strOffset + newNeeded.length, found.strOffset + found.name.length);
+  writeFileSync(soPath, buf);
+  console.log(`${found.tag}: ${found.name} → ${newNeeded}  (${soPath})`);
+  process.exit(0);
+}
+
+if (mode === '--list') {
+  /*
+   * 用法：patch-native-needed.mjs <so> - - --list
+   *
+   * 【为什么要有它】把 libvips 那 46 个库搬进 HAP 需要"先读全量事实，再决定怎么改"
+   * （文件 → SONAME → 扁平新名 → 依赖闭包）。ELF 解析只应存在一处，否则两处实现对
+   * 不上时会以"某个库在设备上打不开"的形态出现。这里输出 JSON，供收集器脚本消费。
+   */
+  const needed = neededEntries().map((e) => e.name);
+  const readStr = (tag) => {
+    for (let off = dynamic.offset; off + 16 <= dynamic.offset + dynamic.size; off += 16) {
+      const t = Number(buf.readBigUInt64LE(off));
+      if (t === DT_NULL) break;
+      if (t !== tag) continue;
+      const value = Number(buf.readBigUInt64LE(off + 8));
+      const strOffset = dynstr.offset + value;
+      let end = strOffset;
+      while (end < buf.length && buf[end] !== 0) end += 1;
+      return buf.toString('utf8', strOffset, end);
+    }
+    return undefined;
+  };
+  console.log(JSON.stringify({
+    path: soPath,
+    soname: readStr(14),
+    rpath: readStr(DT_RPATH),
+    runpath: readStr(DT_RUNPATH),
+    needed: needed,
+  }));
   process.exit(0);
 }
 
