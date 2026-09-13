@@ -101,6 +101,7 @@ relativeTime,
   WorkspaceItem,
   WorkspaceRow,
   SkillRow,
+  AgentPresetRow,
   ActionNotice
 } from 'appstate';
 /**
@@ -326,6 +327,9 @@ struct Index {
   /** 技能清单与其读取结论（E135） */
   @State skills: SkillRow[] = [];
   @State skillNote: string = '';
+  /** Agent 预设名单与其读取结论（E161：预设 = 会话的 Agent 插件组装） */
+  @State presets: AgentPresetRow[] = [];
+  @State presetNote: string = '';
   /** 已按过一次「删除」、等待确认的工作区路径（两步确认） */
   @State confirmingDeletePath: string = '';
   @State fileTree: FileNode[] = [];
@@ -604,6 +608,8 @@ struct Index {
     this.archivedSessionIds = s.archivedSessionIds;
     this.skills = s.skills;
     this.skillNote = s.skillNote;
+    this.presets = s.presets;
+    this.presetNote = s.presetNote;
     this.queuedCount = s.outbox;
     // 附件列表由中枢拥有（回执是会话作用域的），这里只跟随
     this.attachments = s.attachments;
@@ -1287,6 +1293,18 @@ struct Index {
     // 设置页里的核心分区同样需要新鲜的阶段读数，因此**进设置页也重读**。
     if (tab !== NavTab.WORKSPACES) {
       this.refreshCoreView();
+      /*
+       * E162：进设置页时一并读**静态事实**（技能清单、Agent 预设名单）。
+       *
+       * 【为什么现在才接】E135 的技能模块只写了 `refreshSkills()` 与界面，
+       * **触发点当时没接上**（那一步的编辑失败被忽略）⇒ 技能页永远显示"未读"。
+       * 这类"有实现没触发"的缺口不报错、不崩溃，只有跑一遍界面才会发现——
+       * 所以这里两个刷新一起补，并对连接状态做前置判断（未连接时不打无谓的失败记录）。
+       */
+      if (this.hubConnected) {
+        SessionHub.shared().refreshSkills();
+        SessionHub.shared().refreshAgentPresets();
+      }
     }
   }
 
@@ -4105,6 +4123,9 @@ struct Index {
         // E135：技能清单（数据层已就绪；形状未识别时界面如实显示结论）
         skills: this.skills,
         skillNote: this.skillNote,
+        // E161：预设名单（数据层已按真机实测契约接线）
+        presets: this.presets,
+        presetNote: this.presetNote,
         credentials: this.credentials,
         plugins: this.plugins,
         hosts: this.hosts,
