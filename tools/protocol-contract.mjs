@@ -17,6 +17,13 @@
  * 是否可取消、返回类型符号，全部取自此处——比反推方法名可靠得多。
  *
  * 用法：node tools/protocol-contract.mjs [--json <outfile>]
+ *
+ * ⚠️ **纪律（E223）：新增任何端点之前，先跑这个工具取该端点的参数表。**
+ *    - REQUEST 形态的端点，其**内层字段**要另外查上游 `types.d.ts` 里的请求体接口；
+ *    - **不要按"同族端点"推断字段名，也不要照抄自己别处的字段命名**——
+ *      本项目因此写错过两次（`commands/execute` 的字段名、`session/selectModel` 的嵌套层级），
+ *      两次都是被这套契约工具抓出来的；**设备不在时，这是唯一能提前发现"字段不符"的手段**。
+ *    - 找不到上游时本脚本会**明确失败**（不要退化成"没有数据也跑完"——静默失效比报错更糟）。
  */
 import { readdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
