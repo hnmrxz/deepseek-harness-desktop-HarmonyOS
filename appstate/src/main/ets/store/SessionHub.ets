@@ -3153,11 +3153,21 @@ function friendlyFailure(code: string, message: string): string {
   }
   if (code === 'carrier/parse') {
     return '响应无法解析——通常是中间转发通道截断了连接（开发期的端口转发常见）。'
-      + '请改用直连本机回环，或使用 hostkit 的加密隧道。';
+      + '请改用直连本机回环，或使用 hostkit 的加密隧道。'
+      + (message.length > 0 ? `（底层原因：${message}）` : '');
   }
   if (code === 'carrier/closed' || code === 'carrier/transport') {
+    /*
+     * 【为什么必须把底层 `message` 带上（E71）】`reason` 一路从
+     * `RemoteMux.onSocketClosed(reason)`（`:457` 以 `onError('carrier/closed', reason)` 传给每条
+     * 逻辑流）传到这里，内容通常是**明确的**——例如 `探活超时（连接级）：在阈值内未收到任何回帧`
+     * 或 `send 失败 code=-1`。但这条固定文案把它覆盖掉了，于是端侧只能看到
+     * "连接在传输中断开"，排查被迫从零开始猜（本项目为此耗掉数轮，且一度把方向指向"转发通道"）。
+     * 带上它，一次运行就能判定该改探活判死策略还是发送时机。
+     */
     return '连接在传输中断开——中间转发通道不稳定，或 Host 已停止。'
-      + '请检查 Host 是否仍在运行；若经端口转发访问，请改用 hostkit 隧道。';
+      + '请检查 Host 是否仍在运行；若经端口转发访问，请改用 hostkit 隧道。'
+      + (message.length > 0 ? `（底层原因：${message}）` : '');
   }
   if (code === 'carrier/timeout') {
     return '请求超时。请检查网络连通性；若 Host 负载很高可稍后重试。';
