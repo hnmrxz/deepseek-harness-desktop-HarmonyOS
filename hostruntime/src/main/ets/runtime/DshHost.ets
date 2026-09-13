@@ -17,10 +17,15 @@
  * `corePhaseOfHostState()` 映射（纯函数，可单测）。
  */
 import { fileIo as fs } from '@kit.CoreFileKit';
+import { BusinessError } from '@kit.BasicServicesKit';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import { ActivationDecision, ActivationAction, CoreState, CoreVersionRecord } from '../core/Types';
 import { CoreStore, CorePluginRow, CorePluginTotals, CoreTreeInfo, OpResult } from '../core/CoreStore';
 import { BundledInstallResult, installBundledCores } from '../core/BundledCore';
 import { HostHandle, NativeFact, RuntimePort, RuntimeProbe, RuntimeKind } from '../runtime/RuntimePort';
+
+const DOMAIN: number = 0x0000;
+const TAG: string = 'HDSH-DshHost';
 
 /**
  * 入口脚本写进 `host-ready.json` 的**实测运行时事实**（E88）。
@@ -316,6 +321,29 @@ export class DshHost {
 
   /** 停止核心（幂等）。 */
   async stop(): Promise<OpResult> {
+    /*
+     * 协作式停止（E90）：先把"停止请求"落到 `$DSH_HOME`，再等运行时真的退出。
+     *
+     * 【为什么由这里写文件】`$DSH_HOME` 的布局是 CoreStore 的知识（`homeDir()`），
+     * 机制层（NodeRuntime）不该重复这份知识；它只负责"等原生层确认 Node 结束了"。
+     * 【失败时必须把文件清掉】留着请求文件会让**下一次启动**的宿主刚起来就自杀——
+     * 那会变成一个"应用再也起不来、且没有任何报错"的故障，比停止失败本身糟得多。
+     */
+    const requestPath: string = `${this.store.homeDir()}/host-stop-request`;
+    let wrote: boolean = false;
+    try {
+      const f: fs.File = fs.openSync(requestPath,
+        fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC);
+      try {
+        fs.writeSync(f.fd, `${Date.now()}\n`);
+      } finally {
+        fs.closeSync(f);
+      }
+      wrote = true;
+    } catch (e) {
+      const err = e as BusinessError;
+      hilog.warn(DOMAIN, TAG, '写停止请求失败（将继续尝试等待）：%{public}s', err.message);
+    }
     try {
       await this.port.stop();
       this.handle = null;
@@ -324,7 +352,18 @@ export class DshHost {
       return { ok: true, message: '核心已停止' };
     } catch (e) {
       const err = e as Error;
-      return { ok: false, message: `停止失败：${err.message}` };
+      if (wrote) {
+        try {
+          if (fs.accessSync(requestPath)) {
+            fs.unlinkSync(requestPath);
+          }
+        } catch (e2) {
+          // 清不掉也要留下痕迹：下一次启动前 `recoverOrphanLocks` 那类巡检可以考虑它
+          hilog.warn(DOMAIN, TAG, '清理停止请求失败，请留意下次启动行为');
+        }
+      }
+      this.lastFailureNote = `停止失败：${err.message}`;
+      return { ok: false, message: this.lastFailureNote };
     }
   }
 

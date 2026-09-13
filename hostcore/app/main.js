@@ -97,7 +97,20 @@ diag(`userData=${USER_DATA} DSH_BASE=${DSH_BASE}`);
 diag(`platform=${process.platform} arch=${process.arch} versions=${JSON.stringify(process.versions)}`);
 
 const realExit = process.exit.bind(process);
+/**
+ * 是否允许真正退出（E90）。
+ *
+ * 【为什么需要这个开关】诊断期我们**故意**让 `process.exit` 空转：真退出在 OHOS 上会
+ * 变成 SIGABRT 之类"什么都不留下"的结束，而引导阶段的失败信息是当时唯一的线索。
+ * 但"停止核心"必须能真的停下来（核心切换/回滚的前置条件），所以给协作式停止留一个
+ * **显式**的放行开关：只有停止路径会把它置真，其它任何 `process.exit` 仍被拦住并记录。
+ */
+let ALLOW_EXIT = false;
 process.exit = (code) => {
+  if (ALLOW_EXIT) {
+    diag(`!! process.exit(${code})：停止路径放行，真正退出`);
+    return realExit(code);
+  }
   const stack = new Error('process.exit intercepted').stack || '(no stack)';
   diag(`!! process.exit(${code}) called -- intercepted, NOT exiting`);
   diag(`!! stack: ${String(stack).split('\n').join(' | ')}`);
@@ -907,14 +920,65 @@ async function start() {
   });
 
   const shutdown = result.shutdown;
-  process.on('SIGTERM', () => {
-    log('收到 SIGTERM，关闭 Host');
-    try {
-      shutdown.shutdown(0);
-    } catch (e) {
-      log('shutdown 抛错：' + e.message);
+  /*
+   * ── 协作式停止（E90）─────────────────────────────────────────────────────
+   *
+   * 【为什么需要它】端侧没有任何办法让这个 Node 线程退出：
+   *   · 原生层（`dshhost.cc`）只在 `node::Start` **返回**时才把 `g_running` 置假，
+   *     而 `node::Start` 要返回，就得有人让 Node 自己收工；
+   *   · ArkTS 侧不能给已经启动的进程发信号、也不能改它的环境变量；
+   *   · `dshhost.stopHost()` 因此如实返回"做不到"（这是诚实，但"停止核心"这个
+   *     按钮就成了空按钮）。
+   * 而**核心切换/回滚必须能停**（`CoreStore.stageFromZip` 明确拒绝覆盖正在使用中的版本），
+   * 所以停止通道不是锦上添花，是那条主流程的前置条件。
+   *
+   * 【为什么用"文件当信号"】已有的事实：ArkTS 能写沙箱目录（`filesDir`），
+   * 入口脚本能读它；而两侧之间**没有**其它可用通道（环境变量与 argv 在启动前就固定了，
+   * HTTP 侧 dsh 没有 shutdown 端点）。用文件当一个"停止请求"的落点，简单、可观察、
+   * 且失败时留下的痕迹（文件还在/日志没有"收到停止请求"）本身就指明断在哪一环。
+   */
+  let stopRequested = false;
+  const requestStop = (reason) => {
+    if (stopRequested) {
+      return;
     }
-  });
+    stopRequested = true;
+    log(`收到停止请求（${reason}），关闭 Host`);
+    try {
+      if (shutdown && typeof shutdown.shutdown === 'function') {
+        shutdown.shutdown(0);
+      }
+    } catch (e) {
+      log('shutdown 抛错：' + (e && e.message));
+    }
+    // 兜底：dsh 关掉自己的服务后事件循环通常会自然排空；若 1.5 s 后还活着，
+    // 说明仍有句柄（例如我们自己的拦截器/定时器）撑着，那就显式退出——
+    // 走到这里已经没有"还没落盘的诊断"需要保护了。
+    const t = setTimeout(() => {
+      ALLOW_EXIT = true;
+      process.exit(0);
+    }, 1500);
+    t.unref();
+  };
+
+  const stopFile = HOME_DIR.length > 0 ? path.join(HOME_DIR, 'host-stop-request') : '';
+  if (stopFile.length > 0) {
+    const poller = setInterval(() => {
+      try {
+        if (fs.existsSync(stopFile)) {
+          fs.rmSync(stopFile, { force: true });
+          requestStop('host-stop-request 文件');
+        }
+      } catch (e) {
+        // 读/删失败下轮再试：这一环不该因为一次 IO 抖动就永久失效
+      }
+    }, 1500);
+    // unref 只表示"它不单独支撑事件循环"，不等于不触发：HTTP 服务还在时它照常轮询。
+    poller.unref();
+    log(`停止通道已就绪：${stopFile}`);
+  }
+
+  process.on('SIGTERM', () => requestStop('SIGTERM'));
 }
 
 process.on('uncaughtException', (e) => {

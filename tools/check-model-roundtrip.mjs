@@ -150,6 +150,7 @@ function get(path) {
 
 let child = null;
 let hostLog = '';
+let childExit = null;
 if (REMOTE_URL.length === 0) {
   child = spawn(process.execPath,
     ['--jitless', '--no-experimental-fetch', '--experimental-sqlite', ENTRY],
@@ -167,6 +168,8 @@ if (REMOTE_URL.length === 0) {
     });
   child.stdout.on('data', (b) => { hostLog += b.toString(); });
   child.stderr.on('data', (b) => { hostLog += b.toString(); });
+  // 退出码是"停止通道"是否真的生效的硬证据：正常退出 vs 信号/异常
+  child.on('exit', (code, signal) => { childExit = `code=${String(code)} signal=${String(signal)}`; });
 } else {
   console.log(`remote    ${REMOTE_URL} (no local host will be started)`);
 }
@@ -268,6 +271,30 @@ try {
   console.log(`catalog  ${JSON.stringify(catalogValue).slice(0, 500)}`);
   if (args.includes('--catalog-only')) {
     finish(0);
+  }
+
+  /*
+   * 停止通道回归（E90）：写一个 `host-stop-request` 文件，然后等端口停止应答。
+   *
+   * 为什么值得单独验：ArkTS 侧**没有任何手段**让这个 Node 线程退出（原生 stopHost 如实
+   * 返回"做不到"），而核心切换/回滚必须以"能停"为前提。所以这条通道要么真能用，
+   * 要么就该把"停止核心"按钮拿掉——不能留一个按下去没反应的按钮。
+   */
+  if (args.includes('--probe-stop')) {
+    const stopFile = join(HOME, 'host-stop-request');
+    writeFileSync(stopFile, `${Date.now()}\n`, 'utf8');
+    console.log(`stop      已写入停止请求 ${stopFile}`);
+    const stopStart = Date.now();
+    let stopped = false;
+    while (Date.now() - stopStart < 20000) {
+      const res = await get('/');
+      if (res.status === 0) { stopped = true; break; }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    console.log(`stop      端口停止应答=${stopped ? 'true' : 'false'} (+${Date.now() - stopStart}ms)`);
+    console.log(`stop      Node 退出：${childExit === null ? '(仍在运行)' : childExit}`);
+    console.log(stopped ? 'RESULT: PASS' : 'RESULT: FAIL');
+    finish(stopped ? 0 : 1);
   }
 
   // 3. target session: inspect an existing one, or create + prompt a fresh one.
