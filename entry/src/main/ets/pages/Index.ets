@@ -251,6 +251,16 @@ enum StackPage {
 // 「核心」放在工作区与设置之间：它属于"能力/运维"一类，紧邻设置但不与设置混在一起
 const TABS: NavTab[] = [NavTab.PENDING, NavTab.SESSIONS, NavTab.WORKSPACES, NavTab.CORE, NavTab.SETTINGS];
 
+/**
+ * 是否挂载阶段一的 Electron 运行时宿主（`RuntimeHost`）。
+ *
+ * 见根 Stack 里的长注释与 D6 E23：挂上它会让应用在 2–4 秒内以
+ * `Unexpected call: exit(1)` 结束，而阶段一本身只是**开发期验证通道**
+ * （依赖 JIT、不可上架）。默认 false，运行时由阶段二提供；
+ * 需要诊断那条路径时改成 true（一行）。
+ */
+const MOUNT_ELECTRON_RUNTIME_HOST: boolean = false;
+
 @Entry
 @Component
 struct Index {
@@ -1105,7 +1115,18 @@ struct Index {
       // 端侧运行时宿主：Node 只能从 XComponent 的 onLoad 启动（D6 §4.1.2），
       // 因此它必须**常驻**在根 Stack 上、不参与任何条件分支——表面一没 Node 就死。
       // 1×1 且不吃触摸，用户看不到它也点不到它。
-      RuntimeHost()
+      //
+      // 【为什么默认关闭】实测：挂上它之后应用在 2–4 秒内以
+      //   LastFatalMessage:[appspawn_server.c:69]Unexpected call: exit(1)
+      // 结束（崩在 libelectron.so 里的一次 JS 调用，见 D6 E23）。
+      // 而阶段一在 D6 §4.0 里本来就只是**开发期验证通道**：它依赖 JIT，
+      // 与本项目"不申请特殊权限、可正常上架"的前提冲突，**不是上架形态**；
+      // 阶段二（libnode.so + libdshhost.so）才是。所以默认不挂：
+      // 应用能正常起来，运行时由阶段二提供。
+      // 需要复现阶段一那条路径做诊断时，把常量改成 true（一行）。
+      if (MOUNT_ELECTRON_RUNTIME_HOST) {
+        RuntimeHost()
+      }
       if (this.choosing !== undefined) {
         this.choiceSheet()
       }

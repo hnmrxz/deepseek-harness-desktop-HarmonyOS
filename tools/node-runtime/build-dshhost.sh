@@ -80,7 +80,7 @@ fi
 mkdir -p "$OUT_DIR"
 echo "[dshhost] linking → ${OUT_SO#${REPO}/}"
 if ! "$CXX_OHOS" "${CFLAGS[@]}" -shared -o "$OUT_SO" /tmp/dshhost.o \
-      -L"${SRC}/out/Release" -lnode -Wl,-soname,libdshhost.so; then
+      -L"${SRC}/out/Release" -lnode -lhilog_ndk.z -Wl,-soname,libdshhost.so; then
   echo "[dshhost] ✗ 链接失败" >&2
   exit 1
 fi

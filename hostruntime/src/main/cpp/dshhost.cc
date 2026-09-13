@@ -25,6 +25,7 @@
 #include <node_api.h>
 #include <node.h>
 #include <node_version.h>
+#include <hilog/log.h>
 
 #include <atomic>
 #include <cstdlib>
@@ -238,7 +239,18 @@ napi_module g_dshHostModuleFull = {
 }  // namespace
 
 // 模块注册：OHOS 的 NAPI 也是靠 constructor 把模块挂上去的（与 Node 原生模块一致）。
+//
+// 【为什么构造器里要打一条 hilog】这是本轮做的一次**二分**：真机上 ArkTS 侧
+// `import dshhost from 'libdshhost.so'` 拿到的是 ArkUI 的节点 API（E25/E26），
+// 而 `.so` 本身已被逐项排除（INIT_ARRAY 有我们的构造器、NEEDED 齐全、strip 前后一致）。
+// 于是只剩两种可能，且它们需要完全不同的修法：
+//   ① `.so` 被 dlopen 了、构造器跑了，但模块名查找没命中 → 改名字/注册方式；
+//   ② `.so` **根本没被加载** → 问题在运行时如何决定加载哪个 .so（命名/映射）。
+// 一条日志就能区分。用 OH_LOG_Print 而不是 printf：应用进程的 stdout 在设备上看不见（E23）。
 extern "C" __attribute__((constructor)) void RegisterDshHostModule() {
+  OH_LOG_Print(LOG_APP, LOG_INFO, 0x0000, "HDSH-SHIM",
+               "constructor ran: registering g_dshHostModule(name=dshhost) + g_dshHostModuleFull(name=libdshhost.so)");
   napi_module_register(&g_dshHostModule);
   napi_module_register(&g_dshHostModuleFull);
+  OH_LOG_Print(LOG_APP, LOG_INFO, 0x0000, "HDSH-SHIM", "registration calls returned");
 }
