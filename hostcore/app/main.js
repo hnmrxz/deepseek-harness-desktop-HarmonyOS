@@ -318,6 +318,83 @@ function stage(name, extra) {
 stage('BOOT_00_NODE_START',
   `pid=${process.pid} node=${process.version} platform=${process.platform}/${process.arch} jitless=${process.execArgv.includes('--jitless')}`);
 
+/**
+ * 捕获 dsh 打印的 **authenticatedUrl**，并落盘成 `host-ready.json` 供 ArkTS 侧接入。
+ *
+ * 【为什么必须抓它】dsh 的"认证"不是可以关掉的开关，而是 `/api` 的 **browser-trust fence**：
+ * 入口脚本探 `GET /` 得到 401 是**正确**响应，但那意味着**客户端拿不到 token 就只能一直 401**，
+ * 会话 UI 根本驱动不起来。token 只出现在 dsh 打印的这一行里（真机读数，D6 E54）：
+ *     dsh web: http://127.0.0.1:3120/?token=QMHMWOSL…
+ * 而 `libdshhost` 没有"读走 Node 输出"的 API（只有 runtimeVersion/startHost/isHostRunning/stopHost）
+ * ⇒ 通道只能是**文件**：这里写，ArkTS 侧读（EntryAbility.adoptLocalHost）。
+ *
+ * 【为什么在 stdout 上做拦截而不是改 dsh】对上游零 patch 是本项目的纪律；
+ * 而且 dsh 的这一行本来就是为"把 URL 交给用户"设计的（`if (config.printUrl) console.log(...)`）。
+ * 拦截只做一次匹配、立刻恢复原来的 write，不改变任何输出内容。
+ */
+function watchdogAuthUrl() {
+  const original = process.stdout.write.bind(process.stdout);
+  let buffer = '';
+  let done = false;
+  process.stdout.write = function patchedWrite(chunk, encoding, callback) {
+    try {
+      if (!done) {
+        buffer += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
+        // 只留尾部：dsh 启动期输出量不小，别让 buffer 无限涨
+        if (buffer.length > 65536) {
+          buffer = buffer.slice(-32768);
+        }
+        const matched = buffer.match(/dsh web:\s*(https?:\/\/\S+)/);
+        if (matched !== null) {
+          done = true;
+          writeHostReady(matched[1]);
+        }
+      }
+    } catch (e) {
+      // 抓不到也不能影响 Host 本身：这一段的失败只是一条诊断信息缺失
+    }
+    return original(chunk, encoding, callback);
+  };
+  return function restore() {
+    process.stdout.write = original;
+  };
+}
+
+/** 把 authenticatedUrl 拆成 baseUrl + token，写 `<HOME_DIR>/host-ready.json`。 */
+function writeHostReady(authUrl) {
+  try {
+    const parsed = new URL(authUrl);
+    const token = parsed.searchParams.get('token') || '';
+    const payload = {
+      url: authUrl,
+      baseUrl: `${parsed.protocol}//${parsed.host}`,
+      token: token,
+      port: Number(parsed.port),
+      profile: PROFILE,
+      pid: process.pid,
+      startedAt: new Date().toISOString(),
+    };
+    fs.writeFileSync(path.join(HOME_DIR, 'host-ready.json'), JSON.stringify(payload, null, 2) + '\n', 'utf8');
+    stage('BOOT_65_AUTH_URL', `port=${payload.port} tokenLen=${token.length} → host-ready.json`);
+  } catch (e) {
+    console.error('[hdsh-host] 写 host-ready.json 失败：' + (e && e.message));
+  }
+}
+
+/** 读回 `host-ready.json` 里的 authenticatedUrl（没抓到就是空串，不抛）。 */
+function readHostReadyUrl() {
+  try {
+    const p = path.join(HOME_DIR, 'host-ready.json');
+    if (!fs.existsSync(p)) {
+      return '';
+    }
+    const parsed = JSON.parse(fs.readFileSync(p, 'utf8'));
+    return typeof parsed.url === 'string' ? parsed.url : '';
+  } catch (e) {
+    return '';
+  }
+}
+
 function fail(msg) {
   // 【绝不能调 process.exit()】libelectron.so 是**同进程**跑的：
   // 这里的 exit 会连同宿主 ArkUI 应用一起杀掉。
@@ -529,6 +606,10 @@ async function start() {
   log('runProfile profile=' + PROFILE + ' args=' + args.join(' '));
   stage('BOOT_40_PROFILE_BOOT', `entry=${path.basename(entry)}`);
 
+  // 抓 dsh 的 authenticatedUrl（含 token）：客户端唯一的凭据来源，落在 host-ready.json。
+  // 只装不卸：匹配成功后它只是把 write 原样透传，开销可以忽略；而"URL 恰好晚一拍打印"
+  // 这种情况比"卸载时机"更容易出错。
+  watchdogAuthUrl();
   const result = await profileBoot.runProfile({
     environment: appBootMod.loadLayeredEnv('dsh'),
     profile: PROFILE,
@@ -542,11 +623,13 @@ async function start() {
     fail('runProfile 返回了但没有 webServer');
   }
   stage('BOOT_60_HTTP_BIND', `port=${ctx.webServer.port}`);
-  // 这行是给 ArkTS 侧的机器可读信号：ArkTS 会等到端口可连为止
+  // 这行是给 ArkTS 侧的机器可读信号：ArkTS 会等到端口可连为止。
+  // authUrl 是**冗余通道**：主通道是 host-ready.json（ArkTS 侧按文件读，见 adoptLocalHost）。
   console.log('HDSH_READY ' + JSON.stringify({
     port: ctx.webServer.port,
     home: HOME_DIR,
     profile: PROFILE,
+    authUrl: readHostReadyUrl(),
   }));
   log('Host 已就绪，端口 ' + ctx.webServer.port);
   // 自探一次：确认端口**真的应答**（"dsh 说它绑了"与"端口真的通"是两件事）

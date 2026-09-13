@@ -118,7 +118,10 @@ export class DshHost {
     } else if (installed.length === 0) {
       phase = HostState.EMPTY;
       note = '运行时已就绪，但还没有安装任何核心版本';
-    } else if (this.handle !== null) {
+    } else if (this.handle !== null || this.port.isRunning()) {
+      // 【为什么必须带上 `port.isRunning()`】`handle` 是**本实例**的记忆，而 Host 是
+      // 进程级事实：页面每次刷新都会 new 一个 DshHost，用 handle 判断就会在
+      // "端口已经在监听"的情况下报"未启动"（端侧实测症状：端口通了，页面说没有启动核心）。
       phase = HostState.READY;
       note = `核心已在运行（${this.port.label()}）`;
     } else if (this.lastFailureNote.length > 0) {

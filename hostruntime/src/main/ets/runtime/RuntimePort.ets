@@ -73,6 +73,18 @@ export interface RuntimePort {
 
   /** 停止 Host。未启动时应是幂等的 no-op。 */
   stop(): Promise<void>;
+
+  /**
+   * Host 是否**正在这个进程里跑**（进程级事实，不是调用方实例的记忆）。
+   *
+   * 【为什么必须是接口的一部分】端侧只有一个 Node 进程，Host 一起就是全局事实；
+   * 但 `DshHost` 是**可多次构造**的（页面每次刷新都 new 一个，见 Index 的 coreHost）。
+   * 如果"在跑"这件事只记在实例字段里，那么新构造的实例会报"未启动"，
+   * 而真实情况是端口已经在监听——用户看到的就是"端口通了，页面却说没有启动核心"。
+   * 载体实现应当问**引导层**（`libdshhost.isHostRunning()`），而不是记自己的账。
+   * 未接线的载体如实返回 false。
+   */
+  isRunning(): boolean;
 }
 
 /** 未接线载体的探测结果：**如实**说明"还没接"，并给出下一步。 */
@@ -210,6 +222,11 @@ export class NotWiredRuntime implements RuntimePort {
   }
 
   async stop(): Promise<void> {
-    // 未启动 ⇒ 停止是 no-op，且**不报错**（幂等）
+    // 未接线载体没有可停的东西：幂等 no-op
+  }
+
+  /** 未接线载体上不可能有 Host 在跑——如实返回 false，不假装。 */
+  isRunning(): boolean {
+    return false;
   }
 }

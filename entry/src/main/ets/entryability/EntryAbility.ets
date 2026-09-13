@@ -282,9 +282,49 @@ export default class EntryAbility extends UIAbility {
     }).then((s) => {
       hilog.info(DOMAIN, TAG, 'HDSH-AUTO 启动 Host：ok=%{public}s url=%{public}s note=%{public}s',
         s.ok ? 'true' : 'false', s.handle === null ? '' : s.handle.url, s.note);
+      if (s.ok && s.handle !== null) {
+        this.adoptLocalHost(s.handle.url);
+      }
     }).catch((e: Object) => {
       hilog.error(DOMAIN, TAG, 'HDSH-AUTO 异常：%{public}s', String(e));
     });
+  }
+
+  /**
+   * 把**本端自起 Host** 的地址接给客户端（含 token）。
+   *
+   * 【为什么需要这一步】端侧 Host 的地址只有两个来源：
+   *   ① 用户粘贴/深链传入（`applyHostLaunchParams`）；
+   *   ② 本端自己起的 Host —— dsh 会把**带 token 的**地址打到 stdout，入口脚本抓下来写成
+   *      `host-ready.json`，`NodeRuntime.start()` 读出后放进句柄的 `url`。
+   * 只有把 ② 也发布出去，界面才会真的连上本端 Host；否则页面拿着空 token 发请求，
+   * Host 一律回 401（browser-trust fence），表现就是"端口通了但界面没有会话"。
+   *
+   * 启动参数给的 Host 优先级更高：那种情况下**不覆盖**用户明确指定的目标。
+   */
+  private adoptLocalHost(handleUrl: string): void {
+    if (this.launchHostProvided) {
+      hilog.info(DOMAIN, TAG, '本端 Host 已起，但启动参数指定了别的 Host：不覆盖');
+      return;
+    }
+    if (handleUrl.length === 0) {
+      return;
+    }
+    const baseUrl: string = this.stripTokenQuery(handleUrl);
+    const cutToken: number = handleUrl.indexOf('token=');
+    const token: string = cutToken >= 0 ? handleUrl.substring(cutToken + 'token='.length) : '';
+    if (baseUrl.length === 0) {
+      return;
+    }
+    AppStorage.setOrCreate<string>(KEY_HOST_URL, baseUrl);
+    if (token.length > 0) {
+      AppStorage.setOrCreate<string>(KEY_HOST_TOKEN, token);
+      AppStorage.setOrCreate<string>(KEY_HOST_TOKEN_STATE, 'found');
+      AppStorage.setOrCreate<boolean>(KEY_HOST_AUTOCONNECT, true);
+    }
+    this.persistConnectedHost(baseUrl, token);
+    hilog.info(DOMAIN, TAG, 'HDSH-AUTO 已接入本端 Host：base=%{public}s tokenLen=%{public}d',
+      baseUrl, token.length);
   }
 
   onDestroy(): void {
