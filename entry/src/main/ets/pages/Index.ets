@@ -3436,6 +3436,24 @@ struct Index {
   }
 
   /**
+   * 取本地化字符串（E140：**运行时状态字符串**不能用 `$r`）。
+   *
+   * 【为什么需要这个函数】`Text('…')` 这类**渲染绑定**直接写 `$r('app.string.x')` 即可，
+   * 系统按语言解析；但 `this.settingWriteNote = …` 这类 **string 字段**不行——
+   * ArkTS 不会把资源引用解析成文本（塞进去要么编译不过，要么在别处以对象形态露馅）。
+   * 正确做法是经**资源管理器**取值。取不到（资源缺失/上下文不可用）时返回空串，
+   * 由调用方决定回落到什么文案——**不抛**，因为文案取不到不该让操作失败。
+   */
+  private localized(id: Resource): string {
+    try {
+      const ctx = getContext(this) as common.UIAbilityContext;
+      return ctx.resourceManager.getStringSync(id.id);
+    } catch (e) {
+      return '';
+    }
+  }
+
+  /**
    * 忘记当前 Host（E137）。
    *
    * 【为什么是"忘记"而不是"吊销"】官方那套是"设备配对 + 逐设备吊销密钥"，而本应用
@@ -3847,7 +3865,11 @@ struct Index {
                 this.deleteWorkspaceByPath(w);
               } else {
                 this.confirmingDeletePath = w.path;
-                this.settingWriteNote = `再按一次「确认删除」即移除工作区「${w.name.length > 0 ? w.name : w.path}」的登记；磁盘上的目录与文件不会被删除。`;
+                // E140：状态字符串经资源管理器取值；并附上名字——确认框必须指名道姓
+                const note: string = this.localized($r('app.string.confirm_delete_workspace_note'));
+                this.settingWriteNote = note.length > 0
+                  ? `${note}（${w.name.length > 0 ? w.name : w.path}）`
+                  : `再按一次「确认删除」即移除该工作区的登记；磁盘上的目录与文件不会被删除。（${w.name.length > 0 ? w.name : w.path}）`;
               }
             })
         }
