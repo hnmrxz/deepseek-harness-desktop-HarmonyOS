@@ -98,7 +98,8 @@ relativeTime,
   SessionHub,
   Sz,
   TrajectoryItem,
-  WorkspaceItem
+  WorkspaceItem,
+  WorkspaceRow
 } from 'appstate';
 /**
  * 类型单独用 `import type` 引入。
@@ -316,6 +317,12 @@ struct Index {
   @State statsLine: string = '';
   /** 会话的 Agent 预设（E129：官方显示在会话标题上；创建后固定，只读） */
   @State agentPreset: string = '';
+  /** 工作区注册表（E132：带 workspaceId；删除需要它） */
+  @State workspaceRows: WorkspaceRow[] = [];
+  /** 注册表全局归档集合（E132）：常规列表按它过滤 */
+  @State archivedSessionIds: string[] = [];
+  /** 已按过一次「删除」、等待确认的工作区路径（两步确认） */
+  @State confirmingDeletePath: string = '';
   @State fileTree: FileNode[] = [];
   /** 文件预览结果；undefined = 未选择文件（@State 必须给默认值） */
   @State preview: FilePreview | undefined = undefined;
@@ -587,6 +594,9 @@ struct Index {
       }
       this.statsLine = parts.join(' · ');
     }
+    // E132：工作区注册表与归档集合（删除/归档的依据）
+    this.workspaceRows = s.workspaceRows;
+    this.archivedSessionIds = s.archivedSessionIds;
     this.queuedCount = s.outbox;
     // 附件列表由中枢拥有（回执是会话作用域的），这里只跟随
     this.attachments = s.attachments;
@@ -3532,12 +3542,50 @@ struct Index {
   // ───────────────────── 工作区视图（E108：会话与待决并入）─────────────────────
 
   /** 某个工作区下的会话（按 `cwd` 归一化匹配：工作区本来就是由会话的 cwd 归并出来的） */
+  /**
+   * 工作区 → 注册表 id（E132）。
+   *
+   * 【为什么按路径匹配】我们的工作区列表由会话 `cwd` 归并而来（没有 id），
+   * 而注册表行带 `workspaceId`——两者之间**唯一**可靠的共同键是目录路径。
+   * 匹配不到就返回空串：调用方据此**不显示**删除入口，而不是给一个点了没反应的按钮。
+   */
+  private registryIdOf(w: WorkspaceItem): string {
+    const key: string = normalizePathKey(w.path);
+    for (let i = 0; i < this.workspaceRows.length; i++) {
+      const row: WorkspaceRow = this.workspaceRows[i];
+      if (normalizePathKey(row.path) === key) {
+        return row.id;
+      }
+    }
+    return '';
+  }
+
+  /** 删除工作区注册（E132）：只删登记，不动磁盘；结果回显在设置页那条提示上 */
+  private deleteWorkspaceByPath(w: WorkspaceItem): void {
+    const id: string = this.registryIdOf(w);
+    if (id.length === 0) {
+      this.settingWriteNote = '这个工作区不在宿主注册表里（列表是由会话目录归并出来的），没有可删除的登记。';
+      return;
+    }
+    SessionHub.shared().deleteWorkspace(id).then((note: string) => {
+      this.settingWriteNote = note;
+      hilog.info(DOMAIN, TAG, 'HDSH-WS 删除工作区：%{public}s', note);
+    }).catch((e: Object) => {
+      const err = e as Error;
+      this.settingWriteNote = `删除工作区失败：${err.message}`;
+    });
+  }
+
   private sessionsOf(w: WorkspaceItem): SessionListItem[] {
     const key: string = normalizePathKey(w.path);
     const out: SessionListItem[] = [];
     for (let i = 0; i < this.sessions.length; i++) {
       const s: SessionListItem = this.sessions[i];
       if (s.cwd.length > 0 && normalizePathKey(s.cwd) === key) {
+        // E132：已归档的会话从常规分组隐去（归档集是注册表全局的）
+        if (this.archivedSessionIds.indexOf(s.id) >= 0) {
+          continue;
+        }
         out.push(s);
       }
     }
@@ -3695,6 +3743,29 @@ struct Index {
           .onClick(() => {
             this.openWorkspaceFiles(w);
           })
+        /*
+         * E132：删除工作区（只删**注册**，不删目录）。
+         *
+         * 【为什么要两步确认】它虽然不动磁盘文件，但会让"这个目录在这里出现过、以及它下面
+         * 那些会话的归属"消失——一次误触的代价不小，而 ArkUI 的 Row 里塞不下一个说得清楚的
+         * 确认弹窗。所以同一位置先变成「确认删除 / 取消」，用户看清了再按。
+         * 【为什么有时不显示】删除需要**注册表 id**；列表里的工作区是由会话 cwd 归并出来的，
+         * 只有注册表里登记过的才有 id。没有 id 就**不显示**这个入口（而不是给一个点了没反应的）。
+         */
+        if (this.registryIdOf(w).length > 0) {
+          Text(this.confirmingDeletePath === w.path ? '确认删除' : '删除')
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.alert'))
+            .onClick(() => {
+              if (this.confirmingDeletePath === w.path) {
+                this.confirmingDeletePath = '';
+                this.deleteWorkspaceByPath(w);
+              } else {
+                this.confirmingDeletePath = w.path;
+                this.settingWriteNote = `再按一次「确认删除」即移除工作区「${w.name.length > 0 ? w.name : w.path}」的登记；磁盘上的目录与文件不会被删除。`;
+              }
+            })
+        }
       }
       .width('100%')
 

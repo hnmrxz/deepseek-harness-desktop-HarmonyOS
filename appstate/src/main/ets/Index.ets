@@ -58,6 +58,8 @@ export {
   previewKindOf
 } from './model/Workspace';
 export type { FileNode, FilePreview, WorkspaceItem } from './model/Workspace';
+/** E132：工作区注册表行（带 workspaceId；声明在 SessionHub，这里对外转出） */
+export type { WorkspaceRow } from './store/SessionHub';
 
 // ── 设置 / 凭据 / 插件 / 设备 / 诊断 / 模型 ──
 export {
