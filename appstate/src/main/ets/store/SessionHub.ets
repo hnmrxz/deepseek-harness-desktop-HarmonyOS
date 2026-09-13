@@ -87,7 +87,8 @@ import {
   WORKSPACE_FOLLOW_ENDPOINT,
   WORKSPACE_DELETE_ENDPOINT,
   WORKSPACE_ARCHIVE_SESSION_ENDPOINT,
-  SKILLS_LIST_ENDPOINT
+  SKILLS_LIST_ENDPOINT,
+  AGENT_PRESETS_LIST_ENDPOINT
 } from 'dshcompat';
 import type { SessionEventShape, SlotBinding } from 'dshcompat';
 import { projectSessionList } from '../model/SessionList';
@@ -331,6 +332,9 @@ export interface HubSnapshot {
   /** 技能清单（E135）与其读取结论（结论非空时界面必须显示它，不能假装"没有技能"） */
   skills: SkillRow[];
   skillNote: string;
+  /** Agent 预设名单（E159 真机确证契约；空数组=未读到，note 说明原因） */
+  presets: AgentPresetRow[];
+  presetNote: string;
   /** 插件清单（来自 `pluginInventory/list`） */
   plugins: PluginItem[];
   /** 凭据状态（来自 `settings/describe` 取 refs + `credentials/describe` 取状态）。**永不含明文** */
@@ -528,6 +532,9 @@ export class SessionHub {
   private skillRows: SkillRow[] = [];
   /** 技能清单的读取结论（面向界面的一句话，空串=未读/正常） */
   private skillNote: string = '';
+  /** Agent 预设名单（E159）与其读取结论 */
+  private presetRows: AgentPresetRow[] = [];
+  private presetNote: string = '';
   /**
    * 建会话时使用的**默认工作区**（E98）。
    *
@@ -830,6 +837,8 @@ export class SessionHub {
       archivedSessionIds: this.archivedIds,
       skills: this.skillRows,
       skillNote: this.skillNote,
+      presets: this.presetRows,
+      presetNote: this.presetNote,
       plugins: this.plugins,
       credentials: this.credentials,
       settings: this.settingsGroups,
@@ -2617,6 +2626,53 @@ export class SessionHub {
   }
 
   /**
+   * 读取 Agent 预设名单（E159）。
+   *
+   * 【形状是实测的，不是推的】真机探针：`agentPresets/list` **不接受 `request` 包裹**
+   * （带包裹会被 `gateway/arguments-invalid: unexpected "request"` 拒），传**空具名参数**才成功；
+   * 回复是 `{"presets":[{id,trust,isDefault,name,description}…]}`。
+   * 这与 `session/*` 那一族的 `request` 包裹**相反**——所以这里用 `argsFor` 的具名分支结果即可
+   * （端点形态在兼容表里，`argsFor` 会按它处理）。
+   */
+  async refreshAgentPresets(): Promise<void> {
+    if (!this.unaryReady) {
+      this.presetNote = '尚未连接 Host，预设名单未读取。';
+      this.notify();
+      return;
+    }
+    const empty: Record<string, Object> = {};
+    const args: Object | undefined = argsFor(AGENT_PRESETS_LIST_ENDPOINT, empty as Object);
+    if (args === undefined) {
+      this.presetNote = '兼容面缺少预设名单端点的参数契约。';
+      this.notify();
+      return;
+    }
+    const result: RpcResult = await this.conn.call(AGENT_PRESETS_LIST_ENDPOINT, args);
+    if (!result.ok) {
+      const f = result.error;
+      const code: string = f === undefined ? 'unknown' : f.code;
+      this.presetNote = `预设名单读取失败：${friendlyFailure(code, f === undefined ? '' : f.message)}`;
+      this.record(`agentPresets/list fail ${code}`);
+      this.notify();
+      return;
+    }
+    const value: Object | undefined = result.value;
+    const rows: AgentPresetRow[] | undefined = value === undefined ? undefined : presetsFromReply(value);
+    if (rows === undefined) {
+      const keys: string = value === undefined ? '(空回复)' : Object.keys(value as Record<string, Object>).join(', ');
+      this.presetRows = [];
+      this.presetNote = `宿主返回的预设名单形状未识别（顶层键：${keys}）；已记账，待按真实形状收紧解析。`;
+      this.record(`agentPresets/list shape unknown keys=${keys}`);
+      this.notify();
+      return;
+    }
+    this.presetRows = rows;
+    this.presetNote = rows.length === 0 ? '宿主报告没有可用预设。' : '';
+    this.record(`agentPresets/list ok ${rows.length} 项`);
+    this.notify();
+  }
+
+  /**
    * 读取技能清单（E135）。
    *
    * 【为什么解析要容忍三种形状】见 `skillsFromReply` 的说明：外层键未确证。
@@ -3379,6 +3435,56 @@ export interface SkillRow {
   description: string;
   whenToUse: string;
   provider: string;
+}
+
+/**
+ * Agent 预设名单的一行（E159 真机确证）。
+ *
+ * 真机返回字段：`id` / `trust` / `isDefault` / `name` / `description`。
+ * 语义（用户纠正 + 官方文档）：预设 = **一个会话的 Agent 所运行的插件组装**（工具/提示词/能力）。
+ * `trust === 'system'` 表示**随附预设**：只读展示，不提供复制/删除（官方如此）。
+ */
+export interface AgentPresetRow {
+  id: string;
+  name: string;
+  description: string;
+  trust: string;
+  isDefault: boolean;
+}
+
+/** 是否随附（只读）预设 */
+export function presetIsBundled(row: AgentPresetRow): boolean {
+  return row.trust === 'system';
+}
+
+/**
+ * 解析 `agentPresets/list` 的回复（E159 真机形状：`{presets:[…]}`）。
+ *
+ * 【为什么这里可以"直接认 presets 键"】与 skills 不同：**这个形状是真机探针实测到的**
+ * （`args={}` → `{"presets":[…]}`，5 项），不是从类型定义推的。仍然容忍缺字段：
+ * 没有 `id` 的行跳过（id 是后续 copy/delete 的键），其余字段缺就是空。
+ */
+function presetsFromReply(value: Object): AgentPresetRow[] | undefined {
+  const raw: Object[] | undefined = getArray(value, 'presets');
+  if (raw === undefined) {
+    return undefined;
+  }
+  const out: AgentPresetRow[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const one: Object = raw[i];
+    const id: string = getString(one, 'id') ?? '';
+    if (id.length === 0) {
+      continue;
+    }
+    out.push({
+      id: id,
+      name: getString(one, 'name') ?? '',
+      description: getString(one, 'description') ?? '',
+      trust: getString(one, 'trust') ?? '',
+      isDefault: getBoolean(one, 'isDefault') === true
+    });
+  }
+  return out;
 }
 
 /**
