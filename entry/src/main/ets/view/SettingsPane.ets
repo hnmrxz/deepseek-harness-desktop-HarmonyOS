@@ -284,7 +284,39 @@ export struct SettingsPane {
 
       Scroll() {
         Column({ space: Sp.L }) {
-          if (this.tab === 'core') {
+          if (this.tab === 'preset') {
+            /*
+             * E129：Agent 预设分区（对齐官方「设置分区把名单呈现为卡片」的**一半**）。
+             *
+             * 官方那一页管理的是 preset **目录**（复制/删除/定位/只读查看随附项），
+             * 那需要一次 Remote 查询与文件级操作；我们端侧先做**能确证的一半**：
+             * 把宿主真正暴露的 `agent-*` 设置分区（含 `agent-presets.default`）按原有编辑器呈现，
+             * 让"新建会话用哪个预设"这件事真的可改；找不到任何分区时如实说明。
+             */
+            if (this.agentGroups().length === 0) {
+              Text('宿主没有暴露 agent-* 设置分区（端侧只显示它确实报告的东西）。')
+                .fontSize(Fs.CAPTION)
+                .fontColor($r('sys.color.font_tertiary'))
+                .width('100%')
+            } else {
+              ForEach(this.agentGroups(), (group: SettingGroup) => {
+                Column({ space: Sp.XS }) {
+                  Text(group.title)
+                    .fontSize(Fs.CAPTION)
+                    .fontColor($r('sys.color.font_tertiary'))
+                    .width('100%')
+                  ForEach(group.items, (item: SettingItem) => {
+                    this.settingRow(item)
+                  }, (item: SettingItem) => item.key)
+                }
+                .width('100%')
+              }, (group: SettingGroup) => group.title)
+            }
+            Text('预设**在会话创建时固定**（官方原话），所以这里设置的是**此后新建会话**用的默认值；已存在的会话不受影响。')
+              .fontSize(Fs.CAPTION)
+              .fontColor($r('sys.color.font_tertiary'))
+              .width('100%')
+          } else if (this.tab === 'core') {
             // 核心分区：与原来的一级「核心」页内容一致（版本切换/回滚、插件、运行时事实）
             Column({ space: Sp.S }) {
               if (this.coreNotice.length > 0) {
@@ -371,6 +403,8 @@ export struct SettingsPane {
         this.tabChip('model', $r('app.string.settings_models'))
         this.tabChip('plugins', $r('app.string.settings_plugins'))
         this.tabChip('core', $r('app.string.settings_core'))
+        // E129：Agent 预设分区（官方把它放在设置里，用于管理名单与设默认）
+        this.tabChip('preset', '预设')
         this.tabChip('device', $r('app.string.settings_device'))
       }
       .padding({ left: Sp.M, right: Sp.M })
@@ -683,6 +717,18 @@ export struct SettingsPane {
       }
     }
     return $r('sys.color.font_tertiary');
+  }
+
+  /** `agent-*` 设置分区（E129：Agent 预设相关，官方在设置里有专门分区） */
+  private agentGroups(): SettingGroup[] {
+    const out: SettingGroup[] = [];
+    for (let i = 0; i < this.allGroups.length; i++) {
+      const g: SettingGroup = this.allGroups[i];
+      if (g.title.startsWith('agent-')) {
+        out.push(g);
+      }
+    }
+    return out;
   }
 
   /** 提供方的设置分区（先试 `llm-<提供方首段>`，再退到通用 pi-ai 分区；找不到就返回 undefined，不猜） */

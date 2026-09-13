@@ -388,10 +388,16 @@ export const PROJECTION_PERMISSIONS: string = 'permissions';
 export const PROJECTION_SESSION_STATS: string = 'sessionStats';
 /** Token 用量所在的**投影键**（E125）：`{uncachedInputTokens, outputTokens, cacheReadTokens, cacheWriteTokens}` */
 export const PROJECTION_TOKEN_USAGE: string = 'tokenUsage';
+/**
+ * 会话 Agent 预设所在的**投影键**（E129）。
+ *
+ * 真机读数里它一直是 `"agentPreset":"ondevice"`（我们 profile 的 `agent-presets.default`）。
+ * 官方把这个值显示在**会话标题**上（`dsh-client-ui-agent-preset`：「在会话标题中查看当前 preset」），
+ * 我们此前同样没读它。
+ */
+export const PROJECTION_AGENT_PRESET: string = 'agentPreset';
 /** 会话待发队列所在的投影键（`dsh-session` 的 inbox 投影） */
 export const PROJECTION_INBOX: string = 'inbox';
-/** 会话 Agent 预设所在的投影键 */
-export const PROJECTION_AGENT_PRESET: string = 'agentPreset';
 
 /** 查一条事件是否在转发白名单内 */
 export function isForwardedEvent(name: string): boolean {

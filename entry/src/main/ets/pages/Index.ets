@@ -314,6 +314,8 @@ struct Index {
   @State permissionOptions: string[] = [];
   /** 会话统计行（E125：官方措辞「N 轮 M 步 · 缓存命中 X%」；空串=没有可显示的统计） */
   @State statsLine: string = '';
+  /** 会话的 Agent 预设（E129：官方显示在会话标题上；创建后固定，只读） */
+  @State agentPreset: string = '';
   @State fileTree: FileNode[] = [];
   /** 文件预览结果；undefined = 未选择文件（@State 必须给默认值） */
   @State preview: FilePreview | undefined = undefined;
@@ -568,8 +570,22 @@ struct Index {
       const percent: number = totalIn > 0 ? Math.round((cached / totalIn) * 100) : 0;
       const counts: string = turns > 0 ? `${turns} 轮 ${steps} 步` : '';
       const hit: string = totalIn > 0 ? `缓存命中 ${percent}%` : '';
-      this.statsLine = counts.length > 0 && hit.length > 0 ? `${counts} · ${hit}`
-        : (counts.length > 0 ? counts : hit);
+      /*
+       * E129：把 Agent 预设挂进这一行（官方把它显示在**会话标题**上：「在会话标题中查看当前 preset」）。
+       * 预设**在会话创建时即固定**，所以它是状态而不是控件——只显示，不给"改当前会话"的入口。
+       */
+      const preset: string = s.agentPreset.length > 0 ? `预设 ${s.agentPreset}` : '';
+      const parts: string[] = [];
+      if (counts.length > 0) {
+        parts.push(counts);
+      }
+      if (hit.length > 0) {
+        parts.push(hit);
+      }
+      if (preset.length > 0) {
+        parts.push(preset);
+      }
+      this.statsLine = parts.join(' · ');
     }
     this.queuedCount = s.outbox;
     // 附件列表由中枢拥有（回执是会话作用域的），这里只跟随

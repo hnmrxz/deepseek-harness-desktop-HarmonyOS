@@ -66,6 +66,7 @@ import {
   PROJECTION_PERMISSIONS,
   PROJECTION_SESSION_STATS,
   PROJECTION_TOKEN_USAGE,
+  PROJECTION_AGENT_PRESET,
   SETTINGS_DESCRIBE_ENDPOINT,
   SETTINGS_CONFLICT,
   SETTINGS_MUTATE_ENDPOINT,
@@ -317,6 +318,8 @@ export interface HubSnapshot {
   tokensOutput: number;
   tokensCacheRead: number;
   tokensCacheWrite: number;
+  /** 会话的 Agent 预设（E129；空串=宿主没投影，界面不显示） */
+  agentPreset: string;
   /** 插件清单（来自 `pluginInventory/list`） */
   plugins: PluginItem[];
   /** 凭据状态（来自 `settings/describe` 取 refs + `credentials/describe` 取状态）。**永不含明文** */
@@ -495,6 +498,11 @@ export class SessionHub {
   private tokensOutput: number = 0;
   private tokensCacheRead: number = 0;
   private tokensCacheWrite: number = 0;
+  /**
+   * 会话的 Agent 预设（E129）：官方把它显示在**会话标题**上。
+   * 预设**在会话创建时即固定**（官方原话），所以这里只读、不提供"改当前会话"的入口。
+   */
+  private agentPresetId: string = '';
   /**
    * 建会话时使用的**默认工作区**（E98）。
    *
@@ -790,6 +798,7 @@ export class SessionHub {
       tokensOutput: this.tokensOutput,
       tokensCacheRead: this.tokensCacheRead,
       tokensCacheWrite: this.tokensCacheWrite,
+      agentPreset: this.agentPresetId,
       plugins: this.plugins,
       credentials: this.credentials,
       settings: this.settingsGroups,
@@ -2369,11 +2378,15 @@ export class SessionHub {
       this.statsDecodeTokens = getNumber(stats, 'decodeTokens') ?? 0;
     }
     const usage: Object | undefined = typed[PROJECTION_TOKEN_USAGE];
-    if (usage !== undefined) {
-      this.tokensUncachedInput = getNumber(usage, 'uncachedInputTokens') ?? 0;
+    if (usage !== undefined) {      this.tokensUncachedInput = getNumber(usage, 'uncachedInputTokens') ?? 0;
       this.tokensOutput = getNumber(usage, 'outputTokens') ?? 0;
       this.tokensCacheRead = getNumber(usage, 'cacheReadTokens') ?? 0;
       this.tokensCacheWrite = getNumber(usage, 'cacheWriteTokens') ?? 0;
+    }
+    // E129：会话的 Agent 预设（官方显示在会话标题上；预设创建后固定，所以只读）
+    const preset: Object | undefined = typed[PROJECTION_AGENT_PRESET];
+    if (typeof preset === 'string') {
+      this.agentPresetId = preset as string;
     }
     this.notify();
   }
