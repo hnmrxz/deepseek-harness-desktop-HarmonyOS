@@ -798,6 +798,31 @@ export struct SettingsPane {
   }
 
   /**
+   * 未被任何提供方卡片覆盖的凭据引用（E157：模型页去重的关键）。
+   *
+   * 提供方卡片用 `<ROUTE>_API_KEY` 这一个引用；宿主还会报告别的引用
+   * （例如设置命名空间里声明的槽位）。把前者已覆盖的过滤掉，
+   * 用户就不会看到"同一把密钥填两次"，同时**没有任何引用被隐藏**。
+   */
+  private orphanCredentials(): CredentialItem[] {
+    const groups: ModelProviderGroup[] = this.providerGroups();
+    const out: CredentialItem[] = [];
+    for (let i = 0; i < this.credentials.length; i++) {
+      const c: CredentialItem = this.credentials[i];
+      let covered: boolean = false;
+      for (let j = 0; j < groups.length; j++) {
+        if (this.providerKeyRefOf(groups[j].provider) === c.ref) {
+          covered = true;
+        }
+      }
+      if (!covered) {
+        out.push(c);
+      }
+    }
+    return out;
+  }
+
+  /**
    * 密钥状态点的颜色语义（官方：**只有确认已配置才是绿**，**只有确认缺失才是红**，
    * 其余一律"未知"——不把未知渲染成任一种结论）。
    */
@@ -936,10 +961,12 @@ export struct SettingsPane {
      * 所以这里把可写的凭据引用直接列在模型页顶部，配置动作与「凭据」页共用同一条通道。
      */
     Column({ space: Sp.XS }) {
-      Text('模型凭据')
-        .fontSize(Fs.CAPTION)
-        .fontColor($r('sys.color.font_tertiary'))
-        .width('100%')
+      if (this.orphanCredentials().length > 0) {
+        Text('模型凭据')
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.font_tertiary'))
+          .width('100%')
+      }
       if (this.credentials.length === 0) {
         Text('Host 没有报告任何凭据引用')
           .fontSize(Fs.CAPTION)
@@ -949,7 +976,16 @@ export struct SettingsPane {
           .borderRadius(Radius.M)
           .backgroundColor($r('sys.color.background_secondary'))
       } else {
-        ForEach(this.credentials, (c: CredentialItem) => {
+        /*
+         * E157（用户反馈④）：**只列出提供方卡片没有覆盖的凭据引用**。
+         *
+         * 用户看到的是"同一把密钥要填两次"：提供方卡片有「配置密钥」（走 `<ROUTE>_API_KEY`），
+         * 下面这一区又把同一个引用列一遍。**去重的正确做法不是删掉这一区**，
+         * 而是让两处各管各的：提供方卡片管"该提供方的适配器引用"，
+         * 这里管"其余宿主报告的引用"（例如别的命名空间声明的槽位）——
+         * 前者已覆盖的就不在这里重复出现，但**一个引用都不会因此消失**。
+         */
+        ForEach(this.orphanCredentials(), (c: CredentialItem) => {
           Row({ space: Sp.M }) {
             SymbolGlyph(c.configured ? $r('sys.symbol.checkmark_circle') : $r('sys.symbol.exclamationmark_triangle'))
               .fontSize(16)
