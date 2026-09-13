@@ -51,6 +51,44 @@ function Save-Ui([string]$name, [string]$clickAt) {
   & $hdc file recv "/data/local/tmp/acc-$name.jpeg" (Join-Path $out "$name.jpeg") 2>&1 | Out-Null
 }
 
+# 按文本自动定位并点击（E261）。
+# 【为什么不用硬编码坐标】坐标依赖分辨率与布局：换台设备必然点错，而"点错"在验收里最危险——
+# 它看起来像"功能坏了"。做法：dump 布局 → 找 attributes.text 匹配的节点 → 取 bounds → 点中心。
+function Click-Text([string]$text) {
+  & $hdc shell "uitest dumpLayout -p /data/local/tmp/find.json" 2>&1 | Out-Null
+  $local = Join-Path $env:TEMP 'hdsh-find.json'
+  & $hdc file recv "/data/local/tmp/find.json" $local 2>&1 | Out-Null
+  if (-not (Test-Path $local)) { return $false }
+  try { $doc = Get-Content $local -Raw -Encoding UTF8 | ConvertFrom-Json } catch { return $false }
+  $hit = $null
+  $queue = New-Object System.Collections.Queue
+  $queue.Enqueue($doc)
+  while ($queue.Count -gt 0 -and -not $hit) {
+    $node = $queue.Dequeue()
+    if ($node -is [PSCustomObject] -and ($node.PSObject.Properties.Name -contains 'attributes')) {
+      $a = $node.attributes
+      if ($a.text -and $a.text.ToString().Trim() -eq $text -and $a.bounds) { $hit = $a.bounds.ToString(); break }
+    }
+    if ($node -is [PSCustomObject]) {
+      foreach ($p in $node.PSObject.Properties) {
+        if ($p.Value -is [System.Object[]]) { foreach ($c in $p.Value) { $queue.Enqueue($c) } }
+        elseif ($p.Value -is [PSCustomObject]) { $queue.Enqueue($p.Value) }
+      }
+    }
+  }
+  if (-not $hit) {
+    Write-Host ('未找到可点文本「' + $text + '」——跳过（界面可能已变化）') -ForegroundColor Yellow
+    return $false
+  }
+  $m = [regex]::Match($hit, '\[(\d+),(\d+)\]\[(\d+),(\d+)\]')
+  if (-not $m.Success) { return $false }
+  $cx = [int](([int]$m.Groups[1].Value + [int]$m.Groups[3].Value) / 2)
+  $cy = [int](([int]$m.Groups[2].Value + [int]$m.Groups[4].Value) / 2)
+  & $hdc shell "uitest uiInput click $cx $cy" 2>&1 | Out-Null
+  Start-Sleep -Seconds 2
+  return $true
+}
+
 # ── 1) 设备（先确认，再建目录：无设备时不留垃圾）──────────────────────────
 $targets = ((& $hdc list targets 2>&1) -join ' ')
 if ($targets.Contains('[Empty]') -or $targets.Trim().Length -eq 0) {
@@ -86,12 +124,19 @@ Save-Log 'features' 'commands/list|agentPresets/list|skills/list|llm providers|w
 Save-Log 'errors'   'CppCrash|AppKilledReporter|JS_ERROR|exitSigno'
 
 Save-Ui 'workspace' ''
-Save-Ui 'settings'         '978 2607'
-Save-Ui 'settings-general' '167 396'
-Save-Ui 'settings-models'  '345 396'
-Save-Ui 'settings-core'    '766 396'
-Save-Ui 'settings-preset'  '978 396'
-Save-Ui 'settings-skills'  '1206 396'
+# E261：不写死坐标——按文本进入设置与各分区（文本取自界面上真实存在的中文标签）
+Click-Text '设置' | Out-Null
+Save-Ui 'settings' ''
+Click-Text '通用' | Out-Null
+Save-Ui 'settings-general' ''
+Click-Text '模型' | Out-Null
+Save-Ui 'settings-models' ''
+Click-Text '核心' | Out-Null
+Save-Ui 'settings-core' ''
+Click-Text '预设' | Out-Null
+Save-Ui 'settings-preset' ''
+Click-Text '技能' | Out-Null
+Save-Ui 'settings-skills' ''
 
 # ── 4) 报告骨架 ───────────────────────────────────────────────────────────
 $boot  = Run-Hdc "hilog -x | grep 'BOOT_10_ENV_READY' | tail -1"
