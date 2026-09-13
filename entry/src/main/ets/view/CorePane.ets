@@ -28,6 +28,16 @@ import {
   Sz
 } from 'appstate';
 
+/**
+ * 核心版本切换是否可用（E149）。
+ *
+ * **当前为 false，且这是有证据的决定**：真机点「切换」→ `CppCrash / exitSigno = 6`（SIGABRT），
+ * 因为 libnode 在一个应用进程里只允许启动一次，而切换需要"停旧 + 起新"。
+ * 等到正确实现落地（热切换，或"退出 + 重拉应用进程"）再改为 true——
+ * 在那之前**界面不给可点入口**，这与本项目"界面不撒谎"的纪律一致。
+ */
+const CORE_SWITCH_AVAILABLE: boolean = false;
+
 @Component
 export struct CorePane {
   @Prop view: CoreViewState = emptyCoreView();
@@ -206,11 +216,24 @@ export struct CorePane {
                 .borderRadius(6)
                 .backgroundColor($r('sys.color.background_secondary'))
               if (row.selectable) {
-                Text('切换')
+                /*
+                 * 【E149：切换当前**不可用**，界面必须这么说】
+                 *
+                 * 真机取证：点「切换」会让应用**原生崩溃**（`CppCrash / exitSigno = 6` = SIGABRT）。
+                 * 原因是物理约束：libnode 在**一个应用进程里只被设计为启动一次**，而"切换"要
+                 * "停旧 + 起新" ⇒ 同一进程内第二次 `node::Start` 直接 abort。
+                 * （E119 修好的 `g_started` 复位是必要但不充分的：它让代码能走到这一步。）
+                 *
+                 * 在找到正确实现（热切换不重启 Node，或把切换做成"退出 + 重拉应用进程"）之前，
+                 * 这里**不给可点的入口**，改为一行说明——点了就崩的按钮比没有按钮更糟。
+                 */
+                Text(CORE_SWITCH_AVAILABLE ? '切换' : '切换暂不可用')
                   .fontSize(Fs.CAPTION)
-                  .fontColor($r('sys.color.brand'))
+                  .fontColor(CORE_SWITCH_AVAILABLE ? $r('sys.color.brand') : $r('sys.color.font_tertiary'))
                   .onClick(() => {
-                    this.onSelectVersion(row.version);
+                    if (CORE_SWITCH_AVAILABLE) {
+                      this.onSelectVersion(row.version);
+                    }
                   })
               }
             }
