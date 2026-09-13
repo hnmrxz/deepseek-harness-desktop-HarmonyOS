@@ -431,6 +431,15 @@ struct Index {
   };
   @State references: ReferenceCandidate[] = [];
   @State commands: CommandCandidate[] = [];
+  /**
+   * 计划模式状态（E202，来自 `plan` 投影）。
+   *
+   * 官方 chip 的判据是"**生效目标**是计划模式"= `pending ? !active : active`
+   * （`pending` = 刚切换、等宿主确认）⇒ 我们照这条公式推导显示，不自己发明状态。
+   * 切换没有专用端点：执行 `plan` 命令（E190 的命令面板已能执行）。
+   */
+  @State planActive: boolean = false;
+  @State planPending: boolean = false;
   /** 命令面板是否打开（E190：短命令面板的可见状态） */
   @State paletteOpen: boolean = false;
   /** 能力缺失的一次性提示（透传给输入区；如附件上传尚未接线） */
@@ -661,6 +670,8 @@ struct Index {
     this.settings = mergeSettingsGroups(this.hostSettings, this.localSettings);
     this.settingsStates = s.settingsStates;
     this.commands = s.commands;
+    this.planActive = s.planActive;
+    this.planPending = s.planPending;
     this.references = s.references;
     // 文件树与预览由中枢持有（它们与会话绑定），这里只跟随：
     // 中枢换了会话就会清空并重列，视图不做任何缓存，避免两边各存一份而后不一致。
@@ -2829,6 +2840,34 @@ struct Index {
             .fontColor($r('sys.color.brand'))
             .onClick(() => {
               this.paletteOpen = false;
+            })
+        }
+        .width('100%')
+        /*
+         * E202：**计划模式**（官方 `ui-plan` 的一级 chip）。
+         *
+         * 显示判据与官方一致：**生效目标**是计划模式 = `pending ? !active : active`
+         * （`pending` 表示刚切换、等宿主确认）。切换没有专用端点 ⇒ 执行 `plan` 命令
+         * （宿主把"进入或退出计划模式"做成了一条命令，见 `ui-commands` 的 `description.plan`）。
+         */
+        Row({ space: Sp.S }) {
+          Text('计划模式')
+            .fontSize(Fs.CAPTION)
+            .layoutWeight(1)
+          Text((this.planPending ? !this.planActive : this.planActive) ? '已开启' : '已关闭')
+            .fontSize(Fs.CAPTION)
+            .fontColor((this.planPending ? !this.planActive : this.planActive)
+              ? $r('sys.color.brand')
+              : $r('sys.color.font_tertiary'))
+          Text('切换')
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.brand'))
+            .onClick(() => {
+              SessionHub.shared().executeCommand('/plan').then((n: ActionNotice) => {
+                this.settingWriteNote = this.noticeText(n);
+              }).catch((e: Object) => {
+                this.settingWriteNote = '切换计划模式失败：' + (e as Error).message;
+              });
             })
         }
         .width('100%')
