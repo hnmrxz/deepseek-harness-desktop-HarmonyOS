@@ -13,6 +13,31 @@
 > 界面规范见 **[`docs/60-界面重塑-端侧核心.md`](docs/60-界面重塑-端侧核心.md)（D7）**。
 > 与 D1（开发任务书）冲突处，以 D6/D7 为准——D1 的部分结论（把端侧 Host 列为非目标）已经过期。
 
+## ⚠️ 当前真实状态（先读这一节，再看下面的"已完成"）
+
+| 层 | 状态 | 证据（都是读数，不是推断） |
+|---|---|---|
+| ArkTS/ArkUI 页面、核心管理、版本/插件/协议 | ✅ 可用 | 真机与模拟器都能安装、启动、常驻 |
+| 核心包物化与打包（`tools/pack-core.mjs`） | ✅ 可用 | 66 MB zip / 28990 条目 / 树内清单契约核对通过 |
+| 运行时载体接线（`RuntimePort` → `NodeRuntime`） | ✅ **已接线** | `entry/.../EntryAbility.ets:267` 与 `pages/Index.ets:2514` 都用 `NodeRuntime`；`NotWiredRuntime` 只是 `hostruntime` 里的兜底实现 |
+| 自建 Node 进 HAP 并**执行 JS**（arm64） | ✅ **已验证** | 真机：`first-load /data/storage/el1/bundle/libs/arm64/libnode.so.127 (RTLD_GLOBAL): handle=ok node::Start=ok`；Node 自报 `platform=linux arch=arm64 versions={"node":"22.23.2",…}` |
+| 原生插件加载（koffi / node-pty） | 🟡 加载已通、版本代差待解 | 真机 `diag3 dlopen …/libkoffi.so = ok`；但 dsh 全线要 `koffi ^3.1.0`，鸿蒙只有 `@ohos-ports/koffi@2.16.2-beta.0`（D6 E47）⇒ `subprocess-local`/`sandbox-local` 按证据**临时禁用** |
+| **Host 起监听（`127.0.0.1:3120`）与端到端验收** | ❌ **尚未达成** | 还没有"端口可连"的读数——**这是当前唯一的目标** |
+| x86_64（本机模拟器）原生链路 | 🟡 进行中 | 应用已能在模拟器常驻（`libs/x86_64/libdshhost.so` 正常绑定）；x86_64 的 `libnode.so.127` 交叉编译进行中 |
+
+> **一句话**：**不是架构没闭合，而是差最后一段**——"Node 能在鸿蒙里执行 JS"已证，
+> "dsh 的 webServer 起监听"未证，中间卡在插件树加载（koffi 版本代差 + 已按证据禁用的三行）。
+>
+> **已知未闭合项（都写在这里，不藏）**：① `DshHost.start()` 的门槛仍是"拿到句柄"，
+> 真正的健康门禁（HTTP 通 + API/WS 通 + 原生依赖齐）尚未成为硬门槛；② `node::Start` 阻塞、
+> **停止/生命周期未实现**（Ability 前后台/销毁与 Node 线程的关系尚未定义）；
+> ③ `buildHostArgv` 里的 `--no-experimental-fetch` 是当时为隔离 WASM 变量加的，现在那条路
+> 已由"封 `node:http` 惰性 getter"解决（D6 E39）。**但删它之前必须先回答一个问题**：
+> `--jitless` 下 undici 初始化仍会撞 `WebAssembly is not defined`（Node 自带 undici 的 llhttp
+> 是 WASM 实现）⇒ 删掉该 flag 就等于把 dsh 的 fetch/undici 路径暴露在这个硬约束下。
+> 这一条需要单独一轮验证（必要时用 `node:https` 给 dsh 垫一个 fetch）。
+
+
 ## 为什么是端侧自足（三条事实变了）
 
 | # | 事实 | 后果 |
