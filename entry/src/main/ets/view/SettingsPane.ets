@@ -937,6 +937,8 @@ export struct SettingsPane {
   };
   /** 已按过一次「删除」、等待确认的预设 id（两步确认；状态留在组件内，不牵动宿主页） */
   @State confirmingPresetId: string = '';
+  /** 候选提供方的搜索词（E211：对齐官方 `candidateSearch`——候选多时靠它筛） */
+  @State candidateQuery: string = '';
   /**
    * 只读查看器当前展示的预设内容（E173）。
    *
@@ -1011,6 +1013,27 @@ export struct SettingsPane {
    * 为它单独再穿一层 prop 只增加耦合，不会带来额外正确性。
    * 【已配置怎么判定】`providerGroups()` 是"宿主设置里已出现的提供方" ⇒ 从目录里减掉它们。
    */
+  /**
+   * 候选提供方（E211）：在 `providerCandidates()` 之上套一层**搜索过滤**。
+   *
+   * 对齐官方 `candidateSearch`（其候选区带搜索框与工具栏）。纯前端过滤、不涉端点；
+   * 大小写不敏感，空词返回全部。
+   */
+  private filteredCandidates(): string[] {
+    const all: string[] = this.providerCandidates();
+    const q: string = this.candidateQuery.trim().toLowerCase();
+    if (q.length === 0) {
+      return all;
+    }
+    const out: string[] = [];
+    for (let i = 0; i < all.length; i++) {
+      if (all[i].toLowerCase().includes(q)) {
+        out.push(all[i]);
+      }
+    }
+    return out;
+  }
+
   private providerCandidates(): string[] {
     const catalog: string[] = SessionHub.shared().snapshot().providerCatalog;
     const configured: ModelProviderGroup[] = this.providerGroups();
@@ -1077,7 +1100,15 @@ export struct SettingsPane {
         .fontSize(Fs.CAPTION)
         .fontColor($r('sys.color.font_tertiary'))
         .width('100%')
-      ForEach(this.providerCandidates(), (id: string) => {
+      // E211：候选搜索（官方 candidateSearch）。纯前端过滤——候选多时不必翻找
+      TextInput({ text: this.candidateQuery, placeholder: '搜索提供方' })
+        .fontSize(Fs.CAPTION)
+        .height(Sz.TOUCH_MIN)
+        .width('100%')
+        .onChange((value: string) => {
+          this.candidateQuery = value;
+        })
+      ForEach(this.filteredCandidates(), (id: string) => {
         Row({ space: Sp.S }) {
           SymbolGlyph($r('sys.symbol.plus_circle')).fontSize(16)
             .fontColor([$r('sys.color.brand')])
