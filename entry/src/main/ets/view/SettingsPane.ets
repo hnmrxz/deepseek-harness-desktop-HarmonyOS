@@ -1295,39 +1295,9 @@ export struct SettingsPane {
     .width('100%')
     }
 
-    Column({ space: Sp.XS }) {
-      Text('当前模型（Host 的默认选择）')
-        .fontSize(Fs.CAPTION)
-        .fontColor($r('sys.color.font_tertiary'))
-        .width('100%')
-      Row({ space: Sp.S }) {
-        SymbolGlyph($r('sys.symbol.checkmark_circle')).fontSize(16)
-          .fontColor([$r('sys.color.brand')])
-        Column({ space: 2 }) {
-          Text(modelSelectionLabel(this.selection, this.models))
-            .fontSize(Fs.BODY)
-            .width('100%')
-          Text(this.currentModelDetail())
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_tertiary'))
-            .width('100%')
-        }
-        .layoutWeight(1)
-      }
-      .width('100%')
-      .padding(Sp.M)
-      .borderRadius(Radius.M)
-      .backgroundColor($r('sys.color.background_secondary'))
-      // 【为什么这里没有"切换"按钮（E96）】官方把"选哪个模型"放在**会话输入区**
-      // （`dsh-client-ui-model-selection`），写的是 `session/selectModel`——**按会话生效**；
-      // 而设置页管的是提供方与密钥。本机核心的默认选择来自 Host 配置，客户端没有"改全局默认"
-      // 的写通道。所以这里**只展示**，并在下面说清去哪改，而不是留一个点了没反应的按钮。
-      Text('切换模型在「会话」页的输入区进行（本机核心按会话记录模型选择）。这里显示的是 Host 为未配置会话准备的默认值。')
-        .fontSize(Fs.CAPTION)
-        .fontColor($r('sys.color.font_tertiary'))
-        .width('100%')
-    }
-    .width('100%')
+    /* E208（用户要求：模型页与官方一致）：「当前模型（Host 的默认选择）」只读区块已移除——官方 Models 页只列提供方与密钥；
+       默认值在「通用」页的 agent-default-model 项可编辑，本会话切换在会话操作面板（E195/E199）。 */
+
 
     /*
      * E207（用户要求：模型页与官方一致）：**「推理强度（当前默认）」区块已移除**。
