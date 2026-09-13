@@ -60,6 +60,9 @@ export {
 export type { FileNode, FilePreview, WorkspaceItem } from './model/Workspace';
 /** E132：工作区注册表行（带 workspaceId；声明在 SessionHub，这里对外转出） */
 export type { WorkspaceRow } from './store/SessionHub';
+/** E160：Agent 预设名单行与其"随附只读"判定 */
+export type { AgentPresetRow } from './store/SessionHub';
+export { presetIsBundled } from './store/SessionHub';
 /** E135：技能清单行 */
 export type { SkillRow } from './store/SessionHub';
 /** E145：结构化操作回执（中枢产出码+参数，视图层本地化） */

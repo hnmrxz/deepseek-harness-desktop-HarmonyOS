@@ -31,6 +31,8 @@ import {
   SettingKind,
   SettingOrigin,
   SkillRow,
+  AgentPresetRow,
+  presetIsBundled,
   splitSettingKey,
   Sp,
   Sz
@@ -373,6 +375,71 @@ export struct SettingsPane {
               .fontColor($r('sys.color.font_tertiary'))
               .width('100%')
           } else if (this.tab === 'preset') {
+            /*
+             * E161：**预设名单卡片**（官方形态）。
+             *
+             * 预设 = 会话的 Agent 所运行的**插件组装**（工具/提示词/能力），名称与描述**由预设自带**
+             * （真机上就是中文），我们只做展示与动作。官方规则：**复制**是创建自定义预设的**唯一入口**；
+             * **随附预设只读**（`trust === 'system'`）；删除只对自定义项开放。
+             *
+             * 【还没接的动作】复制/删除/打开位置需要 `agentPresets/copy|deletePreset|read`，
+             * 其**参数形状尚未探针确证**（E159 的教训：形状不能推）⇒ 本版只做**名单展示**，
+             * 不摆点不动的按钮；确证后补齐。
+             */
+            if (this.presetNote.length > 0) {
+              Text(this.presetNote)
+                .fontSize(Fs.CAPTION)
+                .fontColor($r('sys.color.font_secondary'))
+                .width('100%')
+                .padding(Sp.M)
+                .borderRadius(Radius.M)
+                .backgroundColor($r('sys.color.background_secondary'))
+            }
+            if (this.presets.length > 0) {
+              Text('Agent 预设')
+                .fontSize(Fs.CAPTION)
+                .fontColor($r('sys.color.font_tertiary'))
+                .width('100%')
+              ForEach(this.presets, (p: AgentPresetRow) => {
+                Column({ space: 2 }) {
+                  Row({ space: Sp.S }) {
+                    Text(p.name.length > 0 ? p.name : p.id)
+                      .fontSize(Fs.BODY)
+                      .fontWeight(FontWeight.Medium)
+                      .layoutWeight(1)
+                      .maxLines(1)
+                      .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    if (p.isDefault) {
+                      Text('默认')
+                        .fontSize(Fs.CAPTION)
+                        .fontColor($r('sys.color.brand'))
+                    }
+                    Text(presetIsBundled(p) ? '随附' : '自定义')
+                      .fontSize(Fs.CAPTION)
+                      .fontColor($r('sys.color.font_tertiary'))
+                  }
+                  .width('100%')
+                  if (p.description.length > 0) {
+                    Text(p.description)
+                      .fontSize(Fs.CAPTION)
+                      .fontColor($r('sys.color.font_secondary'))
+                      .width('100%')
+                  }
+                  Text(p.id)
+                    .fontSize(Fs.CAPTION)
+                    .fontColor($r('sys.color.font_tertiary'))
+                    .width('100%')
+                }
+                .width('100%')
+                .padding(Sp.M)
+                .borderRadius(Radius.M)
+                .backgroundColor($r('sys.color.background_secondary'))
+              }, (p: AgentPresetRow) => p.id)
+              Text('预设是"这个会话的 Agent 跑哪些插件"的组装；会话创建时固定，改默认只影响此后新建的会话。复制 / 打开位置 / 删除待接线（形状需先探针确证）。')
+                .fontSize(Fs.CAPTION)
+                .fontColor($r('sys.color.font_tertiary'))
+                .width('100%')
+            }
             /*
              * E129：Agent 预设分区（对齐官方「设置分区把名单呈现为卡片」的**一半**）。
              *
@@ -790,6 +857,15 @@ export struct SettingsPane {
   /** 技能清单（E135）与读取结论：结论非空必须显示，不假装"没有技能" */
   @Prop skills: SkillRow[] = [];
   @Prop skillNote: string = '';
+  /**
+   * Agent 预设名单（E159/E160：`agentPresets/list` 实测形状）。
+   *
+   * 语义：预设 = **一个会话的 Agent 所运行的插件组装**（工具/提示词/能力）。
+   * `name` / `description` 由**预设自带**（真机上就是中文），我们不自编文案；
+   * `trust === 'system'` 是**随附只读**预设（官方不给复制/删除）。
+   */
+  @Prop presets: AgentPresetRow[] = [];
+  @Prop presetNote: string = '';
 
   /** 提供方 → 适配器默认凭据引用（官方派生规则 `<ROUTE>_API_KEY`，见 E106） */
   private providerKeyRefOf(provider: string): string {
