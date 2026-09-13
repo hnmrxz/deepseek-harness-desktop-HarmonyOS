@@ -252,6 +252,21 @@ enum StackPage {
   CONNECT = 'connect'
 }
 
+/**
+ * 一级页签的**本地化**文案（E117：跟随系统语言，默认中文）。
+ *
+ * 【为什么标签必须留在视图层】`navTabLabel` 在 appstate 里，那是个纯 TS 模块——
+ * `$r('app.string.*')` 是 ArkUI 资源引用，只有视图层能用。资源本体放在
+ * `resources/base/element/string.json`（中文，即默认）与 `resources/en_US/...`（英文），
+ * 由系统按当前语言自动选择；这里只做"页签 → 资源"的映射。
+ */
+function navTabLabelRes(tab: NavTab): Resource {
+  if (tab === NavTab.WORKSPACES) {
+    return $r('app.string.tab_workspaces');
+  }
+  return $r('app.string.tab_settings');
+}
+
 /** 一级导航顺序 */
 // 「核心」放在工作区与设置之间：它属于"能力/运维"一类，紧邻设置但不与设置混在一起
 // E110：收敛为两项——核心并入设置（它是"这台设备上 DSH 怎么跑"的配置，不该另开一级）
@@ -2480,7 +2495,7 @@ struct Index {
               this.badge(this.pendingBadge)
             }
           }
-          Text(navTabLabel(tab))
+          Text(navTabLabelRes(tab))
             .fontSize(Fs.CAPTION)
             .fontColor(this.tab === tab ? $r('sys.color.brand') : $r('sys.color.font_secondary'))
         }

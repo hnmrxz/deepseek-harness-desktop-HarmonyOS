@@ -236,12 +236,13 @@ export struct SettingsPane {
       Row({ space: Sp.S }) {
         // E110：核心（版本/插件/运行时事实）作为设置的一项——它与"这台设备怎么跑"同类
         // E114 顺序对齐官方：官方「通用」是第一个分区，因此通用排在最前
-        this.tabChip('general', '通用')
+        // E117：分区名走资源（默认中文，英文系统读 en_US）
+        this.tabChip('general', $r('app.string.settings_general'))
         // 官方分区就叫「模型」（API 密钥是该分区里的字段，不另立分区）
-        this.tabChip('model', '模型')
-        this.tabChip('plugins', '插件')
-        this.tabChip('core', '核心')
-        this.tabChip('device', '设备')
+        this.tabChip('model', $r('app.string.settings_models'))
+        this.tabChip('plugins', $r('app.string.settings_plugins'))
+        this.tabChip('core', $r('app.string.settings_core'))
+        this.tabChip('device', $r('app.string.settings_device'))
       }
       .padding({ left: Sp.M, right: Sp.M })
     }
@@ -252,7 +253,7 @@ export struct SettingsPane {
   }
 
   @Builder
-  tabChip(key: string, label: string) {
+  tabChip(key: string, label: ResourceStr) {
     Text(label)
       .fontSize(Fs.SECONDARY)
       .fontColor(this.tab === key ? Color.White : $r('sys.color.font_secondary'))

@@ -14,79 +14,79 @@
     },
     {
       "name": "perm_internet_reason",
-      "value": "连接你指定的 DeepSeek Harness Host（本机或局域网/隧道地址）以收发会话与事件"
+      "value": "Connect to the DeepSeek Harness host you specify (on this device, or a LAN/tunnel address) to exchange sessions and events"
     },
     {
       "name": "perm_network_info_reason",
-      "value": "检测网络状态切换，用于断线后自动重连与局域网 Host 发现"
+      "value": "Detect network changes so a dropped connection can be restored and a LAN host can be found"
     },
     {
       "name": "perm_keep_background_reason",
-      "value": "在后台维持与 Host 的长连接并接收审批/提问事件，避免待决事项被错过"
+      "value": "Keep the long-lived connection to the host while in the background so approval and question events are not missed"
     },
     {
       "name": "tab_workspaces",
-      "value": "工作区"
+      "value": "Workspaces"
     },
     {
       "name": "tab_settings",
-      "value": "设置"
+      "value": "Settings"
     },
     {
       "name": "settings_general",
-      "value": "通用"
+      "value": "General"
     },
     {
       "name": "settings_models",
-      "value": "模型"
+      "value": "Models"
     },
     {
       "name": "settings_plugins",
-      "value": "插件"
+      "value": "Plugins"
     },
     {
       "name": "settings_core",
-      "value": "核心"
+      "value": "Core"
     },
     {
       "name": "settings_device",
-      "value": "设备"
+      "value": "Device"
     },
     {
       "name": "action_new_session",
-      "value": "新建会话"
+      "value": "New session"
     },
     {
       "name": "action_choose_folder",
-      "value": "选择文件夹"
+      "value": "Choose folder"
     },
     {
       "name": "action_files",
-      "value": "文件"
+      "value": "Files"
     },
     {
       "name": "action_reset",
-      "value": "重置"
+      "value": "Reset"
     },
     {
       "name": "badge_default",
-      "value": "默认"
+      "value": "Default"
     },
     {
       "name": "badge_overridden",
-      "value": "已覆盖"
+      "value": "Overridden"
     },
     {
       "name": "view_chat",
-      "value": "对话"
+      "value": "Chat"
     },
     {
       "name": "view_trajectory",
-      "value": "轨迹"
+      "value": "Trajectory"
     },
     {
       "name": "settings_local_debug",
-      "value": "本地调试"
+      "value": "Local diagnostics"
     }
   ]
 }
