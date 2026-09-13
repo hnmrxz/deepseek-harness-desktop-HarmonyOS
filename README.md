@@ -22,7 +22,9 @@
 | 运行时载体接线（`RuntimePort` → `NodeRuntime`） | ✅ **已接线** | `entry/.../EntryAbility.ets:267` 与 `pages/Index.ets:2514` 都用 `NodeRuntime`；`NotWiredRuntime` 只是 `hostruntime` 里的兜底实现 |
 | 自建 Node 进 HAP 并**执行 JS**（arm64） | ✅ **已验证** | 真机：`first-load /data/storage/el1/bundle/libs/arm64/libnode.so.127 (RTLD_GLOBAL): handle=ok node::Start=ok`；Node 自报 `platform=linux arch=arm64 versions={"node":"22.23.2",…}` |
 | 原生插件加载（koffi / node-pty） | 🟡 加载已通、版本代差待解 | 真机 `diag3 dlopen …/libkoffi.so = ok`；但 dsh 全线要 `koffi ^3.1.0`，鸿蒙只有 `@ohos-ports/koffi@2.16.2-beta.0`（D6 E47）⇒ `subprocess-local`/`sandbox-local` 按证据**临时禁用** |
-| **Host 起监听（`127.0.0.1:3120`）与端到端验收** | ❌ **尚未达成** | 还没有"端口可连"的读数——**这是当前唯一的目标** |
+| **Host 起监听（`127.0.0.1:3120`）** | 🟢 **本机已达成，端侧待复验** | 本机以**端侧同参**（`node --jitless --no-experimental-fetch hostcore/app/main.js`）跑通：`BOOT_50_DSH_INIT` → `BOOT_60_HTTP_BIND port=3121` → `HDSH_READY` → `BOOT_70_HTTP_READY GET / → HTTP 401`（401 = dsh 的 browser-trust fence，端口真的应答）；并打印出带 token 的 `dsh web: http://127.0.0.1:3121/?token=…`。真机（arm64）原生件已齐但设备当前未连接；模拟器（x86_64）待 x86_64 的 `libnode.so.127` 编译完成 |
+| 原生插件加载（koffi / node-pty） | 🟡 node-pty 链已在 profile 层禁用 | koffi **已自建 3.2.1**（arm64，`DT_NEEDED libnode.so.127`）；node-pty 需要创建进程执行 `spawn-helper`，鸿蒙平台不支持（E15），因此 `subprocess`/`sandbox`/`bash-sandbox`/`pwsh-sandbox`/`tool-bash`/`tool-pwsh` 连同其服务级联（E53）一并禁用 |
+| 端侧 fetch（LLM 调用） | 🟡 已垫片，待端侧验证 | jitless 下 WASM 不可用 ⇒ Node 自带 undici 无法初始化 ⇒ 原生 fetch 在端侧不可用；已加 `hostcore/app/fetch-shim.js`（基于 `node:http/https`，含 `Headers`/`FormData`/`Blob`），仅在原生 fetch 缺失时安装 |
 | x86_64（本机模拟器）原生链路 | 🟡 进行中 | 应用已能在模拟器常驻（`libs/x86_64/libdshhost.so` 正常绑定）；x86_64 的 `libnode.so.127` 交叉编译进行中 |
 
 > **一句话**：**不是架构没闭合，而是差最后一段**——"Node 能在鸿蒙里执行 JS"已证，
@@ -31,11 +33,11 @@
 > **已知未闭合项（都写在这里，不藏）**：① `DshHost.start()` 的门槛仍是"拿到句柄"，
 > 真正的健康门禁（HTTP 通 + API/WS 通 + 原生依赖齐）尚未成为硬门槛；② `node::Start` 阻塞、
 > **停止/生命周期未实现**（Ability 前后台/销毁与 Node 线程的关系尚未定义）；
-> ③ `buildHostArgv` 里的 `--no-experimental-fetch` 是当时为隔离 WASM 变量加的，现在那条路
-> 已由"封 `node:http` 惰性 getter"解决（D6 E39）。**但删它之前必须先回答一个问题**：
-> `--jitless` 下 undici 初始化仍会撞 `WebAssembly is not defined`（Node 自带 undici 的 llhttp
-> 是 WASM 实现）⇒ 删掉该 flag 就等于把 dsh 的 fetch/undici 路径暴露在这个硬约束下。
-> 这一条需要单独一轮验证（必要时用 `node:https` 给 dsh 垫一个 fetch）。
+> ③ **端侧 fetch 的处置已定并已实现**：`--jitless` 下 WASM 不可用是**定义使然**（V8 的 jitless
+> 隐含 `--no-expose-wasm`，不是权限问题），所以"让 undici 在 jitless 下工作"这条路不存在；
+> 正确做法是给端侧垫一个基于 `node:http/https` 的 fetch（`hostcore/app/fetch-shim.js`，含
+> `Headers`/`FormData`/`Blob`，仅在原生 fetch 缺失时安装）。**待办**：在端侧用一次真实模型调用
+> 验证它（含 SSE 流式与 `signal` 中止）。
 
 
 ## 为什么是端侧自足（三条事实变了）

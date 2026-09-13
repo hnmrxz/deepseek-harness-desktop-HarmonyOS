@@ -26,6 +26,10 @@ screenshots/
 # 不进版本库：进版本库的是"如何生产它"（tools/pack-core.mjs + hostcore/core-recipe.json）
 entry/src/main/resources/resfile/*.zip
 
+# Host 入口脚本的放位产物（由 `node tools/place-host-app.mjs` 从 hostcore/app/ 同步过来）。
+# 同样：字节不进库、方法（放置脚本 + hostcore/app/ 的源码）进库。
+entry/src/main/resources/resfile/resources/
+
 # 阶段一的运行时载体（由 tools/electron-runtime/collect.ps1 从 dist/ 导入）
 # libelectron.so 单个就有 172.7 MB，绝不能进版本库
 runtime/

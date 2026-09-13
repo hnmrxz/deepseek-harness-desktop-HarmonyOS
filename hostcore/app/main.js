@@ -207,6 +207,31 @@ function flatNativeName(basename) {
   diag(`原生库重定向已启用：libs=${NATIVE_LIBS}`);
 })();
 
+/*
+ * jitless 下的 fetch 垫片（D6 E52）。
+ *
+ * 【为什么必须有】`--jitless` 隐含关掉 WASM，而 Node 自带 undici 用 WASM 版 llhttp
+ * ⇒ 原生 fetch 在端侧不可用。于是我们既封了 `node:http` 的惰性 getter（E39），
+ * 又用 `--no-experimental-fetch` 让 Node 不去装 globalThis.fetch（E34/E35）。
+ * 但 dsh **调模型就是用 fetch**（`dsh-llm-deepseek/lib/index.js:1770`）——
+ * 不垫它，"Host 起来了"也只是个不能干活的空壳。
+ * 垫片基于 `node:http`/`node:https`（原生 llhttp，与 WASM 无关），见 fetch-shim.js 的文件头。
+ *
+ * 只在原生 fetch 不可用时安装：本机调试（未加 --no-experimental-fetch）时用的仍是原生实现。
+ */
+(function installJitlessFetch() {
+  try {
+    // eslint-disable-next-line global-require
+    const shim = require('./fetch-shim.js');
+    const installed = shim.installFetchShim();
+    diag(installed
+      ? 'jitless fetch 垫片已安装（基于 node:http/https；原生 fetch 不可用）'
+      : '原生 fetch 可用，未安装 jitless 垫片');
+  } catch (e) {
+    diag(`fetch 垫片安装失败：${e && e.message}`);
+  }
+})();
+
 /** 读我们自己的 state.json，得到"当前版本"，据此拼出核心树目录。 */
 function currentCoreDir() {
   if (DSH_BASE.length === 0) {
@@ -264,14 +289,43 @@ function keepAliveWithoutWindows() {
 
 keepAliveWithoutWindows();
 
+/*
+ * ── 启动阶段标记（BOOT_xx）────────────────────────────────────────────────
+ *
+ * 【为什么需要】端侧只有 hilog 可看（应用进程的 stdout 在设备上不可见，D6 E23；
+ * 我们把 stdout 重定向到文件再 tail 到 hilog，见 dshhost.cc），而"Host 没起来"
+ * 这类问题最贵的成本就是**猜停在哪一步**。所以把启动过程切成显式阶段：
+ * 成功的最后一段 + 失败的第一段，本身就是结论。
+ *
+ * 阶段序列（顺序即因果）：
+ *   BOOT_00_NODE_START   入口脚本开始执行（能读到它就说明 libnode + node::Start 成立）
+ *   BOOT_10_ENV_READY    环境/路径已解析（打出实际取值，便于核对是否指向错目录）
+ *   BOOT_20_CORE_FOUND   核心树与 dsh CLI 入口都在
+ *   BOOT_30_PROFILE_READY 端侧 profile 已就位（bundle 列表 + patch 层）
+ *   BOOT_40_PROFILE_BOOT 即将 runProfile（插件树从这里开始挂载）
+ *   BOOT_50_DSH_INIT     runProfile 返回且拿到 ctx
+ *   BOOT_60_HTTP_BIND    ctx.webServer 存在（dsh 已绑定端口）
+ *   BOOT_70_HTTP_READY   我们自探一次 HTTP，确认端口**真的应答**（不是"应该应答"）
+ *   BOOT_ERR             失败：带上最后一个成功阶段 + 原因
+ */
+const BOOT_T0 = Date.now();
+let bootStage = 'BOOT_00_NODE_START';
+function stage(name, extra) {
+  bootStage = name;
+  const suffix = extra === undefined || extra === '' ? '' : ' ' + extra;
+  console.log(`[hdsh-host] ${name}${suffix} (+${Date.now() - BOOT_T0}ms)`);
+}
+stage('BOOT_00_NODE_START',
+  `pid=${process.pid} node=${process.version} platform=${process.platform}/${process.arch} jitless=${process.execArgv.includes('--jitless')}`);
+
 function fail(msg) {
   // 【绝不能调 process.exit()】libelectron.so 是**同进程**跑的：
   // 这里的 exit 会连同宿主 ArkUI 应用一起杀掉。
   // 真机实测症状：启动后窗口被销毁、进程消失、hilog 里既没有 JS 异常也没有崩溃记录——
   // 看起来像"莫名其妙退出"，实际是我们自己把进程结束了。
   // 正确做法：把原因打出来、把失败状态留在全局，让进程活着（上层/诊断页据此如实展示）。
-  console.error('[hdsh-host] FATAL ' + msg);
-  globalThis.__hdshHostError = msg;
+  console.error(`[hdsh-host] BOOT_ERR after=${bootStage} reason=${msg}`);
+  globalThis.__hdshHostError = `${msg}（停在 ${bootStage}）`;
   throw new Error('HDSH host fatal: ' + msg);
 }
 
@@ -394,6 +448,36 @@ function ensureProfile() {
   log('profile 已就位：' + dest);
 }
 
+/**
+ * 自探 HTTP：确认端口**真的应答**——"dsh 说它绑了端口"与"端口真的通"是两件事。
+ *
+ * 用 `node:http` 而不是 fetch：这里要的是最原始的事实，不该掺任何 HTTP 客户端层的东西
+ * （端侧的 fetch 还是我们垫的，见 fetch-shim.js）；`node:http` 的 llhttp 是原生的，与 WASM 无关。
+ * 失败不抛异常、只返回描述串——它的用途是**读数**，不是门禁（门禁在 ArkTS 侧）。
+ */
+function probeHttpReady(port, attempts = 10, intervalMs = 500) {
+  const http = require('node:http');
+  const started = Date.now();
+  return new Promise((resolve) => {
+    const attempt = (left) => {
+      const req = http.request({ host: '127.0.0.1', port: port, path: '/', method: 'GET', timeout: 2000 }, (res) => {
+        res.resume();
+        resolve(`GET / → HTTP ${res.statusCode}（${Date.now() - started}ms）`);
+      });
+      req.on('error', (e) => {
+        if (left <= 1) {
+          resolve(`未应答：${e.code === undefined ? e.message : e.code}（${Date.now() - started}ms，共探测 ${attempts} 次）`);
+          return;
+        }
+        setTimeout(() => attempt(left - 1), intervalMs);
+      });
+      req.on('timeout', () => req.destroy(new Error('timeout')));
+      req.end();
+    };
+    attempt(attempts);
+  });
+}
+
 async function start() {
   const missing = reportConfigError();
   if (missing.length > 0) {
@@ -403,6 +487,8 @@ async function start() {
     globalThis.__hdshHostError = 'missing-config: ' + missing.join(';');
     return;
   }
+  stage('BOOT_10_ENV_READY',
+    `core=${CORE_DIR} home=${HOME_DIR} sandbox=${SANDBOX_HOME} port=${PORT} profile=${PROFILE}`);
   const cliLibDir = path.join(CORE_DIR, 'node_modules', '@deepseek-ai', 'dsh', 'lib');
   if (!fs.existsSync(cliLibDir)) {
     fail('核心树里找不到 dsh CLI：' + cliLibDir);
@@ -416,8 +502,10 @@ async function start() {
     fail('找不到 dsh-app-boot：' + appBoot);
   }
 
+  stage('BOOT_20_CORE_FOUND', `entry=${path.basename(entry)}`);
   ensureDir(HOME_DIR);
   ensureProfile();
+  stage('BOOT_30_PROFILE_READY', `home=${HOME_DIR} profile=${PROFILE}`);
 
   log('导入 ' + entry);
   const profileBoot = await import(pathToFileURL(entry).href);
@@ -439,6 +527,7 @@ async function start() {
    */
   const args = ['--port', PORT, '--host', '127.0.0.1', '--no-open'];
   log('runProfile profile=' + PROFILE + ' args=' + args.join(' '));
+  stage('BOOT_40_PROFILE_BOOT', `entry=${path.basename(entry)}`);
 
   const result = await profileBoot.runProfile({
     environment: appBootMod.loadLayeredEnv('dsh'),
@@ -446,11 +535,13 @@ async function start() {
     patchFiles: [],
     args: args,
   });
+  stage('BOOT_50_DSH_INIT', 'runProfile 已返回');
 
   const ctx = result && result.ctx;
   if (!ctx || !ctx.webServer) {
     fail('runProfile 返回了但没有 webServer');
   }
+  stage('BOOT_60_HTTP_BIND', `port=${ctx.webServer.port}`);
   // 这行是给 ArkTS 侧的机器可读信号：ArkTS 会等到端口可连为止
   console.log('HDSH_READY ' + JSON.stringify({
     port: ctx.webServer.port,
@@ -458,6 +549,10 @@ async function start() {
     profile: PROFILE,
   }));
   log('Host 已就绪，端口 ' + ctx.webServer.port);
+  // 自探一次：确认端口**真的应答**（"dsh 说它绑了"与"端口真的通"是两件事）
+  probeHttpReady(ctx.webServer.port).then((note) => {
+    stage('BOOT_70_HTTP_READY', note);
+  });
 
   const shutdown = result.shutdown;
   process.on('SIGTERM', () => {

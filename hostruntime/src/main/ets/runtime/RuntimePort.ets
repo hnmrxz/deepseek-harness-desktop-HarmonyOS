@@ -135,6 +135,11 @@ export function buildHostArgv(entryScript: string): string[] {
     // （LLM 调用）依赖 fetch，那部分会不可用——所以这是一次**隔离变量的实验**，
     // 不是最终方案；结论出来后再决定对外 HTTP 怎么走。
     '--no-experimental-fetch',
+    // 【为什么加它】`session-query-sqlite` 用 `node:sqlite`；Node 22 里该模块需要这个开关
+    // 才会被暴露（我们的构建**确实带 SQLite**：版本串里有 `"sqlite":"3.51.3"`）。
+    // 不加它，那一行会在 import 期抛 ERR_UNKNOWN_BUILTIN_MODULE —— 与其因此禁掉一个
+    // 鸿蒙上**本来能做**的能力，不如把开关打开。
+    '--experimental-sqlite',
     entryScript,
   ];
 }
