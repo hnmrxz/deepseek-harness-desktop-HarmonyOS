@@ -37,6 +37,20 @@ export struct CorePane {
   /** 选择某个版本作为切换目标 */
   onSelectVersion: (version: string) => void = () => {
   };
+  /**
+   * 切换某一行的启停（写 `$DSH_HOME/profiles/<profile>/.hdsh-plugin-rows.yml`）。
+   *
+   * 【语义边界】端侧**只能**启停随核心包发版的行：上游的插件安装通道是
+   * `spawnSync("pnpm", …)`，而鸿蒙不允许应用创建进程。所以这里的开关不是"装插件"，
+   * 而是"把已经装好的行打开或关掉"，改完需要重启核心才生效（界面会说明）。
+   */
+  onTogglePlugin: (id: string, disabled: boolean) => void = () => {
+  };
+  /** 恢复默认：清空用户启停，回到核心包自带的启停状态。 */
+  onResetPluginRows: () => void = () => {
+  };
+  /** 插件区的结果提示（空的就不显示） */
+  @Prop pluginNotice: string = '';
 
   build() {
     Scroll() {
@@ -231,10 +245,28 @@ export struct CorePane {
       // 而它的实现就是创建进程：`dsh/lib/plugin-Ddi42qoW.js:109` → `spawnSync("pnpm", …)`。
       // 鸿蒙不允许应用创建进程（D6 E15），所以"运行时安装/卸载插件"在端侧**永远不成立**——
       // 无论插件是纯 JS 还是含 .node。这里如实说清，并指出真正能改插件的地方在打包侧。
-      Text('插件不能在端侧运行时安装或卸载：上游安装通道 `dsh plugin add` 的实现是创建子进程执行 pnpm，而鸿蒙不允许应用创建进程（D6 E15）。下面列出的是随核心包发版提供的插件与它们的启停状态。')
+      Text('插件不能在端侧运行时安装或卸载：上游安装通道 `dsh plugin add` 的实现是创建子进程执行 pnpm，而鸿蒙不允许应用创建进程（D6 E15）。下面列出的是随核心包发版提供的插件；**可以开/关**，改动在重启核心后生效。')
         .fontSize(Fs.CAPTION)
         .fontColor($r('sys.color.font_tertiary'))
         .width('100%')
+      // 恢复默认 + 结果提示：把"改了哪一行、要不要重启"讲清楚，不留需要用户猜的状态
+      Row({ space: Sp.S }) {
+        Button('恢复默认启停')
+          .fontSize(Fs.CAPTION)
+          .height(28)
+          .backgroundColor($r('sys.color.background_secondary'))
+          .fontColor($r('sys.color.font_secondary'))
+          .onClick(() => {
+            this.onResetPluginRows();
+          })
+        if (this.pluginNotice.length > 0) {
+          Text(this.pluginNotice)
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.font_secondary'))
+            .layoutWeight(1)
+        }
+      }
+      .width('100%')
       if (this.view.plugins.length === 0) {
         Text('未读取到插件清单。清单由核心包携带（打包时算好，端侧只读一份清单，不遍历目录）；装上带清单的核心版本后，这里会列出实际的行。')
           .fontSize(Fs.CAPTION)
@@ -256,6 +288,14 @@ export struct CorePane {
               Text(p.badge)
                 .fontSize(Fs.CAPTION)
                 .fontColor(p.installable ? $r('sys.color.brand') : $r('sys.color.font_tertiary'))
+              // 启停开关：只对**有行 id** 的行显示（没有 id 就无法写 patch 行，
+              // 硬给一个开关会变成"点了没反应"的假入口）
+              if (p.id.length > 0) {
+                Toggle({ type: ToggleType.Switch, isOn: !p.disabled })
+                  .onChange((isOn: boolean) => {
+                    this.onTogglePlugin(p.id, !isOn);
+                  })
+              }
             }
             .width('100%')
             Text(p.name)

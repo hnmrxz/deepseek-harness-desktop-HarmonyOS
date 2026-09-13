@@ -10,19 +10,21 @@
  *   - DshHost    ：运行状态机（未接线/未安装/待启动/就绪/失败…），起停核心
  *   - Plugins    ：插件清单与「纯 JS / 依赖原生」分类——**清单来自树内元数据**
  *                  （打包器写入，端侧只读一个小 JSON，不遍历 27000 余文件）。
- *                  已能如实回答"这一版装了什么、哪些装不了"；
- *                  **启停/安装插件尚未实现**（需要 Host 起得来才能改 profile 生效）。
+ *                  已能如实回答"这一版装了什么、哪些装不了"。
+ *   - PluginRows ：**插件启停**（E91）——写 `<profile>/.hdsh-plugin-rows.yml`，由入口脚本在
+ *                  下次启动时拼进 profile 的 `cordis.patch.yml`（后写覆盖先写）。
+ *                  **安装/卸载插件在端侧永远做不到**（上游经 pnpm 创建进程，鸿蒙不允许），
+ *                  启停随包发版的行则是纯文件操作；两者在界面文案里严格区分。
  *
  * 尚未实现（下一步）：
- *   - 阶段一的 Electron-on-鸿蒙 载体实现（等华为侧产物）
- *   - 阶段二的 libnode.so 载体实现（等自建交叉编译产物，见 tools/node-runtime/）
- *   - 插件的启用/停用/安装动作（只读清单已经真实，动作没有假入口）
- * 在实现前不导出，避免上层以为已经可用。
+ *   - 核心版本的**切换/回滚动作接线**：`CoreStore.activate/rollback` 与判据已就位
+ *     （且"健康检查不过绝不切换"），但界面动作还没接上，目前只给如实提示。
  */
 
 export * from './core/Types';
 export * from './core/Naming';
 export * from './core/CoreStore';
 export * from './core/BundledCore';
+export * from './core/PluginRows';
 export * from './runtime/RuntimePort';
 export * from './runtime/DshHost';

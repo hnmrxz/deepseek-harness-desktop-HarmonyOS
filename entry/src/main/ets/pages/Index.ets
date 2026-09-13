@@ -284,6 +284,8 @@ struct Index {
   @State coreNotice: string = '';
   /** 端侧核心的生命周期句柄（懒建；只有一个，与"单一状态机"的纪律一致） */
   private host: DshHost | null = null;
+  /** 插件启停操作的即时反馈（重启后生效这类事实必须让用户看到） */
+  @State pluginNotice: string = '';
   @State workspaces: WorkspaceItem[] = [];
   @State fileTree: FileNode[] = [];
   /** 文件预览结果；undefined = 未选择文件（@State 必须给默认值） */
@@ -2837,6 +2839,42 @@ struct Index {
    * 健康检查必须先把候选版本起一次，因此运行时未接线时这一步**做不了**；
    * 这里不写任何状态，只说明原因。
    */
+  /**
+   * 插件行启停（E91）。
+   *
+   * 【这件事在端侧的真实边界】安装/卸载插件做不到（上游经 pnpm 创建进程，鸿蒙不允许），
+   * 但"启停随包发版的行"是纯文件操作：写 `$DSH_HOME/profiles/<profile>/.hdsh-plugin-rows.yml`，
+   * 由入口脚本在下次启动时拼进 profile 的 `cordis.patch.yml`。所以这里的结果话术必须带
+   * **"重启核心后生效"**——插件树是启动时挂载的，不重启就改了也不生效。
+   */
+  private onTogglePlugin(id: string, disabled: boolean): void {
+    const host: DshHost | null = this.host;
+    if (host === null) {
+      this.pluginNotice = '核心尚未接线，无法保存插件启停';
+      return;
+    }
+    const res: OpResult = host.setPluginDisabled(id, disabled);
+    this.pluginNotice = res.message;
+    hilog.info(DOMAIN, TAG, 'HDSH-PLUGIN 设置启停：id=%{public}s disabled=%{public}s ok=%{public}s note=%{public}s',
+      id, disabled ? 'true' : 'false', res.ok ? 'true' : 'false', res.message);
+    // 清单里的 disabled 会叠加用户行，刷新一次让界面显示"重启后会生效的状态"
+    this.refreshCoreView();
+  }
+
+  /** 恢复默认启停（清空用户行文件；核心包自带的启停不受影响）。 */
+  private onResetPluginRows(): void {
+    const host: DshHost | null = this.host;
+    if (host === null) {
+      this.pluginNotice = '核心尚未接线，无法恢复默认';
+      return;
+    }
+    const res: OpResult = host.resetPluginRows();
+    this.pluginNotice = res.ok ? `${res.message}；重启核心后生效` : res.message;
+    hilog.info(DOMAIN, TAG, 'HDSH-PLUGIN 恢复默认：ok=%{public}s note=%{public}s',
+      res.ok ? 'true' : 'false', res.message);
+    this.refreshCoreView();
+  }
+
   private onCoreSelectVersion(version: string): void {
     this.coreNotice = `版本 ${version} 已在设备上。把它设为当前版本需要先起一次做健康检查`
       + '（未通过就不切换，见核心版本激活事务）；运行时载体接线后这里才能真正切换。'
@@ -2942,7 +2980,14 @@ struct Index {
           },
           onSelectVersion: (version: string) => {
             this.onCoreSelectVersion(version);
-          }
+          },
+          onTogglePlugin: (id: string, disabled: boolean) => {
+            this.onTogglePlugin(id, disabled);
+          },
+          onResetPluginRows: () => {
+            this.onResetPluginRows();
+          },
+          pluginNotice: this.pluginNotice
         })
           .layoutWeight(1)
       }

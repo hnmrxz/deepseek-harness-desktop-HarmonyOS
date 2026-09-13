@@ -758,7 +758,24 @@ function findProfileBootEntry(cliLibDir) {
  * 把核心树里的端侧 profile 装到 $DSH_HOME/profiles/<name>。
  * 幂等：文件始终用核心树里的最新版覆盖（壳的 patch 层必须随核心版本更新），
  * 但 package.json 若已存在则只补缺失的字段，避免覆盖掉用户装的插件。
+ *
+ * ── 用户插件行（E91）────────────────────────────────────────────────────
+ *
+ * dsh 的 profile 分层里，"用户层"就是 `<profile 目录>/cordis.patch.yml`
+ * （`dsh-app-boot/lib/index.js:861-862`：`patchPath = join(dir, 'cordis.patch.yml')`，
+ * **不是** `$DSH_HOME/cordis.patch.yml`——早先的注释写错了）。
+ *
+ * 而这一层**每次启动都被我们用核心树里的种子覆盖**（上面的循环），于是"用户在端侧改的
+ * 启停"必然丢。所以把两件事分开：
+ *   · `cordis.patch.yml`：始终 = **核心种子 + 用户行**（本函数每次重新拼装，核心升级照常流入）；
+ *   · `.hdsh-plugin-rows.yml`：**只放用户行**（`- id:` + `disabled:`），由端侧「插件」页维护，
+ *     我们从不覆盖它 ⇒ 启停在重启后仍然成立。
+ * "恢复默认"因此是一次**删除**：删掉用户行文件，下次启动拼出来的就是纯种子。
  */
+const USER_ROWS_FILENAME = '.hdsh-plugin-rows.yml';
+const USER_ROWS_BEGIN = '# >>> hdsh-user-rows（端侧「插件」页写入，勿手工编辑）';
+const USER_ROWS_END = '# <<< hdsh-user-rows';
+
 function ensureProfile() {
   const src = path.join(CORE_DIR, 'profiles', PROFILE);
   if (!fs.existsSync(src)) {
@@ -790,7 +807,44 @@ function ensureProfile() {
     }
     fs.copyFileSync(path.join(src, name), path.join(dest, name));
   }
+  composeUserRows(dest);
   log('profile 已就位：' + dest);
+}
+
+/**
+ * 把用户行拼到 profile 的 patch 文件末尾（E91）。
+ *
+ * 【为什么追加而不是替换】`cordis.patch.yml` 里的行是**按顺序覆盖**的：种子先写、
+ * 用户行后写，于是用户行天然拥有更高优先级（后写覆盖先写），而种子里的其它内容
+ * （bundle 列表之外的覆盖、注释）原样保留。这也让"用户行"与"内核行"在文件里
+ * 一眼可分。
+ */
+function composeUserRows(profileDir) {
+  const patchPath = path.join(profileDir, 'cordis.patch.yml');
+  const rowsPath = path.join(profileDir, USER_ROWS_FILENAME);
+  if (!fs.existsSync(rowsPath)) {
+    return;
+  }
+  let rows = '';
+  try {
+    rows = fs.readFileSync(rowsPath, 'utf8').trim();
+  } catch (e) {
+    log('读用户插件行失败（忽略）：' + e.message);
+    return;
+  }
+  if (rows.length === 0) {
+    return;
+  }
+  let seed = '';
+  try {
+    seed = fs.readFileSync(patchPath, 'utf8');
+  } catch (e) {
+    log('读 profile patch 失败（忽略用户行）：' + e.message);
+    return;
+  }
+  const composed = `${seed.replace(/\s*$/, '')}\n\n${USER_ROWS_BEGIN}\n${rows}\n${USER_ROWS_END}\n`;
+  fs.writeFileSync(patchPath, composed, 'utf8');
+  log(`已应用用户插件行：${rowsPath}`);
 }
 
 /**

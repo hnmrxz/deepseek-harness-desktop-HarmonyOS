@@ -22,6 +22,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { ActivationDecision, ActivationAction, CoreState, CoreVersionRecord } from '../core/Types';
 import { CoreStore, CorePluginRow, CorePluginTotals, CoreTreeInfo, OpResult } from '../core/CoreStore';
 import { BundledInstallResult, installBundledCores } from '../core/BundledCore';
+import { UserPluginRow, clearUserRows, readUserRows, writeUserRows } from '../core/PluginRows';
 import { HostHandle, NativeFact, RuntimePort, RuntimeProbe, RuntimeKind } from '../runtime/RuntimePort';
 
 const DOMAIN: number = 0x0000;
@@ -235,9 +236,60 @@ export class DshHost {
     }
   }
 
+  /** profile 目录（用户行的落点；dsh 读取的用户 patch 层也在这一层）。 */
+  private profileDir(): string {
+    return `${this.store.homeDir()}/profiles/${DshHost.PROFILE}`;
+  }
+
+  /**
+   * 已保存的**用户启停**（端侧「插件」页写的那份覆盖）。
+   *
+   * 【为什么不能让调用方自己拼路径】用户行文件与 dsh 的 profile 分层是同一份契约
+   * （`<profile 目录>/cordis.patch.yml` 的追加段），路径知识只应存在于 hostruntime。
+   */
+  userPluginRows(): UserPluginRow[] {
+    return readUserRows(this.profileDir());
+  }
+
+  /**
+   * 设置某一行的启停（写用户行文件）。
+   *
+   * 【为什么返回的话里必须带"重启生效"】dsh 的插件树在**启动时**挂载：文件改了但进程没重启，
+   * 界面上的状态与运行中的事实会不一致。与其含糊其辞，不如把这件事写在结果里，
+   * 由界面直接显示。
+   */
+  setPluginDisabled(id: string, disabled: boolean): OpResult {
+    if (id.length === 0) {
+      return { ok: false, message: '行 id 为空，无法设置' };
+    }
+    const rows: UserPluginRow[] = readUserRows(this.profileDir());
+    const next: UserPluginRow[] = [];
+    let found: boolean = false;
+    for (const row of rows) {
+      if (row.id === id) {
+        next.push({ id: row.id, disabled: disabled });
+        found = true;
+      } else {
+        next.push(row);
+      }
+    }
+    if (!found) {
+      next.push({ id: id, disabled: disabled });
+    }
+    const written: OpResult = writeUserRows(this.profileDir(), next);
+    if (!written.ok) {
+      return written;
+    }
+    return { ok: true, message: `${id} 已${disabled ? '禁用' : '启用'}；重启核心后生效` };
+  }
+
+  /** 恢复默认：清空用户启停（核心种子里的启停不受影响）。 */
+  resetPluginRows(): OpResult {
+    return clearUserRows(this.profileDir());
+  }
+
   /**
    * 插件清单：取自**会被启动的那个版本**的树内元数据（选取规则与 start() 一致）。
-   *
    * 【为什么不聚合所有版本】清单回答的是"这一版装了什么"。把两个版本的插件混成一个列表，
    * 用户会以为设备上装着这一份合集——那是编造。
    * 【为什么端侧不自己扫】判据要沿依赖闭包走 518 个包 / 27000 余文件（实测规模）；
@@ -264,9 +316,31 @@ export class DshHost {
           + '重新安装一份较新的核心包即可显示。',
       };
     }
+    /*
+     * 把**用户启停**覆盖到清单上（E91）。
+     *
+     * 【为什么必须叠加】清单来自核心包（树内元数据），它只会说"这一版出厂时这一行是开还是关"；
+     * 而用户刚在「插件」页改过的那一行，要**重启核心**才真正生效。如果不叠加，界面会显示
+     * 出厂状态，用户会以为自己的改动没保存——那是界面在说谎。叠加之后，界面显示的是
+     * "重启后会生效的状态"，与提示语（"重启核心后生效"）自洽。
+     */
+    const rows: CorePluginRow[] = info.plugins;
+    const userRows: UserPluginRow[] = readUserRows(this.profileDir());
+    if (userRows.length > 0) {
+      const byId: Map<string, boolean> = new Map<string, boolean>();
+      for (const userRow of userRows) {
+        byId.set(userRow.id, userRow.disabled);
+      }
+      for (const row of rows) {
+        const want: boolean | undefined = byId.get(row.id);
+        if (want !== undefined) {
+          row.disabled = want;
+        }
+      }
+    }
     return {
       version: target,
-      rows: info.plugins,
+      rows: rows,
       totals: info.pluginTotals,
       nativePackages: info.nativePackages,
       note: '',
