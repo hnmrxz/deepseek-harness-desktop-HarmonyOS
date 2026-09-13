@@ -214,7 +214,10 @@ napi_value Init(napi_env env, napi_value exports) {
 napi_module g_dshHostModule = {
     1,          // nm_version
     0,          // nm_flags
-    nullptr,    // nm_filename
+    // 【必须非空】Node 的 NODE_MODULE 宏与 DevEco 样例都传 __FILE__，我们原先传 nullptr。
+    // 实测症状（E28）：构造器执行、napi_module_register 返回，但 Init **从未被调用**
+    // ⇒ 注册很可能没被真正收下。这一栏就是与规范写法唯一的差异，先试它。
+    __FILE__,   // nm_filename
     Init,       // nm_register_func
     "dshhost",  // nm_modname：见下方"注册两个名字"的说明
     nullptr,    // nm_priv
@@ -235,7 +238,7 @@ napi_module g_dshHostModule = {
 napi_module g_dshHostModuleFull = {
     1,
     0,
-    nullptr,
+    __FILE__,
     Init,
     "libdshhost.so",
     nullptr,
@@ -255,7 +258,7 @@ napi_module g_dshHostModuleFull = {
 napi_module g_dshHostModuleNoExt = {
     1,
     0,
-    nullptr,
+    __FILE__,
     Init,
     "libdshhost",
     nullptr,
@@ -265,7 +268,7 @@ napi_module g_dshHostModuleNoExt = {
 napi_module g_dshHostModuleBareDotSo = {
     1,
     0,
-    nullptr,
+    __FILE__,
     Init,
     "dshhost.so",
     nullptr,
