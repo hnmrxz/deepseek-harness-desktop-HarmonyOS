@@ -784,7 +784,19 @@ struct Index {
     const timer: number = setInterval(() => {
       waited += step;
       const state: string = this.rememberedTokenState;
-      if (state === 'pending' && waited < limit) {
+      /*
+       * 【为什么不能"非 pending 就退出"】首次运行（或刚清过数据）时，Ability 会把状态置成
+       * `absent`——它说的是"现在还没有记住的 Host"，而**本端自起 Host 要到 15~20 秒后**
+       * 才把 url+token 发布出来（E54/E55）。旧条件 `state === 'pending'` 会让轮询在 250 ms
+       * 就退出、并因 url 为空直接 return，而 `autoConnectAttempted` 已经置位 ⇒ 本端 Host
+       * 起来时**再没有人重试**。端侧实测症状正是"端口通了、token 也发布了，页面却不连"。
+       * 所以判据改成"**真的具备连接条件**了没有"：url、token、状态三者齐备才收工，
+       * 否则在预算内继续等（`absent` 与 `pending` 一视同仁）。
+       */
+      const ready: boolean = state === 'found'
+        && this.rememberedUrl.length > 0
+        && this.rememberedToken.length > 0;
+      if (!ready && waited < limit) {
         return;
       }
       clearInterval(timer);
