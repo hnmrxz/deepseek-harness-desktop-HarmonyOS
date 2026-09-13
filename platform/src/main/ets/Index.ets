@@ -46,6 +46,8 @@ export {
 } from './system/LocalPrefs';
 export { MAX_ATTACHMENT_BYTES, PickOutcome, pickDocument, pickFolder } from './system/FilePicker';
 export type { PickedFile, PickedFolder } from './system/FilePicker';
+/** E147：字符串资源取值入口（状态字符串不能用 `$r`，须经此函数） */
+export { localized, localizedOr } from './system/Strings';
 
 // ── 窗口与形态 ──
 export {

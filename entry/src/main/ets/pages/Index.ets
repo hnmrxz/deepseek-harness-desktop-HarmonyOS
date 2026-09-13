@@ -28,7 +28,7 @@ import {
 } from 'dshcompat';
 import type { VersionCheck } from 'dshcompat';
 import type { DiagnosticItem, DiagnosticReport } from 'connection';
-import { applyThemeMode, copyText, LocalPrefs, PickOutcome, pickDocument, pickFolder, themeModeOf } from 'platform';
+import { applyThemeMode, copyText, LocalPrefs, PickOutcome, pickDocument, pickFolder, localizedOr, themeModeOf } from 'platform';
 import type { NotifyRoute, PickedFile, PickedFolder } from 'platform';
 import { common } from '@kit.AbilityKit';
 import {
@@ -3443,8 +3443,9 @@ struct Index {
    */
   private localized(id: Resource): string {
     try {
+      // E147：取值实现只留一份（platform/system/Strings），页面只负责提供上下文
       const ctx = getContext(this) as common.UIAbilityContext;
-      return ctx.resourceManager.getStringSync(id.id);
+      return localizedOr(ctx, id, '');
     } catch (e) {
       return '';
     }
