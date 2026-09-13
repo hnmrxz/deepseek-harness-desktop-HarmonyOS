@@ -253,6 +253,16 @@ export const READONLY_PROBE_ENDPOINTS: string[] = [
 // ─────────────────── 参数别名（容忍上游参数改名） ───────────────────
 
 /**
+ * `session/selectModel`（E192）：**按会话**切换模型与推理强度。
+ *
+ * 【为什么需要它】官方把它放在**会话输入区**（`dsh-client-ui-model-selection`），
+ * 而设置页只管"新会话默认用什么"（写 `agent-default-model`，我们早就有 `setDefaultModel`）。
+ * 此前只有后者 ⇒ 用户在一个**已存在**的会话里改不了用哪个模型/强度。
+ * 端点在兼容表里（`Endpoints.ets:683`，`shape: REQUEST`、`params: ['request']`）。
+ */
+export const SESSION_SELECT_MODEL_ENDPOINT: string = 'session/selectModel';
+
+/**
  * 一个发生改名的参数。
  *
  * 存在理由（D5 升级手册「降级策略」）：
