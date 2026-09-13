@@ -1113,6 +1113,15 @@ export struct SettingsPane {
      * "这个模型现在根本调不通，因为没配密钥"——能力与前置条件分居两页，是最容易让人卡住的地方。
      * 所以这里把可写的凭据引用直接列在模型页顶部，配置动作与「凭据」页共用同一条通道。
      */
+    /*
+     * E177（对齐官方 Models 页）：凭据区**只在确有内容时渲染**。
+     *
+     * 官方 Models 页的密钥入口只有**提供方卡片那一处**（只写不读），设置页不再单列凭据；
+     * 我们此前把两个数据源置空（E157/E158）却留下了这个带内边距与底色的列 ⇒ 真机上是一条**空白灰条**。
+     * 这里加条件：两个来源都为空的（常态）整段不存在；**万一将来又有未被卡片覆盖的引用**，
+     * 它仍会如实出现——这比直接删掉更稳（不是把能力砍掉，而是让空壳不再占位）。
+     */
+    if (this.orphanCredentials().length > 0 || this.providerKeyRefs().length > 0) {
     Column({ space: Sp.XS }) {
       if (this.orphanCredentials().length > 0) {
         Text('模型凭据')
@@ -1210,6 +1219,7 @@ export struct SettingsPane {
       }, (ref: string) => ref)
     }
     .width('100%')
+    }
 
     Column({ space: Sp.XS }) {
       Text('当前模型（Host 的默认选择）')
