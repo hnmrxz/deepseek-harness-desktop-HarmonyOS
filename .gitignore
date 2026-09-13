@@ -49,3 +49,7 @@ hostkit/**/*.tmp
 # 提交它会在每次 build 后产生纯噪声 diff（实测只差换行符），release 构建还会把它改错。
 # 构建时自动重新生成，不需要进版本库。
 **/BuildProfile.ets
+
+# CMake 构建原生模块所需的 Node 头文件（由 tools/node-runtime/sync-node-headers.sh 同步）。
+# 几十 MB 的三方头文件：字节不进库、方法（同步脚本）进库。
+entry/src/main/cpp/node-headers/
