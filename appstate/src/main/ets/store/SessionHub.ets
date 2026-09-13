@@ -91,7 +91,9 @@ import {
   AGENT_PRESETS_LIST_ENDPOINT,
   AGENT_PRESETS_COPY_ENDPOINT,
   AGENT_PRESETS_DELETE_ENDPOINT,
-  AGENT_PRESETS_READ_ENDPOINT
+  AGENT_PRESETS_READ_ENDPOINT,
+  LLM_LIST_PROVIDERS_ENDPOINT,
+  LLM_LIST_CONFIGURABLE_PROVIDERS_ENDPOINT
 } from 'dshcompat';
 import type { SessionEventShape, SlotBinding } from 'dshcompat';
 import { projectSessionList } from '../model/SessionList';
@@ -338,6 +340,9 @@ export interface HubSnapshot {
   /** Agent 预设名单（E159 真机确证契约；空数组=未读到，note 说明原因） */
   presets: AgentPresetRow[];
   presetNote: string;
+  /** 提供方目录（E179：已注册 + 可配置，用于'可添加'） */
+  providerCatalog: string[];
+  providerCatalogNote: string;
   /** 插件清单（来自 `pluginInventory/list`） */
   plugins: PluginItem[];
   /** 凭据状态（来自 `settings/describe` 取 refs + `credentials/describe` 取状态）。**永不含明文** */
@@ -538,6 +543,9 @@ export class SessionHub {
   /** Agent 预设名单（E159）与其读取结论 */
   private presetRows: AgentPresetRow[] = [];
   private presetNote: string = '';
+  /** 提供方目录（E179）：已注册路由 + 可配置提供方 ⇒ 「可添加」的来源 */
+  private providerCatalog: string[] = [];
+  private providerCatalogNote: string = '';
   /**
    * 建会话时使用的**默认工作区**（E98）。
    *
@@ -842,6 +850,8 @@ export class SessionHub {
       skillNote: this.skillNote,
       presets: this.presetRows,
       presetNote: this.presetNote,
+      providerCatalog: this.providerCatalog,
+      providerCatalogNote: this.providerCatalogNote,
       plugins: this.plugins,
       credentials: this.credentials,
       settings: this.settingsGroups,
@@ -2742,6 +2752,88 @@ export class SessionHub {
       return text;
     }
     return JSON.stringify(value, null, 2) ?? '';
+  }
+
+  /**
+   * 读取**提供方目录**（E179）：官方 Models 页把"已注册路由"与"声明的可配置提供方"联合起来，
+   * 前者是"当前可用"，后者是"**可添加**"。
+   *
+   * 【两个端点都是 NONE 形态】`llm/listProviders` 与 `llm/listConfigurableProviders` 都不收参数
+   * （兼容表里 shape=NONE ⇒ `argsFor` 给出空具名参数）。**形状未在真机确证**：
+   * 这里沿用既定纪律——容忍 `providers` / `items` / 裸数组三种，**都不中就返回 undefined**，
+   * 由调用方把**真实顶层键**记进旁路日志（E164 之后 hdc 可见），绝不猜一个键名当事实用。
+   */
+  async refreshProviderCatalog(): Promise<void> {
+    if (!this.unaryReady) {
+      this.providerCatalogNote = '尚未连接 Host，提供方目录未读取。';
+      this.notify();
+      return;
+    }
+    const registered: string[] = await this.providerNamesFrom(LLM_LIST_PROVIDERS_ENDPOINT);
+    const configurable: string[] = await this.providerNamesFrom(LLM_LIST_CONFIGURABLE_PROVIDERS_ENDPOINT);
+    const merged: string[] = [];
+    for (let i = 0; i < registered.length; i++) {
+      if (merged.indexOf(registered[i]) < 0) {
+        merged.push(registered[i]);
+      }
+    }
+    for (let i = 0; i < configurable.length; i++) {
+      if (merged.indexOf(configurable[i]) < 0) {
+        merged.push(configurable[i]);
+      }
+    }
+    this.providerCatalog = merged;
+    this.providerCatalogNote = merged.length === 0
+      ? '宿主没有报告可配置的提供方（两个目录都为空或形状未识别，见旁路日志）。'
+      : '';
+    this.record(`llm providers registered=${registered.length} configurable=${configurable.length}`);
+    this.notify();
+  }
+
+  /** 从"提供方目录"类端点取名字数组；形状不识别时返回空数组并记账（不猜） */
+  private async providerNamesFrom(endpoint: string): Promise<string[]> {
+    const inner: Record<string, Object> = {};
+    const args: Object | undefined = argsFor(endpoint, inner as Object);
+    if (args === undefined) {
+      this.record(`${endpoint} 缺少参数契约`);
+      return [];
+    }
+    const result: RpcResult = await this.conn.call(endpoint, args);
+    if (!result.ok) {
+      const f = result.error;
+      this.record(`${endpoint} fail ${f === undefined ? 'unknown' : f.code}`);
+      return [];
+    }
+    const value: Object | undefined = result.value;
+    if (value === undefined) {
+      return [];
+    }
+    let raw: Object[] | undefined = getArray(value, 'providers');
+    if (raw === undefined) {
+      raw = getArray(value, 'items');
+    }
+    if (raw === undefined && Array.isArray(value)) {
+      raw = value as Object[];
+    }
+    if (raw === undefined) {
+      const keys: string = Object.keys(value as Record<string, Object>).join(', ');
+      this.record(`${endpoint} shape unknown keys=${keys}`);
+      return [];
+    }
+    const out: string[] = [];
+    for (let i = 0; i < raw.length; i++) {
+      const one: Object = raw[i];
+      // 元素可能是字符串，也可能是带 id/name 的对象——两种都收（官方目录两种形态都可能出现）
+      if (typeof one === 'string') {
+        out.push(one as string);
+        continue;
+      }
+      const id: string = getString(one, 'id') ?? getString(one, 'provider') ?? getString(one, 'name') ?? '';
+      if (id.length > 0) {
+        out.push(id);
+      }
+    }
+    return out;
   }
 
   /**
