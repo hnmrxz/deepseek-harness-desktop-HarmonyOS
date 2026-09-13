@@ -3196,6 +3196,17 @@ export class SessionHub {
   }
 
   private record(line: string): void {
+    /*
+     * E164：**记账必须先出去，再谈留档**。
+     *
+     * 此前这里有两个"看不见"的问题叠加：① 只写应用内 trace、**不写 hilog**（hdc 侧看不到）；
+     * ② 而且被 `traceEnabled`（界面上的旁路日志开关）挡着——默认关闭 ⇒ **平时一行都不产出**。
+     * 结果是：本项目一路写的"如实记账"（工作区流、技能/预设形状、归档/删除结果…）
+     * 在真机排障时**等于不存在**，我只能靠猜（本轮就在"流没开"和"开了没数据"之间卡住）。
+     * 现在改成：**无条件 `console.info`**（ArkTS 的 console 会进 hilog，tag=JSAPP，hdc 可直接 grep），
+     * 应用内 trace 仍尊重开关（那是给用户看的界面，不是排障通道）。
+     */
+    console.info(`HDSH-TRACE ${line}`);
     if (!this.traceEnabled) {
       return;
     }
