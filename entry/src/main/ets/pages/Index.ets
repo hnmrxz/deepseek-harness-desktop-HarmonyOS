@@ -461,6 +461,17 @@ struct Index {
   @State searchOpen: boolean = false;
   /** 自动重连只跑一次（StorageProp 变化会触发，重复跑会反复认证） */
   private autoConnectAttempted: boolean = false;
+  /**
+   * 最近一次自动连接用的 `(url, token)` 组合。
+   *
+   * 【为什么不能用布尔量表示"已连过"】**dsh 每次启动都会生成新 token**（真机读数：
+   * 上一轮落盘的 token 在这一轮启动 250 ms 时就被页面读到并拿去连接，而新 token 要到
+   * `BOOT_65_AUTH_URL`（约 2.2 秒）才发布）⇒ 只有记录"用的是哪一对"才能在 token 刷新后
+   * 再连一次。用布尔量会让刷新后的新 token 永远没有机会被使用（E57）。
+   */
+  private lastConnectKey: string = '';
+  /** 自动连接尝试上限：为"先用旧 token、随后 token 刷新"这一正常序列留出余量。 */
+  private connectAttempts: number = 0;
   /** 未识别的上游事件类型数量（真机跑一次即可据此回填事件表） */
   @State hubUnknownEvents: number = 0;
   /** 协议旁路日志（取尾部若干行展示，用于区分「列表为空」与「调用失败」） */
@@ -759,7 +770,7 @@ struct Index {
    */
   private waitForRememberedHost(): void {
     if (this.autoConnectAttempted) {
-      hilog.info(DOMAIN, TAG, 'HDSH-CONN 自动连接已尝试过，跳过（只跑一次）');
+      hilog.info(DOMAIN, TAG, 'HDSH-CONN 已安排过等待，跳过重复安排');
       return;
     }
     this.autoConnectAttempted = true;
@@ -771,39 +782,37 @@ struct Index {
     const step: number = 250;
     /*
      * 【窗口为什么是 45 秒】本端自起 Host 要先解包核心再让 dsh 启动，实测 15~20 秒才把
-     * token 发布到 AppStorage（E54/E55）。窗口太短（原 4 秒）的后果是：端口已在监听、
-     * token 也已发布，但页面**从未发出认证请求**（实测：到 3120 只有就绪探测那一次 401）。
+     * token 发布到 AppStorage。窗口太短（原 4 秒）会让页面**从未发出认证请求**。
      *
-     * 【为什么不能按 rememberedUrl 是否为空来分档】本端 Host 起来后会**落盘**，
-     * 于是下一次启动时 `rememberedUrl` 已经非空、就会退回短窗口而再次错过
-     * （实测踩到过）。真正的早退条件是"状态已落地"：`rememberedTokenState` 一旦不是
-     * `pending`（远程 Host 的解密读取是毫秒级）就立刻退出，所以远程场景并不会变慢；
-     * 45 秒只在"等着本端 Host 起来"这一种情况下被用满。
+     * 【为什么不在第一次连接后就停】因为**先到的那份凭据通常是过期的**：`persistConnectedHost`
+     * 会把上一轮的 baseUrl+token 落盘，页面在 250 ms 就能读到，而 **dsh 每次启动都换新 token**
+     * （本轮实测：新 token 在 +2238 ms 才由 `adoptLocalHost` 发布）。所以轮询要**一直跑到预算用完**，
+     * 只在 `(url, token)` 这一对**变化**时重连（最多 3 次）——这既覆盖"首次连接"，
+     * 也覆盖"旧 token 失败 → 新 token 到达后重连"这个正常序列。
      */
     const limit: number = 45000;
+    const maxAttempts: number = 3;
     const timer: number = setInterval(() => {
       waited += step;
       const state: string = this.rememberedTokenState;
-      /*
-       * 【为什么不能"非 pending 就退出"】首次运行（或刚清过数据）时，Ability 会把状态置成
-       * `absent`——它说的是"现在还没有记住的 Host"，而**本端自起 Host 要到 15~20 秒后**
-       * 才把 url+token 发布出来（E54/E55）。旧条件 `state === 'pending'` 会让轮询在 250 ms
-       * 就退出、并因 url 为空直接 return，而 `autoConnectAttempted` 已经置位 ⇒ 本端 Host
-       * 起来时**再没有人重试**。端侧实测症状正是"端口通了、token 也发布了，页面却不连"。
-       * 所以判据改成"**真的具备连接条件**了没有"：url、token、状态三者齐备才收工，
-       * 否则在预算内继续等（`absent` 与 `pending` 一视同仁）。
-       */
       const ready: boolean = state === 'found'
         && this.rememberedUrl.length > 0
         && this.rememberedToken.length > 0;
-      if (!ready && waited < limit) {
-        return;
+      if (ready) {
+        const key: string = `${this.rememberedUrl}\u0000${this.rememberedToken}`;
+        if (key !== this.lastConnectKey && this.connectAttempts < maxAttempts) {
+          this.lastConnectKey = key;
+          this.connectAttempts += 1;
+          hilog.info(DOMAIN, TAG, 'HDSH-CONN 第 %{public}d 次自动连接：url=%{public}s tokenLen=%{public}d',
+            this.connectAttempts, this.rememberedUrl, this.rememberedToken.length);
+          this.applyRememberedHostOutcome(state);
+        }
       }
-      clearInterval(timer);
-      hilog.info(DOMAIN, TAG,
-        'HDSH-CONN 等待结束：waited=%{public}dms state=%{public}s url=%{public}s tokenLen=%{public}d',
-        waited, state, this.rememberedUrl, this.rememberedToken.length);
-      this.applyRememberedHostOutcome(state);
+      if (waited >= limit || this.connectAttempts >= maxAttempts) {
+        clearInterval(timer);
+        hilog.info(DOMAIN, TAG, 'HDSH-CONN 等待结束：waited=%{public}dms attempts=%{public}d state=%{public}s',
+          waited, this.connectAttempts, state);
+      }
     }, step);
   }
 
