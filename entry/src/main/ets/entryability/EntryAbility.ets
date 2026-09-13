@@ -36,6 +36,8 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import dshhost from 'libdshhost.so';
 import probe from 'libentryprobe.so';
+import { DshHost } from 'hostruntime';
+import { NodeRuntime } from '../runtime/NodeRuntime';
 import { emitter } from '@kit.BasicServicesKit';
 import { window } from '@kit.ArkUI';
 import {
@@ -232,6 +234,7 @@ export default class EntryAbility extends UIAbility {
       hilog.error(DOMAIN, TAG, 'HDSH-RUNTIME 模块类型=%{public}s 导出键=%{public}s',
         typeof dshhost, keys);
     }
+    this.autoStartHostForDiagnosis();
     // 先于 onWindowStageCreate 发布：窗口标签与「是否主窗」的判断都依赖它
     this.applyLaunchParams(want);
     this.prefs.attach(this.context).then(async () => {
@@ -243,6 +246,40 @@ export default class EntryAbility extends UIAbility {
       AppStorage.setOrCreate<string>(KEY_THEME_MODE, mode as string);
     }).catch((_error: Object) => {
       // attach 内部已兜底（失败时 store = undefined，读取返回 SYSTEM）
+    });
+  }
+
+  /**
+   * 诊断用：不问 UI，直接把「安装内置核心 → 启动 Host」跑一遍并记录每一步结果。
+   *
+   * 【为什么把它放在 onCreate 而不是等用户点按钮】设备上的点击我无法自动化，
+   * 而这一步要回答的是目标里"dsh web 最小可用"这半道门——必须有真机读数。
+   * 它与核心页上的动作走的是**同一套实现**（`DshHost.installBundled` / `start` 与
+   * `NodeRuntime`），所以这里跑通的路径就是用户在界面上按按钮的路径，不是另一条捷径。
+   *
+   * 【为什么每一步都打日志且不吞异常】`start()` 失败的原因（端口没应答 / 环境变量条数
+   * 不对 / Node 线程已退出）只有这几种，全部来自真实状态；写清楚才能判断卡在哪一环。
+   */
+  private autoStartHostForDiagnosis(): void {
+    const ctx = this.context;
+    // 入口脚本随包放在 resources/resfile/resources/app/main.js（见 coreHost 的注释）
+    // 沙箱 HOME 用 filesDir：hdc 对 cacheDir 无读权限，而诊断日志要能被取回（见 NodeRuntime 注释）
+    const runtime = new NodeRuntime(`${ctx.resourceDir}/resources/app/main.js`, ctx.filesDir);
+    const host = new DshHost(ctx.filesDir, runtime);
+    hilog.info(DOMAIN, TAG, 'HDSH-AUTO 开始：入口=%{public}s', `${ctx.resourceDir}/resources/app/main.js`);
+    runtime.probe().then((p) => {
+      hilog.info(DOMAIN, TAG, 'HDSH-AUTO 探测：available=%{public}s node=%{public}s note=%{public}s',
+        p.available ? 'true' : 'false', p.nodeVersion, p.note);
+      return host.installBundled(ctx.resourceDir, ctx.cacheDir);
+    }).then((r) => {
+      hilog.info(DOMAIN, TAG, 'HDSH-AUTO 安装内置核心：installed=%{public}s failed=%{public}d note=%{public}s',
+        JSON.stringify(r.installed), r.failed.length, r.note);
+      return host.start();
+    }).then((s) => {
+      hilog.info(DOMAIN, TAG, 'HDSH-AUTO 启动 Host：ok=%{public}s url=%{public}s note=%{public}s',
+        s.ok ? 'true' : 'false', s.handle === null ? '' : s.handle.url, s.note);
+    }).catch((e: Object) => {
+      hilog.error(DOMAIN, TAG, 'HDSH-AUTO 异常：%{public}s', String(e));
     });
   }
 

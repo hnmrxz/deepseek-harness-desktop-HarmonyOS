@@ -162,10 +162,24 @@ export class CoreStore {
   }
 
   // ── 布局 ──────────────────────────────────────────────────────────────
+  /**
+   * 建立端侧核心目录（幂等）。
+   *
+   * 【为什么必须先判存在】OHOS 的 `fs.mkdirSync(path, true)` 与 Node 的
+   * `recursive: true` **语义不同**：目标目录**已存在**时它会抛
+   * `13900015 File exists`，而不是静默成功。实测症状（真机）：
+   *     HDSH-AUTO 安装内置核心：installed=[] note=建立端侧核心目录失败：13900015 File exists
+   *     HDSH-AUTO 启动 Host：ok=false   note=建立端侧核心目录失败：13900015 File exists
+   * 而安装与启动**都会**调它（第 2 次起必然失败）——一个"幂等"的布局步骤不能这样。
+   */
   ensureLayout(): OpResult {
     try {
-      fs.mkdirSync(this.coresDir(), true);
-      fs.mkdirSync(this.homeDir(), true);
+      if (!fs.accessSync(this.coresDir())) {
+        fs.mkdirSync(this.coresDir(), true);
+      }
+      if (!fs.accessSync(this.homeDir())) {
+        fs.mkdirSync(this.homeDir(), true);
+      }
       return ok(`布局就绪：${this.baseDir()}`);
     } catch (e) {
       const err: BusinessError = e as BusinessError;

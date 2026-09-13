@@ -124,6 +124,7 @@ import { DetailPane } from '../view/DetailPane';
 import { DiagnosticsPane } from '../view/DiagnosticsPane';
 import { PendingPane } from '../view/PendingPane';
 import { RuntimeHost } from '../view/RuntimeHost';
+import { NodeRuntime } from '../runtime/NodeRuntime';
 import { SessionListPane } from '../view/SessionListPane';
 import { SettingsPane } from '../view/SettingsPane';
 import { WorkspacePane } from '../view/WorkspacePane';
@@ -131,7 +132,7 @@ import { hitOfKeyEvent } from '../view/ShortcutKeys';
 import type { ShortcutHit } from '../view/ShortcutKeys';
 // 端侧核心运行层（D6）：核心版本仓库与激活事务。运行时载体尚未接线，
 // 因此这里现在只用它的"仓库/状态"部分，不声称任何"已启动"。
-import { ActivationAction, ActivationDecision, BundledInstallResult, DshHost, HostPluginReport, HostStartResult, HostStatus, NotWiredRuntime, OpResult, RuntimeProbe, hostStateIsTransient } from 'hostruntime';
+import { ActivationAction, ActivationDecision, BundledInstallResult, DshHost, HostPluginReport, HostStartResult, HostStatus, OpResult, RuntimeProbe, hostStateIsTransient } from 'hostruntime';
 
 /**
  * 把紧凑 JSON 美化以便人读写；失败时原样返回。
@@ -2513,12 +2514,21 @@ struct Index {
     });
   }
 
-  /** 端侧核心的生命周期入口。运行时未接线时用 NotWiredRuntime——它会**如实**报告未接线。 */
-  private coreHost(filesDir: string): DshHost {
+  /**
+   * 端侧核心的生命周期入口。
+   *
+   * 【载体已换成阶段二】此前这里用 `NotWiredRuntime`（如实报告"未接线"）。现在运行时门
+   * 已在真机通过（D6 E31：`libnode 版本 = 22.23.2`），所以默认载体换成 `NodeRuntime`
+   * ——它 import 的 `libdshhost.so` 由 hvigor/CMake 构建（E30：手工放 `.so` 绑不上）。
+   *
+   * 【入口脚本路径怎么来】`resourceDir` 是 HAP 资源目录，入口脚本随包放在
+   * `resources/app/main.js` 下（由 `tools/electron-runtime/place-host-app.ps1` 放置）。
+   * 它**不属于任何一版核心树**：核心树可切换/回滚，入口脚本随应用发版
+   * （见 `hostruntime` 里 `buildHostArgv` 的说明）。
+   */
+  private coreHost(filesDir: string, resourceDir: string, cacheDir: string): DshHost {
     if (this.host === null) {
-      this.host = new DshHost(filesDir, new NotWiredRuntime(
-        '运行时载体尚未接线：阶段一是 Electron-on-鸿蒙 运行时（产物需从华为侧获取，见 D6 §4.1），'
-          + '阶段二是自建 libnode.so（见 tools/node-runtime/）。接线后这里会显示真实的 Node 版本与原生件加载结果。'));
+      this.host = new DshHost(filesDir, new NodeRuntime(`${resourceDir}/resources/app/main.js`, filesDir));
     }
     return this.host;
   }
@@ -2535,7 +2545,7 @@ struct Index {
     let repoNote: string = '';
     try {
       const ctx = getContext(this) as common.UIAbilityContext;
-      const host: DshHost = this.coreHost(ctx.filesDir);
+      const host: DshHost = this.coreHost(ctx.filesDir, ctx.resourceDir, ctx.cacheDir);
       status = await host.status();
       repoNote = `核心树目录：${host.store_().coresDir()}`;
     } catch (e) {
@@ -2649,7 +2659,7 @@ struct Index {
   private async installBundledCoreAsync(): Promise<void> {
     try {
       const ctx = getContext(this) as common.UIAbilityContext;
-      const host: DshHost = this.coreHost(ctx.filesDir);
+      const host: DshHost = this.coreHost(ctx.filesDir, ctx.resourceDir, ctx.cacheDir);
       this.coreNotice = '正在安装内置核心：解包约 2.5 万个文件，请勿退出应用……';
       const result: BundledInstallResult = await host.installBundled(ctx.resourceDir, ctx.cacheDir);
       this.coreNotice = result.note;
@@ -2720,7 +2730,7 @@ struct Index {
 
   private async coreLifecycleActionAsync(id: string): Promise<void> {
     const ctx = getContext(this) as common.UIAbilityContext;
-    const host: DshHost = this.coreHost(ctx.filesDir);
+    const host: DshHost = this.coreHost(ctx.filesDir, ctx.resourceDir, ctx.cacheDir);
     const notes: string[] = [];
     if (id === 'stop' || id === 'restart') {
       const stopped: OpResult = await host.stop();
@@ -2747,7 +2757,7 @@ struct Index {
     let notice: string = '';
     try {
       const ctx = getContext(this) as common.UIAbilityContext;
-      const host: DshHost = this.coreHost(ctx.filesDir);
+      const host: DshHost = this.coreHost(ctx.filesDir, ctx.resourceDir, ctx.cacheDir);
       const decision: ActivationDecision = host.store_().rollback();
       if (decision.action === ActivationAction.REFUSE) {
         notice = `未回滚：${decision.reason}`;

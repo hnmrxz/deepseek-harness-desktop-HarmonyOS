@@ -66,7 +66,13 @@ const DSH_BASE = USER_DATA.length > 0 ? path.join(USER_DATA, 'dsh') : '';
  *
  * 【为什么写在最前面】后面的任何一行都可能抛错或退出；先装好这些，才拿得到原因。
  */
-const DIAG_LOG = path.join(USER_DATA.length > 0 ? USER_DATA : require('node:os').tmpdir(), 'hdsh-host.log');
+const DIAG_LOG = path.join(
+  // 优先落在**调用方传进来的沙箱目录**（阶段二由 buildHostEnv 传 HDSH_SANDBOX_HOME）：
+  // 那个目录我们能直接用 `hdc shell ls` 看到并取回，而 os.tmpdir() 落在哪里不好找。
+  process.env.HDSH_SANDBOX_HOME && process.env.HDSH_SANDBOX_HOME.length > 0
+    ? process.env.HDSH_SANDBOX_HOME
+    : (USER_DATA.length > 0 ? USER_DATA : require('node:os').tmpdir()),
+  'hdsh-host.log');
 let diagStream = null;
 function diag(line) {
   const text = `[${new Date().toISOString()}] ${line}\n`;
