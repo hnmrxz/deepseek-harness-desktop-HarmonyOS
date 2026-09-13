@@ -83,7 +83,10 @@ import {
   SURFACE,
   WATERFALL_APPROVAL,
   WATERFALL_QUESTION,
-  WORKSPACE_CREATE_ENDPOINT
+  WORKSPACE_CREATE_ENDPOINT,
+  WORKSPACE_FOLLOW_ENDPOINT,
+  WORKSPACE_DELETE_ENDPOINT,
+  WORKSPACE_ARCHIVE_SESSION_ENDPOINT
 } from 'dshcompat';
 import type { SessionEventShape, SlotBinding } from 'dshcompat';
 import { projectSessionList } from '../model/SessionList';
@@ -320,6 +323,10 @@ export interface HubSnapshot {
   tokensCacheWrite: number;
   /** 会话的 Agent 预设（E129；空串=宿主没投影，界面不显示） */
   agentPreset: string;
+  /** 工作区注册表行（E132：带 workspaceId，删除/归档要用它；与按 cwd 派生的列表并存） */
+  workspaceRows: WorkspaceRow[];
+  /** 注册表全局归档集合（E132）：常规列表按它过滤，归档视图按它列出 */
+  archivedSessionIds: string[];
   /** 插件清单（来自 `pluginInventory/list`） */
   plugins: PluginItem[];
   /** 凭据状态（来自 `settings/describe` 取 refs + `credentials/describe` 取状态）。**永不含明文** */
@@ -504,6 +511,16 @@ export class SessionHub {
    */
   private agentPresetId: string = '';
   /**
+   * 工作区**注册表**行（E132）：来自 `workspace/follow` 的基线/增量。
+   *
+   * 【与 `sessions` 派生的工作区列表有何不同】派生列表只有路径（由会话 `cwd` 归并），
+   * 注册表行带 **`workspaceId`** —— 删除与归档都要用它，所以两者并存、用途不同。
+   */
+  private workspaceRows: WorkspaceRow[] = [];
+  /** 注册表全局的**归档集合**（`workspace/follow` 基线与 `workspace/archiveSession` 回复都给） */
+  private archivedIds: string[] = [];
+  private cancelWorkspace: (() => void) | undefined = undefined;
+  /**
    * 建会话时使用的**默认工作区**（E98）。
    *
    * 【为什么需要它】真机上建出来的会话 `cwd` 是 `/`（宿主进程的工作目录继承自应用进程），
@@ -640,6 +657,8 @@ export class SessionHub {
     }
 
     this.openControlStream();
+    // E132：工作区注册表变更流——删除与归档都以它的 id 为键
+    this.openWorkspaceStream();
     this.phase = HubPhase.LIVE;
     // 认证与载体已就绪：一元能力从此可用，且**不随事件流的生死变化**
     this.unaryReady = true;
@@ -799,6 +818,8 @@ export class SessionHub {
       tokensCacheRead: this.tokensCacheRead,
       tokensCacheWrite: this.tokensCacheWrite,
       agentPreset: this.agentPresetId,
+      workspaceRows: this.workspaceRows,
+      archivedSessionIds: this.archivedIds,
       plugins: this.plugins,
       credentials: this.credentials,
       settings: this.settingsGroups,
@@ -2432,6 +2453,157 @@ export class SessionHub {
 
   // ───────────────────────── 控制流（队列/作业/投影） ─────────────────────────
 
+  /**
+   * 工作区注册表变更流（E132）。
+   *
+   * 【首帧是基线，后续是增量】实测形状（`dsh-api-workspace-controller` 的类型定义）：
+   *   `{type:'baseline', value:{items: WorkspaceView[], archivedSessionIds}}`
+   *   `{type:'upsert', workspace}`（增量）
+   * 注册表是**唯一**给出 `workspaceId` 的地方；`workspace/delete` 与
+   * `workspace/archiveSession` 都以 id 为键，所以这条流是那两个动作的前置。
+   *
+   * 【失败不阻断连接】拿不到注册表只影响"删除工作区/看归档"这两件事，
+   * 不该让整个客户端连不上——所以这里失败只记账，不改 phase。
+   */
+  private openWorkspaceStream(): void {
+    // ArkTS 禁止无类型的空对象字面量：先声明再传
+    const empty: Record<string, Object> = {};
+    const args: Object | undefined = argsFor(WORKSPACE_FOLLOW_ENDPOINT, empty as Object);
+    if (args === undefined) {
+      this.record('workspace/follow 不在兼容上表');
+      return;
+    }
+    const sink: StreamSink = {
+      onItem: (value: Object) => {
+        this.handleWorkspaceFrame(value);
+      },
+      onError: (code: string, message: string) => {
+        this.record(`workspace follow error ${code}`);
+        this.lastError = `工作区注册表流异常：${friendlyFailure(code, message)}`;
+        this.notify();
+      },
+      onEnd: () => {
+        this.record('workspace follow end');
+      }
+    };
+    this.cancelWorkspace = this.conn.openStream(WORKSPACE_FOLLOW_ENDPOINT, args, sink);
+  }
+
+  /** 处理注册表帧：基线整表替换，增量按 id upsert */
+  private handleWorkspaceFrame(value: Object): void {
+    const type: string = getString(value, 'type') ?? '';
+    if (type === 'baseline') {
+      const baseline: Object | undefined = getRecord(value, 'value');
+      if (baseline === undefined) {
+        return;
+      }
+      this.workspaceRows = projectWorkspaceRows(baseline);
+      this.archivedIds = getStringArray(baseline, 'archivedSessionIds');
+      this.record(`workspace baseline items=${this.workspaceRows.length} archived=${this.archivedIds.length}`);
+      this.notify();
+      return;
+    }
+    if (type === 'upsert') {
+      const ws: Object | undefined = getRecord(value, 'workspace');
+      if (ws === undefined) {
+        return;
+      }
+      const row: WorkspaceRow | undefined = projectWorkspaceRow(ws);
+      if (row === undefined) {
+        return;
+      }
+      const next: WorkspaceRow[] = [];
+      let replaced: boolean = false;
+      for (let i = 0; i < this.workspaceRows.length; i++) {
+        if (this.workspaceRows[i].id === row.id) {
+          next.push(row);
+          replaced = true;
+        } else {
+          next.push(this.workspaceRows[i]);
+        }
+      }
+      if (!replaced) {
+        next.push(row);
+      }
+      this.workspaceRows = next;
+      this.notify();
+    }
+  }
+
+  /**
+   * 删除一个工作区注册（E132）。请求 `{workspaceId}`，回复 `{deleted:true}`。
+   *
+   * 【只删注册，不删目录】官方语义如此：删除的是"这个目录曾被登记为工作区"这件事，
+   * 磁盘上的文件一个都不动。界面上必须把这句话写清楚，否则没人敢按。
+   */
+  async deleteWorkspace(workspaceId: string): Promise<string> {
+    if (workspaceId.length === 0) {
+      return '未提供工作区 id（注册表里没有它，无法删除）。';
+    }
+    if (!this.unaryReady) {
+      return '尚未连接 Host，删除未执行。';
+    }
+    const inner: Record<string, Object> = {};
+    inner['workspaceId'] = workspaceId;
+    const args: Object | undefined = argsFor(WORKSPACE_DELETE_ENDPOINT, inner as Object);
+    if (args === undefined) {
+      return '兼容面缺少工作区删除端点的参数契约。';
+    }
+    const result: RpcResult = await this.conn.call(WORKSPACE_DELETE_ENDPOINT, args);
+    if (!result.ok) {
+      const f = result.error;
+      const code: string = f === undefined ? 'unknown' : f.code;
+      this.record(`workspace/delete fail ${code}`);
+      return `删除工作区失败：${friendlyFailure(code, f === undefined ? '' : f.message)}`;
+    }
+    // 本地立即过滤（流的增量帧可能稍后才到，界面不该等它）
+    const next: WorkspaceRow[] = [];
+    for (let i = 0; i < this.workspaceRows.length; i++) {
+      if (this.workspaceRows[i].id !== workspaceId) {
+        next.push(this.workspaceRows[i]);
+      }
+    }
+    this.workspaceRows = next;
+    this.record(`workspace/delete ok ${workspaceId.substring(0, 8)}`);
+    this.notify();
+    return '已从工作区列表移除（目录与文件未删除）。';
+  }
+
+  /**
+   * 归档一个会话（E132）。请求 `{sessionId}`，回复**完整**归档集合。
+   *
+   * 归档集是"注册表全局"的：客户端按它把会话从常规列表过滤掉——
+   * 这也是官方 `workspace/follow` 基线里带 `archivedSessionIds` 的原因。
+   */
+  async archiveSession(sessionId: string): Promise<string> {
+    if (sessionId.length === 0) {
+      return '未选择会话。';
+    }
+    if (!this.unaryReady) {
+      return '尚未连接 Host，归档未执行。';
+    }
+    const inner: Record<string, Object> = {};
+    inner['sessionId'] = sessionId;
+    const args: Object | undefined = argsFor(WORKSPACE_ARCHIVE_SESSION_ENDPOINT, inner as Object);
+    if (args === undefined) {
+      return '兼容面缺少会话归档端点的参数契约。';
+    }
+    const result: RpcResult = await this.conn.call(WORKSPACE_ARCHIVE_SESSION_ENDPOINT, args);
+    if (!result.ok) {
+      const f = result.error;
+      const code: string = f === undefined ? 'unknown' : f.code;
+      this.record(`workspace/archiveSession fail ${code}`);
+      return `归档失败：${friendlyFailure(code, f === undefined ? '' : f.message)}`;
+    }
+    const value: Object | undefined = result.value;
+    if (value !== undefined) {
+      this.archivedIds = getStringArray(value, 'archivedSessionIds');
+    }
+    this.record(`archive ok ${sessionId.substring(0, 12)}（归档集 ${this.archivedIds.length}）`);
+    this.notify();
+    return '已归档（可在「归档」里查看）。';
+  }
+
   private openControlStream(): void {
     this.cancelControl();
     const sink: StreamSink = {
@@ -3044,6 +3216,61 @@ function firstStringOf(container: Object, keys: string[]): string {
     }
   }
   return '';
+}
+
+/** 工作区注册表的一行（E132：`workspace/follow` 投影） */
+export interface WorkspaceRow {
+  id: string;
+  path: string;
+  title: string;
+  /** 该工作区记账的会话数（注册表给的是 sessionIds，这里只留数量供列表显示） */
+  sessionCount: number;
+}
+
+/** 单个 `WorkspaceView` → 行；没有 id 就不造行（id 是删除/归档唯一的键） */
+function projectWorkspaceRow(view: Object): WorkspaceRow | undefined {
+  const id: string = getString(view, 'workspaceId') ?? '';
+  if (id.length === 0) {
+    return undefined;
+  }
+  const sessionIds: Object[] | undefined = getArray(view, 'sessionIds');
+  return {
+    id: id,
+    path: getString(view, 'path') ?? '',
+    title: getString(view, 'title') ?? '',
+    sessionCount: sessionIds === undefined ? 0 : sessionIds.length
+  };
+}
+
+function projectWorkspaceRows(baseline: Object): WorkspaceRow[] {
+  const items: Object[] | undefined = getArray(baseline, 'items');
+  const out: WorkspaceRow[] = [];
+  if (items === undefined) {
+    return out;
+  }
+  for (let i = 0; i < items.length; i++) {
+    const row: WorkspaceRow | undefined = projectWorkspaceRow(items[i]);
+    if (row !== undefined) {
+      out.push(row);
+    }
+  }
+  return out;
+}
+
+/** 取字符串数组（缺字段一律空数组——"没有"与"没读到"在这里无需区分） */
+function getStringArray(container: Object, key: string): string[] {
+  const raw: Object[] | undefined = getArray(container, key);
+  const out: string[] = [];
+  if (raw === undefined) {
+    return out;
+  }
+  for (let i = 0; i < raw.length; i++) {
+    const one: Object = raw[i];
+    if (typeof one === 'string') {
+      out.push(one as string);
+    }
+  }
+  return out;
 }
 
 export function projectWireRecord(record: Object): TrajectoryItem | undefined {

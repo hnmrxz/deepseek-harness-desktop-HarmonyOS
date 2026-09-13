@@ -142,6 +142,24 @@ export const CREDENTIALS_UNSET_ENDPOINT: string = 'credentials/unset';
  */
 export const WORKSPACE_CREATE_ENDPOINT: string = 'workspace/create';
 
+/**
+ * 工作区注册表**变更流**（E132）。
+ *
+ * 首帧 `{type:'baseline', value:{items: WorkspaceView[], archivedSessionIds}}`，
+ * 其后是增量（`{type:'upsert', workspace}` …）。
+ * 【为什么必须接它】注册表是**唯一**能给出 `workspaceId` 的地方，而
+ * `workspace/delete` 与 `workspace/archiveSession` 都以 id 为键——
+ * 我们此前的工作区列表是从会话 `cwd` 投影出来的，**没有 id**，那两个动作因此做不了。
+ */
+export const WORKSPACE_FOLLOW_ENDPOINT: string = 'workspace/follow';
+/** 删除一个工作区注册（请求 `{workspaceId}`，回复 `{deleted:true}`） */
+export const WORKSPACE_DELETE_ENDPOINT: string = 'workspace/delete';
+/**
+ * 归档一个会话（请求 `{sessionId}`，回复 `{archivedSessionIds}`——**完整**归档集合）。
+ * 官方语义是"注册表全局归档集"：客户端按它把会话从常规列表里过滤掉。
+ */
+export const WORKSPACE_ARCHIVE_SESSION_ENDPOINT: string = 'workspace/archiveSession';
+
 /** 工作区文件列表（需要的 `workspaceFileScopeId` 来自会话/工作区上下文） */
 export const WORKSPACE_FILES_LIST_ENDPOINT: string = 'workspaceFiles/list';
 /** 工作区文件元信息 */
