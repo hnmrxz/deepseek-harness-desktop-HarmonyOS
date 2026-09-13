@@ -63,6 +63,7 @@ import {
   MODEL_CATALOG_ENDPOINT,
   PLUGIN_INVENTORY_ENDPOINT,
   PROJECTION_TITLE,
+  PROJECTION_PERMISSIONS,
   SETTINGS_DESCRIBE_ENDPOINT,
   SETTINGS_CONFLICT,
   SETTINGS_MUTATE_ENDPOINT,
@@ -295,6 +296,12 @@ export interface HubSnapshot {
   models: ModelOption[];
   /** Host 为未配置会话准备的默认模型选择（无则 undefined，界面保持当前选择） */
   defaultSelection: ModelSelection | undefined;
+  /**
+   * 宿主报告的权限组合（E124）：`currentValue` 当前访问模式，`options` 可选集合。
+   * 空串 / 空数组表示宿主没有投影它（那时界面不显示这一行，而不是编一个默认值）。
+   */
+  permissionsCurrent: string;
+  permissionsOptions: string[];
   /** 插件清单（来自 `pluginInventory/list`） */
   plugins: PluginItem[];
   /** 凭据状态（来自 `settings/describe` 取 refs + `credentials/describe` 取状态）。**永不含明文** */
@@ -448,6 +455,14 @@ export class SessionHub {
   private describeWritable: boolean = false;
   /** 从 `settings/describe` 取到的凭据引用（`credentials/describe` 的入参） */
   private credentialRefs: CredentialRefInfo[] = [];
+  /**
+   * 宿主报告的**权限组合**（E124）：`currentValue` 是当前访问模式，`options` 是可选集合。
+   *
+   * 【用途与边界】只用于**如实显示**"当前是什么模式"。切换需要 `dsh-permission-presets`，
+   * 它在端侧因依赖 shell 服务无法启用（E116），所以界面上不给可切换的假档位。
+   */
+  private permissionsCurrent: string = '';
+  private permissionsOptions: string[] = [];
   /**
    * 建会话时使用的**默认工作区**（E98）。
    *
@@ -729,6 +744,8 @@ export class SessionHub {
       unknownEventTypes: this.unknownTypes,
       models: this.models,
       defaultSelection: this.defaultSelection,
+      permissionsCurrent: this.permissionsCurrent,
+      permissionsOptions: this.permissionsOptions,
       plugins: this.plugins,
       credentials: this.credentials,
       settings: this.settingsGroups,
@@ -2268,6 +2285,32 @@ export class SessionHub {
     if (typeof title === 'string') {
       const text: string = title as string;
       this.updateSessionTitle(this.selectedSessionId, text);
+    }
+    /*
+     * 【E124：权限组合本来就投影过来了】线协议文档（`Wire.ets` 的投影样例）里写着
+     * `"permissions":{"options":[…],"currentValue":"workspace-write"}`，而此前我们**从未读它**——
+     * 界面上的"工作区内修改"是我写死的字符串，而不是 Host 的事实。
+     * 这里按结构取出来（`options` 允许缺失：缺失表示这一档没有可选集合），
+     * 让界面显示**宿主真正报告的档位**。
+     */
+    const permissions: Object | undefined = typed[PROJECTION_PERMISSIONS];
+    if (permissions !== undefined) {
+      const current: string = getString(permissions, 'currentValue') ?? '';
+      const optionsArray: Object[] | undefined = getArray(permissions, 'options');
+      const options: string[] = [];
+      if (optionsArray !== undefined) {
+        for (let i = 0; i < optionsArray.length; i++) {
+          const one: Object = optionsArray[i];
+          if (typeof one === 'string') {
+            options.push(one as string);
+          }
+        }
+      }
+      if (current !== this.permissionsCurrent || options.length !== this.permissionsOptions.length) {
+        this.permissionsCurrent = current;
+        this.permissionsOptions = options;
+        this.notify();
+      }
     }
   }
 

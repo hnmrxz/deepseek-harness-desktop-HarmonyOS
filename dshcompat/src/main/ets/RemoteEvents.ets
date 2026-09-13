@@ -368,6 +368,15 @@ export const APPROVAL_UNAVAILABLE: string = 'unavailable';
 
 /** 会话标题所在的**投影键** */
 export const PROJECTION_TITLE: string = 'title';
+/**
+ * 权限组合所在的**投影键**（E124）。
+ *
+ * 实测样例（`Wire.ets` 的投影清单）：`"permissions":{"options":[…],"currentValue":"workspace-write"}`。
+ * 注意它**不等于**"能切换"：可切换的预设由 `dsh-permission-presets` 提供，而那个插件在端侧
+ * 因依赖 shell 服务无法启用（E116）。所以这个键的用途是**如实显示宿主当前的访问模式**，
+ * 而不是假装我们能在三档之间切。
+ */
+export const PROJECTION_PERMISSIONS: string = 'permissions';
 /** 会话待发队列所在的投影键（`dsh-session` 的 inbox 投影） */
 export const PROJECTION_INBOX: string = 'inbox';
 /** 会话 Agent 预设所在的投影键 */

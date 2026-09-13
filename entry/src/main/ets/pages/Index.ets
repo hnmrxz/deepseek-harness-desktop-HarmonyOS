@@ -309,6 +309,9 @@ struct Index {
   /** 插件启停操作的即时反馈（重启后生效这类事实必须让用户看到） */
   @State pluginNotice: string = '';
   @State workspaces: WorkspaceItem[] = [];
+  /** 宿主报告的权限组合（E124：`currentValue` + `options`；空串=宿主没投影，界面不显示） */
+  @State permissionCurrent: string = '';
+  @State permissionOptions: string[] = [];
   @State fileTree: FileNode[] = [];
   /** 文件预览结果；undefined = 未选择文件（@State 必须给默认值） */
   @State preview: FilePreview | undefined = undefined;
@@ -547,6 +550,9 @@ struct Index {
     this.hubUnknownEvents = s.unknownEventTypes.length;
     this.hubTrace = s.trace;
     this.hubConnected = s.connected;
+    // E124：宿主报告的权限组合（真实事实，不是我们写死的默认值）
+    this.permissionCurrent = s.permissionsCurrent;
+    this.permissionOptions = s.permissionsOptions;
     this.queuedCount = s.outbox;
     // 附件列表由中枢拥有（回执是会话作用域的），这里只跟随
     this.attachments = s.attachments;
@@ -3774,6 +3780,8 @@ struct Index {
         // E118：核心分区的内容直接由属性传入（不再用 @BuilderParam 注入父 Builder——
         // 真机上点开该分区会 JS 崩溃）
         coreView: this.coreView,
+        permissionCurrent: this.permissionCurrent,
+        permissionOptions: this.permissionOptions,
         coreNotice: this.coreNotice,
         onCoreAction: (id: string) => {
           this.onCoreAction(id);

@@ -180,9 +180,27 @@ function officialSettingHint(ns: string, key: string): string {
   return '';
 }
 
+/** 访问模式的中文名（官方译名，取自 `dsh-client-ui-permission-presets` 的 README） */
+function permissionModeLabel(value: string): string {
+  if (value === 'read-only') {
+    return '仅可查看';
+  }
+  if (value === 'workspace-write') {
+    return '工作区内修改';
+  }
+  if (value === 'danger-full-access') {
+    return '完全权限';
+  }
+  return value;
+}
+
 /** 设置面板（E108/E110/E114/E120） */
 @Component
 export struct SettingsPane {
+  /** 宿主报告的权限组合（E124；空串=未投影，界面不显示要切换的假档位） */
+  @Prop permissionCurrent: string = '';
+  @Prop permissionOptions: string[] = [];
+
   /** 插件分区子页签（E114：配置 / 列表） */
   @State pluginView: string = 'config';
   /** 插件清单的过滤词（只作用于「列表」子页签） */
@@ -395,7 +413,7 @@ export struct SettingsPane {
       Row({ space: Sp.XS }) {
         Text('权限模式')
           .fontSize(Fs.BODY)
-        Text('宿主默认')
+        Text(this.permissionCurrent.length > 0 ? '宿主报告' : '未报告')
           .fontSize(Fs.CAPTION)
           .fontColor($r('sys.color.font_tertiary'))
           .padding({ left: 6, right: 6, top: 1, bottom: 1 })
@@ -403,11 +421,20 @@ export struct SettingsPane {
           .backgroundColor($r('sys.color.background_primary'))
       }
       .width('100%')
-      Text('工作区内修改（workspace-write）')
+      // E124：显示**宿主真正报告的**当前模式（此前这里是我写死的字符串）
+      Text(this.permissionCurrent.length > 0
+        ? `${permissionModeLabel(this.permissionCurrent)}（${this.permissionCurrent}）`
+        : '宿主暂未报告当前访问模式')
         .fontSize(Fs.SECONDARY)
         .fontColor($r('sys.color.font_secondary'))
         .width('100%')
-      Text('官方的另外两档是「仅可查看」与「完全权限」。端侧暂不可选：把它们捆绑成可切换预设的插件需要 shell 服务，而鸿蒙不允许应用创建进程（E15）。当前生效的是宿主自带的文件策略 workspace-write。')
+      if (this.permissionOptions.length > 0) {
+        Text(`宿主给出的可选集合：${this.permissionOptions.map((v: string) => permissionModeLabel(v)).join(' / ')}`)
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.font_tertiary'))
+          .width('100%')
+      }
+      Text('端侧暂不可切换：把这几档捆绑成可切换预设的插件需要 shell 服务，而鸿蒙不允许应用创建进程（E15）。这里显示的是宿主当前生效的访问模式。')
         .fontSize(Fs.CAPTION)
         .fontColor($r('sys.color.font_tertiary'))
         .width('100%')
