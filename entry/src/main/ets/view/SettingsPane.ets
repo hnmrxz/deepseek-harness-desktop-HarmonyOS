@@ -1031,7 +1031,6 @@ export struct SettingsPane {
       .fontSize(Fs.CAPTION)
       .fontColor($r('sys.color.font_tertiary'))
       .width('100%')
-
     ForEach(this.providerGroups(), (g: ModelProviderGroup) => {
       Column({ space: Sp.XS }) {
         Row({ space: Sp.S }) {
