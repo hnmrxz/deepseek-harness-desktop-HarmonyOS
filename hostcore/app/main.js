@@ -111,6 +111,31 @@ process.on('exit', (code) => {
   diag(`!! process 'exit' event, code=${code}`);
 });
 
+/*
+ * 【实验】在任何人碰 `fetch` 之前把它换掉。
+ *
+ * 根因链（D6 E35）：jitless ⇒ `WebAssembly` 为 undefined ⇒ Node 自带的 undici 在被
+ * **第一次访问 `globalThis.fetch`** 时才惰性初始化（Node 用 getter 装它），其
+ * `lazyllhttp` 需要 WASM ⇒ 抛错 ⇒ dsh 的 profile 加载失败（`dsh: fatal load failure`）。
+ *
+ * 【关键点】**不能先读原值**：`const f = globalThis.fetch` 这一读就会触发 undici 初始化。
+ * 用 `Object.defineProperty` 直接覆盖，才能绕过那个 getter。
+ * 于是这里放一个**自己的 fetch**：本次实验先用"明确失败"的版本，用来验证
+ * "只要不触发 undici，Web 服务能否起来"；确认之后再换成基于 node:http 的真实实现。
+ */
+try {
+  Object.defineProperty(globalThis, 'fetch', {
+    value: function () {
+      return Promise.reject(new Error('HDSH: fetch 被替换（jitless 下无 WASM，undici 不可用）'));
+    },
+    writable: true,
+    configurable: true,
+  });
+  diag('已用 defineProperty 覆盖 globalThis.fetch（不触发 undici 初始化）');
+} catch (e) {
+  diag(`覆盖 fetch 失败：${String(e)}`);
+}
+
 /** 读我们自己的 state.json，得到"当前版本"，据此拼出核心树目录。 */
 function currentCoreDir() {
   if (DSH_BASE.length === 0) {
