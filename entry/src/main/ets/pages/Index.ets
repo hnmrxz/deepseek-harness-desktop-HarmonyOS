@@ -131,6 +131,7 @@ import { hitOfKeyEvent } from '../view/ShortcutKeys';
 import type { ShortcutHit } from '../view/ShortcutKeys';
 // 端侧核心运行层（D6）：核心版本仓库与激活事务。运行时载体尚未接线，
 // 因此这里现在只用它的"仓库/状态"部分，不声称任何"已启动"。
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import { ActivationAction, ActivationDecision, BundledInstallResult, DshHost, HostPluginReport, HostStartResult, HostStatus, OpResult, RuntimeProbe, hostStateIsTransient } from 'hostruntime';
 
 /**
@@ -250,6 +251,11 @@ enum StackPage {
 /** 一级导航顺序 */
 // 「核心」放在工作区与设置之间：它属于"能力/运维"一类，紧邻设置但不与设置混在一起
 const TABS: NavTab[] = [NavTab.PENDING, NavTab.SESSIONS, NavTab.WORKSPACES, NavTab.CORE, NavTab.SETTINGS];
+
+/** 自动连接路径的诊断日志（前缀 HDSH-CONN）：端侧只有 hilog 可看，而这条路径
+ *  "既不发请求也不报错"的失败模式极难从外部定位（见 E55/E56）。 */
+const DOMAIN: number = 0x0000;
+const TAG: string = 'HDSH-Index';
 
 // 【本轮移除】阶段一 Electron 运行时宿主（`RuntimeHost` + `MOUNT_ELECTRON_RUNTIME_HOST`）
 // 连同它对 `web_engine` 的依赖一起删掉了：那条通道依赖 JIT、不可上架，
@@ -753,12 +759,28 @@ struct Index {
    */
   private waitForRememberedHost(): void {
     if (this.autoConnectAttempted) {
+      hilog.info(DOMAIN, TAG, 'HDSH-CONN 自动连接已尝试过，跳过（只跑一次）');
       return;
     }
     this.autoConnectAttempted = true;
+    hilog.info(DOMAIN, TAG,
+      'HDSH-CONN 开始等待记住的 Host：url=%{public}s tokenLen=%{public}d state=%{public}s auto=%{public}s',
+      this.rememberedUrl, this.rememberedToken.length, this.rememberedTokenState,
+      this.shouldAutoConnect ? 'true' : 'false');
     let waited: number = 0;
     const step: number = 250;
-    const limit: number = 4000;
+    /*
+     * 【窗口为什么是 45 秒】本端自起 Host 要先解包核心再让 dsh 启动，实测 15~20 秒才把
+     * token 发布到 AppStorage（E54/E55）。窗口太短（原 4 秒）的后果是：端口已在监听、
+     * token 也已发布，但页面**从未发出认证请求**（实测：到 3120 只有就绪探测那一次 401）。
+     *
+     * 【为什么不能按 rememberedUrl 是否为空来分档】本端 Host 起来后会**落盘**，
+     * 于是下一次启动时 `rememberedUrl` 已经非空、就会退回短窗口而再次错过
+     * （实测踩到过）。真正的早退条件是"状态已落地"：`rememberedTokenState` 一旦不是
+     * `pending`（远程 Host 的解密读取是毫秒级）就立刻退出，所以远程场景并不会变慢；
+     * 45 秒只在"等着本端 Host 起来"这一种情况下被用满。
+     */
+    const limit: number = 45000;
     const timer: number = setInterval(() => {
       waited += step;
       const state: string = this.rememberedTokenState;
@@ -766,6 +788,9 @@ struct Index {
         return;
       }
       clearInterval(timer);
+      hilog.info(DOMAIN, TAG,
+        'HDSH-CONN 等待结束：waited=%{public}dms state=%{public}s url=%{public}s tokenLen=%{public}d',
+        waited, state, this.rememberedUrl, this.rememberedToken.length);
       this.applyRememberedHostOutcome(state);
     }, step);
   }
@@ -781,6 +806,7 @@ struct Index {
    */
   private applyRememberedHostOutcome(state: string): void {
     if (this.rememberedUrl.length === 0) {
+      hilog.info(DOMAIN, TAG, 'HDSH-CONN 无记住的地址：不自动连接（等待本端 Host 或用户添加）');
       return;
     }
     if (state === 'found' && this.rememberedToken.length > 0) {
@@ -792,6 +818,7 @@ struct Index {
       // 实测踩到过。拼接后走同一条解析路径，与手动粘贴 URL 完全等价。
       const connectUrl: string = composeHostUrl(this.rememberedUrl, this.rememberedToken);
       if (!hub.configure(connectUrl, undefined)) {
+        hilog.warn(DOMAIN, TAG, 'HDSH-CONN configure 被拒（地址形态不合法？）：%{public}s', this.rememberedUrl);
         return;
       }
       this.connectBusy = true;

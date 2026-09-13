@@ -310,7 +310,14 @@ export default class EntryAbility extends UIAbility {
     if (handleUrl.length === 0) {
       return;
     }
-    const baseUrl: string = this.stripTokenQuery(handleUrl);
+    let baseUrl: string = this.stripTokenQuery(handleUrl);
+    // 去掉结尾斜杠：`stripTokenQuery` 只切 `?`/`#`，会把 `…:3120/` 原样留下；
+    // 而客户端 `parseTarget` 期望的是 `scheme://authority`（无路径）。
+    // 实测（E56）：带尾斜杠时 `SessionHub.configure` 静默返回 false ⇒ **既不发请求也不报错**，
+    // 外面只能看到"端口通了但界面没连上"，极难定位。
+    while (baseUrl.endsWith('/')) {
+      baseUrl = baseUrl.substring(0, baseUrl.length - 1);
+    }
     const cutToken: number = handleUrl.indexOf('token=');
     const token: string = cutToken >= 0 ? handleUrl.substring(cutToken + 'token='.length) : '';
     if (baseUrl.length === 0) {
