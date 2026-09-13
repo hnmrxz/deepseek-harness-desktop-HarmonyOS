@@ -111,6 +111,11 @@ export interface ModelProviderGroup {
 
 @Component
 export struct SettingsPane {
+  /** 插件分区子页签（E114：配置 / 列表） */
+  @State pluginView: string = 'config';
+  /** 插件清单的过滤词（只作用于「列表」子页签） */
+  @State pluginFilter: string = '';
+
   @Prop groups: SettingGroup[] = [];
   @Prop credentials: CredentialItem[] = [];
   @Prop plugins: PluginItem[] = [];
@@ -134,6 +139,14 @@ export struct SettingsPane {
   };
   /** 打开结构化值（数组/对象）的整值编辑浮层 */
   onEditStruct: (item: SettingItem) => void = () => {
+  };
+  /**
+   * 重置为**部署默认**（E114，对齐官方插件卡片的"重置"）。
+   *
+   * 只对"已覆盖"的项出现：没有覆盖过就没有可重置的东西，摆一个点了没反应的按钮更糟。
+   * 实现走 `settings/unset`（上游语义：删掉用户层的这一项，值立刻回落到基线/默认）。
+   */
+  onResetSetting: (key: string) => void = () => {
   };
   onPickModel: () => void = () => {
   };
@@ -221,14 +234,13 @@ export struct SettingsPane {
   tabBar() {
     Scroll() {
       Row({ space: Sp.S }) {
-        // E110：核心（版本/插件/运行时事实）作为设置的第一项——它与"这台设备怎么跑"同类
-        this.tabChip('core', '核心')
+        // E110：核心（版本/插件/运行时事实）作为设置的一项——它与"这台设备怎么跑"同类
+        // E114 顺序对齐官方：官方「通用」是第一个分区，因此通用排在最前
         this.tabChip('general', '通用')
-        // 【为什么没有「凭据」页签（E96）】官方把 API 密钥放在 Models 页（提供方那一行上），
-        // 密钥与模型本来就是一体的：没配密钥的模型根本调不通。分成两页会让人看不出这条因果。
-        // 凭据区已并入模型页顶部（"模型凭据"）。
-        this.tabChip('model', '模型与密钥')
+        // 官方分区就叫「模型」（API 密钥是该分区里的字段，不另立分区）
+        this.tabChip('model', '模型')
         this.tabChip('plugins', '插件')
+        this.tabChip('core', '核心')
         this.tabChip('device', '设备')
       }
       .padding({ left: Sp.M, right: Sp.M })
@@ -291,10 +303,18 @@ export struct SettingsPane {
           }
           // 实测 value 是「默认 → 基线 → 用户层」三层合并的结果，
           // 只看 value 无法区分「继承默认」与「用户设成了同一个值」。
+          // E114 对齐官方：官方在这一行标明"用户覆盖过哪些值"，并允许**重置为部署默认**。
           if (item.userSet) {
-            Text('已自定义')
+            Text('已覆盖')
               .fontSize(Fs.CAPTION)
               .fontColor($r('sys.color.brand'))
+              .padding({ left: 6, right: 6, top: 1, bottom: 1 })
+              .borderRadius(Radius.S)
+              .backgroundColor($r('sys.color.background_primary'))
+          } else {
+            Text('默认')
+              .fontSize(Fs.CAPTION)
+              .fontColor($r('sys.color.font_tertiary'))
               .padding({ left: 6, right: 6, top: 1, bottom: 1 })
               .borderRadius(Radius.S)
               .backgroundColor($r('sys.color.background_primary'))
@@ -328,6 +348,16 @@ export struct SettingsPane {
         }
       }
       .layoutWeight(1)
+
+      // 重置为部署默认（只对"已覆盖"的项出现，见 `onResetSetting` 的说明）
+      if (item.userSet && item.hostWritable && !item.readOnly) {
+        Text('重置')
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.brand'))
+          .onClick(() => {
+            this.onResetSetting(item.key);
+          })
+      }
 
       if (item.kind === SettingKind.TOGGLE) {
         Toggle({ type: ToggleType.Switch, isOn: item.boolValue })
@@ -808,8 +838,116 @@ export struct SettingsPane {
     return classifyPlugin(p.moduleName, '', PluginNative.UNKNOWN);
   }
 
+  /**
+   * 插件分区（E114 对齐官方：官方在这里分**配置**与**列表**两个子页签）。
+   *
+   * 【为什么分】两者回答的问题不同、风险也不同：
+   *   - **配置**：我要改什么（启停 + 恢复部署默认）——写操作，改动会影响运行；
+   *   - **列表**：这里到底有什么（只读清单 + 过滤）——查证用，152 行时不加过滤根本找不到东西。
+   * 官方把只读清单单独成页，正是为了让"看一眼清单"不必冒误触的风险。
+   */
   @Builder
   pluginsTab() {
+    Row({ space: Sp.S }) {
+      this.subChip('config', '配置')
+      this.subChip('list', '列表')
+      Blank()
+      Text(pluginSummary(this.plugins))
+        .fontSize(Fs.CAPTION)
+        .fontColor($r('sys.color.font_tertiary'))
+    }
+    .width('100%')
+
+    if (this.pluginView === 'config') {
+      this.pluginConfigView()
+    } else {
+      this.pluginListView()
+    }
+  }
+
+  @Builder
+  subChip(value: string, label: string) {
+    Text(label)
+      .fontSize(Fs.SECONDARY)
+      .fontColor(this.pluginView === value ? Color.White : $r('sys.color.font_secondary'))
+      .padding({ left: Sp.M, right: Sp.M, top: Sp.XS, bottom: Sp.XS })
+      .borderRadius(Radius.L)
+      .backgroundColor(this.pluginView === value
+        ? $r('sys.color.brand')
+        : $r('sys.color.background_secondary'))
+      .onClick(() => {
+        this.pluginView = value;
+      })
+  }
+
+  /** 只读清单 + 关键词过滤（官方"插件列表"标签页的语义） */
+  @Builder
+  pluginListView() {
+    TextInput({ placeholder: '按名称或 entryId 过滤…' })
+      .fontSize(Fs.SECONDARY)
+      .height(40)
+      .width('100%')
+      .onChange((value: string) => {
+        this.pluginFilter = value;
+      })
+
+    ForEach(this.filteredPlugins(), (p: PluginItem) => {
+      Row({ space: Sp.M }) {
+        Circle({ width: 8, height: 8 })
+          .fill(p.phase === 'active' ? $r('sys.color.confirm') : $r('sys.color.font_tertiary'))
+        Column({ space: 2 }) {
+          Text(p.moduleName)
+            .fontSize(Fs.SECONDARY)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+          Text(`${p.entryId} · ${p.enabled ? '已启用' : '已禁用'}${p.phase.length > 0 ? ` · ${p.phase}` : ''}`)
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.font_tertiary'))
+            .width('100%')
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .layoutWeight(1)
+        if (p.firstParty) {
+          Text('第一方')
+            .fontSize(10)
+            .fontColor($r('sys.color.font_tertiary'))
+            .padding({ left: 5, right: 5 })
+            .borderRadius(5)
+            .backgroundColor($r('sys.color.background_primary'))
+        }
+      }
+      .width('100%')
+      .padding(Sp.M)
+      .borderRadius(Radius.M)
+      .backgroundColor($r('sys.color.background_secondary'))
+    }, (p: PluginItem) => p.entryId)
+
+    Text('只读清单：这里的行不可点击，改动请切到「配置」。')
+      .fontSize(Fs.CAPTION)
+      .fontColor($r('sys.color.font_tertiary'))
+      .width('100%')
+  }
+
+  /** 关键词过滤后的插件清单（空关键词 = 全部） */
+  private filteredPlugins(): PluginItem[] {
+    const q: string = this.pluginFilter.trim().toLowerCase();
+    if (q.length === 0) {
+      return this.plugins;
+    }
+    const out: PluginItem[] = [];
+    for (let i = 0; i < this.plugins.length; i++) {
+      const p: PluginItem = this.plugins[i];
+      if (p.moduleName.toLowerCase().includes(q) || p.entryId.toLowerCase().includes(q)) {
+        out.push(p);
+      }
+    }
+    return out;
+  }
+
+  @Builder
+  pluginConfigView() {
     Row({ space: Sp.S }) {
       Text(pluginSummary(this.plugins))
         .fontSize(Fs.CAPTION)

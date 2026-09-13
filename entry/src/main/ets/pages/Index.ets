@@ -84,6 +84,7 @@ import {
   filterDiagEntries,
   fact,
   sessionEmptyCopy,
+projectGeneralGroups,
 formatClock,
 relativeTime,
   unknownFact,
@@ -3302,8 +3303,25 @@ struct Index {
    * revision 冲突。结果（含失败原因）通过 `settingWriteNote` 就地回显——设置页顶部那行
    * 就是用户唯一能看到"Host 到底接受了没有"的地方。
    */
-  private applyDefaultModel(provider: string, model: string, effort: string): void {
-    this.settingWriteNote = `正在写入默认模型 ${provider} / ${model}…`;
+  /**
+   * 重置一项设置为**部署默认**（E114：对齐官方"重置"）。
+   *
+   * 走 `settings/unset`（删掉用户层的那一项，值立刻回落到基线/默认），
+   * 结果（含冲突/被拒的原因）与写入一样回显在设置页顶部——用户唯一能看到
+   * "Host 到底接受了没有"的地方。
+   */
+  private resetSetting(key: string): void {
+    this.settingWriteNote = `正在重置 ${key}…`;
+    SessionHub.shared().unsetSetting(key).then((result: SettingsWriteResult) => {
+      this.settingWriteNote = result.message;
+      hilog.info(DOMAIN, TAG, 'HDSH-SET 重置 %{public}s：%{public}s', key, result.outcome);
+    }).catch((e: Object) => {
+      const err = e as Error;
+      this.settingWriteNote = `重置失败：${err.message}`;
+    });
+  }
+
+  private applyDefaultModel(provider: string, model: string, effort: string): void {    this.settingWriteNote = `正在写入默认模型 ${provider} / ${model}…`;
     SessionHub.shared().setDefaultModel(provider, model, effort).then((note: string) => {
       this.settingWriteNote = note;
       hilog.info(DOMAIN, TAG, 'HDSH-MODEL 默认模型写入结果：%{public}s', note);
@@ -3714,7 +3732,10 @@ struct Index {
     } else {
       SettingsPane({
         coreSlot: this.coreTabContent,
-        groups: this.settings,
+        // E114：官方「通用」分区承载的是**用户面向的功能包设置**（外观/语言/会话…），
+        // 引擎参数不在其中。这里做同样的策展：白名单命名空间整组显示，
+        // 其余命名空间里**用户改过**的项收进「其他已修改项」，既不占版面又撤得回。
+        groups: projectGeneralGroups(this.settings),
         credentials: this.credentials,
         plugins: this.plugins,
         hosts: this.hosts,
@@ -3763,6 +3784,9 @@ struct Index {
         },
         onEditStruct: (item: SettingItem) => {
           this.openStructSettingSheet(item);
+        },
+        onResetSetting: (key: string) => {
+          this.resetSetting(key);
         },
         onPickModel: () => {
         },

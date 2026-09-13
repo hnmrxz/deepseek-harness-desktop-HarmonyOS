@@ -169,6 +169,70 @@ export interface SettingGroup {
 }
 
 /**
+ * 「通用」分区承载的命名空间（E114，对齐官方 web 的层级）。
+ *
+ * 【依据】官方设置外壳的做法是：**「通用」分区没有内置行**，行由功能包通过
+ * `settings.general.item` 注册进来（例如「外观」来自 ui-theme）。也就是说
+ * 「通用」= **用户面向的功能包设置**，引擎内部参数不在其中。
+ * 真机上 Host 报的 12 个命名空间里，符合这个定义的是下面这几个；
+ * 模型相关的（`agent-default-model` / `llm-*` / `subagent-model-selection` /
+ * `web-search-*`）归**模型分区**，引擎参数（`agent-loop` / `agent-presets`）不面向用户。
+ *
+ * 【为什么不是"全部隐藏"】用户**显式改过**的项即使属于引擎命名空间也要留在界面上
+ * （否则他改过的东西无处可见、也无处撤回）。所以投影规则是"白名单 ∪ 用户已覆盖"。
+ */
+export const GENERAL_NAMESPACES: string[] = [
+  'ui-theme',
+  'locale',
+  'ui-conversation',
+  'ui-chat',
+  'ui-onboarding'
+];
+
+/** 该命名空间是否属于「通用」分区（用户面向的功能包设置） */
+export function isGeneralNamespace(ns: string): boolean {
+  for (let i = 0; i < GENERAL_NAMESPACES.length; i++) {
+    if (GENERAL_NAMESPACES[i] === ns) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * 投影出「通用」分区应显示的分组（E114）。
+ *
+ * 规则（两条，缺一不可）：
+ *   1. 白名单命名空间**整组**显示；
+ *   2. 其余命名空间里**用户显式覆盖过**的项单独收进「其他已修改项」组——
+ *      既保证"默认就好的参数不占版面"，又保证用户改过的东西永远找得到、撤得回。
+ *
+ * 标题用命名空间名（Host 的稳定标识）：官方是按贡献包给标题，我们这一层拿不到贡献包，
+ * 用命名空间名比自造一个漂亮名字更诚实——它同时是诊断时能直接对照的键。
+ */
+export function projectGeneralGroups(groups: SettingGroup[]): SettingGroup[] {
+  const out: SettingGroup[] = [];
+  const others: SettingItem[] = [];
+  for (let i = 0; i < groups.length; i++) {
+    const group: SettingGroup = groups[i];
+    if (isGeneralNamespace(group.title)) {
+      out.push(group);
+      continue;
+    }
+    for (let j = 0; j < group.items.length; j++) {
+      const item: SettingItem = group.items[j];
+      if (item.userSet) {
+        others.push(item);
+      }
+    }
+  }
+  if (others.length > 0) {
+    out.push({ title: '其他已修改项', items: others });
+  }
+  return out;
+}
+
+/**
  * 一个命名空间的**写状态**（与 `SettingItem` 分开保存）。
  *
  * 为什么必须单独存：`revision` 是**写操作的并发令牌**（实测 `SettingsNamespaceView.revision`，

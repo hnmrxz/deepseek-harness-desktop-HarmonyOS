@@ -375,7 +375,7 @@ try {
     const described = await rpc('settings/describe', {}, cookie);
     const value = described.parsed?.result?.value;
     if (args.includes('--raw')) {
-      console.log(`raw      ${JSON.stringify(value).slice(0, 2500)}`);
+      console.log(`raw      ${JSON.stringify(value)}`);
       finish(0);
     }
     const namespaces = value?.namespaces ?? value?.settings ?? [];

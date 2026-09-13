@@ -71,6 +71,8 @@ export {
   projectModelCatalog,
   projectPluginInventory,
   projectSettingsEntries,
+  projectGeneralGroups,
+  GENERAL_NAMESPACES,
   projectSettingsGroups,
   projectSettingsNamespace,
   parseSettingInput,
