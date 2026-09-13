@@ -544,7 +544,12 @@ export class Connection {
         return rpcFail(failure);
       }
       return rpcFail(new RemoteFailure('carrier/transport',
-        `传输失败：HTTP ${outcome.status}（${endpoint}）`, outcome.body.substring(0, 200)));
+        // 【为什么把响应体也放进**文案**（E72）】`details` 里本来就带着 `outcome.body`，
+        // 但上层展示只取文案，于是 dsh 写在 400 body 里的真实原因被吞掉——我们只能看到
+        // "HTTP 400（session/list）"，下一步仍要猜。这与 E71 的教训同源：**先让错误自己说话**。
+        `传输失败：HTTP ${outcome.status}（${endpoint}）`
+          + (outcome.body.length > 0 ? `：${outcome.body.substring(0, 300)}` : ''),
+        outcome.body.substring(0, 200)));
     }
     if (outcome.body.length === 0) {
       return rpcFail(RemoteFailure.parse(`空响应体（${endpoint}）`));
