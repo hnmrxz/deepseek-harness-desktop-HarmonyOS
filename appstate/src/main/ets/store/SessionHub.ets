@@ -88,6 +88,7 @@ import {
   WORKSPACE_DELETE_ENDPOINT,
   WORKSPACE_ARCHIVE_SESSION_ENDPOINT,
   SKILLS_LIST_ENDPOINT,
+  WORKSPACE_FILES_CHANGES_ENDPOINT,
   AGENT_PRESETS_LIST_ENDPOINT,
   AGENT_PRESETS_COPY_ENDPOINT,
   AGENT_PRESETS_DELETE_ENDPOINT,
@@ -589,6 +590,8 @@ export class SessionHub {
   private fileTruncated: boolean = false;
   /** 文件树对应的会话（切会话后必须重列，否则看到的是别的会话的工作区） */
   private fileTreeFor: string = '';
+  /** 文件变更流的取消句柄（E226：`workspaceFiles/changes`） */
+  private cancelFileChanges: (() => void) | undefined = undefined;
   /** 当前预览的文件（未打开时为 undefined） */
   private filePreview: FilePreview | undefined = undefined;
   /** 待发附件（回执 + 展示信息；字节不留在端侧） */
@@ -2198,7 +2201,53 @@ export class SessionHub {
    *   所以这里把作用域与会话选择**解耦**：会话是「在看哪个对话」，
    *   作用域是「在浏览哪个目录」，两者可以不同。
    */
+  /**
+   * 订阅**文件变更流**（E226：`workspaceFiles/changes`，契约 stream + `workspaceFileScopeId`）。
+   *
+   * 【为什么要它】文件视图此前只在"进入/切会话"时取一次（`openWorkspace`）——Agent 改了文件后
+   * 界面仍显示旧目录，用户会以为"没生效"。官方有这条通道，我们登记了常量却一直没接（§15.8 第 2 条）。
+   *
+   * 【取舍：不做增量补丁，收到任何变更帧就重列】目录几十到几百项、`list` 很轻，
+   * 重列比"猜增量语义"稳，也避免"补丁打错导致界面与磁盘不一致"；真机若发现过频再按帧节流。
+   * 【失败不静默】只记旁路日志（E164 后 hdc 可见），保留"重进刷新"退路——能力降级要说得出原因。
+   */
+  private openFilesStream(sessionId: string): void {
+    if (this.cancelFileChanges !== undefined) {
+      this.cancelFileChanges();
+      this.cancelFileChanges = undefined;
+    }
+    const inner: Record<string, Object> = {};
+    inner['workspaceFileScopeId'] = sessionId;
+    const args: Object | undefined = argsFor(WORKSPACE_FILES_CHANGES_ENDPOINT, inner as Object);
+    if (args === undefined) {
+      this.record('workspaceFiles/changes 不在兼容上表');
+      return;
+    }
+    const sink: StreamSink = {
+      onItem: (value: Object) => {
+        // 变更帧的具体形状不重要：**任何**变更都意味着"目录可能变了" ⇒ 重列
+        this.openWorkspace(sessionId).catch((e: Object) => {
+          this.record('workspaceFiles 变更后重列失败 ' + (e as Error).message);
+        });
+      },
+      onError: (code: string, message: string) => {
+        this.record('workspaceFiles/changes 失败 ' + code + ' ' + message);
+      },
+      onEnd: () => {
+        this.record('workspaceFiles/changes 结束');
+      }
+    };
+    this.cancelFileChanges = this.conn.openStream(WORKSPACE_FILES_CHANGES_ENDPOINT, args, sink);
+    this.record('files changes opened cancel='
+      + (this.cancelFileChanges === undefined ? 'none' : 'ok'));
+  }
+
   async openWorkspace(sessionId: string): Promise<void> {
+    // E226：文件视图要随变更自动刷新 ⇒ 每次打开/重列时确保订阅存在
+    // （重列由订阅回调触发，回调里再调本函数会重订阅一次——不会自激：重订阅本身不产生变更帧）
+    if (sessionId.length > 0) {
+      this.openFilesStream(sessionId);
+    }
     this.filePreview = undefined;
     this.fileTruncated = false;
     if (!this.unaryReady || sessionId.length === 0) {
