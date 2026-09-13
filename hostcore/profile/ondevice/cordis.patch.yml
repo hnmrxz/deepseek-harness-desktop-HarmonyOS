@@ -87,3 +87,8 @@
   disabled: false
 - id: ui-deliverables
   disabled: false
+
+# 端侧 preset：不带 Shell 工具（见 ondevice/agent.cordis.yml）
+- id: agent-presets
+  config:
+    default: ondevice
