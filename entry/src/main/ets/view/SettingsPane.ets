@@ -1205,6 +1205,20 @@ export struct SettingsPane {
    * 写入走同一个 `credentials/set`（真机实测该引用可写且立刻生效）。
    */
   private providerKeyRefs(): string[] {
+    /*
+     * E158（用户反馈④的真因）：**这里返回空**——该列表已被提供方卡片取代。
+     *
+     * 真机 dump 证据：模型页同时出现 `配置密钥`（提供方卡片）与 `DEEPSEEK_API_KEY / 配置`
+     * （本函数生成的旧列表）⇒ 同一引用给了两个入口，用户看到的就是"同一把密钥要填两次"。
+     * E106 加这一行时还没有提供方卡片（E128 才有）；现在卡片已经是官方形态、
+     * 且按提供方分组，这里再列一遍只会制造重复。
+     * **保留函数本身**而不是删掉调用点：万一将来卡片形态被回退，恢复只需改这一处返回值。
+     */
+    return [];
+  }
+
+  /** 该函数原先的实现（保留在注释里，便于回退与查阅派生规则） */
+  private providerKeyRefsLegacy(): string[] {
     const out: string[] = [];
     const groups: ModelProviderGroup[] = this.providerGroups();
     for (let i = 0; i < groups.length; i++) {
