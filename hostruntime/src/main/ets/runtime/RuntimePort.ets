@@ -153,17 +153,13 @@ export function buildHostArgv(entryScript: string): string[] {
     // 鸿蒙上**本来能做**的能力，不如把开关打开。
     '--experimental-sqlite',
     /*
-     * 【为什么要显式给 `--trusted-host`（E66/E67）】dsh 的 `/api` 前是 browser-trust fence，
-     * 而 dsh-web-app 的 `startup.js` 定义的合法选项只有四个：
-     *   `--host <host>` / `--no-open` / `--port <port>` / **`--trusted-host <authority...>`**。
-     * 我们此前只传了 `--host 127.0.0.1`（**没有**声明可信 authority），而端侧是
-     * "本机同源、浏览器等价"的场景：浏览器请求天然带 `Origin` 与同源 authority。
-     * 实测症状与这条吻合——token→cookie 兑换成功（`HDSH-AUTH ok=true`），
-     * 但 WS 升级一律 403（dsh 的 lws：`ws_upgrade: got bad HTTP response '403'`）。
-     * 所以把回环 authority 明确写进可信列表；它与 `--host` 一致，属低风险改动。
-     * （客户端侧同时也补了 `Origin` 头，两边一起对齐"浏览器等价"。）
+     * 【绝对不要把 dsh 的应用级选项放进来】这里返回的是交给 `node::Start` 的 **Node 自身 argv**：
+     * 任何 Node 不认识的开关都会让进程直接死在 CLI 解析上。实测（E68）：
+     *   把 `--trusted-host` 加在这里 ⇒ dsh 侧只有一行 `node: bad option: --trusted-host`，
+     *   随后 `启动 Host：ok=false … 3120 端口未应答（Node 线程已经退出）`，
+     *   而**上一版是能起来的**。dsh 的 `--port/--host/--no-open/--trusted-host` 一律走
+     *   入口脚本里的 `runProfile({ args })`（→ `ctx.cmdlineArgs`），见 hostcore/app/main.js。
      */
-    '--trusted-host', `127.0.0.1:${HOST_DEFAULT_PORT}`,
     entryScript,
   ];
 }

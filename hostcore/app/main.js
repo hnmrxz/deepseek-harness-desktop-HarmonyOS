@@ -602,7 +602,17 @@ async function start() {
    * `if (config.printUrl) console.log(...)`）——我们把 stdout 抓到 hilog 后即可读到那个 URL。
    * 所以端侧客户端该做的是"从 Host 输出里取 URL"，而不是试图关掉认证。
    */
-  const args = ['--port', PORT, '--host', '127.0.0.1', '--no-open'];
+  // `--trusted-host` 属于 dsh 的应用级选项（dsh-web-app 的 startup.js 定义了这四个：
+  // --host / --no-open / --port / --trusted-host <authority...>），必须走这里交给
+  // `ctx.cmdlineArgs`。**绝不能**放进 buildHostArgv——那是 Node 自身 argv，
+  // 实测把 `--trusted-host` 放那儿会得到 `node: bad option` 且 Host 完全起不来（D6 E68）。
+  // 端侧是"本机同源、浏览器等价"的场景，所以显式声明回环 authority 为可信来源。
+  const args = [
+    '--port', PORT,
+    '--host', '127.0.0.1',
+    '--no-open',
+    '--trusted-host', `127.0.0.1:${PORT}`,
+  ];
   log('runProfile profile=' + PROFILE + ' args=' + args.join(' '));
   stage('BOOT_40_PROFILE_BOOT', `entry=${path.basename(entry)}`);
 
