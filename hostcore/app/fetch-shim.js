@@ -182,21 +182,49 @@ async function encodeRequestBody(body) {
 
 // ── Response ──────────────────────────────────────────────────────────────
 class HdshResponse {
-  constructor(stream, init) {
-    this.body = stream;
-    this.status = init.status;
+  constructor(body, init = {}) {
+    /*
+     * 【必须是标准 Fetch 签名 `new Response(body, init)`（E76）】dsh 的 web 栈到处这样构造响应：
+     *   dsh-host-webserver 侧与本包内：`new Response("not found", { status: 404 })`、
+     *   `new Response("content type must be application/json", { status: 415 })`、
+     *   `new Response("body is not JSON", { status: 400 })`、`fullResponse(...)` 等。
+     * 早先这里写成非标准的 `(stream, init)` 且 `headers = init.headers`（常为 undefined），
+     * 于是桥层执行 `Object.fromEntries(response.headers.entries())`
+     * （`dsh-client-connection/lib/index.js:83`）时**抛 TypeError** ⇒ 被 webserver 的
+     * catch-all 兜成空体 400。表现就是：**任何** /api 请求、任何封装/头/cookie 都是 400 空体。
+     */
+    this.status = init.status === undefined ? 200 : init.status;
     this.statusText = init.statusText === undefined ? '' : init.statusText;
-    this.headers = init.headers;
+    this.headers = init.headers instanceof HdshHeaders ? init.headers : new HdshHeaders(init.headers);
     this.url = init.url === undefined ? '' : init.url;
     this.ok = this.status >= 200 && this.status <= 299;
     this.bodyUsed = false;
     this.redirected = false;
-    this.type = 'basic';
-    this._buffer = null;
+    this.type = 'default';
+    if (body === undefined || body === null) {
+      // 空体：`_buffer` 置为长度 0 的 Buffer（与"未缓冲、需读流"区分开）
+      this._buffer = Buffer.alloc(0);
+      this.body = null;
+    } else if (typeof body === 'string' || Buffer.isBuffer(body) || body instanceof HdshBlob) {
+      this._buffer = typeof body === 'string' ? Buffer.from(body, 'utf8')
+        : (Buffer.isBuffer(body) ? body : body._buffer());
+      const bytes = this._buffer;
+      this.body = new ReadableStream({
+        start(controller) {
+          if (bytes.length > 0) controller.enqueue(new Uint8Array(bytes));
+          controller.close();
+        },
+      });
+    } else {
+      // 已是 ReadableStream（我们自己的 fetch 走这条）
+      this._buffer = null;
+      this.body = body;
+    }
   }
   /** 读全文并缓存：`text()/json()/arrayBuffer()` 共享同一份，符合 bodyUsed 语义。 */
   async _readAll() {
     if (this._buffer !== null) return this._buffer;
+    if (this.body === null) return Buffer.alloc(0);
     const reader = this.body.getReader();
     const chunks = [];
     for (;;) {
