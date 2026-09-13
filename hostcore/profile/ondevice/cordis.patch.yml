@@ -52,7 +52,7 @@
 #    恢复线索：`@ohos-ports/img-sharp-libvips-openharmony-arm64/lib/libvips-cpp.so.42.20.3`
 #    确实在核心树里，将来可连同依赖搬进 HAP libs 并处理带版本号的 SONAME。
 - id: attachment-local
-  disabled: true
+  disabled: false
 
 # ③ "在应用中打开"依赖 subprocess 服务（`@deepseek-ai/dsh-host-open-in-app` 的
 #    `inject = ['webServer','connection','subprocess']`）。端侧就是本应用自身，
@@ -82,8 +82,8 @@
 - id: permission
   disabled: true
 - id: file-upload
-  disabled: true
+  disabled: false
 - id: session-controller
-  disabled: true
+  disabled: false
 - id: ui-deliverables
-  disabled: true
+  disabled: false
