@@ -279,17 +279,18 @@ export struct ConnectPane {
               .width('100%')
           }
           .layoutWeight(1)
-          Text('使用')
+          /*
+           * 【E130：这里原本是「使用」与「移除」两个**死按钮】**（父组件的实现是空的）。
+           * 根因不是"没实现"，而是**承诺了不存在的能力**：HDSH 只记一个 Host
+           * （`hosts` 由单一 `rememberedUrl` 投影而来），没有"多 Host 管理"这件事——
+           * 所以"使用某一个"与"移除某一个"都没有对应动作。
+           * 保留的是**真能做的事**：用当前地址重新接入（走同一条 `onSubmit` 通道）。
+           */
+          Text('重新接入')
             .fontSize(Fs.CAPTION)
             .fontColor($r('sys.color.brand'))
             .onClick(() => {
-              this.onSelectHost(h.id);
-            })
-          Text('移除')
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.alert'))
-            .onClick(() => {
-              this.onRemoveHost(h.id);
+              this.onSubmit();
             })
         }
         .width('100%')
