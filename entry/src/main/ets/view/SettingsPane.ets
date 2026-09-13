@@ -1517,7 +1517,7 @@ export struct SettingsPane {
 
         if (!h.isLoopback) {
           Row({ space: Sp.L }) {
-            Text('吊销设备密钥')
+            Text('忘记此 Host')
               .fontSize(Fs.CAPTION)
               .fontColor($r('sys.color.alert'))
               .onClick(() => {

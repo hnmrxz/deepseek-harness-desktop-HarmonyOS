@@ -3435,6 +3435,30 @@ struct Index {
     });
   }
 
+  /**
+   * 忘记当前 Host（E137）。
+   *
+   * 【为什么是"忘记"而不是"吊销"】官方那套是"设备配对 + 逐设备吊销密钥"，而本应用
+   * **没有配对模型**：它只记**一个** Host（`rememberedUrl` + token），默认还是本机核心。
+   * 所以按钮的真实语义是"忘掉这个地址与令牌"——改了名字才对得上它实际做的事。
+   *
+   * 【忘记之后会怎样】清掉记住的地址/令牌并断开；下次启动会重新走"本机核心自启 + 自动接入"，
+   * 也就是说**不会把用户留在无 Host 的空白状态**。
+   */
+  private forgetHost(): void {
+    AppStorage.setOrCreate<string>('dshLastHostUrl', '');
+    AppStorage.setOrCreate<string>('dshLastHostToken', '');
+    AppStorage.setOrCreate<string>('dshLastHostTokenState', 'none');
+    AppStorage.setOrCreate<boolean>('dshHostAutoConnect', false);
+    this.rememberedUrl = '';
+    this.rememberedToken = '';
+    this.rememberedTokenState = 'none';
+    this.shouldAutoConnect = false;
+    SessionHub.shared().disconnect();
+    this.settingWriteNote = '已忘记这个 Host；下次启动会重新接入本机核心，也可以现在粘贴新的启动链接。';
+    hilog.info(DOMAIN, TAG, 'HDSH-CONN 已忘记 Host');
+  }
+
   private applyDefaultModel(provider: string, model: string, effort: string): void {    this.settingWriteNote = `正在写入默认模型 ${provider} / ${model}…`;
     SessionHub.shared().setDefaultModel(provider, model, effort).then((note: string) => {
       this.settingWriteNote = note;
@@ -4074,6 +4098,7 @@ struct Index {
           this.stackPage = StackPage.CONNECT;
         },
         onRevokeHost: (id: string) => {
+          this.forgetHost();
         },
         onOpenDiagnostics: () => {
           this.openDiagnostics();
