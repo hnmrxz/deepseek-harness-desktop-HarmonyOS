@@ -75,6 +75,13 @@ export async function installBundledCores(resourceDir: string, workDir: string,
   }
 
   const installed: string[] = store.listInstalled();
+  /*
+   * 被换掉的旧树先挪到一边，安装结束后再**异步**删。
+   * 见下面替换点处的实测说明（D6 E47）：同步删 25k 文件会把主线程锁死。
+   * 目录名以 `.tmp` 结尾：`CoreStore.listInstalled` 明确忽略该后缀，
+   * 因此即使异步删除没跑完，也不会被当成"已安装版本"。
+   */
+  const staleDirs: string[] = [];
   for (const name of names) {
     const version: string = parseArchiveName(name);
     if (version.length === 0) {
@@ -105,12 +112,26 @@ export async function installBundledCores(resourceDir: string, workDir: string,
         result.skipped.push(version);
         continue;
       }
-      // 指纹不同 ⇒ 删掉旧树重装。rmdirSync 在 OHOS 上可删**非空**目录
-      // （CoreStore.evict 就是这么清理旧版本的，见其第 435 行）。
+      /*
+       * 指纹不同 ⇒ 换树重装：把旧树**改名挪开**（一次元数据操作，毫秒级）。
+       *
+       * 【为什么不能 `fs.rmdirSync(旧树)`】真机实测（D6 E47）：换包后首次启动，
+       * 同步删除 216 MB / 25k 个文件把 ArkUI 主线程锁住十余秒，系统判定
+       * `Reason:LIFECYCLE_TIMEOUT` + `SYS_FREEZE` 并把进程 kill
+       * （日志：`onProcessDied … pid:62616`、`SaveFaultLogToFile … Reason:LIFECYCLE_TIMEOUT`），
+       * 表现为"应用起来就消失、连一条自己的日志都没有"。
+       * 改名后真正的删除放到安装末尾用**异步** `fs.rmdir` 做（见下面的循环），
+       * 它在文件系统的异步工作线程上执行，主线程保持可响应。
+       */
       try {
-        fs.rmdirSync(store.coreDir(version));
+        const oldDir: string = store.coreDir(version);
+        if (fs.accessSync(oldDir)) {
+          const stale: string = `${oldDir}.stale-${Date.now()}.tmp`;
+          fs.renameSync(oldDir, stale);
+          staleDirs.push(stale);
+        }
       } catch (e) {
-        // 目录不存在等情况忽略：下面的解包会给出真实结论
+        // 挪不动也不致命：下面的解包/落位会给出真实结论
       }
     }
     const tmp: string = `${workDir}/bundled-${name}`;
@@ -154,6 +175,20 @@ export async function installBundledCores(resourceDir: string, workDir: string,
       } catch (e) {
         hilog.warn(DOMAIN, TAG, '清理内置核心临时文件失败（不影响结果）');
       }
+    }
+  }
+
+  /*
+   * 异步清理被挪走的旧树。放在这里而不是拦在安装前：安装路径上不能出现
+   * 任何"删几万个文件"的**同步**调用（E47）。`fs.rmdir` 走异步接口，
+   * 主线程在删除期间保持可响应；失败也只是留下一个 `.tmp` 目录，
+   * 不会被 `listInstalled()` 当成已安装版本。
+   */
+  for (const stale of staleDirs) {
+    try {
+      await fs.rmdir(stale);
+    } catch (e) {
+      hilog.warn(DOMAIN, TAG, '清理旧核心树失败：%{public}s', stale);
     }
   }
 

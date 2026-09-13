@@ -36,6 +36,32 @@
 #include <unistd.h>
 #include <vector>
 
+/*
+ * 【诊断/候选修复】由本 .so 提供 `napi_fatal_error` 的定义。
+ *
+ * 背景（真机读数）：koffi 的 .node 加载时报
+ *     Error relocating …/libs/arm64/libkoffi.so: napi_fatal_error: symbol not found
+ * 而 libkoffi.so 需要 84 个 `napi_*`，**只有这一个**解析不到 ⇒ 进程全局作用域里确实有一个
+ * `napi_*` 提供者（其余 83 个都来自它），但它缺这一个符号。
+ *
+ * 本定义同时充当**探针**：构造函数里的 diag1 会 `dlsym(RTLD_DEFAULT, "napi_fatal_error")`
+ * 并用 `dladdr` 打印提供者路径。据此可一次判别三种可能：
+ *   · 提供者 = libdshhost.so → 本 .so 的符号在全局作用域 ⇒ 在这里补齐缺失符号即可修好 koffi；
+ *   · 提供者 = libnode.so.127 → libnode 已全局可见，失败另有原因（需再查加载标志）；
+ *   · 返回 null            → 本 .so 与 libnode 都不在全局作用域，只能靠依赖闭包（DT_NEEDED）解决。
+ * 语义与 Node 一致：打印后 abort（`napi_fatal_error` 本就是不可恢复错误）。
+ */
+extern "C" __attribute__((visibility("default"))) void napi_fatal_error(
+    const char* location, size_t location_len, const char* message, size_t message_len) {
+  (void)location_len;
+  (void)message_len;
+  OH_LOG_Print(LOG_APP, LOG_FATAL, 0x0000, "HDSH-SHIM",
+               "napi_fatal_error: %{public}s | %{public}s",
+               location != nullptr ? location : "(null)",
+               message != nullptr ? message : "(null)");
+  ::abort();
+}
+
 namespace {
 
 // Node 线程与它的 argv。argv 必须活到线程结束，所以放静态存储。
@@ -456,6 +482,54 @@ extern "C" __attribute__((constructor)) void RegisterDshHostModule() {
                "first-load %{public}s (RTLD_GLOBAL): handle=%{public}s node::Start=%{public}s",
                libnodePath.c_str(), handle != nullptr ? "ok" : "failed",
                g_nodeStart != nullptr ? "ok" : "missing");
+  /*
+   * ── 诊断块（定位 koffi 的 `napi_fatal_error: symbol not found`）─────────────
+   * 与本 .so 顶部那个 `napi_fatal_error` 定义配合使用，见那里的说明。
+   * 三个读数：
+   *   diag1 = 全局作用域里 napi_fatal_error 的提供者（判别本 .so / libnode 是否全局可见）
+   *   diag2 = 全局作用域里 napi_get_undefined 的提供者（找出其余 83 个符号来自谁）
+   *   diag3 = 我们自己 dlopen 一次 libkoffi.so 的结果（复现 Node 的加载，且可验证修复）
+   */
+  {
+    std::string libsDir = ".";
+    Dl_info selfInfo2;
+    if (::dladdr(reinterpret_cast<void*>(&RegisterDshHostModule), &selfInfo2) != 0 &&
+        selfInfo2.dli_fname != nullptr) {
+      std::string selfPath(selfInfo2.dli_fname);
+      const size_t slash = selfPath.find_last_of('/');
+      if (slash != std::string::npos) {
+        libsDir = selfPath.substr(0, slash + 1);
+      }
+    }
+    auto providerOf = [](const char* name) -> std::string {
+      void* sym = ::dlsym(RTLD_DEFAULT, name);
+      if (sym == nullptr) {
+        return std::string("(null)");
+      }
+      Dl_info info;
+      if (::dladdr(sym, &info) != 0 && info.dli_fname != nullptr) {
+        return std::string(info.dli_fname);
+      }
+      return std::string("(unknown)");
+    };
+    const std::string fatalProvider = providerOf("napi_fatal_error");
+    const std::string undefProvider = providerOf("napi_get_undefined");
+    OH_LOG_Print(LOG_APP, LOG_INFO, 0x0000, "HDSH-SHIM",
+                 "diag1 RTLD_DEFAULT napi_fatal_error <- %{public}s", fatalProvider.c_str());
+    OH_LOG_Print(LOG_APP, LOG_INFO, 0x0000, "HDSH-SHIM",
+                 "diag2 RTLD_DEFAULT napi_get_undefined <- %{public}s", undefProvider.c_str());
+    const std::string koffiPath = libsDir + "libkoffi.so";
+    ::dlerror();
+    void* koffiHandle = ::dlopen(koffiPath.c_str(), RTLD_NOW | RTLD_LOCAL);
+    std::string koffiErr = "(no-error)";
+    if (koffiHandle == nullptr) {
+      const char* raw = ::dlerror();
+      koffiErr = raw != nullptr ? std::string(raw) : std::string("(no-dlerror-text)");
+    }
+    OH_LOG_Print(LOG_APP, LOG_INFO, 0x0000, "HDSH-SHIM",
+                 "diag3 dlopen %{public}s = %{public}s", koffiPath.c_str(),
+                 koffiHandle != nullptr ? "ok" : koffiErr.c_str());
+  }
   OH_LOG_Print(LOG_APP, LOG_INFO, 0x0000, "HDSH-SHIM",
                "constructor ran: registering 4 name forms (dshhost / libdshhost.so / libdshhost / dshhost.so)");
   napi_module_register(&g_dshHostModule);

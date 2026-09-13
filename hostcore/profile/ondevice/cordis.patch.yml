@@ -8,14 +8,33 @@
 # 本文件里的覆盖**整块替换**目标行的 config；`{insert: […]}` 是追加。
 #
 # ── 纪律 ────────────────────────────────────────────────────────────────
-# 这里只放**有实测证据支持**的覆盖。阶段一的目标是先回答一个问题：
-#   「三个 @ohos-ports 原生件（koffi / node-pty / sharp）能否在鸿蒙运行时里加载」
-# 为了不让"我们自己的覆盖"混淆这个问题，阶段一**故意不覆盖任何行**——
-# 与官方 web 组合完全一致。等某一行被实测证伪，才在此加 {id, disabled: true}
-# 并在注释里写上证据（日志原文 / 复现步骤）。
+# 这里只放**有实测证据支持**的覆盖，每条都要写清证据（日志原文 / 复现条件）。
 #
-# 已经知道"迟早要处理"、但**尚未实测**的三项（不要提前写进来）：
+# 已经知道"迟早要处理"、但**尚未实测**的两项（不要提前写进来）：
 #   1) session-query-sqlite：`node:sqlite` 在目标运行时是否可用（默认 openAt: never 已足够安全）
-#   2) directory-picker：auto → native 需要 koffi，若 koffi 可用则无需改
-#   3) session-telemetry-otel：默认关闭（用 DSH_TELEMETRY_DISABLED 环境变量，无需 patch）
-[]
+#   2) session-telemetry-otel：默认关闭（用 DSH_TELEMETRY_DISABLED 环境变量，无需 patch）
+
+# ── attachment-local：因 sharp 不可用而禁用（真机实测，D6 E46）────────────────
+#
+# 证据（真机 hilog，`HDSH-NODELIVE`，插件树 boot 阶段）：
+#   Error: failed to import loader entry attachment-local (@deepseek-ai/dsh-attachment-local):
+#          Could not load the "sharp" module using the linuxmusl-arm64 runtime
+#   undefined: WebAssembly is not defined
+#   → dsh: plugin tree failed to load … AggregateError: loader entries failed to apply
+#
+# 三个**彼此独立**的阻塞点，缺一不可，故不是改配置能绕过的：
+#   ① libsharp-openharmony-arm64.so 的 DT_NEEDED 含 `libvips-cpp.so.42`，
+#      而该库**不在** HAP 的 libs/ 里（`llvm-readelf -d` 实测；entry/libs/arm64-v8a 无此文件），
+#      即 sharp 的原生件在本应用里根本装载不起来。
+#   ② sharp 的 JS 加载器（sharp/lib/sharp.js）要在 `@img/` 下**建软链**
+#      （`sharp-libvips-<platform>` → `img-sharp-libvips-<platform>`），
+#      而鸿蒙应用沙箱**禁止创建符号链接**（本项目早有实测，见 D6 E13）。
+#   ③ 走到 WASM 回退分支时必然失败：`--jitless` 下 `WebAssembly` 未定义
+#      （jitless 是**强制**的：不上架申请 `ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY`）。
+#
+# 结论：attachment-local（图片附件）在端侧当前不可用；为了不让它拖垮整棵插件树
+# （fail-loud 会让 Host 永远起不来），先禁用该行。核心的读写文件 / 会话 / Web 服务不受影响。
+# 后续若要恢复：需把 `@ohos-ports/img-sharp-libvips-openharmony-arm64` 里的
+# libvips 及其依赖一并打进 HAP libs，并解决 ② 的软链（改加载器或用绝对路径 LD_LIBRARY_PATH）。
+- id: attachment-local
+  disabled: true

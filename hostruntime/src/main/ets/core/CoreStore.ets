@@ -327,7 +327,8 @@ export class CoreStore {
 
     try {
       if (fs.accessSync(staging)) {
-        fs.rmdirSync(staging);
+        // 残留的 staging 可能是上次失败留下的**完整树**：同样只能异步删（E47）
+        await fs.rmdir(staging);
       }
       fs.mkdirSync(staging, true);
     } catch (e) {
@@ -340,23 +341,23 @@ export class CoreStore {
       await zlib.decompressFile(zipPath, staging);
     } catch (e) {
       const err: BusinessError = e as BusinessError;
-      this.dropStaging(staging);
+      await this.dropStaging(staging);
       return fail(`解压失败：${err.code} ${err.message}`);
     }
 
     // 校验：顶层目录与元数据必须都在（否则这不是我们的容器，或解包不完整）
     try {
       if (!fs.accessSync(inner)) {
-        this.dropStaging(staging);
+        await this.dropStaging(staging);
         return fail(`容器内缺少顶层目录 ${topDirOf(version)}`);
       }
       if (!fs.accessSync(`${inner}/${TREE_INFO_FILE}`)) {
-        this.dropStaging(staging);
+        await this.dropStaging(staging);
         return fail(`容器内缺少元数据 ${TREE_INFO_FILE}`);
       }
     } catch (e) {
       const err: BusinessError = e as BusinessError;
-      this.dropStaging(staging);
+      await this.dropStaging(staging);
       return fail(`校验 staging 失败：${err.code} ${err.message}`);
     }
 
@@ -365,25 +366,26 @@ export class CoreStore {
     try {
       if (fs.accessSync(target)) {
         if (state.current === version) {
-          this.dropStaging(staging);
+          await this.dropStaging(staging);
           return fail(`版本 ${version} 正在使用中，拒绝覆盖（请先切到别的版本）`);
         }
-        fs.rmdirSync(target);
+        // 旧树同样是"几万个文件"级别：异步删，别锁主线程（E47）
+        await fs.rmdir(target);
       }
       fs.renameSync(inner, target);
-      fs.rmdirSync(staging);
+      await fs.rmdir(staging);
     } catch (e) {
       const err: BusinessError = e as BusinessError;
-      this.dropStaging(staging);
+      await this.dropStaging(staging);
       return fail(`落位到 ${target} 失败：${err.code} ${err.message}`);
     }
     return ok(`已落位 ${version}`);
   }
 
-  private dropStaging(staging: string): void {
+  private async dropStaging(staging: string): Promise<void> {
     try {
       if (fs.accessSync(staging)) {
-        fs.rmdirSync(staging);
+        await fs.rmdir(staging);
       }
     } catch (e) {
       hilog.warn(DOMAIN, TAG, '清理 staging 失败（残留目录不会被当作已安装版本）');
@@ -427,12 +429,13 @@ export class CoreStore {
   }
 
   /** 清理旧版本；返回真正被删掉的版本号（current/previous 永不删）。 */
-  evict(keep: number): string[] {
+  async evict(keep: number): Promise<string[]> {
     const state: CoreState = this.readState();
     const removed: string[] = [];
     for (const v of evictionCandidates(state, this.listInstalled(), keep)) {
       try {
-        fs.rmdirSync(this.coreDir(v));
+        // 一棵核心树是几万个文件：必须走异步删，否则会锁住 ArkUI 主线程（E47）
+        await fs.rmdir(this.coreDir(v));
         removed.push(v);
       } catch (e) {
         const err: BusinessError = e as BusinessError;
