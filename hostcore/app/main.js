@@ -47,6 +47,64 @@ function electronUserData() {
 const USER_DATA = electronUserData();
 const DSH_BASE = USER_DATA.length > 0 ? path.join(USER_DATA, 'dsh') : '';
 
+/*
+ * ── 诊断引导（必须在一切之前）──────────────────────────────────────────────
+ *
+ * 【为什么需要它】真机崩溃日志（D6 E23）显示：应用起来后 2 秒内以
+ *   Reason:Signal:SIGABRT   LastFatalMessage:[appspawn_server.c:69]Unexpected call: exit(1)
+ * 结束，调用栈是 node::LoadEnvironment → node::StartExecution → JS → 某个 native → exit()。
+ * 也就是说**是 JS 调用了 process.exit(1)**，而不是原生引导崩溃。
+ * 但排查被卡住的原因很具体：**Node 的 console.log 走 stdout，在应用进程里不进 hilog**，
+ * 所以"看不到日志"被误读成"代码没跑"（这个误判浪费了很久）。
+ *
+ * 因此这里做两件事：
+ *   1. 把 stdout/stderr 与关键里程碑**落进文件**，事后用 `hdc file recv` 取回；
+ *   2. 拦截 `process.exit`：先把**调用栈**写进日志，然后**不真的退出**。
+ *      理由：OHOS 用 libappspawn_helper 拦截应用进程里的 exit()，真调用它只会换来
+ *      SIGABRT（拿不到任何解释）；而"不退出"能让进程活着，把更多信息留下来。
+ *      这是**诊断期**的行为，正式形态要不要保留见 D6 的 fail-loud 讨论。
+ *
+ * 【为什么写在最前面】后面的任何一行都可能抛错或退出；先装好这些，才拿得到原因。
+ */
+const DIAG_LOG = path.join(USER_DATA.length > 0 ? USER_DATA : require('node:os').tmpdir(), 'hdsh-host.log');
+let diagStream = null;
+function diag(line) {
+  const text = `[${new Date().toISOString()}] ${line}\n`;
+  try {
+    if (diagStream === null) {
+      diagStream = fs.createWriteStream(DIAG_LOG, { flags: 'a' });
+      diagStream.on('error', () => { diagStream = null; });
+    }
+    diagStream.write(text);
+  } catch (e) {
+    // 写不进去也不能让诊断本身把启动搞崩
+  }
+  // 同时也往 stdout 打：PC 侧离线跑时能直接看见
+  try { process.stdout.write(text); } catch (e) { /* ignore */ }
+}
+
+diag(`--- boot pid=${process.pid} execPath=${process.execPath} argv=${JSON.stringify(process.argv)}`);
+diag(`userData=${USER_DATA} DSH_BASE=${DSH_BASE}`);
+
+const realExit = process.exit.bind(process);
+process.exit = (code) => {
+  const stack = new Error('process.exit intercepted').stack || '(no stack)';
+  diag(`!! process.exit(${code}) called -- intercepted, NOT exiting`);
+  diag(`!! stack: ${String(stack).split('\n').join(' | ')}`);
+  // 诊断期不退出：真退出在 OHOS 上会变成 SIGABRT，什么解释都留不下
+  return undefined;
+};
+
+process.on('uncaughtException', (err) => {
+  diag(`!! uncaughtException: ${err && err.stack ? err.stack : String(err)}`);
+});
+process.on('unhandledRejection', (reason) => {
+  diag(`!! unhandledRejection: ${reason && reason.stack ? reason.stack : String(reason)}`);
+});
+process.on('exit', (code) => {
+  diag(`!! process 'exit' event, code=${code}`);
+});
+
 /** 读我们自己的 state.json，得到"当前版本"，据此拼出核心树目录。 */
 function currentCoreDir() {
   if (DSH_BASE.length === 0) {

@@ -51,6 +51,13 @@ echo "  libnode.so : ${found}"
 ls -la "${REL}"/libnode.so* 2>/dev/null | sed 's/^/    /'
 echo "  node       : $([ -e "${REL}/node" ] && echo present || echo 'not built (ok for HAP embedding)')"
 
+# 链接 libdshhost.so 时要用 -lnode，而链接器只认不带版本号的 libnode.so；
+# make 只产出 libnode.so.<abi>，所以这里补一个符号链接（**只在本机构建树里**——
+# HAP 内部不能有符号链接，见下面第 5 节关于 NEEDED 名字的说明）。
+if [ ! -e "${REL}/libnode.so" ] && [ -e "${REL}/libnode.so.127" ]; then
+  ln -sf libnode.so.127 "${REL}/libnode.so" && echo "  + created symlink libnode.so -> libnode.so.127 (for -lnode)"
+fi
+
 echo
 echo "=== 2) ELF check (must be ELF64 / AArch64 / DYN) ==="
 "$READELF" -h "$found" | grep -E 'Class|Machine|Type' | sed 's/^/  /'
@@ -69,16 +76,13 @@ echo "=== 3) signature ==="
 if "$READELF" -S "$found" | grep -qE '\.codesign'; then
   echo "  .codesign : present"
 else
-  echo "  .codesign : ABSENT"
-  echo "  E18 measured that our packaging pipeline never signs embedded .so, and"
-  echo "  display-sign on the shipped libs reported 'code signature is not found'."
-  echo "  Whether that is fatal for a bundled .so is still an OPEN, device-side question"
-  echo "  (D6 E18; two mutually exclusive readings). If it turns out to be required:"
-  echo "      powershell -File tools/node-runtime/sign-native.ps1 -InFile <so> -KeystorePwd .. -KeyPwd .."
-  echo "  and that step must run BEFORE HAP assembly (changing bytes inside a built HAP"
-  echo "  would break the HAP's own signature)."
-  echo "  To just inspect the state of any .so:"
-  echo "      powershell -File tools/node-runtime/sign-native.ps1 -InFile <so> -DisplayOnly"
+  echo "  .codesign : ABSENT -- and that is EXPECTED / FINE"
+  echo "  E23 settled this on a real device: the bundled libs (libelectron.so etc.) carry no"
+  echo "  .codesign either, yet the device LOADED and RAN them (crash stack shows"
+  echo "  ElectronMain -> node::LoadEnvironment -> node::StartExecution -> JS)."
+  echo "  So a bundled .so does not need a code signature; no signing step is required."
+  echo "  (sign-native.ps1 stays available in case a future device test ever says otherwise."
+  echo "   If it were ever needed it must run BEFORE HAP assembly.)"
 fi
 
 echo
@@ -93,6 +97,12 @@ fi
 echo
 echo "=== 5) what is still missing (do NOT skip the ordering) ==="
 cat <<'NEXT'
+  0) ship the runtime into the HAP: copy out/Release/libnode.so.127 to
+       entry/libs/arm64-v8a/libnode.so.127
+     The filename is NOT free: libdshhost.so's NEEDED entry is `libnode.so.127`
+     (checked by step 4), and the loader looks up exactly that name. Also a HAP cannot
+     carry symlinks, so do NOT plan on shipping libnode.so -> libnode.so.127.
+     entry/libs/ is gitignored (138 MB: bytes out of git, procedure in git).
   a) entry/src/main/cpp/types/libdshhost/oh-package.json5
        { "name": "libdshhost.so", "types": "./index.d.ts", "version": "1.0.0" }
      (index.d.ts already exists and is inert until referenced)
