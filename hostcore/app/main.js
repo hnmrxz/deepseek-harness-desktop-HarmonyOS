@@ -116,15 +116,11 @@ process.on('exit', (code) => {
 });
 
 /*
- * 【实验】阻断 `node:http` 的惰性 undici。
- *
- * 关键栈帧（D6 E38）：`at lazyUndici (node:http:123:21)` —— 触发 undici 初始化的不是 `fetch`
- * （覆盖 fetch 无效，E36），而是 **`node:http` 自己的惰性 undici 加载器**（Node 22 用 undici
- * 实现 `http.Agent` / `globalAgent`）。所以只要**在任何人访问之前**把这两个属性定义掉，
- * 那条 getter 就永远不会被触发，也就不需要 WebAssembly。
- *
- * 与 fetch 同理：**不能先读原值**（读一下就触发初始化）。用 `getOwnPropertyDescriptor`
- * 判断它是不是惰性 getter，再用 `defineProperty` 直接覆盖。
+ * 【必须保留】阻断 `node:http` 的惰性 undici。
+ * 关键栈帧（D6 E38）：`at lazyUndici (node:http:123:21)`。Node 22 用 undici 实现
+ * `http.Agent`/`globalAgent` 等；只要在任何人访问之前把**所有惰性 getter** 定义掉，
+ * 那条路径就不会被触发，也就不需要 WebAssembly（jitless 下它是 undefined）。
+ * 不能先读原值（读一下就触发初始化）——只能用 getOwnPropertyDescriptor 看描述符。
  */
 try {
   for (const modName of ['node:http', 'node:https']) {
@@ -132,7 +128,6 @@ try {
     const getters = [];
     for (const name of Object.getOwnPropertyNames(mod)) {
       const desc = Object.getOwnPropertyDescriptor(mod, name);
-      // 不能读原值（读一下就触发惰性初始化），只能看描述符
       if (desc !== undefined && desc.get !== undefined) {
         getters.push(name);
         Object.defineProperty(mod, name, { value: {}, writable: true, configurable: true });
@@ -143,6 +138,74 @@ try {
 } catch (e) {
   diag(`封掉惰性 getter 失败：${String(e)}`);
 }
+
+/*
+ * 【关键】把"沙箱里的 .node"重定向到 HAP 的 libs/ 下加载。
+ *
+ * 问题（D6 E39，真机实测）：运行时解包到**沙箱**里的原生库，`dlopen` 会被系统拦：
+ *   Error loading shared library …/cores/0.1.5-rc.2/node_modules/koffi/build/koffi/linux_arm64/koffi.node
+ *   : No error information
+ * 而放在 HAP `libs/` 里的库可以正常加载（E18 已证，即使没有 `.codesign`）。hvigor 又**只打包
+ * 扁平的 `libs/<abi>/*.so`**（实测：嵌套的 `.node` 不会被复制进产物），所以没法按 loader 的
+ * 候选路径原样摆放。
+ *
+ * 办法（不碰任何第三方包，也不改 dsh）：原生包的 loader 在 `require` 之前都会先
+ * `fs.existsSync(候选路径)`，而真正加载 `.node` 一定经过 `Module._extensions['.node']`。
+ * 于是同时接管这两处：
+ *   - `existsSync` 对那些"沙箱里不存在、但 libs/ 里有同名平铺文件"的 .node 路径返回 true；
+ *   - `.node` 扩展加载器把实际路径改写成 libs/ 下的平铺文件。
+ * 这样 koffi / node-pty / sharp 的**原样查找逻辑**就能走到 HAP 里的合法位置。
+ */
+const NATIVE_LIBS = (() => {
+  if (process.env.HDSH_NATIVE_LIBS && process.env.HDSH_NATIVE_LIBS.length > 0) {
+    return process.env.HDSH_NATIVE_LIBS;
+  }
+  // 入口脚本在 <bundle>/entry/resources/resfile/resources/app/main.js，
+  // 而原生库在 <bundle>/libs/arm64/（见真机崩溃日志里的 libelectron.so 路径）。
+  try {
+    const bundleRoot = require('node:path').resolve(__dirname, '../../../../../');
+    return require('node:path').join(bundleRoot, 'libs', 'arm64');
+  } catch (e) {
+    return '';
+  }
+})();
+
+/** 沙箱内的 .node 路径 → libs/ 下的平铺文件名。约定：`lib<去掉扩展名的包名>.so` */
+function flatNativeName(basename) {
+  const stem = String(basename).replace(/\.node$/, '');
+  return `lib${stem}.so`;
+}
+
+(function installNativeRedirect() {
+  const fsMod = require('node:fs');
+  const pathMod = require('node:path');
+  const Module = require('node:module');
+  if (NATIVE_LIBS.length === 0 || !fsMod.existsSync(NATIVE_LIBS)) {
+    diag(`原生库重定向未启用（NATIVE_LIBS=${NATIVE_LIBS}）`);
+    return;
+  }
+  const realExists = fsMod.existsSync.bind(fsMod);
+  const redirect = (p) => {
+    try {
+      if (typeof p !== 'string' || !p.endsWith('.node')) return null;
+      const flat = pathMod.join(NATIVE_LIBS, flatNativeName(pathMod.basename(p)));
+      return realExists(flat) ? flat : null;
+    } catch (e) {
+      return null;
+    }
+  };
+  // 1) 让 loader 的"存在性检查"通过
+  fsMod.existsSync = function (p) {
+    return redirect(p) !== null ? true : realExists(p);
+  };
+  // 2) 真正加载时改写到 libs/ 下的合法位置
+  const loader = Module._extensions['.node'];
+  Module._extensions['.node'] = function (mod, filename) {
+    const flat = redirect(filename);
+    return loader.call(this, mod, flat !== null ? flat : filename);
+  };
+  diag(`原生库重定向已启用：libs=${NATIVE_LIBS}`);
+})();
 
 /** 读我们自己的 state.json，得到"当前版本"，据此拼出核心树目录。 */
 function currentCoreDir() {

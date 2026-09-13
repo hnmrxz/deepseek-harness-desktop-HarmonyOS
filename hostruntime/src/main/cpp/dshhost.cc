@@ -30,6 +30,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <dlfcn.h>
 #include <string>
 #include <thread>
 #include <unistd.h>
@@ -346,6 +347,21 @@ napi_module g_dshHostModuleBareDotSo = {
 //   ② `.so` **根本没被加载** → 问题在运行时如何决定加载哪个 .so（命名/映射）。
 // 一条日志就能区分。用 OH_LOG_Print 而不是 printf：应用进程的 stdout 在设备上看不见（E23）。
 extern "C" __attribute__((constructor)) void RegisterDshHostModule() {
+  /*
+   * 把 libnode 提升到**全局符号作用域**。
+   *
+   * 【为什么必须做】真机实测：把 koffi 的 .node 放到 HAP 的 libs/ 下加载后（见入口脚本里的
+   * "原生库重定向"），`dlopen` 通过了沙箱限制，但接着报
+   *     Error relocating …/libs/arm64/libkoffi.so: napi_fatal_error: symbol not found
+   * 原因是：Node 在这里是**共享库**（libnode.so.127），它由应用的加载器以 RTLD_LOCAL 载入，
+   * 符号不在全局作用域；而原生模块（koffi/node-pty/sharp）要解析 `napi_*` 符号，
+   * 靠的正是"Node 的符号全局可见"。可执行文件形式的 node 天然满足这一点，共享库形式不满足。
+   * 再 dlopen 一次并带 RTLD_GLOBAL，就把 libnode 的符号提升进全局表，后续的 .node 才能解析。
+   * 失败也不致命（只是回到原来的症状），所以只记录、不中止。
+   */
+  void* handle = ::dlopen("libnode.so.127", RTLD_NOW | RTLD_GLOBAL);
+  OH_LOG_Print(LOG_APP, LOG_INFO, 0x0000, "HDSH-SHIM",
+               "RTLD_GLOBAL promote libnode.so.127: %{public}s", handle != nullptr ? "ok" : "failed");
   OH_LOG_Print(LOG_APP, LOG_INFO, 0x0000, "HDSH-SHIM",
                "constructor ran: registering 4 name forms (dshhost / libdshhost.so / libdshhost / dshhost.so)");
   napi_module_register(&g_dshHostModule);
