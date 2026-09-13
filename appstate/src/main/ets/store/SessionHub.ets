@@ -3765,60 +3765,6 @@ function skillsFromReply(value: Object): SkillRow[] | undefined {
   return out;
 }
 
-/**
- * 一条可执行命令（E185：官方命令面板 `dsh-client-ui-commands` 的数据形态）。
- *
- * **名字与描述由宿主提供**（官方用 `description.<id>` 渲染）⇒ 我们**不硬编码**任何命令名，
- * 列表里有什么就显示什么（真机上会是 compact / export / feedback / goal / permission / plan 之类）。
- */
-export interface CommandRow {
-  id: string;
-  name: string;
-  description: string;
-}
-
-/**
- * 从 `commands/list` 的回复里取命令数组。
- *
- * 【容忍三种形状】`{commands:[…]}` / `{items:[…]}` / 裸数组——该端点的回复形状
- * **尚未在真机确证**（E182 只取证了"必须带 sessionId"），所以按既有纪律处理：
- * 都不中时返回 `undefined`，由调用方把**真实顶层键**记进旁路日志（E164 之后 hdc 可见），**绝不猜键名**。
- * 元素既可能是字符串（只有 id），也可能是对象 ⇒ 两种都收。
- */
-function commandsFromReply(value: Object): CommandRow[] | undefined {
-  let raw: Object[] | undefined = getArray(value, 'commands');
-  if (raw === undefined) {
-    raw = getArray(value, 'items');
-  }
-  if (raw === undefined && Array.isArray(value)) {
-    raw = value as Object[];
-  }
-  if (raw === undefined) {
-    return undefined;
-  }
-  const out: CommandRow[] = [];
-  for (let i = 0; i < raw.length; i++) {
-    const one: Object = raw[i];
-    if (typeof one === 'string') {
-      const only: string = one as string;
-      if (only.length > 0) {
-        out.push({ id: only, name: only, description: '' });
-      }
-      continue;
-    }
-    const id: string = getString(one, 'id') ?? getString(one, 'name') ?? '';
-    if (id.length === 0) {
-      continue;
-    }
-    out.push({
-      id: id,
-      name: getString(one, 'name') ?? id,
-      description: getString(one, 'description') ?? ''
-    });
-  }
-  return out;
-}
-
 export function projectWireRecord(record: Object): TrajectoryItem | undefined {
   const type: string = getString(record, 'type') ?? '';
   if (type !== 'event') {
