@@ -1,9 +1,6 @@
 {
+  "types": "./index.d.ts",
   "name": "libdshhost.so",
-  "version": "1.0.0",
-  "description": "HDSH 端侧 Node 运行时的 NAPI 引导模块（libdshhost.so）",
-  "main": "",
-  "author": "",
-  "license": "MIT",
-  "types": "./index.d.ts"
+  "description": "libdshhost.so type file",
+  "version": ""
 }

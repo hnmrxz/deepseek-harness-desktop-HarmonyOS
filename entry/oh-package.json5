@@ -11,7 +11,9 @@
     "dshcompat": "file:../dshcompat",
     "platform": "file:../platform",
     "hostruntime": "file:../hostruntime",
-    "web_engine": "file:../web_engine",
+    "web_engine": "file:../web_engine"
+  },
+  "devDependencies": {
     "libdshhost.so": "file:./src/main/cpp/types/libdshhost"
   }
 }
