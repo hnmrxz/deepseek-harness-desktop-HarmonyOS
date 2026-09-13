@@ -1,6 +1,0 @@
-{
-  "name": "hdsh-host",
-  "version": "0.0.0",
-  "description": "HDSH on-device DSH host (started by the Electron runtime, no BrowserWindow)",
-  "main": "main.js"
-}
