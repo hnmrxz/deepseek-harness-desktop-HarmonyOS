@@ -2506,6 +2506,12 @@ export class SessionHub {
       }
     };
     this.cancelWorkspace = this.conn.openStream(WORKSPACE_FOLLOW_ENDPOINT, args, sink);
+    /*
+     * E164：**开流本身也要记账**。此前只有失败分支有记录，于是设备上"没有 baseline 也没有 error"
+     * 时无法判断到底是"流没开"还是"开了但没送数据"——这正是归档集在重启后为空、
+     * 归档会话"复活"的取证卡点。加上这一行，一次真机运行就能分清。
+     */
+    this.record(`workspace follow opened cancel=${this.cancelWorkspace === undefined ? 'none' : 'ok'}`);
   }
 
   /** 处理注册表帧：基线整表替换，增量按 id upsert */
