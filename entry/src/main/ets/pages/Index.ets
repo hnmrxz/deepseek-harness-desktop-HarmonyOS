@@ -2810,23 +2810,31 @@ struct Index {
    * 拒绝、写盘失败、成功。成功后还要说清"核心并未随之重启"——
    * 状态指向变了 ≠ 有东西在跑，这句话不能省。
    */
+  /**
+   * 回滚到上一版本（E92）：停 → 事务 → 起回滚后的版本 → 重新接入。
+   *
+   * 【为什么不能只改状态】早先这里只调 `rollback()` 写状态，提示语还写着"核心并未随之重启"——
+   * 那是运行时未接线时的旧事实。现在运行时是通的：只改状态会让界面显示的版本与**正在跑的**
+   * 版本不一致，那种不一致比回滚失败更难查。所以这里做完整的"停 → 回滚 → 起 → 重连"。
+   */
   private rollbackCore(): void {
-    let notice: string = '';
-    try {
-      const ctx = getContext(this) as common.UIAbilityContext;
-      const host: DshHost = this.coreHost(ctx.filesDir, ctx.resourceDir, ctx.cacheDir);
-      const decision: ActivationDecision = host.store_().rollback();
-      if (decision.action === ActivationAction.REFUSE) {
-        notice = `未回滚：${decision.reason}`;
-      } else {
-        notice = `已回滚到 ${decision.next.current}（退回的版本：${decision.next.previous}）。`
-          + '核心并未随之重启：运行时载体接上后才会以该版本启动。';
-      }
-    } catch (e) {
-      const err = e as Error;
-      notice = `回滚失败：${err.message}`;
+    this.rollbackCoreAsync().catch(() => {
+      this.coreNotice = '回滚失败（详见 hilog）';
+    });
+  }
+
+  private async rollbackCoreAsync(): Promise<void> {
+    const ctx = getContext(this) as common.UIAbilityContext;
+    const host: DshHost = this.coreHost(ctx.filesDir, ctx.resourceDir, ctx.cacheDir);
+    this.coreNotice = '正在回滚：先停当前核心，再把上一版本起回来…';
+    this.refreshCoreView();
+    const res: OpResult = await host.rollbackTo();
+    this.coreNotice = res.message;
+    hilog.info(DOMAIN, TAG, 'HDSH-CORE 回滚结果：ok=%{public}s note=%{public}s',
+      res.ok ? 'true' : 'false', res.message);
+    if (res.ok) {
+      this.adoptLocalHostAfterRestart(host);
     }
-    this.coreNotice = notice;
     this.refreshCoreViewAsync().catch(() => {
     });
   }
@@ -2875,10 +2883,67 @@ struct Index {
     this.refreshCoreView();
   }
 
+  /**
+   * 选择某个已安装版本作为**切换目标**（E92）。
+   *
+   * 走 `DshHost.switchTo`：停当前 → 起候选做健康检查 → 通过才激活；候选起不来就把它停掉、
+   * 把旧版本起回来并如实报告。健康检查之所以只能是"真的起一次"，见 `Types.decideActivation`
+   * 的判据（宁可停在旧版本，也不要把没验证过的核心设为当前）。
+   */
   private onCoreSelectVersion(version: string): void {
-    this.coreNotice = `版本 ${version} 已在设备上。把它设为当前版本需要先起一次做健康检查`
-      + '（未通过就不切换，见核心版本激活事务）；运行时载体接线后这里才能真正切换。'
-      + '当前不会改动任何状态。';
+    this.switchCoreAsync(version).catch(() => {
+      this.coreNotice = '切换核心失败（详见 hilog）';
+    });
+  }
+
+  private async switchCoreAsync(version: string): Promise<void> {
+    const ctx = getContext(this) as common.UIAbilityContext;
+    const host: DshHost = this.coreHost(ctx.filesDir, ctx.resourceDir, ctx.cacheDir);
+    this.coreNotice = `正在切换到 ${version}：先停当前核心，再起候选做健康检查…`;
+    this.refreshCoreView();
+    const res: OpResult = await host.switchTo(version);
+    this.coreNotice = res.message;
+    hilog.info(DOMAIN, TAG, 'HDSH-CORE 切换结果：ok=%{public}s note=%{public}s',
+      res.ok ? 'true' : 'false', res.message);
+    if (res.ok) {
+      this.adoptLocalHostAfterRestart(host);
+    }
+    this.refreshCoreViewAsync().catch(() => {
+    });
+  }
+
+  /**
+   * 核心重启后**重新接入本机 Host**（E92）。
+   *
+   * 【为什么必须做】切换/回滚都会重启宿主，而 dsh 每个进程都会重新生成启动 token
+   * （cookie 也绑进程）⇒ 旧 token 立刻作废。若只重启不重连，界面会停在
+   * "刚切完就掉线"，看起来像"切换把连接弄坏了"；而真相是"凭据换了，需要重新取一次"。
+   * 取不到新的启动链接时**如实说**，不静默装作没事。
+   */
+  private adoptLocalHostAfterRestart(host: DshHost): void {
+    const url: string = host.localHostReadyUrl();
+    if (url.length === 0) {
+      this.hubError = '核心已重启，但没能读到新的启动链接（host-ready.json）；请到「设置」页重新接入本机 Host。';
+      return;
+    }
+    const hub: SessionHub = SessionHub.shared();
+    if (!hub.configure(url, undefined)) {
+      this.hubError = '核心已重启，但新的启动链接形态不合法，未能自动接入。';
+      return;
+    }
+    this.connectBusy = true;
+    hub.connect().then((ok: boolean) => {
+      this.connectBusy = false;
+      const snap: HubSnapshot = hub.snapshot();
+      hilog.info(DOMAIN, TAG, 'HDSH-CORE 重启后接入：ok=%{public}s sessions=%{public}d err=%{public}s',
+        ok ? 'true' : 'false', snap.sessions.length,
+        snap.lastError.length > 0 ? snap.lastError : '(none)');
+      if (ok) {
+        this.hubError = '';
+      } else if (snap.lastError.length > 0) {
+        this.hubError = snap.lastError;
+      }
+    });
   }
 
   @Builder

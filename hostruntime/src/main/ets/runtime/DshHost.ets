@@ -19,7 +19,7 @@
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { ActivationDecision, ActivationAction, CoreState, CoreVersionRecord } from '../core/Types';
+import { ActivationDecision, ActivationAction, CoreHealth, CoreState, CoreVersionRecord } from '../core/Types';
 import { CoreStore, CorePluginRow, CorePluginTotals, CoreTreeInfo, OpResult } from '../core/CoreStore';
 import { BundledInstallResult, installBundledCores } from '../core/BundledCore';
 import { UserPluginRow, clearUserRows, readUserRows, writeUserRows } from '../core/PluginRows';
@@ -52,6 +52,8 @@ interface HostReadyRuntime {
 }
 
 interface HostReadyFile {
+  /** 入口脚本写下的本机启动链接（含 token） */
+  url?: string;
   runtime?: HostReadyRuntime;
 }
 
@@ -390,6 +392,124 @@ export class DshHost {
       this.transient = null;
       this.lastFailureNote = note;
       return { ok: false, note: note, handle: null };
+    }
+  }
+
+  /**
+   * **切换到某个已安装版本**（E92）：停当前 → 起候选做健康检查 → 通过才激活。
+   *
+   * 【为什么健康检查只能是"真的起一次"】`Types.decideActivation` 明确要求健康检查为
+   * PASS，宁可停在旧版本也不把没验证过的核心设为当前。端侧不存在"静态检查就能证明
+   * 这份核心能跑"的手段（原生件、profile 行、Node 版本都只有起来才知道），
+   * 所以这里就把候选起一次、确认端口应答——**这就是健康检查**。
+   *
+   * 【失败路径为什么必须把旧版本起回来】切换失败后如果什么都不做，用户面对的是一台
+   * "核心不跑了、界面说切换失败"的设备。停掉候选、把旧版本起回来，才叫"没切换成功
+   * 但设备仍可用"。这条路径的每一步都写进返回文案，不吞掉任何原因。
+   */
+  async switchTo(version: string): Promise<OpResult> {
+    const installed: string[] = this.store.listInstalled();
+    if (!installed.includes(version)) {
+      return { ok: false, message: `版本 ${version} 不在已安装列表里（${installed.length > 0 ? installed.join('、') : '空'}）` };
+    }
+    const wasRunning: boolean = this.handle !== null || this.port.isRunning();
+    if (wasRunning) {
+      const stopped: OpResult = await this.stop();
+      if (!stopped.ok) {
+        return { ok: false, message: `切换前必须停下当前核心，但停止失败：${stopped.message}` };
+      }
+    }
+    const currentBefore: string = this.store.readState().current;
+    this.transient = HostState.STARTING;
+    let candidate: HostHandle | null = null;
+    let failure: string = '';
+    try {
+      candidate = await this.port.start(this.store.coreDir(version), this.store.homeDir(), DshHost.PROFILE);
+      this.handle = candidate;
+    } catch (e) {
+      failure = (e as Error).message;
+    }
+    this.transient = null;
+
+    if (candidate !== null) {
+      const decision: ActivationDecision =
+        this.store.activate(version, CoreHealth.PASS, '端侧已实起一次并确认端口应答');
+      if (decision.action !== ActivationAction.REFUSE) {
+        this.lastFailureNote = '';
+        return { ok: true, message: `已切换到 ${version} 并已在运行（${decision.reason}）` };
+      }
+      // 极少见：起得来但激活被拒（例如状态写盘失败）。此时**必须**把候选停下，
+      // 否则会出现"在跑的不是 current"这种自相矛盾的状态。
+      await this.stop();
+      return { ok: false, message: `拒绝激活 ${version}：${decision.reason}` };
+    }
+
+    this.lastFailureNote = `候选 ${version} 启动失败：${failure}`;
+    if (wasRunning && currentBefore.length > 0 && installed.includes(currentBefore)) {
+      try {
+        this.handle = await this.port.start(this.store.coreDir(currentBefore), this.store.homeDir(), DshHost.PROFILE);
+        return { ok: false, message: `切换失败（${failure}）；已把 ${currentBefore} 起回来，当前仍是 ${currentBefore}` };
+      } catch (e) {
+        this.handle = null;
+        return { ok: false, message: `切换失败（${failure}），且旧版本 ${currentBefore} 也起不来：${(e as Error).message}` };
+      }
+    }
+    this.handle = null;
+    return { ok: false, message: `切换失败：${failure}（未激活新版本，也没有可自动恢复的运行中版本）` };
+  }
+
+  /**
+   * **回滚到上一版本**（E92）：停 → `rollback()`（判据在 `Types.decideRollback`）→ 起回滚后的版本。
+   *
+   * 【为什么不能只改状态】早先的实现只调 `rollback()` 写状态就完事，提示语还写着
+   * "核心并未随之重启"——那是运行时还没接线时的旧事实。现在运行时是通的，
+   * 只改状态会让界面显示的版本与**正在跑的**版本不一致：那种不一致比回滚失败更难查。
+   */
+  async rollbackTo(): Promise<OpResult> {
+    const wasRunning: boolean = this.handle !== null || this.port.isRunning();
+    if (wasRunning) {
+      const stopped: OpResult = await this.stop();
+      if (!stopped.ok) {
+        return { ok: false, message: `回滚前停止当前核心失败：${stopped.message}` };
+      }
+    }
+    const decision: ActivationDecision = this.store.rollback();
+    if (decision.action === ActivationAction.REFUSE) {
+      return { ok: false, message: `未回滚：${decision.reason}` };
+    }
+    const target: string = decision.next.current;
+    this.transient = HostState.STARTING;
+    try {
+      this.handle = await this.port.start(this.store.coreDir(target), this.store.homeDir(), DshHost.PROFILE);
+      this.transient = null;
+      this.lastFailureNote = '';
+      return { ok: true, message: `已回滚到 ${target} 并已在运行（退回的版本：${decision.next.previous}）` };
+    } catch (e) {
+      this.transient = null;
+      this.handle = null;
+      this.lastFailureNote = `回滚后启动 ${target} 失败：${(e as Error).message}`;
+      return { ok: false, message: this.lastFailureNote };
+    }
+  }
+
+  /**
+   * 入口脚本刚写下的**本机启动链接**（含 token），用于核心重启后重新接入。
+   *
+   * 【为什么需要它】切换/回滚都会重启宿主，而 dsh **每个进程重新生成启动 token**
+   * （cookie 也是绑进程的）：旧 token 立刻作废。不重新取一次，界面会停在"刚切完就掉线"，
+   * 看上去像切换把连接弄坏了。取不到就返回空串——由调用方如实提示，不猜。
+   */
+  localHostReadyUrl(): string {
+    try {
+      const p: string = `${this.store.homeDir()}/host-ready.json`;
+      if (!fs.accessSync(p)) {
+        return '';
+      }
+      const parsed = JSON.parse(fs.readTextSync(p)) as HostReadyFile;
+      const url: string | undefined = parsed.url;
+      return typeof url === 'string' ? url : '';
+    } catch (e) {
+      return '';
     }
   }
 
