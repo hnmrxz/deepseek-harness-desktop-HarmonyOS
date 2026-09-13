@@ -93,6 +93,44 @@ napi_value RuntimeVersion(napi_env env, napi_callback_info info) {
  * 取"KEY=VALUE"字符串数组而不是两个平行数组：无需在两端各自维护下标对应关系，
  * 少一类"键值错位"的错法（键值错位会静默把 Host 指向错误的目录）。
  */
+std::thread g_tailThread;
+std::atomic<bool> g_tailStop{false};
+
+/**
+ * 把 Node 抓取文件里**新增**的内容实时转发到 hilog。
+ *
+ * 【为什么必须有它】原先只在 `node::Start` **返回**时才把捕获内容转 hilog，于是当 Node
+ * 一直跑着（这正是现在的状态：started=true 且 node::Start 不返回）时我们**完全瞎**——
+ * 不知道 Web 服务起没起来、卡在哪一步。有了 tail 线程，Node 活着也能看见它的输出。
+ */
+void TailNodeOutput(std::string path) {
+  long offset = 0;
+  while (!g_tailStop.load()) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    FILE* f = ::fopen(path.c_str(), "r");
+    if (f == nullptr) continue;
+    if (::fseek(f, offset, SEEK_SET) != 0) { ::fclose(f); continue; }
+    char buf[3000];
+    size_t n = ::fread(buf, 1, sizeof(buf) - 1, f);
+    ::fclose(f);
+    if (n == 0) continue;
+    offset += static_cast<long>(n);
+    buf[n] = '\0';
+    // 逐行打：单条 hilog 过长会被截断，行首的定位信息（例如 "dsh web:"）就没了
+    std::string all(buf);
+    size_t pos = 0;
+    while (pos < all.size()) {
+      size_t nl = all.find('\n', pos);
+      std::string line = all.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos);
+      if (!line.empty()) {
+        OH_LOG_Print(LOG_APP, LOG_INFO, 0x0000, "HDSH-NODELIVE", "%{public}s", line.c_str());
+      }
+      if (nl == std::string::npos) break;
+      pos = nl + 1;
+    }
+  }
+}
+
 napi_value StartHost(napi_env env, napi_callback_info info) {
   size_t argc = 2;
   napi_value args[2] = {nullptr, nullptr};
@@ -159,7 +197,13 @@ napi_value StartHost(napi_env env, napi_callback_info info) {
 
   g_started.store(true);
   g_running.store(true);
-  g_nodeThread = std::thread([]() {
+  // 抓取路径在**线程外**算好：Node 线程与 tail 线程都要用它
+  std::string logPath;
+  const char* homeEnv = ::getenv("HDSH_SANDBOX_HOME");
+  if (homeEnv != nullptr && homeEnv[0] != '\0') {
+    logPath = std::string(homeEnv) + "/node-output.log";
+  }
+  g_nodeThread = std::thread([logPath]() {
     /*
      * 把 Node 的 stdout/stderr 抓进一个文件。
      *
@@ -234,6 +278,12 @@ napi_value StartHost(napi_env env, napi_callback_info info) {
   // （Host 正常运行时它就是一直跑），所以这个线程在退出时**一定**是 joinable 的。
   // 不 join 的理由：join 会阻塞调用方直到 Host 结束，而 Host 按设计是要一直跑的。
   g_nodeThread.detach();
+  // 同时开一个 tail 线程：Node 活着的时候也能看见它的输出（见 TailNodeOutput 的说明）
+  if (!logPath.empty()) {
+    g_tailStop.store(false);
+    g_tailThread = std::thread(TailNodeOutput, logPath);
+    g_tailThread.detach();
+  }
 
   SetBool(env, out, "started", true);
   napi_value applied = nullptr;

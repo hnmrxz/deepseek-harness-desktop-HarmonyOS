@@ -153,6 +153,13 @@ export function buildHostEnv(coreDir: string, homeDir: string, sandboxHome: stri
     `HDSH_SANDBOX_HOME=${sandboxHome}`,
     `HDSH_PORT=${port}`,
     `HDSH_PROFILE=${profile}`,
+    // 【必须】关掉 libuv 的 io_uring。
+    // 真机崩溃日志（D6 E42）：`Reason:Signal:SIGSYS(SYS_SECCOMP) syscall number is 425`，
+    // 栈为 `uv_loop_init ← node::tracing::Agent::Agent() ← node::V8Platform::Initialize ← node::Start`。
+    // arm64 上系统调用号 425 就是 `io_uring_setup` —— libuv 1.52 在 loop 初始化时会尝试它，
+    // 而鸿蒙的 seccomp 策略**直接拒绝并杀掉进程**（不是返回错误码，是 SIGSYS）。
+    // libuv 支持用该环境变量禁用这条路径；这是端侧能起来的前提之一。
+    'UV_USE_IO_URING=0',
   ];
 }
 
