@@ -36,7 +36,7 @@ export enum PanelLocation {
 /**
  * 面板描述。
  *
- * `label`/`icon` 只给**默认值**：视图可以按设备改写呈现（四形态共享信息架构，
+ * `label` 只给**默认值**：视图可以按设备改写呈现（四形态共享信息架构，
  * 允许几何/呈现不同），但 `id`/`location`/`owner` 是语义，不能改。
  */
 export interface PanelDescriptor {
@@ -44,9 +44,16 @@ export interface PanelDescriptor {
   location: PanelLocation;
   /** 哪一部分拥有它（互斥组）：例如 SIDEBAR 下的 "workspace" 与 "settings" */
   owner: string;
+  /**
+   * 面板名（默认值；视图可按设备改写文案）。
+   *
+   * 【为什么没有 `icon`】图标是**编译期资源**（`$r('sys.symbol.…')` 只能字面量），
+   * 而模型不能持有 `Resource`。第一版这里放过一个字符串名字段，但它**没有任何消费者**
+   * （视图没法把字符串变 `$r`）——留着就是空 API，故删除。图标映射仍留在
+   * `appstate/ui` 的编译期函数里（如 `navTabSymbol`），P1 侧栏完全由注册表驱动时再补一张
+   * "面板 id → 符号"的编译期表。
+   */
   label: string;
-  /** 系统符号资源名（`$r('sys.symbol.…')` 的键名，交给视图解析；模型不持有 Resource） */
-  icon: string;
   order: number;
   /** 是否可用（默认 true）。不可用的面板不进选择集 */
   available: () => boolean;
@@ -192,12 +199,12 @@ export const PANEL_RIGHT_DELIVERABLES: string = 'right.deliverables';
 export function sidebarPanels(): PanelDescriptor[] {
   return [
     { id: PANEL_SIDEBAR_WORKSPACES, location: PanelLocation.SIDEBAR, owner: 'workspace',
-      label: '工作区', icon: 'sys.symbol.square_stack_3d', order: 10, available: () => true },
+      label: '工作区', order: 10, available: () => true },
     { id: PANEL_SIDEBAR_CORE, location: PanelLocation.SIDEBAR, owner: 'core',
-      label: '核心', icon: 'sys.symbol.wrench_and_screwdriver', order: 20, available: () => true },
+      label: '核心', order: 20, available: () => true },
     // order 很大 ⇒ 始终排在末尾（官方把 Settings 固定在底部）
     { id: PANEL_SIDEBAR_SETTINGS, location: PanelLocation.SIDEBAR, owner: 'settings',
-      label: '设置', icon: 'sys.symbol.gearshape', order: 900, available: () => true },
+      label: '设置', order: 900, available: () => true },
   ];
 }
 
@@ -210,17 +217,17 @@ export function sidebarPanels(): PanelDescriptor[] {
 export function rightbarPanels(): PanelDescriptor[] {
   return [
     { id: PANEL_RIGHT_FILES, location: PanelLocation.RIGHTBAR, owner: 'workspace',
-      label: '文件', icon: 'sys.symbol.folder', order: 10, available: () => true },
+      label: '文件', order: 10, available: () => true },
     { id: PANEL_RIGHT_TRAJECTORY, location: PanelLocation.RIGHTBAR, owner: 'conversation',
-      label: '轨迹', icon: 'sys.symbol.list_bullet', order: 20, available: () => true },
+      label: '轨迹', order: 20, available: () => true },
     { id: PANEL_RIGHT_TOOL, location: PanelLocation.RIGHTBAR, owner: 'conversation',
-      label: '工具', icon: 'sys.symbol.wrench_and_screwdriver', order: 30, available: () => true },
+      label: '工具', order: 30, available: () => true },
     { id: PANEL_RIGHT_SUBAGENT, location: PanelLocation.RIGHTBAR, owner: 'conversation',
-      label: '子代理', icon: 'sys.symbol.person_2', order: 40, available: () => true },
+      label: '子代理', order: 40, available: () => true },
     { id: PANEL_RIGHT_DELIVERABLES, location: PanelLocation.RIGHTBAR, owner: 'conversation',
-      label: '交付物', icon: 'sys.symbol.doc_text', order: 50, available: () => true },
+      label: '交付物', order: 50, available: () => true },
     { id: PANEL_RIGHT_PREVIEW, location: PanelLocation.RIGHTBAR, owner: 'workspace',
-      label: '预览', icon: 'sys.symbol.picture', order: 60, available: () => true },
+      label: '预览', order: 60, available: () => true },
   ];
 }
 

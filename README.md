@@ -149,8 +149,9 @@ hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 **进度**：纯逻辑层（`PanelRegistry` / `NavigationState` / `ShellTracks`，46 条断言）、**侧栏外壳**
 （`view/shell/SidebarShell.ets`：品牌行 / 面板清单 / 徽标 / 三种呈现）与**右栏外壳**
 （`view/shell/RightbarShell.ets`：面板本体 / 三种呈现）已完成；
+`@Provide/@Consume` 机制已在侧栏上真实验证（侧栏按面板注册表过滤入口）；
 `AppShell` / `MainShell` 与"`Index` 不再负责页面级 Pane 选择"仍待完成
-（瓶颈是状态归属：主区六个面板直接读 `Index` 的约 100 个 `@State`）。
+（机制已验 ⇒ 这一步现在可负担；⚠️ 运行时行为须真机确认，见 `docs/device-validation.md` D9）。
 
 理由：功能不少、页面还是不像官方，根因是**信息架构没落地**——框架错则间距、颜色、Markdown 全白做。
 故 Markdown 与视觉精修**排在框架之后**，而不是先做。

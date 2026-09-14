@@ -36,6 +36,9 @@ import {
   navTabLabelRes,
   navTabs,
   navTabSymbol,
+  PanelLocation,
+  PanelRegistry,
+  sidebarPanelIdOfTab,
   Radius,
   Sp,
   Sz,
@@ -61,10 +64,30 @@ export struct SidebarShell {
   /** 呈现方式（由 `ui/ShellTracks` 按形态算出；这里只映射几何） */
   @Prop presentation: TrackPresentation = TrackPresentation.PANEL;
 
+  /**
+   * 面板注册表（由 `Index` `@Provide`）。
+   *
+   * 【为什么侧栏需要它】"哪些入口可用"是**面板的属性**，不是页面的 if 分支
+   * （见 `model/PanelRegistry` 的说明）。侧栏据此过滤：不可用的面板不该占位置。
+   */
+  @Consume('panelRegistry') panelRegistry: PanelRegistry;
+
   onSelectTab: (tab: NavTab) => void = () => {
   };
   onOpenDiagnostics: () => void = () => {
   };
+
+  /** 当前**可用**的导航入口（按注册表过滤；不可用的面板不占位置） */
+  private visibleTabs(): NavTab[] {
+    const out: NavTab[] = [];
+    const all: NavTab[] = navTabs();
+    for (let i = 0; i < all.length; i++) {
+      if (this.panelRegistry.canSelect(PanelLocation.SIDEBAR, sidebarPanelIdOfTab(all[i]))) {
+        out.push(all[i]);
+      }
+    }
+    return out;
+  }
 
   /** 待决徽标挂在哪个页签上（官方把"待决"归到当前会话/工作区这一侧，不单列页签） */
   private badgeFor(tab: NavTab): string {
@@ -108,7 +131,7 @@ export struct SidebarShell {
         .width('100%')
         .padding({ left: Sp.M, top: Sp.M, bottom: Sp.S })
 
-      ForEach(navTabs(), (tab: NavTab) => {
+      ForEach(this.visibleTabs(), (tab: NavTab) => {
         Row({ space: Sp.M }) {
           SymbolGlyph(navTabSymbol(tab))
             .fontSize(HarmonyIconSize.NAV)
@@ -150,7 +173,7 @@ export struct SidebarShell {
   @Builder
   railBody() {
     Column({ space: Sp.S }) {
-      ForEach(navTabs(), (tab: NavTab) => {
+      ForEach(this.visibleTabs(), (tab: NavTab) => {
         Column() {
           Stack({ alignContent: Alignment.TopEnd }) {
             SymbolGlyph(navTabSymbol(tab))
@@ -185,7 +208,7 @@ export struct SidebarShell {
   @Builder
   tabsBody() {
     Row() {
-      ForEach(navTabs(), (tab: NavTab) => {
+      ForEach(this.visibleTabs(), (tab: NavTab) => {
         Column({ space: 2 }) {
           Stack({ alignContent: Alignment.TopEnd }) {
             SymbolGlyph(navTabSymbol(tab))

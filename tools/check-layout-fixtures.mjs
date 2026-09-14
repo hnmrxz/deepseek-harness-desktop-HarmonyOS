@@ -1213,7 +1213,7 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   const { PanelRegistry, PanelLocation, createPanelRegistry, sidebarPanels, rightbarPanels,
     PANEL_SIDEBAR_SETTINGS, PANEL_SIDEBAR_WORKSPACES, PANEL_RIGHT_FILES, PANEL_RIGHT_TRAJECTORY } = PR;
   const { initialNavigationState, mainPanels, mainPanelOfLegacyTab, legacyTabOfMainPanel,
-    navigateToMain, selectRightPanel, openSettings, openOverlay, closeOverlay, setDrawer,
+    navigateToMain, selectRightPanel, openSettings, openOverlay, closeOverlay, setDrawer, sidebarPanelIdOfTab,
     enterSession, defaultRightPanel, copyOf,
     Overlay, DrawerState, MAIN_CONVERSATION, MAIN_WORKSPACES, MAIN_SETTINGS, MAIN_CORE,
     SETTINGS_MODELS, SETTINGS_GENERAL } = NS;
@@ -1224,9 +1224,9 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   // ── 注册表：位置是面板的属性，不是页面的 if 分支 ──
   t.eq('三条轨道的面板都注册了', reg.size(), mainPanels().length + sidebarPanels().length + rightbarPanels().length);
   t.eq('重复 id 被拒绝（不静默覆盖）',
-    reg.register({ id: MAIN_CONVERSATION, location: PanelLocation.MAIN, owner: 'x', label: 'x', icon: 'i', order: 1, available: () => true }), false);
+    reg.register({ id: MAIN_CONVERSATION, location: PanelLocation.MAIN, owner: 'x', label: 'x', order: 1, available: () => true }), false);
   t.eq('空 id 被拒绝',
-    reg.register({ id: '', location: PanelLocation.MAIN, owner: 'x', label: 'x', icon: 'i', order: 1, available: () => true }), false);
+    reg.register({ id: '', location: PanelLocation.MAIN, owner: 'x', label: 'x', order: 1, available: () => true }), false);
 
   // 排序：order 升序；同序按 id 稳定排序（不依赖注册顺序）
   const side = reg.descriptors(PanelLocation.SIDEBAR).map((d) => d.id);
@@ -1238,8 +1238,8 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
 
   // 可用性：不可用的面板不进选择集
   const r2 = new PanelRegistry();
-  r2.register({ id: 'a', location: PanelLocation.RIGHTBAR, owner: 'o', label: 'a', icon: 'i', order: 20, available: () => false });
-  r2.register({ id: 'b', location: PanelLocation.RIGHTBAR, owner: 'o', label: 'b', icon: 'i', order: 10, available: () => true });
+  r2.register({ id: 'a', location: PanelLocation.RIGHTBAR, owner: 'o', label: 'a', order: 20, available: () => false });
+  r2.register({ id: 'b', location: PanelLocation.RIGHTBAR, owner: 'o', label: 'b', order: 10, available: () => true });
   t.eq('不可用的面板不进 descripors()', r2.descriptors(PanelLocation.RIGHTBAR).length, 1);
   t.eq('firstAvailable 跳过不可用的', r2.firstAvailable(PanelLocation.RIGHTBAR), 'b');
 
@@ -1305,6 +1305,12 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   t.eq('往返一致 workspaces', legacyTabOfMainPanel(mainPanelOfLegacyTab('workspaces')), 'workspaces');
   t.eq('往返一致 core', legacyTabOfMainPanel(mainPanelOfLegacyTab('core')), 'core');
   t.eq('往返一致 settings', legacyTabOfMainPanel(mainPanelOfLegacyTab('settings')), 'settings');
+
+  // 侧栏入口 → 面板 id（注册表管"能不能用"，NavTab 暂时管"长什么样"）
+  t.eq('工作区页签 → 侧栏工作区面板 id', sidebarPanelIdOfTab('workspaces'), 'sidebar.workspaces');
+  t.eq('设置页签 → 侧栏设置面板 id', sidebarPanelIdOfTab('settings'), 'sidebar.settings');
+  t.eq('三个页签的面板都在注册表里可用',
+    reg.canSelect('sidebar', 'sidebar.core') && reg.canSelect('sidebar', 'sidebar.settings'), true);
 
   // ── 四形态：信息架构不变，只变呈现 ──
   const single = shellTracksOf('single');

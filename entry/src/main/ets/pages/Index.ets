@@ -131,7 +131,10 @@ relativeTime,
   detailWidthOf,
   dragDetailWidth,
   flattenSources,
+  createPanelRegistry,
   guessFromKeyboardForm,
+  mainPanels,
+  PanelRegistry,
   shellTracksOf,
   TrackPresentation,
   modalityFromSources,
@@ -368,6 +371,17 @@ struct Index {
    *   ② 运行时事件证据（悬停过 ⇒ 有指针；这里只增不减）
    *   ③ 设备形态猜测（2in1/桌面模式，最弱的兜底，保证不比旧行为更差）
    */
+  /**
+   * 面板注册表（P0：三条轨道的面板清单与可用性的**唯一事实**）。
+   *
+   * 【为什么用 `@Provide` 而不是一路传 props】本轮把它 `@Provide` 出来、由 shell `@Consume`，
+   * 是 MainShell 迁移的**前置机制验证**：主区六个面板直接读本组件约 100 个 `@State`，
+   * 要把它们交给 shell，必须先确认这种"祖先提供、后代消费"的方式在本仓 ArkTS 里可用
+   * （`@Provide/@Consume` 在本仓**无先例**；`@BuilderParam` 曾导致真机 JS 崩溃，D4）。
+   * 先在最窄的一条轨道（侧栏）上用起来，再决定是否用于主区。
+   */
+  @Provide('panelRegistry') panelRegistry: PanelRegistry = createPanelRegistry(mainPanels());
+
   @State modality: InputModality = { hasKeyboard: false, hasPointer: false };
 
   /** 上面这次合成的**理由**（诊断用：说不出理由时，只能到真机上猜） */

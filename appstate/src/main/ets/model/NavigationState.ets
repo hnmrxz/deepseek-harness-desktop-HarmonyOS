@@ -140,17 +140,17 @@ export function copyOf(state: NavigationState): NavigationState {
 export function mainPanels(): PanelDescriptor[] {
   return [
     { id: MAIN_CONVERSATION, location: PanelLocation.MAIN, owner: 'conversation',
-      label: '会话', icon: 'sys.symbol.message', order: 10, available: () => true },
+      label: '会话', order: 10, available: () => true },
     { id: MAIN_WORKSPACES, location: PanelLocation.MAIN, owner: 'workspace',
-      label: '工作区', icon: 'sys.symbol.square_stack_3d', order: 20, available: () => true },
+      label: '工作区', order: 20, available: () => true },
     { id: MAIN_CORE, location: PanelLocation.MAIN, owner: 'core',
-      label: '核心', icon: 'sys.symbol.wrench_and_screwdriver', order: 30, available: () => true },
+      label: '核心', order: 30, available: () => true },
     { id: MAIN_SETTINGS, location: PanelLocation.MAIN, owner: 'settings',
-      label: '设置', icon: 'sys.symbol.gearshape', order: 40, available: () => true },
+      label: '设置', order: 40, available: () => true },
     { id: MAIN_DIAGNOSTICS, location: PanelLocation.MAIN, owner: 'diagnostics',
-      label: '诊断', icon: 'sys.symbol.exclamationmark_circle', order: 50, available: () => true },
+      label: '诊断', order: 50, available: () => true },
     { id: MAIN_CONNECT, location: PanelLocation.MAIN, owner: 'connect',
-      label: '连接', icon: 'sys.symbol.link', order: 60, available: () => true },
+      label: '连接', order: 60, available: () => true },
   ];
 }
 
@@ -187,6 +187,26 @@ export function mainPanelOfLegacyTab(tab: string): string {
   }
   // 未知取值回到会话（主区的默认面板），而不是空串——空串会让主区什么都不显示
   return MAIN_CONVERSATION;
+}
+
+/**
+ * 既有 `NavTab` → **侧栏面板 id**。
+ *
+ * 【为什么需要】侧栏要按 `PanelRegistry` 的**可用性**决定显示哪些入口（不可用的面板不该占位置），
+ * 而当前侧栏仍按 `NavTab` 取值渲染（面板各自的视图还没做，见 docs/ia-parity-plan.md 的 P1）。
+ * 这个映射就是两者之间的桥：注册表管"能不能用"，`NavTab` 暂时管"长什么样"。
+ */
+export function sidebarPanelIdOfTab(tab: string): string {
+  if (tab === 'workspaces') {
+    return 'sidebar.workspaces';
+  }
+  if (tab === 'core') {
+    return 'sidebar.core';
+  }
+  if (tab === 'settings') {
+    return 'sidebar.settings';
+  }
+  return 'sidebar.workspaces';
 }
 
 /** 主区面板 id → 既有的 `NavTab` 取值（供尚未迁移的调用点使用） */

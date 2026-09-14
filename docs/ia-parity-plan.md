@@ -61,7 +61,8 @@ AppFrame
 | `view/shell/SidebarShell.ets` | ✅ 已落地：**侧栏内容归它所有**（品牌行 / 面板清单 / 待决徽标 / 二级入口 / Settings 固定底部），三种呈现（PANEL / RAIL / 底部标签）都在它内部 |
 | `Index` 的三段侧栏 builder | ✅ 已改为委托（只保留"这条轨道的 surface"：宽度与底色） |
 | `view/shell/RightbarShell.ets` | ✅ 已落地：右栏**面板本体**归它所有（标题行 / 关闭入口 / sections / 宽度与底色），三种呈现（真右栏 / 侧边浅层面板 / Sheet）都在它内部 |
-| `AppShell` / `MainShell` | ❌ **下一步**（`Index` 目前仍直接负责页面级 Pane 选择） |
+| `@Provide/@Consume` 机制 | ✅ **已小范围验证并在真实用途上用起来**：`Index` `@Provide('panelRegistry')`、`SidebarShell` `@Consume` 并按注册表可用性过滤入口（编译通过）。⚠️ 运行时行为**必须真机确认**（`@BuilderParam` 编译通过但真机崩过，D4）⇒ 见 `docs/device-validation.md` **D9** |
+| `AppShell` / `MainShell` | ❌ **下一步**（`Index` 目前仍直接负责页面级 Pane 选择）。机制已验 ⇒ 这一步现在可负担 |
 
 **下一步的做法（写下来避免走偏）**
 
