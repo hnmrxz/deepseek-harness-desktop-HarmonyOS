@@ -237,7 +237,7 @@ devecocli build（全量）                                                     
 
 | Feature | Web 行为（官方实现） | Harmony 状态层 | Harmony 界面 | 协议/端点 | Phone | Tablet | PC | 2-in-1 | Status |
 |---|---|---|---|---|---|---|---|---|---|
-| `conversation` 会话装配/外壳/输入区/队列 | 目标中立的 Conversation 装配、shell、composer、队列、视图导航 | `SessionHub`：`sendPrompt` / `cancelTurn` / `removeQueuedItem` / `steerQueuedItem` / `editQueuedItem` / `selectSession` / `refreshTrajectoryByPage` | `view/ConversationPane.ets` + `view/Composer.ets` | `session/*`、`session/follow`（$events） | DONE | DONE | PARTIAL | PARTIAL | PARTIAL |
+| `conversation` 会话装配/外壳/输入区/队列 | 目标中立的 Conversation 装配、shell、composer、队列、视图导航 | **回合模型已落地**（`appstate/model/Turns.ets`：`groupTurns` / `hasProcessGroup` / `chatVisibleItems` / `processSummary` / `defaultExpanded`，纯函数 + 15 条断言）；**对话视图的可见集合已改由模型回答**（视图不再自写过滤规则） `SessionHub`：`sendPrompt` / `cancelTurn` / `removeQueuedItem` / `steerQueuedItem` / `editQueuedItem` / `selectSession` / `refreshTrajectoryByPage` | `view/ConversationPane.ets` + `view/Composer.ets` | `session/*`、`session/follow`（$events） | DONE | DONE | PARTIAL | PARTIAL | PARTIAL |
 | `chat` 对话目标与详情面 | Chat Conversation 目标、节点定义、渲染器、详情面 | `SessionHub.projectWireRecord`（D2 §8.7.7 的 32 种事件）、`model/Detail.ets` | `ConversationPane` + `view/DetailPane.ets` | 事件流 + `session/page` | DONE | DONE | DONE | DONE | DONE |
 | `trajectory` 轨迹台账与时间轴 | 轨迹事件台账 + **交互式时间总览**（timing overview） | `model/Trajectory.ets`（8 种 `TrajectoryKind`）、`model/Present.ets` | `ConversationPane` 轨迹区 | 事件流投影 | DONE | DONE | PARTIAL | PARTIAL | PARTIAL |
 | `tool` 工具调用树与每工具呈现 | 工具调用树渲染器 + 按工具键的呈现槽位 | `ConversationPane.toolItem` 的 `callId` 合卡、`ToolState` 五态、`Present.previewOutput` 截断 | `ConversationPane` 工具卡 | `tool/call`、`tool/result` | DONE | DONE | PARTIAL | PARTIAL | PARTIAL |
@@ -330,7 +330,7 @@ devecocli build（全量）                                                     
 | `primitives` | ① 原语已落 `NativeChip` / `NativeSectionTitle` / `NativeCard` / `NativeButton` / `NativeActionBar`（+Sheet 参数助手）；**弹层/Dialog/导航**仍未原语化 ② **浮层改原生只做了 2/6**：详情、枚举选择已改 `bindSheet`；`folderSheet` / `credentialSheet` / `textSettingSheet` / `structSettingSheet` 四个仍是"整屏 Column + 自制遮罩"的老形态（遮罩已换成系统语义色 `HarmonyColor.MASK`，但原生拖拽关闭/键盘避让仍缺）③ `deliverableItem` 的保存/分享是**禁用+写明原因**（平台无文件保存能力） ② `WEB_TOKEN_MAP` 目前是**文档化数据 + fixture 可校验**，但还没有"视图必须经映射取色"的强制门禁（现有棘轮只管裸 fontSize/圆角/描边/颜色字面量） | P1.5 已做：HarmonyTheme 语义层 + 前两个原语 + 两处接入（消息操作条、Composer 工具行）。下一步按 P1.5 清单推进（Surface/Button/Card/Popup/Sheet/Dialog/ActionBar/Navigation），每个原语都**当时就接一个真实消费者**，不落没人用的空构件 |
 | `slots` / `renderer` | 官方是 React + 槽位插件化渲染；ArkUI 无槽位系统，第三方不能贡献 UI | 架构边界：**不追平**，能力由"构建期装配 + 设置页开关"替代；本条登记以免被当作缺陷反复讨论 |
 | `session` | 无"会话作用域槽位"；控制器能力（`SessionHub`）已具备 | 不追平（同上）；控制器本身已 DONE |
-| `conversation` | ① 未建立 `Turn → ProcessGroup → Answer` 统一模型（计划 §8）② 已完成回合的折叠语义、tool-only 空节点过滤未确认 ③ PC/2-in-1 列随 `layout` 的缺口 | P1：Conversation 重构（先做模型，再改视图） |
+| `conversation` | ① **模型已建**（§8 的 Turn/ProcessGroup/Answer + 空分组规则 + 折叠默认态，15 条断言），但**视图仍是扁平列表**：`ConversationPane` 按条目分派渲染，尚未改成"按回合渲染 + 已完成回合可折叠" ② sticky-follow 仍与会话滚动耦合（§8 要求独立管理）③ PC/2-in-1 列随 `layout` 的缺口 | P1 已做：回合模型 + 对话视图可见集合改由模型回答。下一步：视图改按回合渲染（过程分组可折叠、进行中展开）| | P1：Conversation 重构（先做模型，再改视图） |
 | `trajectory` | 无交互式时间总览（timing overview）；无 inspector | P2：`TrajectoryPresenter` |
 | `tool` | 无按工具细分的呈现（terminal / read / write / diff / search / web / image 的差异化卡片） | P2：`ToolPresenter` |
 | `subagent` | 无续跑路由 UI；子代理不作为 `@` 引用源 | P2 |

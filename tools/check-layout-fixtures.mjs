@@ -38,7 +38,10 @@ const PURE_FILES = [
   'appstate/src/main/ets/ui/Tokens.ets',
   'appstate/src/main/ets/ui/Breakpoints.ets',
   'appstate/src/main/ets/ui/LayoutController.ets',
-  'appstate/src/main/ets/ui/NavigationController.ets'
+  'appstate/src/main/ets/ui/NavigationController.ets',
+  // 回合模型（§8）：纯逻辑，可在本机直接执行
+  'appstate/src/main/ets/model/Trajectory.ets',
+  'appstate/src/main/ets/model/Turns.ets'
 ];
 
 /** ArkUI 全局的声明补丁：Tokens.ets 用它取系统资源色/符号 */
@@ -161,6 +164,8 @@ const LC = require2('./LayoutController.js');
 
 const { decideLayout, decideLayoutWithDetail, concedeDetail, navWidthOf, ConcessionStep, MAIN_MIN_VP } = LC;
 const NC = require2('./NavigationController.js');
+const TM = require2('./Turns.js');
+const TJ = require2('./Trajectory.js');
 const t = makeAsserter(selfTest);
 
 console.log('# 布局 fixture 门禁（四形态 + 断点边界 + 让步链）\n');
@@ -365,6 +370,59 @@ console.log('\n## 导航：返回键的优先级阶梯（迁移前写在 Index.o
   t.eq('在设置页：假', showsConversation(nav({ hasSession: true, tab: 'settings' })), false);
   t.eq('一级页签顺序', navTabs(), ['workspaces', 'settings']);
   console.log('  ok    页签归一化 / 清栈 / 静态事实重读 / 会话可见性 全部断言');
+}
+
+console.log('\n## 回合模型（§8：Turn → ProcessGroup + Answer）');
+{
+  const { groupTurns, hasProcessGroup, chatVisibleItems, processSummary, defaultExpanded } = TM;
+  const { makeItem, TrajectoryKind, Speaker } = TJ;
+
+  // 造一个回合：user → (reasoning, tool) → assistant
+  const mk = (id, kind, speaker, extra) => {
+    const it = makeItem(id, kind, 0);
+    it.speaker = speaker;
+    if (extra) Object.assign(it, extra);
+    return it;
+  };
+  const u1 = mk('u1', TrajectoryKind.MESSAGE, Speaker.USER);
+  const r1 = mk('r1', TrajectoryKind.REASONING, Speaker.ASSISTANT);
+  const t1 = mk('t1', TrajectoryKind.TOOL, Speaker.ASSISTANT);
+  const a1 = mk('a1', TrajectoryKind.MESSAGE, Speaker.ASSISTANT);
+  const u2 = mk('u2', TrajectoryKind.MESSAGE, Speaker.USER);
+  const a2 = mk('a2', TrajectoryKind.MESSAGE, Speaker.ASSISTANT);
+  const err = mk('e1', TrajectoryKind.ERROR, Speaker.SYSTEM);
+
+  const turns = groupTurns([u1, r1, t1, a1, u2, a2, err], true);
+  t.eq('回合数 = 用户消息数', turns.length, 2);
+  t.eq('第 1 回合的过程条目数（思考+工具）', turns[0].process.length, 2);
+  t.eq('第 1 回合的回答是最后一条助手消息', turns[0].answer.id, 'a1');
+  t.eq('第 1 回合不再进行（后面还有回合）', turns[0].running, false);
+  t.eq('最后回合进行中（会话在跑）', turns[1].running, true);
+  t.eq('错误进 notices 而不是 process', turns[1].notices.length, 1);
+  t.eq('过程分组存在', hasProcessGroup(turns[0]), true);
+  t.eq('过程分组摘要按类型计数', processSummary(turns[0]), '思考 1 · 工具 1');
+  t.eq('进行中的回合默认展开', defaultExpanded(turns[1], false), true);
+  t.eq('已完成的回合默认折叠', defaultExpanded(turns[0], false), false);
+  t.eq('用户手动展开后优先', defaultExpanded(turns[0], true), true);
+
+  // 空过程 ⇒ 不建分组（§8「tool-only 空节点不显示」）
+  t.eq('没有过程条目时不建分组', hasProcessGroup(turns[1]), false);
+
+  // 对话视图的可见集合：用户消息 + 回答 + notices（错误要留），不含工具/思考
+  const chat = chatVisibleItems(turns).map((i) => i.id);
+  t.eq('对话视图可见集合', chat, ['u1', 'a1', 'u2', 'a2']);
+
+  // 首条用户消息之前的内容单独成回合
+  const pre = groupTurns([err, u1, a1], false);
+  t.eq('前置条目单独成回合', pre.length, 2);
+  t.eq('前置回合没有 user', pre[0].user === undefined, true);
+  t.eq('前置回合保留错误（notices）', pre[0].notices.length, 1);
+
+  // 流式中的回合即使中枢说停了也不该折叠
+  const streaming = mk('a3', TrajectoryKind.MESSAGE, Speaker.ASSISTANT, { streaming: true });
+  const st = groupTurns([u1, streaming], false);
+  t.eq('流式输出中的回合视为进行中', st[0].running, true);
+  console.log('  ok    分组边界 / 过程与回答归类 / notices / 空分组 / 折叠默认态 / 流式，共 15 条断言');
 }
 
 t.done();

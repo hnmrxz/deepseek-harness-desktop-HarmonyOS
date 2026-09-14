@@ -162,6 +162,16 @@ export {
 // ── 设计令牌 ──
 export { Border, Breakpoint, Dur, Fs, Lh, Radius, SemanticColor, Sp, Sz } from './ui/Tokens';
 
+// ── 回合模型（P1 §8：Turn → ProcessGroup + Answer；纯函数，可本机直接测） ──
+export {
+  chatVisibleItems,
+  defaultExpanded,
+  groupTurns,
+  hasProcessGroup,
+  processSummary
+} from './model/Turns';
+export type { Turn } from './model/Turns';
+
 // ── HarmonyTheme（P1.5：Web 语义 → HarmonyOS 视觉的映射层） ──
 export {
   harmonyTokenFor,

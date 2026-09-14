@@ -35,8 +35,10 @@ import {
   TrajectoryItem,
   TrajectoryKind,
   SessionHub,
+  chatVisibleItems,
   FEEDBACK_CATEGORIES,
   FeedbackRow,
+  groupTurns,
   Border
 } from 'appstate';
 /** 类型单独 import type（本仓约定：值与类型分开写） */
@@ -314,19 +316,15 @@ export struct ConversationPane {
     if (this.view === 'trajectory') {
       return this.items;
     }
-    const out: TrajectoryItem[] = [];
-    for (let i = 0; i < this.items.length; i++) {
-      const item: TrajectoryItem = this.items[i];
-      if (item.kind === TrajectoryKind.MESSAGE || item.kind === TrajectoryKind.ERROR) {
-        // 系统消息（系统提示词等内部上下文）不进对话视图：官方 web 也不显示，
-        // 它会让用户以为模型在自言自语（真机截图里出现过）。轨迹视图里仍可查。
-        if (item.speaker === Speaker.SYSTEM) {
-          continue;
-        }
-        out.push(item);
-      }
-    }
-    return out;
+    /*
+     * 对话视图的可见集合由**回合模型**回答（§8），不再由视图层自己写过滤规则。
+     *
+     * 【为什么必须搬走】此前这段逻辑里藏着两条判断："什么算对话内容"（只留消息与错误）
+     * 与"系统消息不显示"。换个视图（或换个入口）就得再答一次，而两处必然漂移。
+     * 现在它们与回合分组**同处一地**（`appstate/model/Turns.ets`），并有 15 条断言覆盖——
+     * 其中"错误必须留在对话视图"是 E134 的教训（它是"为什么没有回答"的唯一说明）。
+     */
+    return chatVisibleItems(groupTurns(this.items, this.running));
   }
 
   @Builder
