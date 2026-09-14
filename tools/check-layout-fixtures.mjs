@@ -43,7 +43,8 @@ const PURE_FILES = [
   'appstate/src/main/ets/model/Trajectory.ets',
   'appstate/src/main/ets/model/Turns.ets',
   'appstate/src/main/ets/model/Follow.ets',
-  'appstate/src/main/ets/model/InputPolicy.ets'
+  'appstate/src/main/ets/model/InputPolicy.ets',
+  'appstate/src/main/ets/model/ToolPresentation.ets'
 ];
 
 /** ArkUI 全局的声明补丁：Tokens.ets 用它取系统资源色/符号 */
@@ -169,6 +170,7 @@ const NC = require2('./NavigationController.js');
 const TM = require2('./Turns.js');
 const FM = require2('./Follow.js');
 const IP = require2('./InputPolicy.js');
+const TP = require2('./ToolPresentation.js');
 const TJ = require2('./Trajectory.js');
 const t = makeAsserter(selfTest);
 
@@ -457,6 +459,30 @@ console.log('\n## 输入模态策略（触控 / 鼠标 / 键盘同一套语义�
   t.eq('提示文案随模态变（纯触控）', contextMenuHintLabel(touch), '长按');
   t.eq('提示文案随模态变（有指针）', contextMenuHintLabel(desktop), '长按或右键');
   console.log('  ok    6 条断言：手势集合 / 悬停 / 菜单提示文案，按输入模态分别成立');
+}
+
+console.log('\n## 工具呈现（§11：按工具类别区分，而不是一视同仁）');
+{
+  const { toolKindOf, toolKindLabel, toolToneOf, toolDefaultExpanded, ToolKind } = TP;
+  // 用例取自**上游客户端渲染器实际出现的工具名键**（dsh-client-ui-tool/lib/client.js）
+  t.eq('bash → 终端', toolKindOf('bash'), ToolKind.TERMINAL);
+  t.eq('pwsh → 终端（大小写不敏感）', toolKindOf('Pwsh'), ToolKind.TERMINAL);
+  t.eq('read → 读取', toolKindOf('read'), ToolKind.READ);
+  t.eq('write → 写入', toolKindOf('write'), ToolKind.WRITE);
+  t.eq('str_replace → 编辑', toolKindOf('str_replace'), ToolKind.EDIT);
+  t.eq('grep → 搜索', toolKindOf('grep'), ToolKind.SEARCH);
+  t.eq('glob → 搜索', toolKindOf('glob'), ToolKind.SEARCH);
+  t.eq('web_search → 网络', toolKindOf('web_search'), ToolKind.WEB);
+  t.eq('ask_user_question → 提问', toolKindOf('ask_user_question'), ToolKind.ASK);
+  t.eq('未识别的名字 → 通用（不硬塞进某类）', toolKindOf('some_future_tool'), ToolKind.GENERIC);
+  t.eq('类别中文名', toolKindLabel(ToolKind.TERMINAL), '终端');
+  t.eq('运行中 → running 语气', toolToneOf(ToolKind.TERMINAL, 'running'), 'running');
+  t.eq('失败 → failed 语气', toolToneOf(ToolKind.READ, 'failed'), 'failed');
+  t.eq('被拒 → warning 语气', toolToneOf(ToolKind.WRITE, 'rejected'), 'warning');
+  t.eq('失败默认展开（§11 的展开规则）', toolDefaultExpanded('failed'), true);
+  t.eq('被拒默认展开', toolDefaultExpanded('rejected'), true);
+  t.eq('成功默认折叠（长会话不刷屏）', toolDefaultExpanded('success'), false);
+  console.log('  ok    17 条断言：10 个真实工具名归类 + 语气 + 展开规则');
 }
 
 t.done();

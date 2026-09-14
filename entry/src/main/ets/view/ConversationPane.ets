@@ -54,10 +54,12 @@ import {
   contextMenuGestures,
   contextMenuHintLabel,
   hoverEnabled,
-  MenuGesture
+  MenuGesture,
+  presentTool,
+  ToolKind
 } from 'appstate';
 /** 类型单独 import type（本仓约定：值与类型分开写） */
-import type { ActionNotice, FeedbackCategory, InputModality, Turn } from 'appstate';
+import type { ActionNotice, FeedbackCategory, InputModality, ToolPresentation, Turn } from 'appstate';
 import type { NativeAction } from './NativePrimitives';
 import { NativeActionBar, NativeCard, NativeChip } from './NativePrimitives';
 import { Composer } from './Composer';
@@ -1126,56 +1128,80 @@ export struct ConversationPane {
 
   @Builder
   toolItem(item: TrajectoryItem) {
-    // 卡片本体走 P1.5 的原语（NativeCard）：空间层级由它统一表达——
-    // 常规/成功无边框，运行中抬阴影，异常才画 alert 描边（边框在这里是信息）。
+    // 卡片本体走 P1.5 的原语（NativeCard）；**工具类别**由 `ToolPresenter` 判定
+    // （纯模型 + 17 条断言）：图标、语气、展开默认态、无障碍文案都不再由视图各自猜。
     NativeCard({
-      iconSymbol: $r('sys.symbol.wrench_and_screwdriver'),
+      iconSymbol: this.toolIcon(presentTool(item, toolStateLabel(item.toolState)).kind),
       title: item.toolName,
-      badge: toolStateLabel(item.toolState),
-      tone: this.toolTone(item.toolState),
+      badge: this.toolBadge(item),
+      tone: presentTool(item, toolStateLabel(item.toolState)).tone,
       meta: item.elapsedMs > 0
         ? (this.clockOf(item.at).length > 0
           ? `${this.clockOf(item.at)} · ${formatDuration(item.elapsedMs)}`
           : formatDuration(item.elapsedMs))
         : '',
       summary: item.toolArgs,
-      bodyText: (this.isExpanded(item.id) || toolStateIsProblem(item.toolState))
+      bodyText: (this.isExpanded(item.id)
+        || presentTool(item, toolStateLabel(item.toolState)).defaultExpanded)
         ? previewOutput(item.toolOutput).shown
         : '',
       bodyTruncatedHint: previewOutput(item.toolOutput).truncated
         ? `▸ 查看完整输出（共 ${previewOutput(item.toolOutput).totalLength} 字符）`
         : '',
       collapsedHint: item.toolOutput.length > 0 ? '▸ 查看结果' : '',
-      expanded: this.isExpanded(item.id) || toolStateIsProblem(item.toolState),
-      a11y: `工具 ${item.toolName}，状态 ${toolStateLabel(item.toolState)}`,
+      expanded: this.isExpanded(item.id)
+        || presentTool(item, toolStateLabel(item.toolState)).defaultExpanded,
+      a11y: presentTool(item, toolStateLabel(item.toolState)).a11y,
       onToggle: () => {
         this.toggle(item.id);
       }
     })
   }
 
-  /**
-   * 工具状态 → 卡片语气。
-   *
-   * 语气决定**层次怎么表达**（阴影/强调色/是否描边），具体色值由原语按语气取——
-   * 两者分开的理由：混在一起后，"运行中要不要抬阴影"这种设计问题就没地方回答了。
-   * （原 `toolColor` 取色函数随之内联进原语，已删除；此处不再引用它。）
-   */
-  private toolTone(state: ToolState): string {
-    if (state === ToolState.RUNNING) {
-      return 'running';
-    }
-    if (state === ToolState.SUCCESS) {
-      return 'success';
-    }
-    if (state === ToolState.FAILED) {
-      return 'failed';
-    }
-    if (state === ToolState.REJECTED) {
-      return 'warning';
-    }
-    return 'neutral';
+  /** 徽标：非通用类别时带上类别名（"读取 · 成功"比单说"成功"有用） */
+  private toolBadge(item: TrajectoryItem): string {
+    const p: ToolPresentation = presentTool(item, toolStateLabel(item.toolState));
+    const state: string = toolStateLabel(item.toolState);
+    return p.kind === ToolKind.GENERIC ? state : `${p.kindLabel} · ${state}`;
   }
+
+  /**
+   * 类别 → 系统符号。
+   *
+   * 【符号名不是猜的】每个名字都用编译器验过（不存在会 `Unknown resource name`）——
+   * 例如 `terminal`/`globe`/`photo`/`pencil` 在本 SDK **都不存在**，实测后改用 `code`/`link`/`picture`/`pencil_line`。
+   *
+   * 【为什么图标映射留在视图层】`$r(...)` 是 ArkUI 资源引用，模型层（appstate）刻意不认识它——
+   * 那条边界让模型可以在本机直接执行。所以"哪一类画哪个图标"是视图的决定，类别判定才是模型的。
+   */
+  private toolIcon(kind: ToolKind): Resource {
+    if (kind === ToolKind.TERMINAL) {
+      return $r('sys.symbol.code');
+    }
+    if (kind === ToolKind.READ) {
+      return $r('sys.symbol.doc_text');
+    }
+    if (kind === ToolKind.WRITE) {
+      return $r('sys.symbol.square_and_pencil');
+    }
+    if (kind === ToolKind.EDIT) {
+      return $r('sys.symbol.pencil_line');
+    }
+    if (kind === ToolKind.SEARCH) {
+      return $r('sys.symbol.magnifyingglass');
+    }
+    if (kind === ToolKind.WEB) {
+      return $r('sys.symbol.link');
+    }
+    if (kind === ToolKind.IMAGE) {
+      return $r('sys.symbol.picture');
+    }
+    if (kind === ToolKind.ASK) {
+      return $r('sys.symbol.questionmark_circle');
+    }
+    return $r('sys.symbol.wrench_and_screwdriver');
+  }
+
 
   @Builder
   subagentItem(item: TrajectoryItem) {

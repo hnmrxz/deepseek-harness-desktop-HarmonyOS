@@ -162,6 +162,10 @@ export {
 // ── 设计令牌 ──
 export { Border, Breakpoint, Dur, Fs, Lh, Radius, SemanticColor, Sp, Sz } from './ui/Tokens';
 
+// ── 工具呈现（P2 §11：按工具类别区分呈现；纯函数，可本机直接测） ──
+export { presentTool, toolA11y, toolDefaultExpanded, ToolKind, toolKindLabel, toolKindOf, toolToneOf } from './model/ToolPresentation';
+export type { ToolPresentation } from './model/ToolPresentation';
+
 // ── 输入模态策略（P1/P3：触控+鼠标+键盘同一套语义；纯函数，可本机直接测） ──
 export { contextMenuGestures, contextMenuHintLabel, hoverEnabled, MenuGesture } from './model/InputPolicy';
 export type { InputModality } from './model/InputPolicy';
