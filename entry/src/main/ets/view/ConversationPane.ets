@@ -41,7 +41,7 @@ import {
 } from 'appstate';
 /** 类型单独 import type（本仓约定：值与类型分开写） */
 import type { ActionNotice, FeedbackCategory } from 'appstate';
-import { NativeChip } from './NativePrimitives';
+import { NativeCard, NativeChip } from './NativePrimitives';
 import { Composer } from './Composer';
 import { PendingPane } from './PendingPane';
 
@@ -853,114 +853,72 @@ export struct ConversationPane {
 
   @Builder
   toolItem(item: TrajectoryItem) {
-    Column({ space: Sp.XS }) {
-      Row({ space: Sp.S }) {
-        SymbolGlyph($r('sys.symbol.wrench_and_screwdriver'))
-          .fontSize(14)
-          .fontColor([this.toolColor(item.toolState)])
-        Text(item.toolName)
-          .fontSize(Fs.SECONDARY)
-          .fontWeight(FontWeight.Medium)
-          .layoutWeight(1)
-        Text(toolStateLabel(item.toolState))
-          .fontSize(Fs.CAPTION)
-          .fontColor(this.toolColor(item.toolState))
-        if (item.elapsedMs > 0) {
-          // E204：钟点 + 时长并列（官方"实际时间"的信息，不额外做开关）
-          Text(this.clockOf(item.at).length > 0
-            ? `${this.clockOf(item.at)} · ${formatDuration(item.elapsedMs)}`
-            : formatDuration(item.elapsedMs))
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_tertiary'))
-        }
+    // 卡片本体走 P1.5 的原语（NativeCard）：空间层级由它统一表达——
+    // 常规/成功无边框，运行中抬阴影，异常才画 alert 描边（边框在这里是信息）。
+    NativeCard({
+      iconSymbol: $r('sys.symbol.wrench_and_screwdriver'),
+      title: item.toolName,
+      badge: toolStateLabel(item.toolState),
+      tone: this.toolTone(item.toolState),
+      meta: item.elapsedMs > 0
+        ? (this.clockOf(item.at).length > 0
+          ? `${this.clockOf(item.at)} · ${formatDuration(item.elapsedMs)}`
+          : formatDuration(item.elapsedMs))
+        : '',
+      summary: item.toolArgs,
+      bodyText: (this.isExpanded(item.id) || toolStateIsProblem(item.toolState))
+        ? previewOutput(item.toolOutput).shown
+        : '',
+      bodyTruncatedHint: previewOutput(item.toolOutput).truncated
+        ? `▸ 查看完整输出（共 ${previewOutput(item.toolOutput).totalLength} 字符）`
+        : '',
+      collapsedHint: item.toolOutput.length > 0 ? '▸ 查看结果' : '',
+      expanded: this.isExpanded(item.id) || toolStateIsProblem(item.toolState),
+      a11y: `工具 ${item.toolName}，状态 ${toolStateLabel(item.toolState)}`,
+      onToggle: () => {
+        this.toggle(item.id);
       }
-      .width('100%')
-
-      if (item.toolArgs.length > 0) {
-        Text(item.toolArgs)
-          .fontSize(Fs.CAPTION)
-          .fontFamily('monospace')
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-      }
-
-      if (item.toolOutput.length > 0) {
-        if (this.isExpanded(item.id) || toolStateIsProblem(item.toolState)) {
-          this.outputBlock(item)
-        } else {
-          Text('▸ 查看结果')
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.brand'))
-            .onClick(() => {
-              this.toggle(item.id);
-            })
-        }
-      }
-    }
-    .width('100%')
-    .padding(Sp.M)
-    .borderRadius(Radius.M)
-    .backgroundColor($r('sys.color.background_secondary'))
-    .borderWidth(Border.HAIRLINE)
-    .borderColor(toolStateIsProblem(item.toolState) ? $r('sys.color.alert') : $r('sys.color.comp_divider'))
-    .accessibilityText(`工具 ${item.toolName}，状态 ${toolStateLabel(item.toolState)}`)
+    })
   }
 
-  @Builder
-  outputBlock(item: TrajectoryItem) {
-    Column({ space: Sp.XS }) {
-      Text(previewOutput(item.toolOutput).shown)
-        .fontSize(Fs.CAPTION)
-        .fontFamily('monospace')
-        .width('100%')
-        .textAlign(TextAlign.Start)
-        .copyOption(CopyOptions.LocalDevice)
-      if (previewOutput(item.toolOutput).truncated) {
-        Text(`▸ 查看完整输出（共 ${previewOutput(item.toolOutput).totalLength} 字符）`)
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.brand'))
-      }
+  /**
+   * 工具状态 → 卡片语气。
+   *
+   * 语气决定**层次怎么表达**（阴影/强调色/是否描边），具体色值由原语按语气取——
+   * 两者分开的理由：混在一起后，"运行中要不要抬阴影"这种设计问题就没地方回答了。
+   * （原 `toolColor` 取色函数随之内联进原语，已删除；此处不再引用它。）
+   */
+  private toolTone(state: ToolState): string {
+    if (state === ToolState.RUNNING) {
+      return 'running';
     }
-    .width('100%')
-    .padding(Sp.S)
-    .borderRadius(Radius.S)
-    .backgroundColor($r('sys.color.background_primary'))
+    if (state === ToolState.SUCCESS) {
+      return 'success';
+    }
+    if (state === ToolState.FAILED) {
+      return 'failed';
+    }
+    if (state === ToolState.REJECTED) {
+      return 'warning';
+    }
+    return 'neutral';
   }
 
   @Builder
   subagentItem(item: TrajectoryItem) {
-    Column({ space: Sp.XS }) {
-      Row({ space: Sp.S }) {
-        SymbolGlyph($r('sys.symbol.person_2'))
-          .fontSize(14)
-          .fontColor([$r('sys.color.brand')])
-        Text(`子代理 ${item.subagentName}`)
-          .fontSize(Fs.SECONDARY)
-          .fontWeight(FontWeight.Medium)
-          .layoutWeight(1)
-        if (item.elapsedMs > 0) {
-          // E204：钟点 + 时长并列（官方"实际时间"的信息，不额外做开关）
-          Text(this.clockOf(item.at).length > 0
-            ? `${this.clockOf(item.at)} · ${formatDuration(item.elapsedMs)}`
-            : formatDuration(item.elapsedMs))
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_tertiary'))
-        }
-      }
-      .width('100%')
-      Text(item.body)
-        .fontSize(Fs.SECONDARY)
-        .fontColor($r('sys.color.font_secondary'))
-        .width('100%')
-        .textAlign(TextAlign.Start)
-    }
-    .width('100%')
-    .padding(Sp.M)
-    .borderRadius(Radius.M)
-    .borderWidth(Border.HAIRLINE)
-    .borderColor($r('sys.color.comp_divider'))
-    .accessibilityText(`子代理 ${item.subagentName}`)
+    NativeCard({
+      iconSymbol: $r('sys.symbol.person_2'),
+      title: `子代理 ${item.subagentName}`,
+      tone: 'brand',
+      meta: item.elapsedMs > 0
+        ? (this.clockOf(item.at).length > 0
+          ? `${this.clockOf(item.at)} · ${formatDuration(item.elapsedMs)}`
+          : formatDuration(item.elapsedMs))
+        : '',
+      bodyText: item.body,
+      expanded: true,
+      a11y: `子代理 ${item.subagentName}`
+    })
   }
 
   @Builder
@@ -998,38 +956,17 @@ export struct ConversationPane {
 
   @Builder
   goalItem(item: TrajectoryItem) {
-    Column({ space: Sp.XS }) {
-      Row({ space: Sp.S }) {
-        SymbolGlyph(item.kind === TrajectoryKind.GOAL
-          ? $r('sys.symbol.checkmark_circle')
-          : $r('sys.symbol.list_bullet'))
-          .fontSize(14)
-          .fontColor([$r('sys.color.brand')])
-        Text(item.title)
-          .fontSize(Fs.SECONDARY)
-          .fontWeight(FontWeight.Medium)
-          .layoutWeight(1)
-        Text(item.kind === TrajectoryKind.GOAL ? '目标' : '任务')
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
-      }
-      .width('100%')
-
-      if (item.percent >= 0) {
-        Progress({ value: item.percent, total: 100, type: ProgressType.Linear })
-          .width('100%')
-      }
-
-      Text(item.progress)
-        .fontSize(Fs.CAPTION)
-        .fontColor($r('sys.color.font_tertiary'))
-        .width('100%')
-    }
-    .width('100%')
-    .padding(Sp.M)
-    .borderRadius(Radius.M)
-    .borderWidth(Border.HAIRLINE)
-    .borderColor($r('sys.color.comp_divider'))
+    NativeCard({
+      iconSymbol: item.kind === TrajectoryKind.GOAL
+        ? $r('sys.symbol.checkmark_circle')
+        : $r('sys.symbol.list_bullet'),
+      title: item.title,
+      badge: item.kind === TrajectoryKind.GOAL ? '目标' : '任务',
+      tone: 'brand',
+      summary: item.progress,
+      progress: item.percent,
+      a11y: `${item.kind === TrajectoryKind.GOAL ? '目标' : '任务'} ${item.title}`
+    })
   }
 
   @Builder
@@ -1087,23 +1024,7 @@ export struct ConversationPane {
     this.expanded = out;
   }
 
-  private toolColor(state: ToolState): ResourceColor {
-    if (state === ToolState.SUCCESS) {
-      return $r('sys.color.confirm');
-    }
-    if (state === ToolState.FAILED) {
-      return $r('sys.color.alert');
-    }
-    if (state === ToolState.REJECTED) {
-      return $r('sys.color.warning');
-    }
-    if (state === ToolState.RUNNING) {
-      return $r('sys.color.brand');
-    }
-    return $r('sys.color.font_tertiary');
-  }
 
-  /** 无障碍朗读文本（D3 §7） */
   private speakableText(item: TrajectoryItem): string {
     const who: string = item.speaker === Speaker.USER ? '我说' : '助手回复';
     const head: string = item.body.length > 60 ? `${item.body.substring(0, 60)}…` : item.body;

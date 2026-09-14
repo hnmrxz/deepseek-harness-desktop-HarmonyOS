@@ -19,7 +19,18 @@
  * 不在构件里写 `if (设备是手机)`——设备差异属于布局层（`LayoutController`）与输入层（P3）。
  */
 
-import { HarmonyColor, HarmonyMotion, HarmonyRadius, HarmonySpacing, HarmonyTouch, HarmonyType } from 'appstate';
+import type { ShadowLevel } from 'appstate';
+import {
+  HarmonyBorder,
+  HarmonyColor,
+  HarmonyElevation,
+  HarmonyIconSize,
+  HarmonyMotion,
+  HarmonyRadius,
+  HarmonySpacing,
+  HarmonyTouch,
+  HarmonyType
+} from 'appstate';
 
 /**
  * 轻量标签/操作构件（官方 Web 叫 chip，鸿蒙侧就用原生观感表达）。
@@ -143,4 +154,171 @@ export function harmonySheetOptions(onGone: () => void, height: SheetSize = Shee
     }
   };
   return options;
+}
+
+
+/**
+ * 原生卡片：会话里的"一类事件"（工具调用 / 子代理 / 交付物 / 目标 / 任务）统一用它表达。
+ *
+ * ## 为什么是**参数驱动**而不是"通用容器 + 内容注入"
+ *
+ * ArkUI 里给容器注入内容的常规做法是 `@BuilderParam`（尾随闭包）。但本项目在真机上踩过
+ * 「`@BuilderParam` 注入父 Builder → 展开该区块时 JS 崩溃」（D4 记载，SettingsPane 因此改成直传属性）。
+ * 在**没有真机可验**的阶段，把一个已知会崩的机制铺到会话主视图上是不负责任的。
+ * 而这几类卡片的结构其实**高度同构**（图标 + 名称 + 状态 + 次要信息 + 摘要 + 可折叠结果），
+ * 于是参数驱动反而得到更清晰的 API：调用方只说"是什么"，不再各写一遍内距/圆角/边框。
+ *
+ * ## 空间层级（而不是网页卡片堆叠）
+ *
+ * 鸿蒙侧的层次靠**材质与微阴影**表达，不靠"画一圈边框"。因此：
+ *   · 常规/成功：无边框，仅一层浅底 + FLAT 阴影；
+ *   · 运行中：品牌色做小面积强调（图标+状态字），并把阴影抬到 RAISED——"正在进行"靠**动势**而不是靠边框；
+ *   · 失败/被拒：保留 alert 描边——这是**例外状态**，值得被一眼看到，边框在这里是有信息的。
+ * 边框从"每张卡都画"变成"只在异常时出现"，卡片堆叠的噪声就降下来了。
+ */
+@Component
+export struct NativeCard {
+  /** 图标（系统符号；调用方按事件类型给） */
+  @Prop iconSymbol: Resource = $r('sys.symbol.circle');
+  /** 名称（工具名 / 子代理名 / 文件名） */
+  @Prop title: string = '';
+  /** 状态徽标文字（运行中 / 成功 / 失败 / 被拒…） */
+  @Prop badge: string = '';
+  /** 语气：neutral | running | success | failed | warning */
+  @Prop tone: string = 'neutral';
+  /** 次要信息（钟点 · 时长 / 大小 / 路径） */
+  @Prop meta: string = '';
+  /** 参数摘要（等宽单行，超出省略） */
+  @Prop summary: string = '';
+  /** 结果正文（已由调用方截断/预览；空串表示没有结果） */
+  @Prop bodyText: string = '';
+  /** 结果被截断时的提示（如「查看完整输出（共 N 字符）」） */
+  @Prop bodyTruncatedHint: string = '';
+  /** 折叠时显示的入口文案（如「▸ 查看结果」） */
+  @Prop collapsedHint: string = '';
+  /** 是否展开结果 */
+  @Prop expanded: boolean = false;
+  /** 进度百分比（0–100；负数 = 不显示进度条）——目标/任务卡用 */
+  @Prop progress: number = -1;
+  /** 无障碍的一段话（调用方给"这是什么、什么状态"） */
+  @Prop a11y: string = '';
+
+  onToggle: () => void = () => {
+  };
+
+  private accent(): Resource {
+    if (this.tone === 'failed') {
+      return HarmonyColor.ALERT;
+    }
+    if (this.tone === 'warning') {
+      return HarmonyColor.WARNING;
+    }
+    if (this.tone === 'success') {
+      return HarmonyColor.CONFIRM;
+    }
+    if (this.tone === 'running') {
+      return HarmonyColor.BRAND;
+    }
+    return HarmonyColor.TEXT_SECONDARY;
+  }
+
+  /** 只有"异常"才画描边（边框在这里是信息，不是装饰） */
+  private borderRes(): Resource | undefined {
+    if (this.tone === 'failed') {
+      return HarmonyColor.ALERT;
+    }
+    return undefined;
+  }
+
+  private shadowOf(): ShadowLevel {
+    if (this.tone === 'running') {
+      return HarmonyElevation.RAISED;
+    }
+    return HarmonyElevation.FLAT;
+  }
+
+  build() {
+    Column({ space: HarmonySpacing.INLINE }) {
+      Row({ space: HarmonySpacing.CONTROL_INNER }) {
+        SymbolGlyph(this.iconSymbol)
+          .fontSize(HarmonyIconSize.INLINE)
+          .fontColor([this.accent()])
+        Text(this.title)
+          .fontSize(HarmonyType.CAPTION.size)
+          .fontWeight(HarmonyType.CAPTION.weight + 100)
+          .fontColor(HarmonyColor.TEXT_PRIMARY)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .layoutWeight(1)
+        if (this.badge.length > 0) {
+          Text(this.badge)
+            .fontSize(HarmonyType.LABEL.size)
+            .fontColor(this.accent())
+        }
+        if (this.meta.length > 0) {
+          Text(this.meta)
+            .fontSize(HarmonyType.LABEL.size)
+            .fontColor(HarmonyColor.TEXT_TERTIARY)
+            .maxLines(1)
+        }
+      }
+      .width('100%')
+
+      if (this.progress >= 0) {
+        Progress({ value: this.progress, total: 100, type: ProgressType.Linear })
+          .width('100%')
+      }
+
+      if (this.summary.length > 0) {
+        Text(this.summary)
+          .fontSize(HarmonyType.LABEL.size)
+          .fontFamily('monospace')
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+      }
+
+      if (this.bodyText.length > 0) {
+        if (this.expanded) {
+          Column({ space: HarmonySpacing.INLINE }) {
+            Text(this.bodyText)
+              .fontSize(HarmonyType.LABEL.size)
+              .fontFamily('monospace')
+              .width('100%')
+              .textAlign(TextAlign.Start)
+              .copyOption(CopyOptions.LocalDevice)
+            if (this.bodyTruncatedHint.length > 0) {
+              Text(this.bodyTruncatedHint)
+                .fontSize(HarmonyType.LABEL.size)
+                .fontColor(HarmonyColor.BRAND)
+            }
+          }
+          .width('100%')
+          .padding(HarmonySpacing.CONTROL_INNER)
+          .borderRadius(HarmonyRadius.CONTROL)
+          .backgroundColor(HarmonyColor.SURFACE)
+        } else if (this.collapsedHint.length > 0) {
+          Text(this.collapsedHint)
+            .fontSize(HarmonyType.LABEL.size)
+            .fontColor(HarmonyColor.BRAND)
+            .onClick(() => {
+              this.onToggle();
+            })
+        }
+      }
+    }
+    .width('100%')
+    .padding(HarmonySpacing.CONTAINER)
+    .borderRadius(HarmonyRadius.SURFACE)
+    .backgroundColor(HarmonyColor.SURFACE_RAISED)
+    .borderWidth(this.borderRes() === undefined ? 0 : HarmonyBorder.HAIRLINE)
+    .borderColor(this.borderRes() === undefined ? HarmonyColor.SURFACE_RAISED : this.borderRes())
+    .shadow({
+      radius: this.shadowOf().radius,
+      color: HarmonyColor.SURFACE,
+      offsetY: this.shadowOf().offsetY
+    })
+    .animation({ duration: HarmonyMotion.TRANSITION })
+    .accessibilityText(this.a11y.length > 0 ? this.a11y : `${this.title}，${this.badge}`)
+  }
 }
