@@ -37,9 +37,11 @@ import {
   pickFolder,
   localizedOr,
   readDeviceFacts,
-  themeModeOf
+  readInputSources,
+  themeModeOf,
+  watchInputSources
 } from 'platform';
-import type { NotifyRoute, PickedFile, PickedFolder } from 'platform';
+import type { InputSourceReading, NotifyRoute, PickedFile, PickedFolder } from 'platform';
 import { common } from '@kit.AbilityKit';
 import {
   APPROVAL_CHOICE_ALLOW_ALWAYS,
@@ -121,7 +123,13 @@ relativeTime,
   WorkspaceRow,
   SkillRow,
   AgentPresetRow,
-  ActionNotice
+  ActionNotice,
+  flattenSources,
+  guessFromKeyboardForm,
+  modalityFromSources,
+  modalityOf,
+  modalityTrace,
+  unionModality,
 } from 'appstate';
 /**
  * 类型单独用 `import type` 引入。
@@ -131,6 +139,8 @@ relativeTime,
  */
 import type {
   AttachOutcome,
+  InputModality,
+  ModalityEvidence,
   NavState,
   OverlayState,
   TabSelection,
@@ -327,14 +337,34 @@ struct Index {
   @State detailSheetOpen: boolean = false;
 
   /**
-   * 是否有指针设备（鼠标/触控笔）。
+   * 输入模态事实（**合成结果**：键盘 / 指针各一个布尔）。
    *
-   * 【为什么用 `keyboardLikely` 作代理】`DeviceFacts` 目前只给出"键鼠形态"这一个综合事实
-   * （2in1/桌面模式为真）。**不编一个新的系统探测**：等 P3 细分指针/触控时，
-   * 在这里改成读更精确的事实即可（`InputPolicy` 已经按 hasKeyboard/hasPointer 两个维度写好，
-   * 届时只换事实来源，不动策略）。
+   * 【为什么不再用一个布尔】此前这里是 `hasPointerInput = keyboardLikely`，并把它**同时**
+   * 当作 hasPointer 与 hasKeyboard 传下去，于是手机插鼠标、平板配触控笔都画不出 hover 与右键，
+   * 而 2in1 拆掉键盘后仍被当成有键盘。两个事实各有消费点（`InputPolicy.hoverEnabled` /
+   * `contextMenuGestures`），必须分开。
+   *
+   * 【事实从哪来（优先级见 appstate/model/InputFacts）】
+   *   ① 系统枚举的输入设备（`platform/system/InputDevices`，可增可减）
+   *   ② 运行时事件证据（悬停过 ⇒ 有指针；这里只增不减）
+   *   ③ 设备形态猜测（2in1/桌面模式，最弱的兜底，保证不比旧行为更差）
    */
-  @State hasPointerInput: boolean = false;
+  @State modality: InputModality = { hasKeyboard: false, hasPointer: false };
+
+  /** 上面这次合成的**理由**（诊断用：说不出理由时，只能到真机上猜） */
+  @State modalityNote: string = '';
+
+  /** 系统枚举到的输入设备；`null` = 枚举不可用 ⇒ 退回形态猜测（与"当前没有设备"是两件事） */
+  private enumeratedModality: InputModality | null = null;
+
+  /** 运行时事件证据（只增不减） */
+  private observedModality: InputModality = { hasKeyboard: false, hasPointer: false };
+
+  /** 设备形态猜测（最弱兜底） */
+  private formGuessModality: InputModality = { hasKeyboard: false, hasPointer: false };
+
+  /** 取消设备热插拔监听（页面销毁时调用） */
+  private unwatchInput: (() => void) | undefined = undefined;
 
   // ── 数据（当前来自桩数据源） ──
   @State sessions: SessionListItem[] = [];
@@ -793,8 +823,17 @@ struct Index {
   }
 
   aboutToAppear(): void {
-    // 设备事实读一次：它决定右键/悬停是否启用（不参与布局决策——布局只看窗口宽度）
-    this.hasPointerInput = readDeviceFacts().keyboardLikely;
+    // 设备形态只给**最弱的兜底猜测**；真实事实来自系统枚举（下面异步取回），
+    // 三者按优先级合成（appstate/model/InputFacts，37 条断言）。它决定右键/悬停是否启用。
+    this.formGuessModality = guessFromKeyboardForm(readDeviceFacts().keyboardLikely);
+    this.recomputeModality();
+    readInputSources().then((sources: InputSourceReading) => {
+      this.applyInputSources(sources);
+    });
+    // 热插拔：运行中插上鼠标/键盘要立刻生效（"手机/平板当工作台用"的常见动作）
+    this.unwatchInput = watchInputSources((sources: InputSourceReading) => {
+      this.applyInputSources(sources);
+    });
     // 初始值 = 空态。所有真实数据都在 `applyHubSnapshot` 到达时落地；
     // 连接建立前界面显示的是各视图自己的空态文案（D3 §4），而不是编造的示例数据。
     this.diag = emptyDiagReport();
@@ -1208,6 +1247,10 @@ struct Index {
 
   aboutToDisappear(): void {
     this.unwatchWindowSize();
+    if (this.unwatchInput !== undefined) {
+      this.unwatchInput();
+      this.unwatchInput = undefined;
+    }
     // 只退订本窗口；**不得**在此断开连接——关掉一个窗口不能让其他窗口掉线
     // （D1 §7.7.5b：「关任一窗口不影响其他窗口与连接」）
     const listener: HubSubscriber | undefined = this.hubListener;
@@ -1345,18 +1388,85 @@ struct Index {
   }
 
   /**
+   * 落地一次枚举结果（`null` 表示枚举不可用，此时靠形态猜测兜底）。
+   *
+   * 摊平去重由纯模型做（`flattenSources`）——平台层只把"每台设备的输入源"原样交回来，
+   * 它**不认识** appstate（架构边界：platform 在 appstate 之下，不许反向依赖）。
+   */
+  private applyInputSources(sources: InputSourceReading): void {
+    this.enumeratedModality = sources === null
+      ? null
+      : modalityFromSources(flattenSources(sources));
+    this.recomputeModality();
+  }
+
+  /** 重新合成输入模态事实：① 枚举（权威，可增可减）② 事件证据（只增不减）③ 形态猜测（兜底） */
+  private recomputeModality(): void {
+    const evidence: ModalityEvidence = {
+      enumerated: this.enumeratedModality,
+      observed: this.observedModality,
+      formGuess: this.formGuessModality
+    };
+    this.modality = modalityOf(evidence);
+    this.modalityNote = modalityTrace(evidence).join('；');
+  }
+
+  /**
+   * 事件证据：指针悬停过 ⇒ 这台设备有指针。
+   *
+   * 【为什么还需要它】设备枚举可能失败（API 不可用/系统差异），那时只剩形态猜测，
+   * 而"手机插鼠标"恰恰是猜测判错的场景；一次悬停就能把它救回来。
+   * 只增不减：一次证明即长期成立，鼠标拔掉后留着 hover 语义也不会错（只是不再触发）。
+   */
+  private notePointerEvidence(): void {
+    if (this.observedModality.hasPointer) {
+      return;
+    }
+    this.observedModality = unionModality(this.observedModality, { hasKeyboard: false, hasPointer: true });
+    this.recomputeModality();
+  }
+
+  /** 事件证据：收到物理按键 ⇒ 这台设备有键盘（软键盘不产生按键事件） */
+  private noteKeyboardEvidence(): void {
+    if (this.observedModality.hasKeyboard) {
+      return;
+    }
+    this.observedModality = unionModality(this.observedModality, { hasKeyboard: true, hasPointer: false });
+    this.recomputeModality();
+  }
+
+  /**
+   * 输入模态作为**一条真实诊断项**。
+   *
+   * 【为什么它该出现在诊断页】这条链路上"采集失败"与"真的没有设备"现象完全一样
+   * （hover 不生效），而诊断页是用户唯一能看到"为什么"的地方。`passed` 判的是
+   * **设备枚举是否可用**（不可用时会退回形态猜测，那是已知会判错的路径）。
+   */
+  private modalityEntry(): DiagEntry {
+    const enumerated: InputModality | null = this.enumeratedModality;
+    const flags: string = `键盘=${this.modality.hasKeyboard ? '是' : '否'} 指针=${this.modality.hasPointer ? '是' : '否'}`;
+    return {
+      name: '输入模态（键鼠 / 指针）',
+      passed: enumerated !== null,
+      detail: this.modalityNote.length === 0 ? flags : `${flags} · ${this.modalityNote}`,
+      advice: enumerated === null
+        ? '输入设备枚举不可用，已退回按设备形态猜测：手机插鼠标、平板用触控笔时可能画不出 hover 与右键'
+        : '真实事实来自系统枚举；插拔鼠标/键盘会自动重新枚举'
+    };
+  }
+
+  /**
    * 当前窗口尺寸下的布局决策。
    *
-   * 输入模态（键鼠/指针）此处置 `false`：`LayoutDecision.pointerRich` 目前**没有任何消费点**，
-   * 与其编一个来源不明的 `true`，不如如实传 false —— 接 P3 输入模态时改为读
-   * `platform` 的 `readDeviceFacts()`（它已给出 `keyboardLikely`），并在那一步统一。
+   * 输入模态现在传**真实事实**（此前硬编码 false，因为 `pointerRich` 当时没有消费点；
+   * 事实链路打通后按实际值传，避免"决策里写着 false、别处却按有鼠标渲染"这种两个真值）。
    */
   private layoutDecision(): LayoutDecision {
     const input: LayoutInput = {
       widthVp: this.winWidthVp,
       heightVp: this.winHeightVp,
-      hasKeyboard: false,
-      hasPointer: false
+      hasKeyboard: this.modality.hasKeyboard,
+      hasPointer: this.modality.hasPointer
     };
     return decideLayout(input);
   }
@@ -1706,6 +1816,23 @@ struct Index {
     }
     .width('100%')
     .height('100%')
+    /**
+     * 事件证据采集（输入模态的兜底来源，见 `notePointerEvidence`）。
+     *
+     * 悬停：只有鼠标/触控笔会 hover（触控不会）⇒ 一次悬停即证明有指针。
+     * 按键：软键盘不走按键事件 ⇒ 收到按键即证明有物理键盘。
+     * 两者都**不消费**事件（不调用 stopPropagation），下面那 8 个快捷键不受影响。
+     */
+    .onHover((isHover: boolean) => {
+      if (isHover) {
+        this.notePointerEvidence();
+      }
+    })
+    .onKeyEvent((event: KeyEvent) => {
+      if (event.type === KeyType.Down) {
+        this.noteKeyboardEvidence();
+      }
+    })
     /**
      * 2in1 / 平板（外接键盘）快捷键：**声明式**那 8 个规格。
      *
@@ -3199,7 +3326,7 @@ struct Index {
         report: this.diag,
         running: this.diagRunning,
         // 判定项按模式裁剪（D7 §3 第 4 项）：本地核心模式下 TLS / 认证不适用
-        entries: filterDiagEntries(this.diagMode(), this.diag.entries),
+        entries: filterDiagEntries(this.diagMode(), this.diag.entries).concat([this.modalityEntry()]),
         modeTitle: diagTitleOf(this.diagMode()),
         modeHint: diagHintOf(this.diagMode()),
         traceEnabled: this.traceEnabled,
@@ -3351,9 +3478,10 @@ struct Index {
         onTogglePlan: () => {
           this.togglePlan();
         },
-        // 输入模态：有指针才启用右键菜单与悬停（策略模型决定，见 appstate/model/InputPolicy）
-        hasPointer: this.hasPointerInput,
-        hasKeyboard: this.hasPointerInput,
+        // 输入模态：有指针才启用右键菜单与悬停（策略模型决定，见 appstate/model/InputPolicy）。
+        // 两个事实**分开传**：合成来源见本文件 `recomputeModality()`。
+        hasPointer: this.modality.hasPointer,
+        hasKeyboard: this.modality.hasKeyboard,
         onQuoteMessage: (item: TrajectoryItem) => {
           this.quoteIntoDraft(item);
         },

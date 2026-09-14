@@ -36,6 +36,10 @@ export {
 } from './system/HostEvents';
 export { FormFactor, readDeviceFacts } from './system/DeviceFacts';
 export type { DeviceFacts } from './system/DeviceFacts';
+
+// ── 输入设备采集（P3：输入模态的**真实事实**来源；SDK 枚举，不靠形态猜） ──
+export { readInputSources, watchInputSources } from './system/InputDevices';
+export type { InputSourceReading } from './system/InputDevices';
 export {
   applyThemeMode,
   colorModeOf,

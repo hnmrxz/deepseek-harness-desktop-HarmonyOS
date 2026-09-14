@@ -45,7 +45,8 @@ const PURE_FILES = [
   'appstate/src/main/ets/model/Follow.ets',
   'appstate/src/main/ets/model/InputPolicy.ets',
   'appstate/src/main/ets/model/ToolPresentation.ets',
-  'appstate/src/main/ets/model/ToolDiff.ets'
+  'appstate/src/main/ets/model/ToolDiff.ets',
+  'appstate/src/main/ets/model/InputFacts.ets'
 ];
 
 /** ArkUI 全局的声明补丁：Tokens.ets 用它取系统资源色/符号 */
@@ -173,6 +174,7 @@ const FM = require2('./Follow.js');
 const IP = require2('./InputPolicy.js');
 const TP = require2('./ToolPresentation.js');
 const TD = require2('./ToolDiff.js');
+const IF = require2('./InputFacts.js');
 const TJ = require2('./Trajectory.js');
 const t = makeAsserter(selfTest);
 
@@ -624,6 +626,105 @@ console.log('\n## 改动对照（§11：编辑类工具出"改了什么"，而�
   t.eq('截断仍如实统计增删总数（不因截断而少算）', manyDiff !== null && manyDiff.added, 60);
 
   console.log('  ok    45 条断言：官方 intendedDiff 规则（含提权闸门与拒绝路径）+ 行级对照 + 折叠 + 截断');
+}
+
+console.log('\n## 输入模态事实（P3：设备枚举 / 事件证据 / 形态猜测，三者优先级明确）');
+{
+  const {
+    flattenSources, guessFromKeyboardForm, modalityFromSources, modalityOf, modalityTrace,
+    noModality, sourceIsKeyboard, sourceIsPointer, unionModality,
+    SOURCE_KEYBOARD, SOURCE_MOUSE, SOURCE_TOUCHPAD, SOURCE_TRACKBALL, SOURCE_TOUCHSCREEN, SOURCE_JOYSTICK,
+  } = IF;
+
+  // ── 取值映射：依据 SDK SourceType 字符串联合，逐条钉死 ──
+  t.eq('keyboard 算键盘', sourceIsKeyboard(SOURCE_KEYBOARD), true);
+  t.eq('mouse 不算键盘', sourceIsKeyboard(SOURCE_MOUSE), false);
+  t.eq('mouse 算指针', sourceIsPointer(SOURCE_MOUSE), true);
+  t.eq('touchpad 算指针（笔记本自带）', sourceIsPointer(SOURCE_TOUCHPAD), true);
+  t.eq('trackball 算指针', sourceIsPointer(SOURCE_TRACKBALL), true);
+  t.eq('touchscreen **不算**指针（没有悬停、没有右键，入口是长按）', sourceIsPointer(SOURCE_TOUCHSCREEN), false);
+  t.eq('joystick 不算指针（无法指向具体控件）', sourceIsPointer(SOURCE_JOYSTICK), false);
+  t.eq('键盘也不算指针', sourceIsPointer(SOURCE_KEYBOARD), false);
+  // 未识别取值必须保守：SDK 新增输入源时不该悄悄打开 hover/右键
+  t.eq('未识别的取值两者都不算（保守）', sourceIsKeyboard('hologram') === false && sourceIsPointer('hologram') === false, true);
+
+  // ── 由枚举结果得事实 ──
+  t.eq('只有触控屏 → 无键盘无指针（手机常态）',
+    JSON.stringify(modalityFromSources([SOURCE_TOUCHSCREEN])), '{"hasKeyboard":false,"hasPointer":false}');
+  t.eq('触控屏 + 鼠标 → 有指针（**这正是此前判错的场景**）',
+    modalityFromSources([SOURCE_TOUCHSCREEN, SOURCE_MOUSE]).hasPointer, true);
+  t.eq('触控屏 + 鼠标 → 仍无键盘',
+    modalityFromSources([SOURCE_TOUCHSCREEN, SOURCE_MOUSE]).hasKeyboard, false);
+  t.eq('触控屏 + 键盘 + 触控板 → 两者都有（笔记本）',
+    modalityFromSources([SOURCE_TOUCHSCREEN, SOURCE_KEYBOARD, SOURCE_TOUCHPAD]).hasKeyboard === true
+    && modalityFromSources([SOURCE_TOUCHSCREEN, SOURCE_KEYBOARD, SOURCE_TOUCHPAD]).hasPointer === true, true);
+  t.eq('空列表 → 无（不抛异常）', modalityFromSources([]).hasPointer, false);
+
+  t.eq('摊平多设备并去重', flattenSources([[SOURCE_KEYBOARD], [SOURCE_MOUSE, SOURCE_KEYBOARD]]).length, 2);
+  t.eq('摊平保留原有取值', flattenSources([[SOURCE_MOUSE]]), [SOURCE_MOUSE]);
+
+  // ── 形态猜测（最弱的兜底，与旧行为一致） ──
+  t.eq('2in1 形态 → 键盘+指针都猜有（笔记本有触控板）',
+    guessFromKeyboardForm(true).hasKeyboard === true && guessFromKeyboardForm(true).hasPointer === true, true);
+  t.eq('手机形态 → 都猜没有', guessFromKeyboardForm(false).hasPointer, false);
+
+  // ── 合成优先级 ──
+  const noEv = noModality();
+  t.eq('① 枚举成功 ⇒ 以枚举为准，**覆盖**形态猜测（2in1 拆掉键盘后不再假装有键盘）',
+    modalityOf({ enumerated: noModality(), observed: noEv, formGuess: guessFromKeyboardForm(true) }).hasKeyboard, false);
+  t.eq('① 枚举成功且命中 ⇒ 手机插鼠标就有指针',
+    modalityOf({ enumerated: { hasKeyboard: false, hasPointer: true }, observed: noEv, formGuess: guessFromKeyboardForm(false) }).hasPointer, true);
+  t.eq('② 枚举不可用 ⇒ 退回形态猜测（保证不比旧行为更差）',
+    modalityOf({ enumerated: null, observed: noEv, formGuess: guessFromKeyboardForm(true) }).hasKeyboard, true);
+  t.eq('② 枚举不可用 + 悬停过 ⇒ 指针被事件证据救回来',
+    modalityOf({ enumerated: null, observed: { hasKeyboard: false, hasPointer: true }, formGuess: guessFromKeyboardForm(false) }).hasPointer, true);
+  t.eq('事件证据不能凭空造键盘',
+    modalityOf({ enumerated: null, observed: { hasKeyboard: false, hasPointer: true }, formGuess: guessFromKeyboardForm(false) }).hasKeyboard, false);
+  t.eq('三项都有时逐项取或',
+    JSON.stringify(modalityOf({
+      enumerated: { hasKeyboard: true, hasPointer: false },
+      observed: { hasKeyboard: false, hasPointer: true },
+      formGuess: noModality(),
+    })), '{"hasKeyboard":true,"hasPointer":true}');
+
+  // ── 降级与升级 ──
+  t.eq('枚举可降级：拔掉鼠标后重新枚举即回到"没有指针"',
+    modalityOf({ enumerated: noModality(), observed: noEv, formGuess: guessFromKeyboardForm(true) }).hasPointer, false);
+  t.eq('unionModality 不制造假事实', unionModality(noModality(), noModality()).hasKeyboard, false);
+
+  // ── 可解释性：失败时能说出理由（否则只能到设备上猜） ──
+  const traceUnavailable = modalityTrace({ enumerated: null, observed: noEv, formGuess: guessFromKeyboardForm(false) });
+  t.eq('枚举不可用时理由里写明"退回猜测"', traceUnavailable.length > 0 && traceUnavailable[0].indexOf('形态猜测') >= 0, true);
+  const traceEmpty = modalityTrace({ enumerated: [], observed: noEv, formGuess: guessFromKeyboardForm(true) });
+  t.eq('枚举成功但没有键鼠时理由里写明"当前没有"', traceEmpty[0].indexOf('没有键鼠类') >= 0, true);
+  const tracePointerOnly = modalityTrace({
+    enumerated: { hasKeyboard: false, hasPointer: true }, observed: noEv, formGuess: noModality(),
+  });
+  t.eq('只有指针时点明"不提示快捷键"', tracePointerOnly.indexOf('只有指针：启用 hover/右键，但不提示快捷键') >= 0, true);
+  const traceHover = modalityTrace({
+    enumerated: null, observed: { hasKeyboard: false, hasPointer: true }, formGuess: noModality(),
+  });
+  t.eq('事件证据生效时理由里点明"观察到指针悬停"', traceHover.indexOf('观察到指针悬停') >= 0, true);
+
+  // ── 与策略层衔接：事实确定后，手势集合与 hover 随之确定（这才是这条链路的终点） ──
+  const phoneOnly = modalityFromSources([SOURCE_TOUCHSCREEN]);
+  t.eq('纯触控 ⇒ 手势集合只有长按（不给触控设备绑永远不触发的右键）',
+    JSON.stringify(IP.contextMenuGestures(phoneOnly)), '["long-press"]');
+  t.eq('纯触控 ⇒ 不启用 hover', IP.hoverEnabled(phoneOnly), false);
+  t.eq('纯触控 ⇒ 菜单提示不出现"右键"字样',
+    IP.contextMenuHintLabel(phoneOnly).indexOf('右键') < 0, true);
+
+  const phoneWithMouse = modalityFromSources([SOURCE_TOUCHSCREEN, SOURCE_MOUSE]);
+  t.eq('手机插鼠标 ⇒ 手势集合多了右键',
+    JSON.stringify(IP.contextMenuGestures(phoneWithMouse)), '["long-press","right-click"]');
+  t.eq('手机插鼠标 ⇒ 启用 hover（此前被 keyboardLikely 卡死）', IP.hoverEnabled(phoneWithMouse), true);
+
+  const laptop = modalityFromSources([SOURCE_TOUCHSCREEN, SOURCE_KEYBOARD, SOURCE_TOUCHPAD]);
+  t.eq('笔记本 ⇒ 长按与右键都在', JSON.stringify(IP.contextMenuGestures(laptop)), '["long-press","right-click"]');
+  t.eq('键盘+指针 ⇒ 菜单提示带上快捷键说法',
+    IP.contextMenuHintLabel(laptop).indexOf('右键') >= 0, true);
+
+  console.log('  ok    37 条断言：SourceType 映射（含触控不算指针）+ 三个来源的优先级 + 可解释性');
 }
 
 t.done();
