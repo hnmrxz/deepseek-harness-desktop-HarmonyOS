@@ -36,7 +36,6 @@ import {
   APPROVAL_CHOICE_DENY,
   CommandCandidate,
   CredentialItem,
-  detailPanelAvailable,
   DetailSection,
   DiagEntry,
   DiagReport,
@@ -46,7 +45,7 @@ import {
   HostRecord,
   HubPhase,
   LayoutMode,
-  layoutModeOf,
+  decideLayout,
   ModelOption,
   ModelSelection,
   NavTab,
@@ -112,6 +111,8 @@ relativeTime,
  */
 import type {
   AttachOutcome,
+  LayoutDecision,
+  LayoutInput,
   CredentialWriteResult,
   HubSnapshot,
   HubSubscriber,
@@ -294,6 +295,13 @@ struct Index {
   @State tab: NavTab = NavTab.SESSIONS;
   @State stackPage: StackPage = StackPage.MAIN;
   @State detailOpen: boolean = false;
+  /**
+   * 当前窗口尺寸（vp）。形态与几何**不再由本文件各算一遍**，
+   * 统一交给 `appstate/ui/LayoutController.decideLayout()`（P1：布局决策出栈）。
+   * 两者在 `applySize()` 里同时写入，因此 `mode !== SINGLE` 时它们必定有效。
+   */
+  @State winWidthVp: number = 0;
+  @State winHeightVp: number = 0;
 
   // ── 数据（当前来自桩数据源） ──
   @State sessions: SessionListItem[] = [];
@@ -763,7 +771,7 @@ struct Index {
     this.settings = this.localSettings;
     this.updateHosts();
     this.recomputeDerived();
-    this.applyWidth(initialWidthVp());
+    this.applySize(initialWidthVp(), initialHeightVp());
     this.watchWindowSize();
     // 订阅中枢：多窗口下每个窗口各自订阅，但共用同一个连接与会话状态
     const listener: HubSubscriber = (s: HubSnapshot) => {
@@ -1225,9 +1233,10 @@ struct Index {
   private watchWindowSize(): void {
     try {
       window.getLastWindow(getContext(this)).then((win: window.Window) => {
-        this.applyWidth(px2vp(win.getWindowProperties().windowRect.width));
+        const rect = win.getWindowProperties().windowRect;
+        this.applySize(px2vp(rect.width), px2vp(rect.height));
         const listener = (size: window.Size) => {
-          this.applyWidth(px2vp(size.width));
+          this.applySize(px2vp(size.width), px2vp(size.height));
         };
         this.widthListener = listener;
         win.on('windowSizeChange', listener);
@@ -1253,8 +1262,13 @@ struct Index {
   }
 
   /** 切档位并修正派生状态（不重载数据，D3 §2） */
-  private applyWidth(widthVp: number): void {
-    const next: LayoutMode = layoutModeOf(widthVp);
+  private applySize(widthVp: number, heightVp: number): void {
+    this.winWidthVp = widthVp;
+    this.winHeightVp = heightVp;
+    // 档位与详情栏可用性都来自**一处**决策（appstate/ui/LayoutController），
+    // 本文件不再自己拼断点判断——否则"什么宽度显示什么"会有两份实现，破版时两处都要查。
+    const decision: LayoutDecision = this.layoutDecision();
+    const next: LayoutMode = decision.mode;
     if (next === this.mode) {
       return;
     }
@@ -1263,11 +1277,38 @@ struct Index {
       && (this.stackPage === StackPage.CONVERSATION || this.stackPage === StackPage.DETAIL)) {
       this.stackPage = StackPage.MAIN;
     }
-    if (!detailPanelAvailable(next)) {
+    if (!decision.detailAvailable) {
       this.detailOpen = false;
     } else if (this.selectedSessionId.length > 0) {
       this.detailOpen = true;
     }
+  }
+
+  /**
+   * 当前窗口尺寸下的布局决策。
+   *
+   * 输入模态（键鼠/指针）此处置 `false`：`LayoutDecision.pointerRich` 目前**没有任何消费点**，
+   * 与其编一个来源不明的 `true`，不如如实传 false —— 接 P3 输入模态时改为读
+   * `platform` 的 `readDeviceFacts()`（它已给出 `keyboardLikely`），并在那一步统一。
+   */
+  private layoutDecision(): LayoutDecision {
+    const input: LayoutInput = {
+      widthVp: this.winWidthVp,
+      heightVp: this.winHeightVp,
+      hasKeyboard: false,
+      hasPointer: false
+    };
+    return decideLayout(input);
+  }
+
+  /** 导航侧栏宽度（唯一来源：布局决策） */
+  private navWidthVp(): number {
+    return this.layoutDecision().navWidthVp;
+  }
+
+  /** 详情栏宽度（唯一来源：布局决策，含让步链的收窄结果） */
+  private detailWidthVp(): number {
+    return this.layoutDecision().detailWidthVp;
   }
 
   // ───────────────────── 交互 ─────────────────────
@@ -2672,7 +2713,7 @@ struct Index {
             }
           }
         }
-        .width(Sz.NAV_RAIL)
+        .width(this.navWidthVp())
         .height(Sz.TOUCH_MIN)
         .justifyContent(FlexAlign.Center)
         .borderRadius(Radius.S)
@@ -2682,7 +2723,7 @@ struct Index {
         })
       }, (tab: NavTab) => tab)
     }
-    .width(Sz.NAV_RAIL)
+    .width(this.navWidthVp())
     .height('100%')
     .padding({ top: Sp.M })
     .backgroundColor($r('sys.color.background_secondary'))
@@ -2820,7 +2861,7 @@ struct Index {
         }
       })
     }
-    .width(Sz.DETAIL_PANEL)
+    .width(this.detailWidthVp())
     .height('100%')
     .backgroundColor($r('sys.color.background_secondary'))
   }
@@ -4560,6 +4601,16 @@ function initialWidthVp(): number {
     return px2vp(d.width);
   } catch (error) {
     return 400;
+  }
+}
+
+/** 初始窗口高度（vp）。与 initialWidthVp 同款：读不到就给一个安全默认值 */
+function initialHeightVp(): number {
+  try {
+    const d: display.Display = display.getPrimaryDisplaySync();
+    return px2vp(d.height);
+  } catch (error) {
+    return 800;
   }
 }
 
