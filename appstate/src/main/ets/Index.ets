@@ -174,6 +174,16 @@ export type { DiffLine, DiffPresentation, DiffStat, ToolDiff } from './model/Too
 export { contextMenuGestures, contextMenuHintLabel, hoverEnabled, MenuGesture } from './model/InputPolicy';
 export type { InputModality } from './model/InputPolicy';
 
+// ── 轨迹时间线（P2 §11：交互式时间总览；纯函数，可本机直接测） ──
+export {
+  cellIdAtRatio, segmentOrdinalOf, statsLinesOf,
+  timelineCellsOf, timelineKindLabel, timelineKindOf, timelineScaleOf,
+  timelineStartedLabel, timelineTotalLabel, TimelineKind, StatsUnit,
+} from './model/Timeline';
+export type {
+  SessionStatsInput, StatsLine, TimelineCell, TimelineScale, TimelineSegment,
+} from './model/Timeline';
+
 // ── 输入模态事实（P3：形态猜测 / 系统枚举 / 事件证据三者按优先级合成；纯函数，可本机直接测） ──
 export {
   flattenSources, guessFromKeyboardForm, modalityFromSources, modalityOf, modalityTrace,

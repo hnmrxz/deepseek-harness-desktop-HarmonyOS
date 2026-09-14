@@ -148,6 +148,7 @@ import type {
   InputModality,
   ModalityEvidence,
   NavState,
+  SessionStatsInput,
   OverlayState,
   TabSelection,
   LayoutDecision,
@@ -367,6 +368,17 @@ struct Index {
 
   /** 上面这次合成的**理由**（诊断用：说不出理由时，只能到真机上猜） */
   @State modalityNote: string = '';
+
+  /**
+   * 会话统计（快照字段原样带过去，供轨迹的时间总览用）。
+   *
+   * 【为什么单独存一份数字】上面那条 `statsLine` 是"给人看的一行字"（轮次/缓存命中/预设），
+   * 而时间总览要的是**数字本身**（模型用时、工具用时、TTFT、TPS）——把数字拼成字符串再反向解析
+   * 是典型的错法。故两者各存各的，都由同一份快照落地。
+   */
+  @State sessionStats: SessionStatsInput = {
+    turns: 0, steps: 0, llmMs: 0, toolMs: 0, ttftMs: 0, ttftSteps: 0, decodeMs: 0, decodeTokens: 0
+  };
 
   /**
    * 详情栏**用户想要的**宽度（P3：拖拽把手与宽度记忆的唯一真值）。
@@ -722,6 +734,17 @@ struct Index {
         parts.push(preset);
       }
       this.statsLine = parts.join(' · ');
+      // 时间总览要的是数字本身（见 `sessionStats` 的说明）
+      this.sessionStats = {
+        turns: turns,
+        steps: steps,
+        llmMs: s.statsLlmMs,
+        toolMs: s.statsToolMs,
+        ttftMs: s.statsTtftMs,
+        ttftSteps: s.statsTtftSteps,
+        decodeMs: s.statsDecodeMs,
+        decodeTokens: s.statsDecodeTokens
+      };
     }
     // E132：工作区注册表与归档集合（删除/归档的依据）
     this.workspaceRows = s.workspaceRows;
@@ -3669,6 +3692,8 @@ struct Index {
         // 两个事实**分开传**：合成来源见本文件 `recomputeModality()`。
         hasPointer: this.modality.hasPointer,
         hasKeyboard: this.modality.hasKeyboard,
+        // 轨迹的时间总览要用的统计（数字，不是拼好的字符串）
+        stats: this.sessionStats,
         onQuoteMessage: (item: TrajectoryItem) => {
           this.quoteIntoDraft(item);
         },

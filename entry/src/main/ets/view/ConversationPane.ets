@@ -55,13 +55,26 @@ import {
   contextMenuHintLabel,
   hoverEnabled,
   MenuGesture,
+  cellIdAtRatio,
   presentTool,
   presentDiff,
+  segmentOrdinalOf,
+  statsLinesOf,
+  StatsUnit,
+  timelineCellsOf,
+  timelineKindLabel,
+  timelineScaleOf,
+  timelineStartedLabel,
+  timelineTotalLabel,
+  TimelineKind,
   ToolKind,
   toolSummaryOf
 } from 'appstate';
 /** 类型单独 import type（本仓约定：值与类型分开写） */
-import type { ActionNotice, DiffPresentation, FeedbackCategory, InputModality, ToolPresentation, Turn } from 'appstate';
+import type {
+  ActionNotice, DiffPresentation, FeedbackCategory, InputModality, SessionStatsInput, StatsLine,
+  TimelineCell, TimelineScale, TimelineSegment, ToolPresentation, Turn,
+} from 'appstate';
 import type { NativeAction } from './NativePrimitives';
 import { NativeActionBar, NativeCard, NativeChip } from './NativePrimitives';
 import { Composer } from './Composer';
@@ -151,6 +164,20 @@ export struct ConversationPane {
   @State menuForId: string = '';
   @State menuShown: boolean = false;
   /** 输入模态（宿主从设备事实派生后传入；视图不认识 deviceInfo） */
+  /**
+   * 会话统计（时间总览用）。由宿主把快照字段映射成这个形状——
+   * 视图不做"哪个数字该显示"的判断，那在 `model/Timeline` 里（有断言）。
+   */
+  @Prop stats: SessionStatsInput = {
+    turns: 0, steps: 0, llmMs: 0, toolMs: 0, ttftMs: 0, ttftSteps: 0, decodeMs: 0, decodeTokens: 0
+  };
+
+  /** 时间总览条已测量的宽度（拖动聚焦要按它把偏移量换算成比例） */
+  @State timelineBarWidth: number = 0;
+
+  /** 当前聚焦的格子 id（拖动/点选后显示它的详情） */
+  @State focusedCellId: string = '';
+
   @Prop hasPointer: boolean = false;
   @Prop hasKeyboard: boolean = false;
   /** 当前被指针悬停的消息 id（有指针设备时才有值） */
@@ -180,6 +207,64 @@ export struct ConversationPane {
    * **信息**（这件事发生在几点），对列表同样有意义 ⇒ 直接**与时长并列显示**：
    * 少一份状态、少一个入口，信息一点不少。
    */
+  /** 时间线格子（每次都按当前条目算一次；条目数是几十到几百，代价可忽略） */
+  private timelineCells(): TimelineCell[] {
+    return timelineCellsOf(this.items);
+  }
+
+  private timelineScale(): TimelineScale {
+    return timelineScaleOf(this.timelineCells());
+  }
+
+  /** 聚焦格子的详情行（官方：「总计」「开始于」「首 token … · 解码 …」「无计时数据」） */
+  private focusedTimelineNote(): string {
+    const cells: TimelineCell[] = this.timelineCells();
+    let cell: TimelineCell | undefined = undefined;
+    for (let i = 0; i < cells.length; i++) {
+      if (cells[i].id === this.focusedCellId) {
+        cell = cells[i];
+        break;
+      }
+    }
+    if (cell === undefined) {
+      return '';
+    }
+    const parts: string[] = [];
+    parts.push(`${timelineKindLabel(cell.kind)} · ${segmentOrdinalOf(this.timelineScale().segments, cell.id)}/${this.timelineScale().segments.length}`);
+    const started: string = timelineStartedLabel(cell, (at: number) => this.clockOf(at));
+    if (started.length > 0) {
+      parts.push(started);
+    }
+    if (cell.durationMs > 0) {
+      parts.push(formatDuration(cell.durationMs));
+    }
+    return parts.join(' · ');
+  }
+
+  /** 会话统计（时间相关四项）的文案：单位由模型给，排版在这里 */
+  private statsLineText(line: StatsLine): string {
+    if (line.unit === StatsUnit.MS) {
+      return `${line.label} ${formatDuration(Math.round(line.value))}`;
+    }
+    if (line.unit === StatsUnit.TPS) {
+      return `${line.label} ${line.value.toFixed(1)}`;
+    }
+    return `${line.label} ${line.value}`;
+  }
+
+  /** 拖动/点选：把条上的比例位置换算成"聚焦哪一格"（越界夹到首尾，规则在模型里） */
+  private focusTimelineAt(deltaXVp: number): void {
+    const scale: TimelineScale = this.timelineScale();
+    if (scale.segments.length === 0 || this.timelineBarWidth <= 0) {
+      return;
+    }
+    const ratio: number = deltaXVp / this.timelineBarWidth;
+    const id: string = cellIdAtRatio(scale.segments, ratio);
+    if (id.length > 0) {
+      this.focusedCellId = id;
+    }
+  }
+
   private clockOf(ms: number): string {
     if (ms <= 0) {
       return '';
@@ -460,6 +545,98 @@ export struct ConversationPane {
     .backgroundColor($r('sys.color.background_secondary'))
   }
 
+  /**
+   * 轨迹的**时间总览**（P2 §11：交互式时间总览）。
+   *
+   * 【为什么需要它】轨迹此前只有一条扁平的事件列表，看不出"这一步花了多久、时间花在哪、总耗时多少"；
+   * 而 `sessionStats` 那几个数字（模型用时 / 工具用时 / TTFT / TPS）**投影出来了却没有任何界面显示**。
+   *
+   * 【为什么每条一格的比例条】官方的做法是把整场会话摊成格子、按耗时给比例，
+   * 并支持"**水平拖动可聚焦事件**"（`timeline.overviewAria` 原文）。这里照做：
+   * 拖动 → 按条宽把偏移量换算成比例 → 落到哪一格就聚焦哪一格（越界夹到首尾）。
+   * 判定规则全在 `model/Timeline`（60 条断言），视图只把比例映射成宽度。
+   */
+  @Builder
+  timelineOverview() {
+    Column({ space: Sp.XS }) {
+      Row({ space: Sp.S }) {
+        Text(timelineTotalLabel(this.timelineScale()))
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.font_secondary'))
+        Text(`${this.timelineScale().count} 格`)
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.font_tertiary'))
+        Blank()
+        // 会话统计的**时间四项**（轮次/步数由会话头部那行承担，不在这里重复）
+        ForEach(statsLinesOf(this.stats), (line: StatsLine) => {
+          Text(this.statsLineText(line))
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.font_tertiary'))
+        }, (line: StatsLine) => line.key)
+      }
+      .width('100%')
+
+      if (this.timelineScale().hasData) {
+        // 比例条：每段用**累计起点 + 宽度**摆放（不是浮动相加，避免四舍五入出缝隙）
+        Stack({ alignContent: Alignment.Start }) {
+          Row() {
+            ForEach(this.timelineScale().segments, (seg: TimelineSegment) => {
+              Column()
+                .width(`${seg.ratio * 100}%`)
+                .height(this.focusedCellId === seg.id ? Sz.POINTER_MIN : Sp.M)
+                .backgroundColor(this.timelineColorOf(seg.kind))
+            }, (seg: TimelineSegment) => seg.id)
+          }
+          .width('100%')
+          .height(Sp.M)
+          .borderRadius(Radius.XS)
+          .clip(true)
+        }
+        .width('100%')
+        .onAreaChange((_oldArea: Area, newArea: Area) => {
+          this.timelineBarWidth = Number(newArea.width);
+        })
+        .gesture(
+          PanGesture({ direction: PanDirection.Horizontal })
+            .onActionUpdate((event: GestureEvent) => {
+              this.focusTimelineAt(event.offsetX);
+            })
+        )
+        .onClick((event: ClickEvent) => {
+          // `event.x` 是**相对本组件**的横坐标，正是比例条的换算起点（`displayX` 是相对窗口的）
+          this.focusTimelineAt(Number(event.x));
+        })
+
+        if (this.focusedTimelineNote().length > 0) {
+          Text(this.focusedTimelineNote())
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.font_secondary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+      } else {
+        // 官方 `timeline.noTimingData` 的情形：如实说"无计时数据"，而不是画一条空条
+        Text('这一轮的条目没有计时数据，无法给出时间分布。')
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.font_tertiary'))
+      }
+    }
+    .width('100%')
+    .padding({ left: Sp.M, right: Sp.M, top: Sp.XS, bottom: Sp.XS })
+    .backgroundColor($r('sys.color.background_primary'))
+  }
+
+  /** 格子种类的颜色：只有"工具"与"助手"需要区分，其余用中性色（不靠颜色表达状态） */
+  private timelineColorOf(kind: TimelineKind): Resource {
+    if (kind === TimelineKind.TOOL) {
+      return $r('sys.color.brand');
+    }
+    if (kind === TimelineKind.USER) {
+      return $r('sys.color.comp_background_tertiary');
+    }
+    return $r('sys.color.comp_divider');
+  }
+
   build() {
     Column() {
       /*
@@ -496,6 +673,11 @@ export struct ConversationPane {
       }
       .width('100%')
       .padding({ left: Sp.M, right: Sp.M, top: Sp.S })
+
+      // 轨迹视图的时间总览（P2 §11 的 TrajectoryPresenter）
+      if (this.view === 'trajectory') {
+        this.timelineOverview()
+      }
 
       if (this.searchOpen) {
         this.searchBar()

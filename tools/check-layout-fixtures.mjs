@@ -46,7 +46,9 @@ const PURE_FILES = [
   'appstate/src/main/ets/model/InputPolicy.ets',
   'appstate/src/main/ets/model/ToolPresentation.ets',
   'appstate/src/main/ets/model/ToolDiff.ets',
-  'appstate/src/main/ets/model/InputFacts.ets'
+  'appstate/src/main/ets/model/InputFacts.ets',
+  'appstate/src/main/ets/model/Timeline.ets',
+  'appstate/src/main/ets/model/Present.ets'
 ];
 
 /** ArkUI 全局的声明补丁：Tokens.ets 用它取系统资源色/符号 */
@@ -175,6 +177,7 @@ const IP = require2('./InputPolicy.js');
 const TP = require2('./ToolPresentation.js');
 const TD = require2('./ToolDiff.js');
 const IF = require2('./InputFacts.js');
+const TL = require2('./Timeline.js');
 const TJ = require2('./Trajectory.js');
 const t = makeAsserter(selfTest);
 
@@ -817,6 +820,111 @@ console.log('\n## 详情栏拖拽与宽度记忆（P3：把模型里那条"用�
     decideLayoutWithDetail({ widthVp: 800, heightVp: 1280, hasKeyboard: false, hasPointer: false }, 400).detailPresentation, 'side-panel');
 
   console.log('  ok    33 条断言：可用空间 / 夹取（不跳变）/ 拖拽方向（左拖变宽）/ 起点归一化 / 记忆值收窄 / 档位边界 / 呈现方式 / 与决策衔接');
+}
+
+console.log('\n## 轨迹时间线（P2 §11：交互式时间总览；种类/比例/拖动聚焦/会话统计）');
+{
+  const {
+    TimelineKind, timelineKindLabel, timelineKindOf, timelineCellsOf, timelineScaleOf,
+    cellIdAtRatio, segmentOrdinalOf, timelineTotalLabel, timelineStartedLabel,
+    statsLinesOf, StatsUnit,
+  } = TL;
+  const { TrajectoryKind } = TJ;
+
+  // 造条目：只填本模型用到的字段
+  const item = (id, kind, speaker, elapsedMs, at) => ({
+    id, kind, speaker: speaker || 'assistant', elapsedMs: elapsedMs || 0, at: at || 0,
+    body: '', reasoning: '', model: '', toolName: '', callId: '', toolArgs: '',
+    toolState: 'success', toolOutput: '', subagentName: '', fileName: '', fileSize: 0,
+    title: '', progress: '', percent: -1, streaming: false, expanded: false,
+  });
+
+  // ── 种类标签：逐字取官方中文 ──
+  t.eq('system 标签', timelineKindLabel(TimelineKind.SYSTEM), '系统');
+  t.eq('user 标签', timelineKindLabel(TimelineKind.USER), '用户');
+  t.eq('context 标签', timelineKindLabel(TimelineKind.CONTEXT), '上下文');
+  t.eq('compacted 标签', timelineKindLabel(TimelineKind.COMPACTED), '已压缩');
+  t.eq('message 标签是「助手」（官方 kind.message 中文就是助手）', timelineKindLabel(TimelineKind.MESSAGE), '助手');
+  t.eq('tool 标签', timelineKindLabel(TimelineKind.TOOL), '工具');
+  t.eq('subtool 标签', timelineKindLabel(TimelineKind.SUBTOOL), '子工具');
+
+  // ── 条目 → 格子 ──
+  t.eq('用户消息 → 用户格', timelineKindOf(item('a', TrajectoryKind.MESSAGE, 'user')), TimelineKind.USER);
+  t.eq('助手消息 → 助手格', timelineKindOf(item('b', TrajectoryKind.MESSAGE, 'assistant')), TimelineKind.MESSAGE);
+  t.eq('思考归入助手那一步（官方没有独立的思考格）', timelineKindOf(item('c', TrajectoryKind.REASONING)), TimelineKind.MESSAGE);
+  t.eq('工具调用 → 工具格', timelineKindOf(item('d', TrajectoryKind.TOOL)), TimelineKind.TOOL);
+  t.eq('子代理也是一次工具调用 → 工具格（官方 tool/subtool 之分需要父子关系，我方没有）',
+    timelineKindOf(item('e', TrajectoryKind.SUBAGENT)), TimelineKind.TOOL);
+  t.eq('交付物**不产生**格子（官方时间线没有这个种类）', timelineKindOf(item('f', TrajectoryKind.DELIVERABLE)), null);
+  t.eq('目标不产生格子', timelineKindOf(item('g', TrajectoryKind.GOAL)), null);
+  t.eq('任务不产生格子', timelineKindOf(item('h', TrajectoryKind.JOB)), null);
+  t.eq('错误不产生格子（官方把错误记在格子上的 isError，而不是一种 kind）',
+    timelineKindOf(item('i', TrajectoryKind.ERROR)), null);
+
+  const cells = timelineCellsOf([
+    item('t1', TrajectoryKind.TOOL, 'assistant', 3000, 1000),
+    item('t2', TrajectoryKind.TOOL, 'assistant', 1000, 2000),
+    item('m1', TrajectoryKind.MESSAGE, 'assistant', 0, 3000),
+    item('d1', TrajectoryKind.DELIVERABLE, 'assistant', 500, 4000),
+  ]);
+  t.eq('只有能对上种类的条目进时间线（4 条里 3 条）', cells.length, 3);
+  t.eq('没有计时数据的格子仍在（不算比例但可见）',
+    cells[cells.length - 1].durationMs, 0);
+
+  // ── 比例 ──
+  const scale = timelineScaleOf(cells);
+  t.eq('总耗时只统计有计时数据的格子', scale.totalMs, 4000);
+  t.eq('比例段只含有计时数据的格子', scale.segments.length, 2);
+  t.eq('有计时数据', scale.hasData, true);
+  t.eq('第一段比例 3/4', Math.abs(scale.segments[0].ratio - 0.75) < 1e-9, true);
+  t.eq('第一段起点为 0', scale.segments[0].startRatio, 0);
+  t.eq('第二段起点接在第一段之后（累计起点，不是浮动相加）',
+    Math.abs(scale.segments[1].startRatio - 0.75) < 1e-9, true);
+  t.eq('比例之和为 1', Math.abs(scale.segments[0].ratio + scale.segments[1].ratio - 1) < 1e-9, true);
+  t.eq('格子总数包含没有计时数据的', scale.count, 3);
+
+  const noData = timelineScaleOf([item('x', TrajectoryKind.TOOL, 'assistant', 0, 0)]);
+  t.eq('全都没有计时数据 ⇒ hasData=false（界面显示官方那句"无计时数据"）', noData.hasData, false);
+  t.eq('无计时数据时总计文案就是官方文案', timelineTotalLabel(noData), '无计时数据');
+  t.eq('有数据时的总计文案带时长', timelineTotalLabel(scale).indexOf('总计 ') === 0, true);
+
+  // ── 拖动聚焦（官方："水平拖动可聚焦事件"） ──
+  t.eq('比例 0.1 落在第一格', cellIdAtRatio(scale.segments, 0.1), 't1');
+  t.eq('比例 0.9 落在第二格', cellIdAtRatio(scale.segments, 0.9), 't2');
+  t.eq('恰好落在分界点 0.75 归后一格', cellIdAtRatio(scale.segments, 0.75), 't2');
+  t.eq('拖到条左侧之外 ⇒ 夹到第一格（而不是什么都不选）', cellIdAtRatio(scale.segments, -0.5), 't1');
+  t.eq('拖到条右侧之外 ⇒ 夹到最后一格', cellIdAtRatio(scale.segments, 1.7), 't2');
+  t.eq('空条 ⇒ 空 id（不抛异常）', cellIdAtRatio([], 0.5), '');
+  t.eq('序号从 1 开始', segmentOrdinalOf(scale.segments, 't2'), 2);
+  t.eq('找不到序号 ⇒ 0', segmentOrdinalOf(scale.segments, 'nope'), 0);
+
+  /*
+   * 助手逐步计时（官方 `assistantTimingDetail`）**故意不在本模型里**：
+   * 那些字段（`timingRecorded`/`stepStartTime`/`firstTokenTime`）来自官方客户端自己的 metrics，
+   * 我方投影没有 ⇒ 没有消费者的函数不留（"不预置空 API"）。
+   * 会话级的「首 token 平均（TTFT）」由下面的 `sessionStats` 给，仍有覆盖。
+   */
+  // ── 会话统计：官方 web 的五项，为 0 即不显示 ──
+  const full = statsLinesOf({ turns: 3, steps: 7, llmMs: 12000, toolMs: 4000, ttftMs: 3000, ttftSteps: 3, decodeMs: 2000, decodeTokens: 100 });
+  t.eq('四项时间相关项齐全时给四行', full.length, 4);
+  t.eq('不含「轮次/步数」那一项（会话头部已显示，不重复）',
+    full.filter((l) => l.key === 'turns').length, 0);
+  t.eq('首行是模型用时', full[0].key, 'llm');
+  t.eq('模型用时单位是毫秒', full[0].unit, StatsUnit.MS);
+  t.eq('TTFT 是**平均值**（除以步数）', full[2].value, 1000);
+  t.eq('TPS = 输出 token / 秒', full[3].value, 50);
+  const none = statsLinesOf({ turns: 0, steps: 0, llmMs: 0, toolMs: 0, ttftMs: 0, ttftSteps: 0, decodeMs: 0, decodeTokens: 0 });
+  t.eq('全为 0 ⇒ 一行都不显示（而不是显示一堆 0）', none.length, 0);
+  const onlyCounts = statsLinesOf({ turns: 5, steps: 9, llmMs: 0, toolMs: 0, ttftMs: 0, ttftSteps: 0, decodeMs: 0, decodeTokens: 0 });
+  t.eq('只有轮次/步数（无任何计时）⇒ 一行也不给（那两项不归这里显示）', onlyCounts.length, 0);
+  const ttftNoSteps = statsLinesOf({ turns: 1, steps: 0, llmMs: 0, toolMs: 0, ttftMs: 500, ttftSteps: 0, decodeMs: 0, decodeTokens: 0 });
+  t.eq('有 TTFT 但没有步数 ⇒ 不出平均值（没有步数就没有平均可言）',
+    ttftNoSteps.filter((l) => l.key === 'ttft').length, 0);
+  const decodeNoTokens = statsLinesOf({ turns: 1, steps: 1, llmMs: 0, toolMs: 0, ttftMs: 0, ttftSteps: 0, decodeMs: 1000, decodeTokens: 0 });
+  t.eq('有解码时长但没有 token 数 ⇒ 不出 TPS',
+    decodeNoTokens.filter((l) => l.key === 'tps').length, 0);
+
+  console.log('  ok    47 条断言：官方种类标签 / 条目映射（含"不产生格子"的四类）/ 累计比例 / 拖动聚焦与夹取 / 会话统计四项');
 }
 
 t.done();
