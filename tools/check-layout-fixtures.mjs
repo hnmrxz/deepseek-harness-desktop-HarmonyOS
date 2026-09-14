@@ -827,6 +827,7 @@ console.log('\n## 轨迹时间线（P2 §11：交互式时间总览；种类/比
   const {
     TimelineKind, timelineKindLabel, timelineKindOf, timelineCellsOf, timelineScaleOf,
     cellIdAtRatio, segmentOrdinalOf, timelineTotalLabel, timelineStartedLabel,
+    listIndexForCell, cellIdForListIndex,
     statsLinesOf, StatsUnit,
   } = TL;
   const { TrajectoryKind } = TJ;
@@ -897,6 +898,25 @@ console.log('\n## 轨迹时间线（P2 §11：交互式时间总览；种类/比
   t.eq('空条 ⇒ 空 id（不抛异常）', cellIdAtRatio([], 0.5), '');
   t.eq('序号从 1 开始', segmentOrdinalOf(scale.segments, 't2'), 2);
   t.eq('找不到序号 ⇒ 0', segmentOrdinalOf(scale.segments, 'nope'), 0);
+
+  // ── 条 ↔ 列表联动：聚焦的格子在列表第几行 ──
+  const listItems = [
+    item('l1', TrajectoryKind.MESSAGE, 'user', 0, 0),
+    item('l2', TrajectoryKind.TOOL, 'assistant', 100, 0),
+    item('l3', TrajectoryKind.GOAL, 'assistant', 0, 0),
+    item('l4', TrajectoryKind.TOOL, 'assistant', 200, 0),
+  ];
+  t.eq('聚焦工具格 ⇒ 滚到列表第 1 行', listIndexForCell(listItems, 'l2'), 1);
+  t.eq('行号是**列表里的位置**（含不产生格子的条目）', listIndexForCell(listItems, 'l4'), 3);
+  t.eq('还没聚焦（空 id）⇒ 不滚（-1，而不是第 0 行）', listIndexForCell(listItems, ''), -1);
+  t.eq('条目被过滤出列表 ⇒ 不滚', listIndexForCell(listItems, 'gone'), -1);
+  t.eq('空列表 ⇒ 不滚', listIndexForCell([], 'l2'), -1);
+
+  t.eq('列表第 1 行是工具格', cellIdForListIndex(listItems, 1), 'l2');
+  t.eq('列表第 2 行是目标（**不产生格子**）⇒ 空 id', cellIdForListIndex(listItems, 2), '');
+  t.eq('越界行号 ⇒ 空 id（不抛异常）', cellIdForListIndex(listItems, 99), '');
+  t.eq('负行号 ⇒ 空 id', cellIdForListIndex(listItems, -1), '');
+  t.eq('空列表 ⇒ 空 id', cellIdForListIndex([], 0), '');
 
   /*
    * 助手逐步计时（官方 `assistantTimingDetail`）**故意不在本模型里**：

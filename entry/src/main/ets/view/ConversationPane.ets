@@ -56,6 +56,8 @@ import {
   hoverEnabled,
   MenuGesture,
   cellIdAtRatio,
+  cellIdForListIndex,
+  listIndexForCell,
   presentTool,
   presentDiff,
   segmentOrdinalOf,
@@ -175,8 +177,17 @@ export struct ConversationPane {
   /** 时间总览条已测量的宽度（拖动聚焦要按它把偏移量换算成比例） */
   @State timelineBarWidth: number = 0;
 
-  /** 当前聚焦的格子 id（拖动/点选后显示它的详情） */
+  /** 当前聚焦的格子 id（拖动/点选/滚动列表都会改它，见下面的双向联动） */
   @State focusedCellId: string = '';
+
+  /**
+   * 是否正在**拖动比例条**。
+   *
+   * 【为什么需要它】联动是双向的：拖条会滚列表，滚列表也会改聚焦。
+   * 拖条的时候若还让"滚动"反过来改聚焦，两边会互相覆盖（拖到哪都被列表当前行抢走）。
+   * 故拖条期间**关掉**列表→条这一路。
+   */
+  @State timelineDragging: boolean = false;
 
   @Prop hasPointer: boolean = false;
   @Prop hasKeyboard: boolean = false;
@@ -261,6 +272,44 @@ export struct ConversationPane {
     const ratio: number = deltaXVp / this.timelineBarWidth;
     const id: string = cellIdAtRatio(scale.segments, ratio);
     if (id.length > 0) {
+      this.focusedCellId = id;
+    }
+  }
+
+  /**
+   * 条 → 列表：把聚焦的那一格滚进视野。
+   *
+   * 【为什么只在"拖动结束/点选"时滚，而不是拖动过程中每一帧都滚】拖动时每帧滚动会让列表
+   * 剧烈抖动，且用户此刻看的是**条上的详情行**，不是列表。松手再跳，符合"先扫、再过去看"的动作。
+   *
+   * 【为什么要判 -1】`listIndexForCell` 会在"还没聚焦 / 该条目被过滤出列表"时返回 -1，
+   * 此时**不滚**——滚到第 0 行等于"用户什么都没点，列表自己跳回顶部"。
+   */
+  private scrollToFocusedCell(): void {
+    const index: number = listIndexForCell(this.visibleItems(), this.focusedCellId);
+    if (index < 0) {
+      return;
+    }
+    /*
+     * 用 START 对齐：让该条落在列表顶部，这样"列表首行"与"聚焦格"一致，
+     * 下面那条 `onScrollIndex → 聚焦` 才不会被同一个动作来回改（否则会自己抖自己）。
+     *
+     * 【为什么不用平滑滚动】平滑滚动会在动画途中**反复**触发 `onScrollIndex`，
+     * 于是"列表 → 条"那一路会把聚焦扫过中间的每一格——聚焦指示器在动画期间短暂地"说谎"，
+     * 看起来像条在自己动。改成立即跳转直接消掉这条未验证的观感风险；
+     * 想要平滑效果可以后续加"程序化滚动期间挂起列表→条"再换回 `true`
+     * （已记进 docs/device-validation.md 的 D8，真机上若观感需要再补）。
+     */
+    this.scroller.scrollToIndex(index, false, ScrollAlign.START);
+  }
+
+  /** 列表 → 条：列表滚动时，把**首行**对应的格子设为聚焦（条上的位置随之移动） */
+  private focusFromListIndex(firstVisible: number): void {
+    if (this.timelineDragging) {
+      return;
+    }
+    const id: string = cellIdForListIndex(this.visibleItems(), firstVisible);
+    if (id.length > 0 && id !== this.focusedCellId) {
       this.focusedCellId = id;
     }
   }
@@ -598,13 +647,22 @@ export struct ConversationPane {
         })
         .gesture(
           PanGesture({ direction: PanDirection.Horizontal })
+            .onActionStart(() => {
+              this.timelineDragging = true;
+            })
             .onActionUpdate((event: GestureEvent) => {
               this.focusTimelineAt(event.offsetX);
+            })
+            .onActionEnd(() => {
+              this.timelineDragging = false;
+              // 松手才滚（见 `scrollToFocusedCell` 的说明）
+              this.scrollToFocusedCell();
             })
         )
         .onClick((event: ClickEvent) => {
           // `event.x` 是**相对本组件**的横坐标，正是比例条的换算起点（`displayX` 是相对窗口的）
           this.focusTimelineAt(Number(event.x));
+          this.scrollToFocusedCell();
         })
 
         if (this.focusedTimelineNote().length > 0) {
@@ -692,8 +750,17 @@ export struct ConversationPane {
             }
             // 命中项加一条左侧色条：**不改变正文**（正文里做高亮要拆 span，
             // 而拆 span 会让 Markdown/代码块的渲染路径多一条分支，风险大于收益）。
-            .border({ width: { left: this.isHit(item) ? 3 : 0 },
-              color: $r('sys.color.brand') })
+            /*
+             * 左侧色条承担两种含义，用**颜色**区分（同一个通道，宽度一致）：
+             *   · 搜索命中 → brand（与既有行为一致）
+             *   · 时间线聚焦 → emphasize（"你现在在时间线的哪一格"）
+             * 两者同时成立时以聚焦为准：聚焦是用户刚刚做的动作。
+             */
+            .border({
+              width: { left: this.focusedCellId === item.id || this.isHit(item) ? 3 : 0 },
+              color: this.focusedCellId === item.id
+                ? $r('sys.color.font_emphasize') : $r('sys.color.brand')
+            })
           }, (item: TrajectoryItem) => item.id)
         } else {
           // 对话视图 = 按**回合**渲染（§8）：用户消息 + 过程分组（折叠）+ 回答
@@ -708,6 +775,10 @@ export struct ConversationPane {
       }
       .layoutWeight(1)
       .width('100%')
+      // 列表 → 条：滚动时让条上的聚焦跟着走（拖动条期间由 `timelineDragging` 关掉这一路）
+      .onScrollIndex((firstVisible: number) => {
+        this.focusFromListIndex(firstVisible);
+      })
       .padding({ left: Sp.M, right: Sp.M, top: Sp.M })
       // E113：可见区间决定"是否跟随最新"；贴底跟随由 `stickToBottom` + 定时器实现
       .onScrollIndex((start: number, end: number) => {

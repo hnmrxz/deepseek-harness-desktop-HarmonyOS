@@ -231,6 +231,37 @@ export function segmentOrdinalOf(segments: TimelineSegment[], id: string): numbe
   return 0;
 }
 
+/**
+ * 聚焦某一格时，**列表**该滚到第几行（条 ↔ 列表联动的条→列表方向）。
+ *
+ * @returns 行号；`-1` = 不滚（该格不在当前列表里）
+ *
+ * 【为什么这是个需要判断的查询，而不是一行 indexOf】它有三种"找不到"的情形，
+ * 而它们**都不该滚**：格子 id 为空（还没聚焦）、该条目被过滤出列表（搜索/视图切换后
+ * 列表与时间线的来源可能不同）、以及列表本身为空。滚到一个越界行号会直接抛错，
+ * 而"滚到第 0 行"则是比不滚更糟的行为（用户没点任何东西，列表自己跳到顶部）。
+ */
+export function listIndexForCell(items: TrajectoryItem[], cellId: string): number {
+  if (cellId.length === 0) {
+    return -1;
+  }
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].id === cellId) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+/** 列表第 `index` 行的条目在时间线里是哪一格（列表→条方向）；`''` = 该条目不产生格子 */
+export function cellIdForListIndex(items: TrajectoryItem[], index: number): string {
+  if (index < 0 || index >= items.length) {
+    return '';
+  }
+  const kind: TimelineKind | null = timelineKindOf(items[index]);
+  return kind === null ? '' : items[index].id;
+}
+
 /* ───────────────────────── 文案（逐字取官方文案） ───────────────────────── */
 
 /** 官方 `timeline.total`：「总计 {duration}」 */

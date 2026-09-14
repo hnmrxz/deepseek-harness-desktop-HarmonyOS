@@ -176,7 +176,7 @@ export type { InputModality } from './model/InputPolicy';
 
 // ── 轨迹时间线（P2 §11：交互式时间总览；纯函数，可本机直接测） ──
 export {
-  cellIdAtRatio, segmentOrdinalOf, statsLinesOf,
+  cellIdAtRatio, cellIdForListIndex, listIndexForCell, segmentOrdinalOf, statsLinesOf,
   timelineCellsOf, timelineKindLabel, timelineKindOf, timelineScaleOf,
   timelineStartedLabel, timelineTotalLabel, TimelineKind, StatsUnit,
 } from './model/Timeline';
