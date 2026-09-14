@@ -105,7 +105,8 @@
 | **纯逻辑执行测试（layout fixtures）** | ✅ 可跑 | `tools/check-layout-fixtures.mjs`：把 `appstate/ui` 的三个**纯逻辑** `.ets` 按 `.ts` 编译后**在本机直接执行**（被测的是同一源文件，不是复制品），断言四形态 + 断点边界 + 让步链三分支，共 28 条 |
 | **ArkTS 静态检查（codelinter）** | ✅ 可跑且**覆盖面已证明** | 直接调用 CLT 的 `codelinter/bin/codelinter -c code-linter.json5 <模块目录>`：**16 条 warning / 0 error**（7 个文件）。覆盖用**注入测试**证明：往一个「无问题」文件注入已知违规，能被检出（见 §3.2） |
 | API 兼容扫描（`devecocli check compat`） | ❌ 平台不支持 | CLI 明文：`Unsupported platform: linux. compat only supports macOS and Windows.`——**与 CLT 是否安装无关**，Linux 上永远不可用 |
-| 模型/协议往返（`check-model-roundtrip.mjs`） | ⚠️ 需产物 | 需要 `dist/core/` 物化出来的核心树与可起的 Host |
+| 模型/协议往返（`check-model-roundtrip.mjs`） | ✅ 前提已齐（可跑） | 需要 `dist/core/` 的核心树 + 可起的 Host；两者现已就绪（见 §3.3） |
+| 起真实 Host 的门禁（`check-origin-fence` / `check-plugin-toggle`） | ⚠️ **需要 Node < 22** | 这三个门禁用 `process.execPath` 起 Host 并传 `--no-experimental-fetch`；该 flag 在 Node 22+ **已被移除**（fetch 转正）⇒ Node 24 下 Host 直接启动失败：`--no-experimental-fetch is an invalid negation`。本机已备 **Node v22.23.2**（与端侧同一版本，`/home/node/node22/bin/node`），用它跑即可 |
 | 在设备上真跑（装机） | ❌ 缺运行期产物 | 需要 `entry/libs/<abi>/libnode.so.127`（自建 Node OHOS 交叉编译产物，不入库，见 §3.3） |
 | 布局/形态真机验收 | ❌ 不可跑 | 无模拟器、无真机 |
 | 视觉像素、手势、键盘、触控笔、系统权限、文件选择器 | ❌ 不可跑 | 统一进 `docs/device-validation.md`（P4） |
@@ -158,13 +159,20 @@ devecocli build（全量）                                                     
 | 产物 | 路径 | 干什么用 | 产生方式 | 本机状态 |
 |---|---|---|---|---|
 | Node 头文件 | `entry/src/main/cpp/node-headers/` | CMake 编 `libdshhost`（**只需要它**） | `tools/node-runtime/sync-node-headers.sh`（从 Node v22.23.2 源码树取 `src/*.h` + `deps/v8/include` + `deps/uv/include`） | ✅ 已生成（3.8 MB） |
-| koffi 源码 | `third_party/koffi/` | 编 `libkoffi.so`（`subprocess`/`sandbox` 两行插件依赖它） | `node tools/fetch-koffi.mjs` | ⚠️ 缺（**只 warn 不失败**：CMake 跳过该架构的 koffi） |
+| koffi 源码 | `third_party/koffi/` | 编 `libkoffi.so`（`subprocess`/`sandbox` 两行插件依赖它） | `node tools/fetch-koffi.mjs` | ✅ 已就位（4.6 MB，随其余产物上传） |
 | Host 入口脚本 | `entry/src/main/resources/resfile/resources/app/` | 装机后由原生层跑起 dsh | `node tools/place-host-app.mjs`（源 `hostcore/app/` **在库里**） | ✅ 已就位 |
 | 核心包 | `entry/src/main/resources/resfile/*.zip` | 首启解包出端侧核心树 | `node tools/pack-core.mjs --skip-install --place-in-app` | ✅ 已就位（rc.2 / rc.3 各 69 MB） |
-| **libnode** | `entry/libs/{arm64-v8a,x86_64}/libnode.so.127` | **运行期**：自建 Node（OHOS）载体；同时是"编不编 koffi"的门 | `tools/node-runtime/build-node-ohos.sh`（交叉编译 Node，产出在开发机） | ❌ 缺 ⇒ **只能签名装机后才需要**；**不参与链接**（`CMakeLists.txt` 故意不写进 `DT_NEEDED`，见其注释） |
-| 核心树 | `dist/core/work/dsh-core-*` | `pack-core` 的输入；`check-origin-fence` / `check-plugin-toggle` 门禁的前提 | `tools/pack-core.mjs` 的安装阶段物化 | ❌ 缺 ⇒ 两个门禁仍是盲区 |
-| 协议契约 | `.research/protocol/contracts.json` | `compat-drift` 门禁的输入 | `node tools/protocol-contract.mjs` + 上游 checkout | ❌ 缺 ⇒ 漂移门禁仍是盲区 |
+| **libnode** | `entry/libs/{arm64-v8a,x86_64}/libnode.so.127` | **运行期**：自建 Node（OHOS）载体；同时是"编不编 koffi"的门 | `tools/node-runtime/build-node-ohos.sh`（本机亦可：容器与真机同为 arm64） | ✅ `arm64-v8a` 已就位（169 MB 原生库组，随其余产物上传）⇒ **koffi 从此会被真正编进 HAP**；**不参与链接**（`CMakeLists.txt` 故意不写进 `DT_NEEDED`，见其注释） |
+| 核心树 | `dist/core/work/dsh-core-*` | `pack-core` 的输入；`check-origin-fence` / `check-plugin-toggle` / `check-model-roundtrip` 门禁的前提 | **不需要上传**：`entry/src/main/resources/resfile/dsh-core-*.zip` 本身就是完整树（29006 个文件），`unzip` 到 `dist/core/work/` 即物化 |
+| 协议契约 | `.research/protocol/contracts.json` | `compat-drift` 门禁的输入 | `node tools/protocol-contract.mjs` + 上游 checkout | ❌ 缺 ⇒ 漂移门禁仍是盲区（**唯一仍跑不动的门禁**） |
 | 签名材料 | `.p12` / `.cer` / `.p7b` | `SignHap` 出可安装的 HAP | DevEco 自动签名（那个 Windows 机器上的 `C:\Users\hnzy1\.ohos\config\`） | ❌ 缺（路径写在 `build-profile.json5`，Linux 上无效） |
+
+**从别处拷贝产物时的两个实测坑（2026-09-14 各踩一次）**
+
+| 坑 | 现象 | 核对办法 |
+|---|---|---|
+| **"上传了目录" ≠ "文件到了"** | `dist/core/work/dsh-core-*` 看起来存在，但 `find … -type f | wc -l` = **0**：只有目录骨架，没有文件 ⇒ Host 报 `找不到 profile-boot 入口（核心树可能不完整）` | 收到目录后用 **`find <dir> -type f | wc -l`** 核对文件数，不只看 `ls` |
+| **文件带 +x 位** | 拷进来的 `.ets` / `.cpp` / `.d.ts` 变成 `100755`，与库里的 `100644` 产生**纯模式 diff**（内容逐字节相同） | `git diff --summary` 看 `mode change`；归一化用 `git update-index --chmod=-x <path>`（必要时重写文件以取得属主再 `chmod 644`） |
 
 **结论**：**编译验证不需要任何外部产物**（HAR 模块 + entry 的 ArkTS + 原生 + 打包在这一台机器上全通）；
 **装机运行**才需要 `libnode`（+ 签名）。这一点值得写下来，因为"编译过了"与"能装机"经常被混为一谈。
@@ -207,7 +215,7 @@ devecocli build（全量）                                                     
 
 | Feature | Web 行为（官方实现） | Harmony 状态层 | Harmony 界面 | 协议/端点 | Phone | Tablet | PC | 2-in-1 | Status |
 |---|---|---|---|---|---|---|---|---|---|
-| `layout` 外壳与三栏布局 | 三栏 AppFrame + 拖拽手柄；`ctx.layout` 查看态服务（导航 + 面板） | `appstate/ui/Breakpoints.ets`（`layoutModeOf` / `detailPanelAvailable` / `navPresentation`）、**`ui/LayoutController.ets`（P1 新增：形态/几何决策的唯一落点，含让步链 `concedeDetail`）**、`ui/Tokens.ets`（`Sz.NAV_RAIL` / `NAV_PANEL` / `DETAIL_PANEL` / `DETAIL_MIN`） | `pages/Index.ets` 的 `buildSingle` / `buildDouble` / `buildTriple` + `navRail` / `navPanel` / `detailColumn` / `applyWidth`（**尚未改为消费 LayoutController**） | 无（纯前端） | DONE | DONE | PARTIAL | PARTIAL | PARTIAL |
+| `layout` 外壳与三栏布局 | 三栏 AppFrame + 拖拽手柄；`ctx.layout` 查看态服务（导航 + 面板） | `appstate/ui/Breakpoints.ets`（`layoutModeOf` / `detailPanelAvailable` / `navPresentation`）、**`ui/LayoutController.ets`（P1：形态/几何决策的唯一落点，含让步链 `concedeDetail`）**、`ui/Tokens.ets`（`Sz.NAV_RAIL` / `NAV_PANEL` / `DETAIL_PANEL` / `DETAIL_MIN`） | **`pages/Index.ets` 已改为消费决策**：`applySize` 取 `decideLayout()`，navRail/detailColumn 的宽度取 `navWidthVp()`/`detailWidthVp()`（commit `fad954a`）——本文件不再有第二份断点/几何实现 | 无（纯前端） | DONE | DONE | PARTIAL | PARTIAL | PARTIAL |
 | `slots` 槽位注册 | SlotMap 声明合并 + 单次 register 组合 API + 四方共享 props | 无（ArkUI 声明式，无插件槽位系统） | 无 | 无 | BOUNDARY | BOUNDARY | BOUNDARY | BOUNDARY | BOUNDARY |
 | `primitives` 基础组件原子 | 纯 React 原子：控件 / 图标 / Markdown / JSON 检查器 | 无独立层（样式直接内联在各 Pane） | 各 Pane 内联 | 无 | — | — | — | — | TODO |
 | `renderer` 渲染器与应用根 | React 槽位绑定 + `ctx.uiRenderer` + 组装后的应用根 | ArkUI 声明式 UI 由 `@Entry` 组件承载（无等价服务） | `pages/Index.ets` | 无 | BOUNDARY | BOUNDARY | BOUNDARY | BOUNDARY | BOUNDARY |
@@ -307,7 +315,7 @@ devecocli build（全量）                                                     
 
 | id | 缺什么（对等差距） | 下一步（归属） |
 |---|---|---|
-| `layout` | ① 无拖拽调宽手柄（官方 AppFrame 有 drag handles）；`decideLayoutWithDetail` 已把"用户想要的宽度"这条路径做好并有 fixture，但**没有 UI 去产生这个宽度** ② 详情栏宽度记忆未落 ③ **`Index.ets` 尚未消费 `LayoutController`**：形态决策仍写在自己的 `applyWidth` 里，`navPresentation` 虽已有真实消费者（`LayoutController`）但**渲染层还没接**（`entry` 无编译验证，故此步要单独、小步地做）④ **待决（需真机）**：D3 §2 只按宽度判定 ⇒ **手机横屏（800vp 宽）会落成双栏**；要不要加高度/方向子句，看真机效果后定 | P1：把 `Index.ets` 的 `applyWidth` / 两个硬编码 `Sz.NAV_RAIL` / `Sz.DETAIL_PANEL` 换成消费 `decideLayout()`（行为等价，逐项对照 fixture）；**每步只改一处**，并靠 fixture + 人工核对兜底 |
+| `layout` | ① 无拖拽调宽手柄（官方 AppFrame 有 drag handles）；`decideLayoutWithDetail` 已把"用户想要的宽度"这条路径做好并有 fixture，但**没有 UI 去产生这个宽度** ② 详情栏宽度记忆未落 ③ **待决（需真机）**：D3 §2 只按宽度判定 ⇒ **手机横屏（800vp 宽）会落成双栏**；要不要加高度/方向子句，看真机效果后定 ④ 输入模态仍未接入决策（传 `false` 并在源码里注明）：`pointerRich` 无消费点，P3 再统一 | P2：拖拽调宽 + 宽度记忆；P3：把 `readDeviceFacts().keyboardLikely` 接进 `LayoutInput` |
 | `primitives` | 无组件原子层：字号/圆角/边框/背景直接内联在各 Pane，token 使用不可强制 | P1：`ParityTheme` + `ParityButton` / `ParityChip` / `ParityCard` / `ParityDialog` 等，并加"禁用裸魔数"门禁 |
 | `slots` / `renderer` | 官方是 React + 槽位插件化渲染；ArkUI 无槽位系统，第三方不能贡献 UI | 架构边界：**不追平**，能力由"构建期装配 + 设置页开关"替代；本条登记以免被当作缺陷反复讨论 |
 | `session` | 无"会话作用域槽位"；控制器能力（`SessionHub`）已具备 | 不追平（同上）；控制器本身已 DONE |
