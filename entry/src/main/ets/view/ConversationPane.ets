@@ -44,7 +44,11 @@ import {
   hasProcessGroup,
   processSummary,
   HarmonyColor,
-  HarmonyType
+  HarmonyType,
+  followTimerShouldRun,
+  FollowSignal,
+  nextFollowing,
+  shouldJumpOnNewItems
 } from 'appstate';
 /** 类型单独 import type（本仓约定：值与类型分开写） */
 import type { ActionNotice, FeedbackCategory, Turn } from 'appstate';
@@ -55,7 +59,7 @@ import { PendingPane } from './PendingPane';
 
 @Component
 export struct ConversationPane {
-  @Prop sessionId: string = '';
+  @Prop @Watch('onSessionChanged') sessionId: string = '';
   @Prop items: TrajectoryItem[] = [];
   @Prop running: boolean = false;
   @Prop offline: boolean = false;
@@ -211,11 +215,25 @@ export struct ConversationPane {
   /** 可见区间变化：最后一条可见 ⇔ 用户在底部 ⇒ 恢复跟随；否则解除跟随 */
   private onVisibleRange(start: number, end: number): void {
     const last: number = this.rowCount() - 1;
-    this.stickToBottom = last < 0 || end >= last;
+    const atBottom: boolean = last < 0 || end >= last;
+    // 几何只回答"在不在底部"；**是否跟随**由跟随模型按信号决定（§8 的独立管理）
+    this.stickToBottom = nextFollowing(this.stickToBottom,
+      atBottom ? FollowSignal.AT_BOTTOM : FollowSignal.SCROLLED_AWAY);
+  }
+
+  /**
+   * 会话切换（§8 缺的那条意图信号）。
+   *
+   * 【修的是什么】此前"在会话 A 上翻过历史"会让跟随保持 false，切到会话 B 时
+   * **新会话不在底部**——用户看到的是 B 的中间某处。切换会话的意图显然是"看最新"。
+   */
+  private onSessionChanged(): void {
+    this.stickToBottom = nextFollowing(this.stickToBottom, FollowSignal.SESSION_CHANGED);
+    this.scrollToLatest();
   }
 
   private onItemsChanged(): void {
-    if (this.stickToBottom) {
+    if (shouldJumpOnNewItems(this.stickToBottom)) {
       this.scrollToLatest();
     }
   }
@@ -234,7 +252,7 @@ export struct ConversationPane {
    * 只在自己跟随（`stickToBottom`）时定时；用户上翻时立刻停。
    */
   private syncFollowTimer(): void {
-    const shouldRun: boolean = this.running && this.stickToBottom;
+    const shouldRun: boolean = followTimerShouldRun(this.stickToBottom, this.running);
     if (shouldRun && this.followTimer < 0) {
       this.followTimer = setInterval(() => {
         this.scrollToLatest();
@@ -533,7 +551,12 @@ export struct ConversationPane {
         commands: this.commands,
         notice: this.notice,
         onDraftChange: this.onDraftChange,
-        onSend: this.onSend,
+        onSend: () => {
+          // 用户发消息 = 他在等回答 ⇒ 恢复跟随（否则上翻过历史时，回答会出现在看不到的地方）
+          this.stickToBottom = nextFollowing(this.stickToBottom, FollowSignal.USER_SENT);
+          this.scrollToLatest();
+          this.onSend();
+        },
         onStop: this.onStop,
         onAddAttachment: this.onAddAttachment,
         onRemoveAttachment: this.onRemoveAttachment,

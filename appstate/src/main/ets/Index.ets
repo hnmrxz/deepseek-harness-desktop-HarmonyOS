@@ -162,6 +162,9 @@ export {
 // ── 设计令牌 ──
 export { Border, Breakpoint, Dur, Fs, Lh, Radius, SemanticColor, Sp, Sz } from './ui/Tokens';
 
+// ── 贴底跟随模型（P1 §8：sticky-follow 独立管理；纯函数，可本机直接测） ──
+export { followTimerShouldRun, FollowSignal, nextFollowing, shouldJumpOnNewItems } from './model/Follow';
+
 // ── 回合模型（P1 §8：Turn → ProcessGroup + Answer；纯函数，可本机直接测） ──
 export {
   chatVisibleItems,

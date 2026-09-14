@@ -41,7 +41,8 @@ const PURE_FILES = [
   'appstate/src/main/ets/ui/NavigationController.ets',
   // 回合模型（§8）：纯逻辑，可在本机直接执行
   'appstate/src/main/ets/model/Trajectory.ets',
-  'appstate/src/main/ets/model/Turns.ets'
+  'appstate/src/main/ets/model/Turns.ets',
+  'appstate/src/main/ets/model/Follow.ets'
 ];
 
 /** ArkUI 全局的声明补丁：Tokens.ets 用它取系统资源色/符号 */
@@ -165,6 +166,7 @@ const LC = require2('./LayoutController.js');
 const { decideLayout, decideLayoutWithDetail, concedeDetail, navWidthOf, ConcessionStep, MAIN_MIN_VP } = LC;
 const NC = require2('./NavigationController.js');
 const TM = require2('./Turns.js');
+const FM = require2('./Follow.js');
 const TJ = require2('./Trajectory.js');
 const t = makeAsserter(selfTest);
 
@@ -423,6 +425,22 @@ console.log('\n## 回合模型（§8：Turn → ProcessGroup + Answer）');
   const st = groupTurns([u1, streaming], false);
   t.eq('流式输出中的回合视为进行中', st[0].running, true);
   console.log('  ok    分组边界 / 过程与回答归类 / notices / 空分组 / 折叠默认态 / 流式，共 15 条断言');
+}
+
+console.log('\n## 贴底跟随模型（§8：sticky-follow 独立管理）');
+{
+  const { nextFollowing, followTimerShouldRun, shouldJumpOnNewItems, FollowSignal } = FM;
+  t.eq('滚到/停在底部 → 跟随', nextFollowing(false, FollowSignal.AT_BOTTOM), true);
+  t.eq('上翻离开底部 → 不跟随', nextFollowing(true, FollowSignal.SCROLLED_AWAY), false);
+  // 下面两条是本次修的**真实缺陷**：此前几何判断顺带管意图，导致切会话/发消息不恢复跟随
+  t.eq('切会话 → 恢复跟随（此前缺陷：新会话停在中间）', nextFollowing(false, FollowSignal.SESSION_CHANGED), true);
+  t.eq('发消息 → 恢复跟随（此前缺陷：回答出现在看不到的地方）', nextFollowing(false, FollowSignal.USER_SENT), true);
+  t.eq('跟随中 + 会话在跑 → 定时贴底跑', followTimerShouldRun(true, true), true);
+  t.eq('跟随中但已停止 → 不跑', followTimerShouldRun(true, false), false);
+  t.eq('未跟随（用户在看历史）→ 绝不抢滚动条', followTimerShouldRun(false, true), false);
+  t.eq('新条目：跟随中才跳到底', shouldJumpOnNewItems(true), true);
+  t.eq('新条目：不跟随时不把用户拽走', shouldJumpOnNewItems(false), false);
+  console.log('  ok    9 条断言：三处几何 + 两条**意图信号**（切会话/发消息）+ 定时器与跳底判据');
 }
 
 t.done();
