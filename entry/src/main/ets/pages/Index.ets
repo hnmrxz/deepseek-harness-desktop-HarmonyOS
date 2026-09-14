@@ -170,6 +170,7 @@ import { extractToken, parseJson } from 'connection';
 import { EVENT_HOST_CONNECTED, EVENT_KEY_HOST_TOKEN, EVENT_KEY_HOST_URL } from 'platform';
 import { ConnectPane } from '../view/ConnectPane';
 import { ConversationPane } from '../view/ConversationPane';
+import { RightbarShell } from '../view/shell/RightbarShell';
 import { SidebarShell } from '../view/shell/SidebarShell';
 import { CorePane } from '../view/CorePane';
 import { DetailPane } from '../view/DetailPane';
@@ -1931,21 +1932,17 @@ struct Index {
    */
   @Builder
   detailSheet() {
-    Column({ space: HarmonySpacing.CONTAINER }) {
-      NativeSectionTitle({ text: '详情', hint: '工具 / 子代理 / 交付物 / 目标 / 任务' })
-      DetailPane({
-        sections: this.detailSections,
-        onLineTap: (section: string, text: string) => {
-          // E130：详情行看起来可点，就得真的做一件事——复制该行
-          if (text.length > 0) {
-            copyText(text);
-          }
+    // Sheet 呈现同样归 RightbarShell：关闭由原生 Sheet 提供（拖拽条/点击外部）
+    RightbarShell({
+      presentation: DetailPresentation.OVERLAY,
+      widthVp: 0,
+      sections: this.detailSections,
+      onLineTap: (section: string, text: string) => {
+        if (text.length > 0) {
+          copyText(text);
         }
-      })
-    }
-    .width('100%')
-    .height('100%')
-    .padding(HarmonySpacing.CONTAINER)
+      }
+    })
   }
 
   build() {
@@ -3301,40 +3298,21 @@ struct Index {
 
   @Builder
   detailColumn(widthVp: number) {
-    Column() {
-      Row({ space: Sp.S }) {
-        Text('详情')
-          .fontSize(Fs.SECONDARY)
-          .fontWeight(FontWeight.Medium)
-          .layoutWeight(1)
-        Button() {
-          SymbolGlyph($r('sys.symbol.xmark')).fontSize(16)
+    // 右栏面板本体归 RightbarShell 所有（P0：第三条轨道）；这里只给"这条轨道怎么出现"。
+    RightbarShell({
+      presentation: DetailPresentation.COLUMN,
+      widthVp: widthVp,
+      sections: this.detailSections,
+      onClose: () => {
+        this.closeDetail();
+      },
+      onLineTap: (section: string, text: string) => {
+        // E130：详情行看起来可点，就得真的做一件事——复制该行
+        if (text.length > 0) {
+          copyText(text);
         }
-        .buttonStyle(ButtonStyleMode.TEXTUAL)
-        .accessibilityText('关闭详情')
-        .onClick(() => {
-          this.closeDetail();
-        })
       }
-      .width('100%')
-      .height(Sz.TOUCH_MIN)
-      .padding({ left: Sp.M, right: Sp.S })
-
-      Divider().color($r('sys.color.comp_divider'))
-
-      DetailPane({
-        sections: this.detailSections,
-        onLineTap: (section: string, text: string) => {
-          // E130：详情行看起来可点，就得真的做一件事——复制该行
-          if (text.length > 0) {
-            copyText(text);
-          }
-        }
-      })
-    }
-    .width(widthVp)
-    .height('100%')
-    .backgroundColor($r('sys.color.background_secondary'))
+    })
   }
 
   // ───────────────────── 主内容路由 ─────────────────────

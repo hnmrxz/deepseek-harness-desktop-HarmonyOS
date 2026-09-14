@@ -146,9 +146,11 @@ hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 `AppFrame → Sidebar → Main → Rightbar → Settings 域`，四形态共享同一套信息架构（只有几何/输入/面板呈现不同）。
 分步计划与验收见 `docs/ia-parity-plan.md`；判断依据与现状对照见 `docs/parity-matrix.md` §5.1。
 
-**进度**：纯逻辑层（`PanelRegistry` / `NavigationState` / `ShellTracks`，46 条断言）与**侧栏外壳**
-（`entry/src/main/ets/view/shell/SidebarShell.ets`，已接管侧栏的三种呈现）已完成；
-`AppShell` / `MainShell` / `RightbarShell` 与"`Index` 不再负责页面级 Pane 选择"仍待完成。
+**进度**：纯逻辑层（`PanelRegistry` / `NavigationState` / `ShellTracks`，46 条断言）、**侧栏外壳**
+（`view/shell/SidebarShell.ets`：品牌行 / 面板清单 / 徽标 / 三种呈现）与**右栏外壳**
+（`view/shell/RightbarShell.ets`：面板本体 / 三种呈现）已完成；
+`AppShell` / `MainShell` 与"`Index` 不再负责页面级 Pane 选择"仍待完成
+（瓶颈是状态归属：主区六个面板直接读 `Index` 的约 100 个 `@State`）。
 
 理由：功能不少、页面还是不像官方，根因是**信息架构没落地**——框架错则间距、颜色、Markdown 全白做。
 故 Markdown 与视觉精修**排在框架之后**，而不是先做。
