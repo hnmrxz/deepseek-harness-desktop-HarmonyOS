@@ -164,3 +164,145 @@ export function presentTool(item: TrajectoryItem, stateLabel: string): ToolPrese
     a11y: toolA11y(kind, item.toolName, item.toolState, stateLabel)
   };
 }
+
+/**
+ * 从参数里**提炼该类别最该被看见的那个要点**（§11 的"path summary"）。
+ *
+ * ## 为什么需要它
+ *
+ * `toolArgs` 是工具调用的原始参数（多为 JSON 串）。直接显示的结果是：
+ * 终端卡片上写着 `{"command":"npm run build","timeout":60000}`——**要点被埋在一堆键里**，
+ * 用户得自己找。按类别提炼后，卡片第一行就是 `npm run build`。
+ *
+ * ## 为什么用"键名查找"而不是完整 JSON 解析
+ *
+ * 参数串的来源不止一处（投影里可能来自 `arguments` / `args` / `input` / `parameters`，
+ * 也可能是模型直接给的一段文本）。用 `JSON.parse` 遇到非 JSON 就抛，得处处 try/catch；
+ * 而这里需要的只是"某个键的值"，所以按**优先键名**逐个找、找不到就退回清理后的原文——
+ * 对 JSON、类 JSON、纯文本三种输入都成立，且没有异常路径。
+ *
+ * ## 裁剪
+ *
+ * 超出 `maxLen` 截断并加省略号：卡片本身只有一行，把 4KB 的参数塞进去只会被样式吃掉，
+ * 还会让无障碍朗读变得没法听。
+ */
+const SUMMARY_KEYS: Record<string, string[]> = {
+  'terminal': ['command', 'cmd', 'script'],
+  'read': ['file_path', 'path', 'filePath', 'filename'],
+  'write': ['file_path', 'path', 'filePath', 'filename'],
+  'edit': ['file_path', 'path', 'filePath', 'filename'],
+  'search': ['pattern', 'query', 'regex', 'keyword'],
+  'web': ['url', 'query', 'q'],
+  'image': ['file_path', 'path', 'image_path', 'url'],
+  'ask': ['question', 'prompt', 'text'],
+  'generic': ['command', 'file_path', 'path', 'query', 'url', 'question', 'name']
+};
+
+function keysFor(kind: ToolKind): string[] {
+  const k: string[] = SUMMARY_KEYS[kind];
+  return k === undefined ? SUMMARY_KEYS['generic'] : k;
+}
+
+/** 把原文压成一行（多行/多空格折成单空格）——卡片只有一行位置 */
+function collapse(text: string): string {
+  let out: string = '';
+  let prevSpace: boolean = false;
+  for (let i = 0; i < text.length; i++) {
+    const c: string = text.charAt(i);
+    const isSpace: boolean = c === ' ' || c === '\n' || c === '\r' || c === '\t';
+    if (isSpace) {
+      if (!prevSpace && out.length > 0) {
+        out += ' ';
+      }
+      prevSpace = true;
+    } else {
+      out += c;
+      prevSpace = false;
+    }
+  }
+  return out.trim();
+}
+
+/** 从 JSON 样式的参数里取某个键的字符串值（取不到返回空串） */
+function valueOfKey(raw: string, key: string): string {
+  // 匹配 "key" : "value"（允许键被引号包住或不包、值必须是引号字符串）
+  const quoted: string = '"' + key + '"';
+  let at: number = raw.indexOf(quoted);
+  let keyEnd: number = -1;
+  if (at >= 0) {
+    keyEnd = at + quoted.length;
+  } else {
+    at = raw.indexOf(key + ':');
+    if (at >= 0) {
+      keyEnd = at + key.length;
+    }
+  }
+  if (keyEnd < 0) {
+    return '';
+  }
+  const colon: number = raw.indexOf(':', keyEnd);
+  if (colon < 0) {
+    return '';
+  }
+  let i: number = colon + 1;
+  while (i < raw.length && raw.charAt(i) === ' ') {
+    i += 1;
+  }
+  if (i >= raw.length || raw.charAt(i) !== '"') {
+    return '';
+  }
+  i += 1;
+  let out: string = '';
+  while (i < raw.length) {
+    const c: string = raw.charAt(i);
+    if (c === '\\') {
+      // 转义：保留被转义的字符本身（\n 还原成换行、\" 还原成引号）
+      const nxt: string = i + 1 < raw.length ? raw.charAt(i + 1) : '';
+      if (nxt === 'n') {
+        out += '\n';
+      } else {
+        out += nxt;
+      }
+      i += 2;
+      continue;
+    }
+    if (c === '"') {
+      break;
+    }
+    out += c;
+    i += 1;
+  }
+  return out;
+}
+
+/** 该工具参数的单行摘要（按类别提炼要点；提炼不到则退回清理后的原文） */
+export function toolSummaryOf(kind: ToolKind, rawArgs: string, maxLen: number = 120): string {
+  if (rawArgs.length === 0) {
+    return '';
+  }
+  const keys: string[] = keysFor(kind);
+  for (let i = 0; i < keys.length; i++) {
+    const v: string = collapse(valueOfKey(rawArgs, keys[i]));
+    if (v.length > 0) {
+      const more: string = pathHint(rawArgs, keys[i]);
+      const text: string = more.length > 0 ? `${v} · ${more}` : v;
+      return text.length > maxLen ? text.substring(0, maxLen) + '…' : text;
+    }
+  }
+  const plain: string = collapse(rawArgs);
+  return plain.length > maxLen ? plain.substring(0, maxLen) + '…' : plain;
+}
+
+/**
+ * 搜索类额外带上"在哪儿搜"（`foo · src`）。
+ *
+ * 【为什么只给搜索类】搜索的结果与范围强相关：只说搜了什么、不说在哪儿搜，
+ * 用户没法判断这个结果是否覆盖了他关心的目录。
+ */
+function pathHint(rawArgs: string, usedKey: string): string {
+  if (usedKey !== 'pattern' && usedKey !== 'query') {
+    return '';
+  }
+  const p: string = collapse(valueOfKey(rawArgs, 'path'));
+  return p;
+}

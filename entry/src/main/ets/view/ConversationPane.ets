@@ -56,7 +56,8 @@ import {
   hoverEnabled,
   MenuGesture,
   presentTool,
-  ToolKind
+  ToolKind,
+  toolSummaryOf
 } from 'appstate';
 /** 类型单独 import type（本仓约定：值与类型分开写） */
 import type { ActionNotice, FeedbackCategory, InputModality, ToolPresentation, Turn } from 'appstate';
@@ -1140,7 +1141,9 @@ export struct ConversationPane {
           ? `${this.clockOf(item.at)} · ${formatDuration(item.elapsedMs)}`
           : formatDuration(item.elapsedMs))
         : '',
-      summary: item.toolArgs,
+      // 参数摘要**按类别提炼**（§11 的 path summary）：终端出命令、读取出路径、搜索出模式+范围；
+      // 提炼不到再退回清理后的原文——不再把整段 JSON 糊在卡片第一行。
+      summary: toolSummaryOf(presentTool(item, toolStateLabel(item.toolState)).kind, item.toolArgs),
       bodyText: (this.isExpanded(item.id)
         || presentTool(item, toolStateLabel(item.toolState)).defaultExpanded)
         ? previewOutput(item.toolOutput).shown

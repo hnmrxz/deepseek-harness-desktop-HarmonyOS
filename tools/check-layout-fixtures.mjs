@@ -463,7 +463,7 @@ console.log('\n## 输入模态策略（触控 / 鼠标 / 键盘同一套语义�
 
 console.log('\n## 工具呈现（§11：按工具类别区分，而不是一视同仁）');
 {
-  const { toolKindOf, toolKindLabel, toolToneOf, toolDefaultExpanded, ToolKind } = TP;
+  const { toolKindOf, toolKindLabel, toolToneOf, toolDefaultExpanded, toolSummaryOf, ToolKind } = TP;
   // 用例取自**上游客户端渲染器实际出现的工具名键**（dsh-client-ui-tool/lib/client.js）
   t.eq('bash → 终端', toolKindOf('bash'), ToolKind.TERMINAL);
   t.eq('pwsh → 终端（大小写不敏感）', toolKindOf('Pwsh'), ToolKind.TERMINAL);
@@ -483,6 +483,23 @@ console.log('\n## 工具呈现（§11：按工具类别区分，而不是一视�
   t.eq('被拒默认展开', toolDefaultExpanded('rejected'), true);
   t.eq('成功默认折叠（长会话不刷屏）', toolDefaultExpanded('success'), false);
   console.log('  ok    17 条断言：10 个真实工具名归类 + 语气 + 展开规则');
+
+  // 摘要提炼（§11 的 path summary）：要点从参数里挖出来，而不是整段糊上去
+  t.eq('终端：取 command', toolSummaryOf(ToolKind.TERMINAL, '{"command":"npm run build"}'), 'npm run build');
+  t.eq('终端：忽略其它键', toolSummaryOf(ToolKind.TERMINAL, '{"command":"ls -la","timeout":60000}'), 'ls -la');
+  t.eq('读取：取 file_path', toolSummaryOf(ToolKind.READ, '{"file_path":"/a/b.ts"}'), '/a/b.ts');
+  t.eq('搜索：模式 + 范围', toolSummaryOf(ToolKind.SEARCH, '{"pattern":"foo","path":"src"}'), 'foo · src');
+  t.eq('搜索：无范围时不加分隔符', toolSummaryOf(ToolKind.SEARCH, '{"pattern":"foo"}'), 'foo');
+  t.eq('网络：取 url', toolSummaryOf(ToolKind.WEB, '{"url":"https://example.com/a"}'), 'https://example.com/a');
+  t.eq('提问：取 question', toolSummaryOf(ToolKind.ASK, '{"question":"选哪一个？"}'), '选哪一个？');
+  t.eq('非 JSON 原文：清理成一行', toolSummaryOf(ToolKind.TERMINAL, 'ls -la\n  /tmp'), 'ls -la /tmp');
+  t.eq('空参数 → 空摘要', toolSummaryOf(ToolKind.TERMINAL, ''), '');
+  const longCmd = '{"command":"' + 'x'.repeat(200) + '"}';
+  const sum = toolSummaryOf(ToolKind.TERMINAL, longCmd);
+  t.eq('超长截断并加省略号', sum.length, 121);
+  t.eq('截断标记在末尾', sum.endsWith('…'), true);
+  t.eq('转义引号还原', toolSummaryOf(ToolKind.TERMINAL, '{"command":"echo \\"hi\\""}'), 'echo "hi"');
+  console.log('  ok    12 条断言：按类别提炼要点（终端的命令 / 读取的路径 / 搜索的模式+范围 / 网络的 url …）');
 }
 
 t.done();
