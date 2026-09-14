@@ -298,6 +298,45 @@ function flatNativeName(basename) {
   }
 })();
 
+/*
+ * jitless 下的 `undici` **模块名**解析钩子（与上面的 fetch 垫片是同一件事的另一半）。
+ *
+ * 【为什么光有垫片还不够】上面的垫片解决的是"全局 fetch 不可用"，但上游
+ * `dsh-web-fetch-http` **不用全局 fetch**：它 `await import("undici")` 自建 Agent，
+ * 再把 `dispatcher` 传进 fetch（lib/index.js:154 与 :193）。而 undici 的 HTTP 解析器
+ * 是 WASM 版 llhttp（lib/llhttp/llhttp-wasm.js）⇒ jitless 下 `new Agent()` 一连接就抛
+ * `fetch failed / cause: WebAssembly is not defined`。
+ * 这正是"web_search 正常、web_fetch 打不开任何网页和 ip"的根因：前者走上面的垫片，
+ * 后者走 undici。已用对照实验确认（同一核心树、同一个本地 HTTP 服务、只切换 --jitless）。
+ *
+ * 【怎么修】**运行期组合**，而不是改上游源码或改核心树：注册一个解析钩子，让
+ * `import("undici")` 解析到本仓的 undici-shim.mjs。核心树一个字节都不动。
+ * 钩子同时翻译 `dispatcher` → 我们垫片认识的 `lookup`，从而**保住上游的 DNS 钉住/
+ * SSRF 防护**（它先解析出公开地址再钉住连接，见 fetch-shim.js 里 lookup 的注释）。
+ *
+ * 【注册条件】只在 WASM 不可用（jitless）时注册。原生 undici 可用时不该被替换——
+ * 它的连接池与协议实现比垫片完整得多。
+ *
+ * 【已知未验项】`register()` 的钩子跑在 Node 的**独立线程**里；端侧嵌入式运行时是否
+ * 允许起线程，属真机待验收项（docs/parity-matrix.md §3.2）。故失败时只降级、不阻断
+ * 启动——web_fetch 坏掉不该拖垮整个 Host。
+ */
+(function installUndiciNameHook() {
+  if (typeof WebAssembly !== 'undefined') {
+    diag('WASM 可用，保留原生 undici（未注册解析钩子）');
+    return;
+  }
+  try {
+    // eslint-disable-next-line global-require
+    const { register } = require('node:module');
+    register(pathToFileURL(path.join(__dirname, 'undici-loader.mjs')).href,
+      pathToFileURL(__filename).href);
+    diag('undici 解析钩子已注册（web_fetch 走本仓垫片，绕开 WASM）');
+  } catch (e) {
+    diag(`undici 解析钩子注册失败（web_fetch 将不可用）：${e && e.message}`);
+  }
+})();
+
 /** 读我们自己的 state.json，得到"当前版本"，据此拼出核心树目录。 */
 function currentCoreDir() {
   if (DSH_BASE.length === 0) {

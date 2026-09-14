@@ -1,6 +1,6 @@
 /**
  * `undici` 垫片（端侧 jitless 环境的必要件）。
- * 状态：**已实现、已单独验证可加载，但尚未接线**（`main.js` 里还没有注册解析钩子）。
+ * 状态：**已接线并端到端验证通过**（见 docs/parity-matrix.md §3.2）。
  *
  * ## 为什么需要它（实测根因）
  *
@@ -27,6 +27,10 @@
  *   1. 转出 `fetch`（带 dispatcher → lookup 的翻译，**保住上游的 DNS 钉住/SSRF 防护**）；
  *   2. 提供 `Agent` / `Dispatcher`（上游要 `new Agent(...)` 与 `await dispatcher.close()`）；
  *   3. 补上 `setGlobalDispatcher` / `getGlobalDispatcher` 之类的空实现，避免 import 报错。
+ *
+ * 【为什么扩展名是 .mjs】生成的 `package.json` 故意不带 `type` 字段（main.js 是 CommonJS），
+ * 所以 .js 会被当成 CJS；本文件用的是 ESM 语法。用 .mjs 让 ESM 属性成为**结构性事实**，
+ * 而不是依赖 Node 的语法探测或钩子里的 format 提示。
  *
  * 模块名的替换由 `undici-loader.mjs` 的 resolve 钩子完成（**运行期组合**，
  * 不改上游源码、也不改核心树——符合 D5 §1「上游知识不落进客户端代码」的边界）。

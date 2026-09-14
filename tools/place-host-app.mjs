@@ -23,8 +23,14 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SRC_DIR = join(ROOT, 'hostcore', 'app');
 const DEST = join(ROOT, 'entry', 'src', 'main', 'resources', 'resfile', 'resources', 'app');
 
-// 入口脚本会 `require('./fetch-shim.js')`（jitless 下垫 fetch，见 D6 E52）⇒ 必须一起进包
-const FILES = ['main.js', 'fetch-shim.js'];
+// 入口脚本依赖的三份文件，缺一份都会让端侧功能静默变哑：
+//   · main.js       —— 入口本身
+//   · fetch-shim.js —— 被 main.js `require('./fetch-shim.js')`（jitless 下垫 fetch，见 D6 E52）
+//   · undici-shim.mjs / undici-loader.mjs
+//       被 main.js `register()` 的解析钩子指向。**漏掉这两个不会报错**，只会让
+//       `import("undici")` 落回原生 undici，而它在 jitless 下必然抛
+//       `WebAssembly is not defined` ⇒ 表现为"web_fetch 打不开任何网页"（矩阵 §3.2）。
+const FILES = ['main.js', 'fetch-shim.js', 'undici-shim.mjs', 'undici-loader.mjs'];
 
 mkdirSync(DEST, { recursive: true });
 
