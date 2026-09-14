@@ -28,7 +28,17 @@ import {
 } from 'dshcompat';
 import type { VersionCheck } from 'dshcompat';
 import type { DiagnosticItem, DiagnosticReport } from 'connection';
-import { applyThemeMode, copyText, LocalPrefs, PickOutcome, pickDocument, pickFolder, localizedOr, themeModeOf } from 'platform';
+import {
+  applyThemeMode,
+  copyText,
+  LocalPrefs,
+  PickOutcome,
+  pickDocument,
+  pickFolder,
+  localizedOr,
+  readDeviceFacts,
+  themeModeOf
+} from 'platform';
 import type { NotifyRoute, PickedFile, PickedFolder } from 'platform';
 import { common } from '@kit.AbilityKit';
 import {
@@ -315,6 +325,16 @@ struct Index {
    * 三栏形态不走这条（`mode === TRIPLE` 时用真正的右栏，可调宽、可记忆）。
    */
   @State detailSheetOpen: boolean = false;
+
+  /**
+   * 是否有指针设备（鼠标/触控笔）。
+   *
+   * 【为什么用 `keyboardLikely` 作代理】`DeviceFacts` 目前只给出"键鼠形态"这一个综合事实
+   * （2in1/桌面模式为真）。**不编一个新的系统探测**：等 P3 细分指针/触控时，
+   * 在这里改成读更精确的事实即可（`InputPolicy` 已经按 hasKeyboard/hasPointer 两个维度写好，
+   * 届时只换事实来源，不动策略）。
+   */
+  @State hasPointerInput: boolean = false;
 
   // ── 数据（当前来自桩数据源） ──
   @State sessions: SessionListItem[] = [];
@@ -773,6 +793,8 @@ struct Index {
   }
 
   aboutToAppear(): void {
+    // 设备事实读一次：它决定右键/悬停是否启用（不参与布局决策——布局只看窗口宽度）
+    this.hasPointerInput = readDeviceFacts().keyboardLikely;
     // 初始值 = 空态。所有真实数据都在 `applyHubSnapshot` 到达时落地；
     // 连接建立前界面显示的是各视图自己的空态文案（D3 §4），而不是编造的示例数据。
     this.diag = emptyDiagReport();
@@ -1518,6 +1540,46 @@ struct Index {
       this.settingWriteNote = this.noticeText(n);
     }).catch((e: Object) => {
       this.settingWriteNote = '切换计划模式失败：' + (e as Error).message;
+    });
+  }
+
+  /**
+   * 引用一条消息到输入框。
+   *
+   * 【为什么是"加前缀"而不是把原文塞进去】引用要给**上下文**：只复制原文，用户会分不清
+   * 哪句是自己写的哪句是引的。逐行加 `> ` 是 Markdown 的引用语法，也是官方 Web 的做法，
+   * 发送后模型与界面都能正确理解这是引用。
+   */
+  private quoteIntoDraft(item: TrajectoryItem): void {
+    if (item.body.length === 0) {
+      this.attachNotice = '这条消息没有可引用的正文。';
+      return;
+    }
+    const lines: string[] = item.body.split('\n');
+    const quoted: string[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      quoted.push('> ' + lines[i]);
+    }
+    const prefix: string = this.draft.length > 0 ? this.draft + '\n' : '';
+    this.draft = prefix + quoted.join('\n') + '\n';
+  }
+
+  /**
+   * 重发一条消息。
+   *
+   * 走中枢的 `sendPrompt`——**不是**复制到输入框让用户再点一次：
+   * "重发"的语义就是立刻再发一遍（有真实协议面 `session/prompt`）。
+   * 失败时如实说明（未连接/无会话），不假装已发出。
+   */
+  private resendMessage(item: TrajectoryItem): void {
+    if (item.body.length === 0) {
+      this.attachNotice = '这条消息没有可重发的正文。';
+      return;
+    }
+    SessionHub.shared().sendPrompt(item.body).then((ok: boolean) => {
+      this.attachNotice = ok ? '已重发。' : '重发失败：消息未发出（连接或会话不可用）。';
+    }).catch((e: Object) => {
+      this.attachNotice = '重发失败：' + (e as Error).message;
     });
   }
 
@@ -3288,6 +3350,15 @@ struct Index {
         },
         onTogglePlan: () => {
           this.togglePlan();
+        },
+        // 输入模态：有指针才启用右键菜单与悬停（策略模型决定，见 appstate/model/InputPolicy）
+        hasPointer: this.hasPointerInput,
+        hasKeyboard: this.hasPointerInput,
+        onQuoteMessage: (item: TrajectoryItem) => {
+          this.quoteIntoDraft(item);
+        },
+        onResendMessage: (item: TrajectoryItem) => {
+          this.resendMessage(item);
         },
         // 消息操作条的「复制」：剪贴板是平台能力，回调由宿主提供（视图层不依赖 platform）
         onCopyMessage: (text: string) => {

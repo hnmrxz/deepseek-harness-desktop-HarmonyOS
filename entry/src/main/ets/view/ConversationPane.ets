@@ -48,10 +48,16 @@ import {
   followTimerShouldRun,
   FollowSignal,
   nextFollowing,
-  shouldJumpOnNewItems
+  shouldJumpOnNewItems,
+  HarmonyRadius,
+  HarmonySpacing,
+  contextMenuGestures,
+  contextMenuHintLabel,
+  hoverEnabled,
+  MenuGesture
 } from 'appstate';
 /** 类型单独 import type（本仓约定：值与类型分开写） */
-import type { ActionNotice, FeedbackCategory, Turn } from 'appstate';
+import type { ActionNotice, FeedbackCategory, InputModality, Turn } from 'appstate';
 import type { NativeAction } from './NativePrimitives';
 import { NativeActionBar, NativeCard, NativeChip } from './NativePrimitives';
 import { Composer } from './Composer';
@@ -129,6 +135,23 @@ export struct ConversationPane {
    * `category` 与 `note`（D2b §6.7）。只发 rating 等于把官方那套"类别 → 可选说明 → 提交"
    * 砍成两个文字按钮——那正是 §10 明确不允许的形态。
    */
+  /**
+   * 上下文菜单（§10 的「更多」与 P3 输入语义）。
+   *
+   * 【为什么用"受控形式"而不是 `bindContextMenu(builder, ResponseType.X)`】
+   * 后者一次只能绑一种手势，且其 builder **不带参数** ⇒ 无法表达"每条消息各自的菜单"。
+   * 受控形式（`bindContextMenu(isShown, content, options)`）把显隐交给我们，
+   * 于是"长按 ≡ 右键 → 同一个菜单"是**显式实现**的（手势集合由 `contextMenuGestures` 决定），
+   * 而不是靠两套绑定碰巧长得一样。
+   */
+  @State menuForId: string = '';
+  @State menuShown: boolean = false;
+  /** 输入模态（宿主从设备事实派生后传入；视图不认识 deviceInfo） */
+  @Prop hasPointer: boolean = false;
+  @Prop hasKeyboard: boolean = false;
+  /** 当前被指针悬停的消息 id（有指针设备时才有值） */
+  @State hoveredId: string = '';
+
   @State fbFor: string = '';
   @State fbRating: string = '';
   @State fbCategory: string = '';
@@ -138,6 +161,11 @@ export struct ConversationPane {
 
   /** 复制消息正文（剪贴板是平台能力，由宿主传入回调——视图层不直接依赖 platform） */
   onCopyMessage: (text: string) => void = () => {
+  };
+  /** 引用到输入框 / 重发（都由宿主执行：草稿与发送都在宿主手里） */
+  onQuoteMessage: (item: TrajectoryItem) => void = () => {
+  };
+  onResendMessage: (item: TrajectoryItem) => void = () => {
   };
 
   /**
@@ -759,24 +787,40 @@ export struct ConversationPane {
         .copyOption(CopyOptions.LocalDevice)
         .accessibilityText(this.speakableText(item))
 
-      Row({ space: Sp.L }) {
-        Text('复制')
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.brand'))
-          .copyOption(CopyOptions.LocalDevice)
-        Text('引用').fontSize(Fs.CAPTION).fontColor($r('sys.color.brand'))
-        if (item.speaker === Speaker.USER) {
-          Text('重发').fontSize(Fs.CAPTION).fontColor($r('sys.color.brand'))
-        }
-      }
-      .width('100%')
     }
     .width('100%')
     .padding(Sp.M)
     .borderRadius(Radius.M)
-    .backgroundColor(item.speaker === Speaker.USER
-      ? $r('sys.color.background_secondary')
-      : $r('sys.color.background_primary'))
+    .backgroundColor(this.isHovered(item)
+      ? HarmonyColor.SURFACE_TERTIARY
+      : (item.speaker === Speaker.USER
+        ? HarmonyColor.SURFACE_RAISED
+        : HarmonyColor.SURFACE))
+    // 悬停反馈：只有指针设备才有"悬停"这个概念（策略模型回答，视图不自己判断）
+    .onHover((isHover: boolean) => {
+      if (!hoverEnabled(this.inputModality())) {
+        return;
+      }
+      this.hoveredId = isHover ? item.id : '';
+    })
+    .accessibilityText(`${item.speaker === Speaker.USER ? '我' : '助手'}的消息，${contextMenuHintLabel(this.inputModality())}打开操作菜单`)
+    // 触控：长按；指针：右键。**两者唤起同一个菜单**（§P3「同一套交互语义」）——
+    // 手势集合由输入策略模型决定（`contextMenuGestures`），此处只做映射。
+    .gesture(LongPressGesture().onAction(() => {
+      this.openMessageMenu(item);
+    }))
+    .onMouse((e: MouseEvent) => {
+      if (this.rightClickMenuEnabled() && e.button === MouseButton.Right) {
+        this.openMessageMenu(item);
+      }
+    })
+    .bindContextMenu(this.menuShown, this.messageMenu(), {
+      placement: Placement.BottomLeft,
+      // 原生关闭（点空白/返回）时要复位，否则菜单再也打不开（与 Sheet 同一个坑）
+      onDisappear: () => {
+        this.menuShown = false;
+      }
+    })
   }
 
   @Builder
@@ -818,6 +862,120 @@ export struct ConversationPane {
 
   /** 工具调用卡片（D3 §3.3） */
   /**
+   * 一条消息的**动作清单**（操作条与上下文菜单**共用这一份**）。
+   *
+   * 【为什么必须是同一份】§10 要的是"统一消息操作"：同一条消息在行内操作条与
+   * 长按菜单里必须是同样几项、同样顺序。写成两处必然漂移——一处加了"撤回"，另一处没有，
+   * 而用户会在两个入口得到不同答案。
+   */
+  private messageActionsOf(item: TrajectoryItem): NativeAction[] {
+    const out: NativeAction[] = [];
+    out.push({ id: 'copy', label: '复制', a11y: '复制这条消息的正文' });
+    out.push({
+      id: 'like',
+      label: '有帮助',
+      active: this.myRating(item.id) === 'positive',
+      a11y: '评价为有帮助，可选择原因'
+    });
+    out.push({
+      id: 'dislike',
+      label: '没帮助',
+      active: this.myRating(item.id) === 'negative',
+      a11y: '评价为没帮助，可选择原因'
+    });
+    out.push({ id: 'quote', label: '引用', a11y: '把这条消息引用到输入框' });
+    if (item.speaker === Speaker.USER) {
+      // 【为什么只给用户消息】"重发"对用户消息是**把同一句再发一次**（有真实协议面：
+      // `session/prompt`）；对助手消息则是"重跑那一轮"，本仓没有对应端点 ⇒ 不给，避免假入口。
+      out.push({ id: 'resend', label: '重发', a11y: '重新发送这条消息' });
+    }
+    // 已评才给"撤回"：没评就没有可撤的（按钮不该假装有事可做）
+    if (this.myRating(item.id).length > 0) {
+      out.push({ id: 'withdraw', label: '撤回评价', a11y: '撤回这条消息的反馈' });
+    }
+    return out;
+  }
+
+  /** 动作的统一处理（两个入口都走这里） */
+  private onMessageAction(item: TrajectoryItem, id: string): void {
+    if (id === 'copy') {
+      this.onCopyMessage(item.body);
+    } else if (id === 'like') {
+      this.openFeedback(item, 'positive');
+    } else if (id === 'dislike') {
+      this.openFeedback(item, 'negative');
+    } else if (id === 'quote') {
+      this.onQuoteMessage(item);
+    } else if (id === 'resend') {
+      this.onResendMessage(item);
+    } else if (id === 'withdraw') {
+      SessionHub.shared().clearFeedback(item.id).then((n: ActionNotice) => {
+        this.fbNote2 = this.feedbackNoticeText(n);
+      });
+    }
+  }
+
+  /** 打开上下文菜单（长按/右键都走这里；手势集合来自输入策略） */
+  /** 输入模态快照（策略模型的输入；本文件只做映射，不做判断） */
+  private inputModality(): InputModality {
+    return { hasKeyboard: this.hasKeyboard, hasPointer: this.hasPointer };
+  }
+
+  /** 该消息是否处于悬停态（只有指针设备才可能有） */
+  private isHovered(item: TrajectoryItem): boolean {
+    return hoverEnabled(this.inputModality()) && this.hoveredId === item.id;
+  }
+
+  /** 是否支持右键唤起菜单（手势集合来自策略模型，不在视图里散落判断） */
+  private rightClickMenuEnabled(): boolean {
+    return contextMenuGestures(this.inputModality()).indexOf(MenuGesture.RIGHT_CLICK) >= 0;
+  }
+
+  private openMessageMenu(item: TrajectoryItem): void {
+    this.menuForId = item.id;
+    this.menuShown = true;
+  }
+
+  private menuItem(): TrajectoryItem | undefined {
+    for (let i = 0; i < this.items.length; i++) {
+      if (this.items[i].id === this.menuForId) {
+        return this.items[i];
+      }
+    }
+    return undefined;
+  }
+
+  /** 上下文菜单内容：与行内操作条同一份动作清单 */
+  @Builder
+  messageMenu() {
+    Column({ space: Sp.XS }) {
+      ForEach(this.messageActionsOf2(), (a: NativeAction) => {
+        Text(a.active === true ? `✓ ${a.label}` : a.label)
+          .fontSize(HarmonyType.CAPTION.size)
+          .fontColor(a.active === true ? HarmonyColor.BRAND : HarmonyColor.TEXT_PRIMARY)
+          .width('100%')
+          .padding(HarmonySpacing.CONTROL_INNER)
+          .borderRadius(HarmonyRadius.CONTROL)
+          .onClick(() => {
+            const it: TrajectoryItem | undefined = this.menuItem();
+            this.menuShown = false;
+            if (it !== undefined) {
+              this.onMessageAction(it, a.id);
+            }
+          })
+      }, (a: NativeAction) => a.id)
+    }
+    .width(200)
+    .padding(HarmonySpacing.CONTROL_INNER)
+  }
+
+  /** 菜单用当前归属消息的动作清单（找不到就空——菜单不显示空气泡） */
+  private messageActionsOf2(): NativeAction[] {
+    const it: TrajectoryItem | undefined = this.menuItem();
+    return it === undefined ? [] : this.messageActionsOf(it);
+  }
+
+  /**
    * 消息操作条（计划 §10：Copy / Retry / Edit / Like / Dislike / More 统一在一处）。
    *
    * 【本仓已接的三类】复制（剪贴板）、好评/差评（`messageFeedback/put`，含类别与说明）、
@@ -828,44 +986,13 @@ export struct ConversationPane {
   @Builder
   messageActions(item: TrajectoryItem) {
     Column({ space: Sp.XS }) {
-      Row({ space: Sp.XS }) {
-        NativeChip({
-          label: '复制',
-          a11y: '复制这条消息的正文',
-          onTap: () => {
-            this.onCopyMessage(item.body);
-          }
-        })
-        NativeChip({
-          label: '有帮助',
-          active: this.myRating(item.id) === 'positive',
-          a11y: '评价为有帮助，可选择原因',
-          onTap: () => {
-            this.openFeedback(item, 'positive');
-          }
-        })
-        NativeChip({
-          label: '没帮助',
-          active: this.myRating(item.id) === 'negative',
-          a11y: '评价为没帮助，可选择原因',
-          onTap: () => {
-            this.openFeedback(item, 'negative');
-          }
-        })
-        // 已评才给"撤回"：没评就没有可撤的（按钮不该假装有事可做）
-        if (this.myRating(item.id).length > 0) {
-          NativeChip({
-            label: '撤回评价',
-            a11y: '撤回这条消息的反馈',
-            onTap: () => {
-              SessionHub.shared().clearFeedback(item.id).then((n: ActionNotice) => {
-                this.fbNote2 = this.feedbackNoticeText(n);
-              });
-            }
-          })
+      NativeActionBar({
+        actions: this.messageActionsOf(item),
+        onAction: (id: string) => {
+          this.onMessageAction(item, id);
         }
-        Blank()
-      }
+      })
+
       .width('100%')
 
       if (this.fbFor === item.id) {

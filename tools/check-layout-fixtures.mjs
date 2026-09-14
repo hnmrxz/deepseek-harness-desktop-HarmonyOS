@@ -42,7 +42,8 @@ const PURE_FILES = [
   // 回合模型（§8）：纯逻辑，可在本机直接执行
   'appstate/src/main/ets/model/Trajectory.ets',
   'appstate/src/main/ets/model/Turns.ets',
-  'appstate/src/main/ets/model/Follow.ets'
+  'appstate/src/main/ets/model/Follow.ets',
+  'appstate/src/main/ets/model/InputPolicy.ets'
 ];
 
 /** ArkUI 全局的声明补丁：Tokens.ets 用它取系统资源色/符号 */
@@ -167,6 +168,7 @@ const { decideLayout, decideLayoutWithDetail, concedeDetail, navWidthOf, Concess
 const NC = require2('./NavigationController.js');
 const TM = require2('./Turns.js');
 const FM = require2('./Follow.js');
+const IP = require2('./InputPolicy.js');
 const TJ = require2('./Trajectory.js');
 const t = makeAsserter(selfTest);
 
@@ -441,6 +443,20 @@ console.log('\n## 贴底跟随模型（§8：sticky-follow 独立管理）');
   t.eq('新条目：跟随中才跳到底', shouldJumpOnNewItems(true), true);
   t.eq('新条目：不跟随时不把用户拽走', shouldJumpOnNewItems(false), false);
   console.log('  ok    9 条断言：三处几何 + 两条**意图信号**（切会话/发消息）+ 定时器与跳底判据');
+}
+
+console.log('\n## 输入模态策略（触控 / 鼠标 / 键盘同一套语义）');
+{
+  const { contextMenuGestures, hoverEnabled, contextMenuHintLabel, MenuGesture } = IP;
+  const touch = { hasKeyboard: false, hasPointer: false };
+  const desktop = { hasKeyboard: true, hasPointer: true };
+  t.eq('纯触控：长按必须可用（否则手机没有上下文菜单）', contextMenuGestures(touch), ['long-press']);
+  t.eq('有指针：长按 + 右键', contextMenuGestures(desktop), ['long-press', 'right-click']);
+  t.eq('纯触控：无悬停', hoverEnabled(touch), false);
+  t.eq('有指针：启用悬停', hoverEnabled(desktop), true);
+  t.eq('提示文案随模态变（纯触控）', contextMenuHintLabel(touch), '长按');
+  t.eq('提示文案随模态变（有指针）', contextMenuHintLabel(desktop), '长按或右键');
+  console.log('  ok    6 条断言：手势集合 / 悬停 / 菜单提示文案，按输入模态分别成立');
 }
 
 t.done();
