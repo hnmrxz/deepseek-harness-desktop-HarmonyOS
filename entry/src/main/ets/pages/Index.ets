@@ -44,8 +44,14 @@ import {
   Fs,
   HostRecord,
   HubPhase,
+  BackAction,
+  decideBack,
   LayoutMode,
   decideLayout,
+  navTabs,
+  selectTab as decideTabSelection,
+  showsConversation,
+  StackPage,
   ModelOption,
   ModelSelection,
   NavTab,
@@ -111,6 +117,9 @@ relativeTime,
  */
 import type {
   AttachOutcome,
+  NavState,
+  OverlayState,
+  TabSelection,
   LayoutDecision,
   LayoutInput,
   CredentialWriteResult,
@@ -249,14 +258,6 @@ const LOCAL_THEME_LIGHT: string = 'light';
 const LOCAL_THEME_DARK: string = 'dark';
 
 /** 单栏下的页面栈 */
-enum StackPage {
-  MAIN = 'main',
-  CONVERSATION = 'conversation',
-  DETAIL = 'detail',
-  DIAGNOSTICS = 'diagnostics',
-  CONNECT = 'connect'
-}
-
 /**
  * 一级页签的**本地化**文案（E117：跟随系统语言，默认中文）。
  *
@@ -275,7 +276,6 @@ function navTabLabelRes(tab: NavTab): Resource {
 /** 一级导航顺序 */
 // 「核心」放在工作区与设置之间：它属于"能力/运维"一类，紧邻设置但不与设置混在一起
 // E110：收敛为两项——核心并入设置（它是"这台设备上 DSH 怎么跑"的配置，不该另开一级）
-const TABS: NavTab[] = [NavTab.WORKSPACES, NavTab.SETTINGS];
 
 /** 自动连接路径的诊断日志（前缀 HDSH-CONN）：端侧只有 hilog 可看，而这条路径
  *  "既不发请求也不报错"的失败模式极难从外部定位（见 E55/E56）。 */
@@ -885,64 +885,80 @@ struct Index {
    * 每一步都写 hilog：真机上核对"到底哪一层没退掉"时，这行日志就是答案。
    */
   onBackPress(): boolean {
-    // ① 浮层/编辑态最先关：它们在视觉上盖在页面上
-    if (this.credentialRef.length > 0 || this.credentialDraft.length > 0) {
-      this.credentialRef = '';
-      this.credentialDraft = '';
-      this.credentialNote = '';
-      hilog.info(DOMAIN, TAG, 'HDSH-BACK 关闭凭据编辑浮层');
-      return true;
+    // 优先级阶梯（浮层 → 二级页 → 详情 → 下钻 → 预览 → 首页签 → 交给系统）全部在
+    // `appstate/ui/NavigationController.decideBack` 里，并有 fixture 逐级断言；
+    // 这里只做**执行 + 日志**，不再自己排顺序。
+    const action: BackAction = decideBack(this.navState(), this.overlayState());
+    switch (action) {
+      case BackAction.CLOSE_CREDENTIAL:
+        this.credentialRef = '';
+        this.credentialDraft = '';
+        this.credentialNote = '';
+        hilog.info(DOMAIN, TAG, 'HDSH-BACK 关闭凭据编辑浮层');
+        return true;
+      case BackAction.CLOSE_SETTING_DRAFT:
+        this.textSettingDraft = '';
+        this.structSettingDraft = '';
+        hilog.info(DOMAIN, TAG, 'HDSH-BACK 关闭设置编辑浮层');
+        return true;
+      case BackAction.CLOSE_SEARCH:
+        this.searchOpen = false;
+        hilog.info(DOMAIN, TAG, 'HDSH-BACK 关闭搜索');
+        return true;
+      case BackAction.CLOSE_CHOICE:
+        this.choosing = undefined;
+        hilog.info(DOMAIN, TAG, 'HDSH-BACK 关闭选择浮层');
+        return true;
+      case BackAction.STACK_TO_MAIN: {
+        const from: string = this.stackPage;
+        this.stackPage = StackPage.MAIN;
+        hilog.info(DOMAIN, TAG, 'HDSH-BACK 二级页回主列表：%{public}s', from);
+        return true;
+      }
+      case BackAction.CLOSE_DETAIL:
+        this.detailOpen = false;
+        hilog.info(DOMAIN, TAG, 'HDSH-BACK 关闭会话详情');
+        return true;
+      case BackAction.DRILL_UP:
+        this.wsDrill -= 1;
+        hilog.info(DOMAIN, TAG, 'HDSH-BACK 工作区上退一层，drill=%{public}d', this.wsDrill);
+        return true;
+      case BackAction.CLOSE_PREVIEW:
+        this.preview = undefined;
+        hilog.info(DOMAIN, TAG, 'HDSH-BACK 关闭文件预览');
+        return true;
+      case BackAction.TAB_TO_SESSIONS:
+        this.selectTab(NavTab.SESSIONS);
+        hilog.info(DOMAIN, TAG, 'HDSH-BACK 回首页签（会话）');
+        return true;
+      default:
+        // EXIT：**不消费**，交给系统（最小化）。写成 false 是刻意的——
+        // "按返回没反应"的假入口都是在这里 return true 造成的。
+        hilog.info(DOMAIN, TAG, 'HDSH-BACK 已在根层，交给系统');
+        return false;
     }
-    if (this.textSettingDraft.length > 0 || this.structSettingDraft.length > 0) {
-      this.textSettingDraft = '';
-      this.structSettingDraft = '';
-      hilog.info(DOMAIN, TAG, 'HDSH-BACK 关闭设置编辑浮层');
-      return true;
-    }
-    if (this.searchOpen) {
-      this.searchOpen = false;
-      hilog.info(DOMAIN, TAG, 'HDSH-BACK 关闭搜索');
-      return true;
-    }
-    if (this.choosing !== undefined) {
-      this.choosing = undefined;
-      hilog.info(DOMAIN, TAG, 'HDSH-BACK 关闭选择浮层');
-      return true;
-    }
-    // ② 二级页（会话 / 详情 / 诊断 / 添加 Host）→ 回主列表
-    if (this.stackPage !== StackPage.MAIN) {
-      const from: string = this.stackPage;
-      this.stackPage = StackPage.MAIN;
-      hilog.info(DOMAIN, TAG, 'HDSH-BACK 二级页回主列表：%{public}s', from);
-      return true;
-    }
-    // ③ 会话详情（说明/轨迹/诊断抽屉）
-    if (this.detailOpen) {
-      this.detailOpen = false;
-      hilog.info(DOMAIN, TAG, 'HDSH-BACK 关闭会话详情');
-      return true;
-    }
-    // ④ 工作区目录下钻：退一层
-    if (this.tab === NavTab.WORKSPACES && this.wsDrill > 0) {
-      this.wsDrill -= 1;
-      hilog.info(DOMAIN, TAG, 'HDSH-BACK 工作区上退一层，drill=%{public}d', this.wsDrill);
-      return true;
-    }
-    // ⑤ 文件预览
-    if (this.preview !== undefined) {
-      this.preview = undefined;
-      hilog.info(DOMAIN, TAG, 'HDSH-BACK 关闭文件预览');
-      return true;
-    }
-    // ⑥ 不在首页签 → 回会话（首页）
-    if (this.tab !== NavTab.SESSIONS) {
-      this.selectTab(NavTab.SESSIONS);
-      hilog.info(DOMAIN, TAG, 'HDSH-BACK 回首页签（会话）');
-      return true;
-    }
-    // ⑦ 已经在首页、没有浮层：交给系统（最小化应用），而不是假装消费掉
-    hilog.info(DOMAIN, TAG, 'HDSH-BACK 已在根层，交给系统');
-    return false;
+  }
+
+  /** 导航状态快照（视图持有真实状态，控制器只读） */
+  private navState(): NavState {
+    return {
+      tab: this.tab,
+      stackPage: this.stackPage,
+      wsDrill: this.wsDrill,
+      hasSession: this.selectedSessionId.length > 0,
+      detailOpen: this.detailOpen
+    };
+  }
+
+  /** 浮层状态快照（返回键的第一优先级） */
+  private overlayState(): OverlayState {
+    return {
+      credentialOpen: this.credentialRef.length > 0 || this.credentialDraft.length > 0,
+      settingDraftOpen: this.textSettingDraft.length > 0 || this.structSettingDraft.length > 0,
+      searchOpen: this.searchOpen,
+      choosingOpen: this.choosing !== undefined,
+      previewOpen: this.preview !== undefined
+    };
   }
 
   /**
@@ -1347,47 +1363,30 @@ struct Index {
    * `NavTab.PENDING` 还留在枚举里（历史调用点仍会传它，例如"有待决时跳过去看"），
    * 但页签栏里已经没有它——统一落到工作区视图，那里有内联的待决区。
    */
+  /**
+   * 切换一级页签。
+   *
+   * 归一化（待决→工作区、核心→设置）、清栈、是否清空会话选择、是否重读静态事实，
+   * 全部来自 `appstate/ui/NavigationController.selectTab`（纯函数，有 fixture 覆盖）；
+   * 本方法只负责把决策**落到状态**并执行副作用。
+   */
   private selectTab(tab: NavTab): void {
-    if (tab === NavTab.PENDING) {
-      tab = NavTab.WORKSPACES;
-    }
-    // E110：核心页并入设置——历史调用点（"启动核心后跳过去看"）统一落到设置页
-    if (tab === NavTab.CORE) {
-      tab = NavTab.SETTINGS;
-    }
-    this.tab = tab;
-    this.stackPage = StackPage.MAIN;
-    this.wsDrill = 0;
-    if (tab !== NavTab.SESSIONS) {
+    const d: TabSelection = decideTabSelection(this.navState(), tab);
+    this.tab = d.tab;
+    this.stackPage = d.stackPage;
+    this.wsDrill = d.wsDrill;
+    if (d.clearSession) {
       this.selectedSessionId = '';
       this.selectedSessionTitle = '';
     }
-    // 核心页每次进入都重读仓库：解包/切换可能发生在别处（别的窗口、别的页面），
-    // 不该让用户看到一个过期的"当前版本"
-    //
-    // 【会话页为什么也必须重读（E83）】会话页的空态文案不是写死的，而是**由核心阶段决定**的
-    // （`sessionEmptyCopy(this.coreView.phase)`）。首启的真实时序是：页面先渲染（此时核心还在解包
-    // 或还没起来 → 阶段是"未安装"），**之后**核心才就绪。若不重读，用户会一直看到
-    // 「还没有安装核心 / 核心随应用内置，首次启动会自动解包」，而事实正相反。
-    // 真机实测过这一对自相矛盾的读数：核心页写着「就绪 · 已安装 1 个版本」，
-    // 会话页却写着「还没有安装核心」。空态文案是给人指路的，指错方向比不写更糟。
-    //
-    // E110 之后 `NavTab.CORE` 只是 `SETTINGS` 的别名（核心并入设置），所以这里不再单列它：
-    // 设置页里的核心分区同样需要新鲜的阶段读数，因此**进设置页也重读**。
-    if (tab !== NavTab.WORKSPACES) {
+    if (d.refreshStaticFacts) {
+      // 空态文案由核心阶段决定，而首启时序是"页面先渲染、核心后就绪" ⇒ 每次进
+      // 非工作区页签都重读，避免出现"核心页说就绪、会话页说没装"的自相矛盾读数。
       this.refreshCoreView();
-      /*
-       * E162：进设置页时一并读**静态事实**（技能清单、Agent 预设名单）。
-       *
-       * 【为什么现在才接】E135 的技能模块只写了 `refreshSkills()` 与界面，
-       * **触发点当时没接上**（那一步的编辑失败被忽略）⇒ 技能页永远显示"未读"。
-       * 这类"有实现没触发"的缺口不报错、不崩溃，只有跑一遍界面才会发现——
-       * 所以这里两个刷新一起补，并对连接状态做前置判断（未连接时不打无谓的失败记录）。
-       */
       if (this.hubConnected) {
+        // 技能/预设/提供方目录都是会话无关的静态事实，进设置页时一并刷新
         SessionHub.shared().refreshSkills();
         SessionHub.shared().refreshAgentPresets();
-        // E181：提供方目录（"可添加"的来源）——官方 Models 页的数据源之一
         SessionHub.shared().refreshProviderCatalog();
       }
     }
@@ -1485,7 +1484,8 @@ struct Index {
   }
 
   private showsConversation(): boolean {
-    return this.selectedSessionId.length > 0 && this.tab === NavTab.SESSIONS;
+    // 判据在控制器里（`NavTab.SESSIONS` 是 `WORKSPACES` 的别名这事只该写在那一处）
+    return showsConversation(this.navState());
   }
 
   build() {
@@ -2648,7 +2648,7 @@ struct Index {
   @Builder
   bottomTabs() {
     Row() {
-      ForEach(TABS, (tab: NavTab) => {
+      ForEach(navTabs(), (tab: NavTab) => {
         Column({ space: 2 }) {
           Stack({ alignContent: Alignment.TopEnd }) {
             SymbolGlyph(navTabSymbol(tab))
@@ -2702,7 +2702,7 @@ struct Index {
   @Builder
   navRail() {
     Column({ space: Sp.S }) {
-      ForEach(TABS, (tab: NavTab) => {
+      ForEach(navTabs(), (tab: NavTab) => {
         Column() {
           Stack({ alignContent: Alignment.TopEnd }) {
             SymbolGlyph(navTabSymbol(tab))
@@ -2765,7 +2765,7 @@ struct Index {
         .width('100%')
         .padding({ left: Sp.M, top: Sp.M, bottom: Sp.S })
 
-      ForEach(TABS, (tab: NavTab) => {
+      ForEach(navTabs(), (tab: NavTab) => {
         Row({ space: Sp.M }) {
           SymbolGlyph(navTabSymbol(tab))
             .fontSize(20)
@@ -3334,7 +3334,7 @@ struct Index {
       // 变成可读的原始轨迹（D3 §7.8）
       ForEach(this.hubTraceTail(), (line: string) => {
         Text(line)
-          .fontSize(10)
+          .fontSize(Fs.CAPTION_XS)
           .fontFamily('monospace')
           .fontColor($r('sys.color.font_tertiary'))
           .maxLines(1)
@@ -4585,10 +4585,10 @@ struct Index {
   @Builder
   badge(text: string) {
     Text(text)
-      .fontSize(10)
+      .fontSize(Fs.CAPTION_XS)
       .fontColor(Color.White)
       .backgroundColor($r('sys.color.alert'))
-      .borderRadius(8)
+      .borderRadius(Radius.S)
       .padding({ left: 5, right: 5 })
       .margin({ top: -4, right: -10 })
   }

@@ -160,7 +160,7 @@ export {
 } from './ui/Breakpoints';
 
 // ── 设计令牌 ──
-export { Breakpoint, Dur, Fs, Lh, Radius, SemanticColor, Sp, Sz } from './ui/Tokens';
+export { Border, Breakpoint, Dur, Fs, Lh, Radius, SemanticColor, Sp, Sz } from './ui/Tokens';
 
 // ── 布局决策（P1：形态/几何决策的唯一落点，见 LayoutController 的说明） ──
 export {
@@ -173,6 +173,18 @@ export {
   ConcessionStep
 } from './ui/LayoutController';
 export type { DetailCapacity, LayoutDecision, LayoutInput } from './ui/LayoutController';
+
+// ── 导航状态机（P1：返回键优先级阶梯与页签归一化，见 NavigationController 的说明） ──
+export {
+  BackAction,
+  decideBack,
+  navTabs,
+  normalizeTab,
+  selectTab,
+  showsConversation,
+  StackPage
+} from './ui/NavigationController';
+export type { NavState, OverlayState, TabSelection } from './ui/NavigationController';
 
 // ── 会话中枢（D1 §7.7.5b：全应用单一连接池 + 单一会话状态机 + 单一待发队列） ──
 export { HubPhase, projectWireRecord, SessionHub, notice, noticeWith, put } from './store/SessionHub';

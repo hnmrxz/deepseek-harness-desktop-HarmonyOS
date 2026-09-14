@@ -37,7 +37,8 @@ const OUT = join(WORK, 'out');
 const PURE_FILES = [
   'appstate/src/main/ets/ui/Tokens.ets',
   'appstate/src/main/ets/ui/Breakpoints.ets',
-  'appstate/src/main/ets/ui/LayoutController.ets'
+  'appstate/src/main/ets/ui/LayoutController.ets',
+  'appstate/src/main/ets/ui/NavigationController.ets'
 ];
 
 /** ArkUI 全局的声明补丁：Tokens.ets 用它取系统资源色/符号 */
@@ -112,9 +113,11 @@ function buildAndLoad() {
     + 'globalThis.$r = (value) => value;\n'
     + "module.exports = require('./LayoutController.js');\n", 'utf8');
 
-  // 用 bootstrap 作为入口 require：它先装 `$r` 垫片，再转出 LayoutController
+  // bootstrap 先装 `$r` 垫片，再转出 LayoutController。
+  // 返回 **require 函数**：本文件现在要加载两个模块（布局 + 导航），都从同一个 OUT 目录取。
   const req = createRequire(bootstrap);
-  return req(bootstrap);
+  req(bootstrap);   // 触发垫片安装
+  return req;
 }
 
 /** 断言器：收集失败而不是首错即停（一次看清全部差异） */
@@ -154,9 +157,10 @@ function makeAsserter(selfTest) {
 
 const selfTest = process.argv.includes('--self-test');
 const require2 = buildAndLoad();
-const LC = require2;
+const LC = require2('./LayoutController.js');
 
 const { decideLayout, decideLayoutWithDetail, concedeDetail, navWidthOf, ConcessionStep, MAIN_MIN_VP } = LC;
+const NC = require2('./NavigationController.js');
 const t = makeAsserter(selfTest);
 
 console.log('# 布局 fixture 门禁（四形态 + 断点边界 + 让步链）\n');
@@ -302,6 +306,60 @@ console.log('\n## 导航宽度映射');
   t.eq('RAIL → 56', navWidthOf('rail'), 56);
   t.eq('BOTTOM_TABS → 0（不占侧边）', navWidthOf('bottom'), 0);
   console.log('  ok    panel/rail/bottom 三档映射');
+}
+
+console.log('\n## 导航：返回键的优先级阶梯（迁移前写在 Index.onBackPress 里）');
+{
+  const { decideBack, BackAction, StackPage, selectTab, normalizeTab, showsConversation, navTabs } = NC;
+  // 【坑】`NavTab.SESSIONS` 是 `'workspaces'` 的**别名**（E108：会话并入工作区），
+  // 所以"在会话页签"与"在工作区页签"是同一个状态；默认值必须写 'workspaces'。
+  const nav = (o) => Object.assign({ tab: 'workspaces', stackPage: StackPage.MAIN, wsDrill: 0, hasSession: true, detailOpen: false }, o);
+  const ov = (o) => Object.assign({ credentialOpen: false, settingDraftOpen: false, searchOpen: false, choosingOpen: false, previewOpen: false }, o);
+
+  // 优先级：浮层之间也有先后（凭据 → 设置草稿 → 搜索 → 选择）
+  t.eq('全开时先关凭据浮层', decideBack(nav({}), ov({ credentialOpen: true, settingDraftOpen: true, searchOpen: true, choosingOpen: true, previewOpen: true })), BackAction.CLOSE_CREDENTIAL);
+  t.eq('无凭据时关设置草稿', decideBack(nav({}), ov({ settingDraftOpen: true, searchOpen: true })), BackAction.CLOSE_SETTING_DRAFT);
+  t.eq('再关搜索', decideBack(nav({}), ov({ searchOpen: true, choosingOpen: true })), BackAction.CLOSE_SEARCH);
+  t.eq('再关选择浮层', decideBack(nav({}), ov({ choosingOpen: true, previewOpen: true })), BackAction.CLOSE_CHOICE);
+  // 浮层优先于二级页
+  t.eq('浮层优先于二级页', decideBack(nav({ stackPage: StackPage.DETAIL }), ov({ searchOpen: true })), BackAction.CLOSE_SEARCH);
+  // 二级页
+  t.eq('二级页回主列表', decideBack(nav({ stackPage: StackPage.CONVERSATION }), ov({})), BackAction.STACK_TO_MAIN);
+  // 详情
+  t.eq('关详情抽屉', decideBack(nav({ detailOpen: true }), ov({})), BackAction.CLOSE_DETAIL);
+  // 工作区下钻（仅工作区页签）
+  t.eq('工作区下钻退一层', decideBack(nav({ tab: 'workspaces', wsDrill: 2 }), ov({})), BackAction.DRILL_UP);
+  t.eq('非工作区页签不消耗下钻（留给后面的规则）', decideBack(nav({ tab: 'settings', wsDrill: 2 }), ov({})), BackAction.TAB_TO_SESSIONS);
+  // 文件预览在工作区页签且未下钻时才轮到
+  t.eq('关文件预览', decideBack(nav({ tab: 'workspaces', wsDrill: 0 }), ov({ previewOpen: true })), BackAction.CLOSE_PREVIEW);
+  // 回首页签
+  t.eq('不在首页签则回会话', decideBack(nav({ tab: 'settings' }), ov({})), BackAction.TAB_TO_SESSIONS);
+  // 根层交给系统（**必须**是 EXIT，否则就是"按返回没反应"的假入口）
+  t.eq('根层交给系统（不消费）', decideBack(nav({}), ov({})), BackAction.EXIT);
+  console.log('  ok    7 级阶梯的每一级 + 浮层内部先后都被断言');
+
+  // 页签归一化（E108/E110 的别名）
+  t.eq('待决 → 工作区', normalizeTab('pending'), 'workspaces');
+  t.eq('核心 → 设置', normalizeTab('core'), 'settings');
+  t.eq('设置保持设置', normalizeTab('settings'), 'settings');
+
+  // 点页签：清栈 + 清会话选择 + 重读静态事实
+  const toSettings = selectTab(nav({ tab: 'workspaces', stackPage: StackPage.DETAIL, wsDrill: 3, hasSession: true }), 'settings');
+  t.eq('点设置：清栈', toSettings.stackPage, 'main');
+  t.eq('点设置：清下钻', toSettings.wsDrill, 0);
+  t.eq('点设置：清会话选择', toSettings.clearSession, true);
+  t.eq('点设置：重读静态事实', toSettings.refreshStaticFacts, true);
+  const toWs = selectTab(nav({ tab: 'settings' }), 'workspaces');
+  t.eq('点工作区：保留会话选择', toWs.clearSession, false);
+  t.eq('点工作区：不重读静态事实', toWs.refreshStaticFacts, false);
+  t.eq('点待决别名 → 工作区', selectTab(nav({}), 'pending').tab, 'workspaces');
+
+  // 详情栏并排的前提
+  t.eq('看会话中：showsConversation 真', showsConversation(nav({ hasSession: true })), true);
+  t.eq('无会话：假', showsConversation(nav({ hasSession: false })), false);
+  t.eq('在设置页：假', showsConversation(nav({ hasSession: true, tab: 'settings' })), false);
+  t.eq('一级页签顺序', navTabs(), ['workspaces', 'settings']);
+  console.log('  ok    页签归一化 / 清栈 / 静态事实重读 / 会话可见性 全部断言');
 }
 
 t.done();
