@@ -105,9 +105,10 @@
 | **纯逻辑执行测试（layout fixtures）** | ✅ 可跑 | `tools/check-layout-fixtures.mjs`：把 `appstate/ui` 的三个**纯逻辑** `.ets` 按 `.ts` 编译后**在本机直接执行**（被测的是同一源文件，不是复制品），断言四形态 + 断点边界 + 让步链三分支，共 28 条 |
 | **ArkTS 静态检查（codelinter）** | ✅ 可跑且**覆盖面已证明** | 直接调用 CLT 的 `codelinter/bin/codelinter -c code-linter.json5 <模块目录>`：**16 条 warning / 0 error**（7 个文件）。覆盖用**注入测试**证明：往一个「无问题」文件注入已知违规，能被检出（见 §3.2） |
 | API 兼容扫描（`devecocli check compat`） | ❌ 平台不支持 | CLI 明文：`Unsupported platform: linux. compat only supports macOS and Windows.`——**与 CLT 是否安装无关**，Linux 上永远不可用 |
-| 模型/协议往返（`check-model-roundtrip.mjs`） | ✅ 前提已齐（可跑） | 需要 `dist/core/` 的核心树 + 可起的 Host；两者现已就绪（见 §3.3） |
-| 起真实 Host 的门禁（`check-origin-fence` / `check-plugin-toggle`） | ⚠️ **需要 Node < 22** | 这三个门禁用 `process.execPath` 起 Host 并传 `--no-experimental-fetch`；该 flag 在 Node 22+ **已被移除**（fetch 转正）⇒ Node 24 下 Host 直接启动失败：`--no-experimental-fetch is an invalid negation`。本机已备 **Node v22.23.2**（与端侧同一版本，`/home/node/node22/bin/node`），用它跑即可 |
-| 在设备上真跑（装机） | ❌ 缺运行期产物 | 需要 `entry/libs/<abi>/libnode.so.127`（自建 Node OHOS 交叉编译产物，不入库，见 §3.3） |
+| 模型/协议往返（`check-model-roundtrip.mjs`） | ✅ **可跑且通过** | `--no-prompt --wait-ms 180000`（Node 22）：真起 Host → 铸 cookie → 读模型目录 → 建会话 → 开 mux → `session/page` → 收到 `follow` 的 snapshot 帧（含 projections） |
+| 起真实 Host 的门禁（`check-origin-fence` / `check-plugin-toggle`） | ✅ **可跑且通过**（需 Node < 22，慢机器还要放宽就绪等待） | ① 这三个门禁用 `process.execPath` 起 Host 并传 `--no-experimental-fetch`，该 flag 在 **Node 22+ 已被移除**（fetch 转正）⇒ Node 24 下 Host 直接启动失败（`--no-experimental-fetch is an invalid negation`）。本机备了 **Node v22.23.2**（与端侧同版本）：`/home/node/node22/bin/node`。② **本机 Host 冷启动实测 62,951 ms**（`BOOT_60_HTTP_BIND …(+62951ms)`；Orange Pi 5B + 工作区在 NFS）⇒ `check-origin-fence` 原来的 60 秒就绪等待刚好不够（`check-plugin-toggle` 用 90 秒，所以它一直能过）。已把它改成可放宽（**默认值不变**）：`HDSH_CHECK_READY_MS=180000`。③ 结论：`check-origin-fence` **PASS**（clean/absent/duplicated → 101；foreign → 403；no-cookie → 401）；`check-plugin-toggle` **PASS**（155 条目 → 写用户行 → `ui-deliverables enabled=false`） |
+| 在设备上真跑（装机） | ❌ 只差签名材料 | 运行期产物已齐（`entry/libs/arm64-v8a/` 含 `libnode.so.127`，见 §3.3）；`devecocli build` 打通 `CompileArkTS`→`PackageHap`，仅 `SignHap` 因 `build-profile.json5` 指向 Windows 证书路径而失败 |
+| **完整 arm64 HAP（未签名）** | ✅ 已产出 | `entry/build/default/outputs/default/entry-default-unsigned.hap`（138 MB），内含 **`libnode.so.127`(114 MB) + `libkoffi.so`(1,600,496 B) + `libsystem.so`(10,496 B, flock) + `libdshhost.so` + 全套原生库**；三个原生附加件（koffi / flock / dshhost）都在这一台机器上**真的编出来了** |
 | 布局/形态真机验收 | ❌ 不可跑 | 无模拟器、无真机 |
 | 视觉像素、手势、键盘、触控笔、系统权限、文件选择器 | ❌ 不可跑 | 统一进 `docs/device-validation.md`（P4） |
 
@@ -166,6 +167,15 @@ devecocli build（全量）                                                     
 | 核心树 | `dist/core/work/dsh-core-*` | `pack-core` 的输入；`check-origin-fence` / `check-plugin-toggle` / `check-model-roundtrip` 门禁的前提 | **不需要上传**：`entry/src/main/resources/resfile/dsh-core-*.zip` 本身就是完整树（29006 个文件），`unzip` 到 `dist/core/work/` 即物化 |
 | 协议契约 | `.research/protocol/contracts.json` | `compat-drift` 门禁的输入 | `node tools/protocol-contract.mjs` + 上游 checkout | ❌ 缺 ⇒ 漂移门禁仍是盲区（**唯一仍跑不动的门禁**） |
 | 签名材料 | `.p12` / `.cer` / `.p7b` | `SignHap` 出可安装的 HAP | DevEco 自动签名（那个 Windows 机器上的 `C:\Users\hnzy1\.ohos\config\`） | ❌ 缺（路径写在 `build-profile.json5`，Linux 上无效） |
+
+**工作区在 NFS 上——批量文件操作必须换到本地盘（本轮最大的效率教训）**
+
+| 事实 | 读数 |
+|---|---|
+| 工作区文件系统 | **NFS**：宿主是 Orange Pi 5B，`/mnt/Develop` 来自 NAS `192.168.3.27:/volume1/Develop`；容器（内层 Docker）以 `/workspace` 挂载它 |
+| 逐文件操作代价 | 把核心树（29k 个小文件）解到工作区：**跑了 25 分钟才 6.5k 个文件**（≈4 个/秒，照这速度要数小时） |
+| 换到本地盘 | 容器本地 overlay（`/home/node`）实测 **2000 个小文件 0.12 秒**；同一份核心树解到 `/home/node/hdsh-cores/` 只用 **4 秒** |
+| 做法 | 大批小文件的东西解到**容器本地**，再用软链挂进项目：`ln -sfn /home/node/hdsh-cores/dsh-core-0.1.5-rc.2 dist/core/work/dsh-core-0.1.5-rc.2`（`dist/` 已 gitignore，不污染仓库；`existsSync` 会跟随软链，门禁无需改动） |
 
 **从别处拷贝产物时的两个实测坑（2026-09-14 各踩一次）**
 

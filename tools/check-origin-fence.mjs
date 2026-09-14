@@ -148,7 +148,14 @@ const results = [];
 let failed = false;
 
 try {
-  const ready = await waitReady(60000);
+  // 【为什么可用环境变量放宽】端侧 Host 的启动时间随机器差别很大：本机（Orange Pi 5B，
+  // 且工作区还在 NFS 上）实测 `BOOT_60_HTTP_BIND … (+62951ms)`——**63 秒**，恰好越过这里的 60 秒，
+  // 于是门禁报 "host never answered"，而事实是 Host 正常、`GET /` 正确返回 401（信任栅栏）。
+  // 同目录的 check-plugin-toggle 用的是 90 秒，所以它在本机能过。
+  // 默认值保持不变（可能是别人 CI 的口径），慢机器上显式放宽：
+  //   HDSH_CHECK_READY_MS=180000 node tools/check-origin-fence.mjs
+  const readyMs = Number(process.env.HDSH_CHECK_READY_MS ?? '60000');
+  const ready = await waitReady(readyMs);
   if (!ready) {
     console.error(`FAIL: host never answered on 127.0.0.1:${PORT}`);
     shutdown(2);
