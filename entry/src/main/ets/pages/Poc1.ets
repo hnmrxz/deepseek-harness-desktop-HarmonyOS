@@ -31,6 +31,7 @@ import {
   RpcResult
 } from 'connection';
 import { READONLY_PROBE_ENDPOINTS, SURFACE } from 'dshcompat';
+import { Border, Fs, Radius } from 'appstate';
 
 const DOMAIN: number = 0xD5D5;
 const TAG: string = 'DshPoc1';
@@ -330,13 +331,13 @@ struct Poc1 {
   build() {
     Column({ space: 10 }) {
       Text('DSH 协议往返验证（POC-1）')
-        .fontSize(20)
+        .fontSize(Fs.TITLE_L)
         .fontWeight(FontWeight.Bold)
         .width('100%')
 
       if (this.prefillNote.length > 0) {
         Text(this.prefillNote)
-          .fontSize(12)
+          .fontSize(Fs.CAPTION)
           .fontColor($r('sys.color.font_tertiary'))
           .width('100%')
       }
@@ -372,16 +373,16 @@ struct Poc1 {
 
       Row({ space: 8 }) {
         Text(`状态：${this.stateText}`)
-          .fontSize(14)
+          .fontSize(Fs.SECONDARY)
         Text(this.busy ? '运行中…' : '空闲')
-          .fontSize(14)
+          .fontSize(Fs.SECONDARY)
           .fontColor(Color.Gray)
       }
       .width('100%')
 
       if (this.hostFactsText.length > 0) {
         Text(this.hostFactsText)
-          .fontSize(12)
+          .fontSize(Fs.CAPTION)
           .fontColor(Color.Gray)
           .width('100%')
       }
@@ -391,15 +392,15 @@ struct Poc1 {
           ListItem() {
             Row({ space: 6 }) {
               Text(line.time)
-                .fontSize(12)
+                .fontSize(Fs.CAPTION)
                 .fontColor(Color.Gray)
                 .width(64)
               Text(line.level)
-                .fontSize(12)
+                .fontSize(Fs.CAPTION)
                 .fontColor(levelColor(line.level))
                 .width(40)
               Text(line.text)
-                .fontSize(12)
+                .fontSize(Fs.CAPTION)
                 .layoutWeight(1)
             }
             .width('100%')
@@ -409,9 +410,9 @@ struct Poc1 {
       }
       .layoutWeight(1)
       .width('100%')
-      .borderWidth(1)
+      .borderWidth(Border.HAIRLINE)
       .borderColor(Color.Gray)
-      .borderRadius(6)
+      .borderRadius(Radius.XS)
       .padding(6)
     }
     .padding(12)

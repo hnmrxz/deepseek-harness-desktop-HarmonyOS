@@ -57,7 +57,7 @@ export struct DetailPane {
           .fontSize(Fs.CAPTION)
           .fontColor($r('sys.color.font_tertiary'))
           .padding({ left: 6, right: 6, top: 1, bottom: 1 })
-          .borderRadius(6)
+          .borderRadius(Radius.XS)
           .backgroundColor($r('sys.color.background_primary'))
         Text(this.isCollapsed(section.title) ? '展开' : '收起')
           .fontSize(Fs.CAPTION)
@@ -85,7 +85,7 @@ export struct DetailPane {
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .width('100%')
               .padding({ left: Sp.S, right: Sp.S, top: Sp.XS, bottom: Sp.XS })
-              .borderRadius(6)
+              .borderRadius(Radius.XS)
               .onClick(() => {
                 // E130：这一行的**文本**直接给宿主（视图知道自己渲染了什么）
                 this.onLineTap(section.title, line);

@@ -17,7 +17,8 @@ import {
   riskLabel,
   Sp,
   Sz,
-  sortPending
+  sortPending,
+  Border
 } from 'appstate';
 
 @Component
@@ -104,7 +105,7 @@ export struct PendingPane {
             .fontSize(Fs.CAPTION)
             .fontColor(this.riskColor(item.risk))
             .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-            .borderRadius(6)
+            .borderRadius(Radius.XS)
             .backgroundColor($r('sys.color.background_secondary'))
         }
       }
@@ -224,7 +225,7 @@ export struct PendingPane {
     .width('100%')
     .padding({ left: Sp.M, right: Sp.M, top: Sp.S, bottom: Sp.S })
     .borderRadius(Radius.S)
-    .borderWidth(1)
+    .borderWidth(Border.HAIRLINE)
     .borderColor(this.isPrimaryChoice(item, choice, index)
       ? $r('sys.color.brand')
       : $r('sys.color.comp_divider'))

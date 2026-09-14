@@ -312,7 +312,7 @@ export struct DiagnosticsPane {
           } else {
             ForEach(this.traceLines, (line: string, index: number) => {
               Text(line)
-                .fontSize(10)
+                .fontSize(Fs.CAPTION_XS)
                 .fontFamily('monospace')
                 .fontColor($r('sys.color.font_secondary'))
                 .width('100%')

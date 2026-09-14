@@ -16,9 +16,22 @@ export class Sp {
 
 /** 圆角 */
 export class Radius {
+  /** 小徽标 / 药丸（P1 补：原先散落着 5/6/9 三种魔数，取出现最多的 6） */
+  static readonly XS: number = 6;
   static readonly S: number = 8;
   static readonly M: number = 12;
   static readonly L: number = 16;
+}
+
+/**
+ * 边框宽度。
+ *
+ * P1 补：此前代码里散落 7 处 `.borderWidth(1)`。这不是"设计选择"，而是**忘了给它起名**——
+ * 一位像素的描边在深浅色下都要清晰，值本身不该由各处自己决定。
+ */
+export class Border {
+  /** 常规分隔线 / 描边（1px）。`MEDIUM` 等更粗的档位**等真有使用者再加**，不预置空 API。 */
+  static readonly HAIRLINE: number = 1;
 }
 
 /** 字号（D3 §8 字号体系） */
@@ -29,6 +42,14 @@ export class Fs {
   static readonly BODY: number = 16;
   static readonly SECONDARY: number = 14;
   static readonly CAPTION: number = 12;
+  /**
+   * 徽标文字 / 等宽日志行（P1 补）。
+   *
+   * 【为什么单独一个名字】原先散落 3 处 `.fontSize(10)`（徽标计数、旁路日志的等宽行、
+   * "由 Host 维护"脚注）。它比 `CAPTION` 还小一档，是有意的**最小可读档**——
+   * 各处自己写 10 会让"到底还有没有更小的档"永远说不清。
+   */
+  static readonly CAPTION_XS: number = 10;
 }
 
 /** 行高倍数 */

@@ -1692,7 +1692,7 @@ export struct SettingsPane {
         .layoutWeight(1)
         if (p.firstParty) {
           Text('第一方')
-            .fontSize(10)
+            .fontSize(Fs.CAPTION_XS)
             .fontColor($r('sys.color.font_tertiary'))
             .padding({ left: 5, right: 5 })
             .borderRadius(5)
@@ -1766,7 +1766,7 @@ export struct SettingsPane {
         .layoutWeight(1)
         if (p.firstParty) {
           Text('第一方')
-            .fontSize(10)
+            .fontSize(Fs.CAPTION_XS)
             .fontColor($r('sys.color.font_tertiary'))
             .padding({ left: 5, right: 5 })
             .borderRadius(5)
@@ -1774,7 +1774,7 @@ export struct SettingsPane {
         }
         // 可安装性徽标：取值由 appstate 的三态契约给出（纯 JS / 需发版 / 待确认）
         Text(this.pluginRowOf(p).badge)
-          .fontSize(10)
+          .fontSize(Fs.CAPTION_XS)
           .fontColor($r('sys.color.font_tertiary'))
           .padding({ left: 5, right: 5 })
           .borderRadius(5)

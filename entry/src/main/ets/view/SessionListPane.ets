@@ -202,7 +202,7 @@ export struct SessionListPane {
         .fontColor(this.badgeColor(label))
     }
     .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-    .borderRadius(6)
+    .borderRadius(Radius.XS)
     .backgroundColor($r('sys.color.background_secondary'))
   }
 

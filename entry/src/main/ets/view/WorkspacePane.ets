@@ -302,7 +302,7 @@ export struct WorkspacePane {
 
       if (node.deliverable) {
         Text('交付物')
-          .fontSize(10)
+          .fontSize(Fs.CAPTION_XS)
           .fontColor($r('sys.color.brand'))
           .padding({ left: 5, right: 5 })
           .borderRadius(5)

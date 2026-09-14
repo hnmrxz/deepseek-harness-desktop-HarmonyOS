@@ -89,7 +89,7 @@ export struct CorePane {
           .fontSize(Fs.CAPTION)
           .fontColor(this.phaseColor())
           .padding({ left: 8, right: 8, top: 2, bottom: 2 })
-          .borderRadius(6)
+          .borderRadius(Radius.XS)
           .backgroundColor($r('sys.color.background_primary'))
         if (this.view.currentVersion.length > 0) {
           Text(`v${this.view.currentVersion}`)
@@ -213,7 +213,7 @@ export struct CorePane {
                 .fontSize(Fs.CAPTION)
                 .fontColor(row.badge === '当前' ? $r('sys.color.brand') : $r('sys.color.font_tertiary'))
                 .padding({ left: 6, right: 6, top: 1, bottom: 1 })
-                .borderRadius(6)
+                .borderRadius(Radius.XS)
                 .backgroundColor($r('sys.color.background_secondary'))
               if (row.selectable) {
                 /*
@@ -322,7 +322,7 @@ export struct CorePane {
             }
             .width('100%')
             Text(p.name)
-              .fontSize(10)
+              .fontSize(Fs.CAPTION_XS)
               .fontColor($r('sys.color.font_tertiary'))
               .width('100%')
             if (!p.installable && p.reason.length > 0) {
