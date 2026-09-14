@@ -52,6 +52,16 @@ export class HarmonyColor {
   // 描边 / 分隔
   static readonly DIVIDER: Resource = $r('sys.color.comp_divider');
 
+  /**
+   * 模态遮罩。
+   *
+   * 【为什么必须用系统语义色】此前 5 个手写浮层各自硬编码 `'rgba(0,0,0,0.35)'`。
+   * 那不只是"魔数"问题——**35% 黑遮罩在深色主题下观感是错的**（深色界面本该用更弱的遮罩）。
+   * 系统提供了遮罩语义色（`ohos_id_color_mask_thin`，名字已由编译器校验存在），
+   * 交给它，深浅色与对比模式都由系统保证。
+   */
+  static readonly MASK: Resource = $r('sys.color.ohos_id_color_mask_thin');
+
   // 状态色（语义，不写死红绿）
   static readonly BRAND: Resource = $r('sys.color.brand');
   static readonly WARNING: Resource = $r('sys.color.warning');

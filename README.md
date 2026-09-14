@@ -85,8 +85,18 @@ hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 | 语义令牌 | `appstate/ui/HarmonyTheme.ets` | 角色 → 系统语义资源（`sys.color.*`）+ 排版成套角色 + 层级/动效/触控；**`WEB_TOKEN_MAP`** 逐条映射官方 `--dsw-*` |
 | 原生原语 | `entry/src/main/ets/view/NativePrimitives.ets` | `NativeChip` / `NativeCard` / `NativeButton` / `NativeActionBar` / `NativeSectionTitle` + Sheet 参数助手 |
 
-- 图标一律用系统符号（`SymbolGlyph` 只支持系统预置资源，**不引入 Web SVG**）。
-- `tools/check-design-tokens.mjs` 是**棘轮门禁**：裸 `fontSize`/圆角/描边/颜色字面量只许变少。
+**四条已经定下来的规则**（都是踩过或查证后写的，不是偏好）：
+
+1. **浮层用系统形态**：半模态一律 `bindSheet`（`NativePrimitives.harmonySheetOptions` 统一参数），
+   不再手写"整屏 Column + 自制遮罩"。原因：原生 Sheet 自带"非全屏、底层父视图可见"、拖拽关闭、
+   遮罩与键盘避让——手写那套要逐个补回来，且必然补不全。
+   > 注意 `bindSheet` 是**组件属性**，同一节点只能绑一个 ⇒ 多个 Sheet 要挂在不同节点上
+   > （本项目：详情 Sheet 挂根 Stack、枚举选择 Sheet 挂页头）。
+2. **遮罩用系统语义色**：`HarmonyColor.MASK`（`ohos_id_color_mask_thin`），不用 `rgba(...)` 硬编码——
+   35% 黑遮罩在深色主题下观感就是错的。
+3. **图标用系统符号**：`SymbolGlyph` 只支持系统预置资源，**不引入 Web SVG**（这条是 API 约束，不是偏好）。
+4. **裸值只许变少**：`tools/check-design-tokens.mjs` 是棘轮门禁，管的是
+   `fontSize`/圆角/描边/颜色字面量（含 `rgb()/rgba()/hsl()`——首版漏检过，已补）。
 
 ## 仓库结构
 

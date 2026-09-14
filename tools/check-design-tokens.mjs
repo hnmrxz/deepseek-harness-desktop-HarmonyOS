@@ -37,7 +37,10 @@ const PATTERNS = [
   { id: 'lineHeight', re: /\.lineHeight\(\s*\d+(?:\.\d+)?\s*\)/ },
   { id: 'borderRadius', re: /\.borderRadius\(\s*\d+(?:\.\d+)?\s*\)/ },
   { id: 'borderWidth', re: /\.borderWidth\(\s*\d+(?:\.\d+)?\s*\)/ },
-  { id: 'colorLiteral', re: /\.(?:backgroundColor|fontColor|borderColor)\(\s*(?:'#[0-9a-fA-F]{3,8}'|Color\.(?!Transparent)[A-Z]\w*)/ }
+  // 【覆盖面的教训】首版只匹配 `'#hex'` 与 `Color.X`，于是 **`'rgba(0,0,0,0.35)'` 这类函数式颜色被漏掉**——
+  // 实测手写浮层里就有一个硬编码遮罩。门禁"通过"不等于"覆盖到了"，所以这里把 rgb/rgba/hsl 一并纳入，
+  // 并加了对应的自检样例。颜色**资源**（`$r('sys.color.*')`）不是字面量，仍然不命中。
+  { id: 'colorLiteral', re: /\.(?:backgroundColor|fontColor|borderColor)\(\s*(?:'#[0-9a-fA-F]{3,8}'|'rgba?\([^']*\)'|'hsla?\([^']*\)'|Color\.(?!Transparent)[A-Z]\w*)/ }
 ];
 
 const EXEMPT = /\/\/\s*token-exempt:\s*\S+/;
@@ -103,6 +106,8 @@ function selfTest() {
     { why: '裸描边必须命中', text: '.borderWidth(1)', want: 1 },
     { why: '颜色字面量必须命中', text: "Text(x).fontColor('#ff0000')", want: 1 },
     { why: 'Color.Red 必须命中', text: '.fontColor(Color.Red)', want: 1 },
+    { why: 'rgba() 字面量必须命中（首版漏检过）', text: ".backgroundColor('rgba(0,0,0,0.35)')", want: 1 },
+    { why: 'rgb()/hsl() 同理', text: ".backgroundColor('hsl(0,0%,0%)')", want: 1 },
     { why: '语义资源不得命中', text: ".fontColor($r('sys.color.alert'))", want: 0 },
     { why: '整行注释不得命中', text: '// Text(x).fontSize(15)', want: 0 },
     { why: '块注释行不得命中', text: ' * Text(x).fontSize(15)', want: 0 },

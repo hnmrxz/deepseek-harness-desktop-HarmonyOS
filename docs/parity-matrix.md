@@ -283,7 +283,7 @@ devecocli build（全量）                                                     
 
 | Feature | Web 行为（官方实现） | Harmony 状态层 | Harmony 界面 | 协议/端点 | Phone | Tablet | PC | 2-in-1 | Status |
 |---|---|---|---|---|---|---|---|---|---|
-| `theme` 主题 | 插件前调色板 bootstrap + 无 DOM 的 ThemeRuntime（light/dark/system）+ `--dsw-*` 令牌样式 + 外观设置行 | `ui/Tokens.ets`（`Sp`/`Radius`(+`XS`)/`Fs`(+`CAPTION_XS`)/`Lh`/`Dur`/`Sz`/`Border`/`Breakpoint`/`SemanticColor`）、`themeModeOf` / `applyThemeMode`；**`tools/check-design-tokens.mjs` 强制「裸值只许变少」**；`HarmonyMaterial.IMMERSIVE_ENABLED = false`（API 固定 6.1.1(24) 的决策已入档） | 各 Pane 直接用 token；设置页外观行 | `settings/*`（外观键） | DONE | DONE | DONE | DONE | PARTIAL |
+| `theme` 主题 | 插件前调色板 bootstrap + 无 DOM 的 ThemeRuntime（light/dark/system）+ `--dsw-*` 令牌样式 + 外观设置行 | `ui/Tokens.ets`（`Sp`/`Radius`(+`XS`)/`Fs`(+`CAPTION_XS`)/`Lh`/`Dur`/`Sz`/`Border`/`Breakpoint`/`SemanticColor`；`HarmonyColor.MASK` 统一模态遮罩）、`themeModeOf` / `applyThemeMode`；**`tools/check-design-tokens.mjs` 强制「裸值只许变少」**；`HarmonyMaterial.IMMERSIVE_ENABLED = false`（API 固定 6.1.1(24) 的决策已入档） | 各 Pane 直接用 token；设置页外观行 | `settings/*`（外观键） | DONE | DONE | DONE | DONE | PARTIAL |
 | `client-locale` 语言 | 宿主偏好 + 可扩展语言目录 + 内置词典 | 跟随系统语言（E117）+ `platform/system/Strings.ets`、`localizedOr` | 设置页「语言」（`locale.preference`） | `settings/*` | DONE | DONE | DONE | DONE | PARTIAL |
 
 ### 4.6 端侧独有（无 Web 对应；`hdsh-` 前缀）
@@ -327,7 +327,7 @@ devecocli build（全量）                                                     
 | id | 缺什么（对等差距） | 下一步（归属） |
 |---|---|---|
 | `layout` | ① 无拖拽调宽手柄（官方 AppFrame 有 drag handles）；`decideLayoutWithDetail` 已把"用户想要的宽度"这条路径做好并有 fixture，但**没有 UI 去产生这个宽度** ② 详情栏宽度记忆未落 ⑤ **平板（DOUBLE）目前与手机一样用半模态 Sheet**；计划 §12 说的"平板侧边浅层面板"尚未做（三栏已经是真右栏） ③ **待决（需真机）**：D3 §2 只按宽度判定 ⇒ **手机横屏（800vp 宽）会落成双栏**；要不要加高度/方向子句，看真机效果后定 ④ 输入模态仍未接入决策（传 `false` 并在源码里注明）：`pointerRich` 无消费点，P3 再统一 | P2：拖拽调宽 + 宽度记忆；P3：把 `readDeviceFacts().keyboardLikely` 接进 `LayoutInput` |
-| `primitives` | ① 原语已落 `NativeChip` / `NativeSectionTitle` / `NativeCard`（+Sheet 参数助手）；**按钮/弹层/Dialog/操作条/导航**仍未原语化，`deliverableItem`（带保存/分享动作，形状不同）暂未回收 ② `WEB_TOKEN_MAP` 目前是**文档化数据 + fixture 可校验**，但还没有"视图必须经映射取色"的强制门禁（现有棘轮只管裸 fontSize/圆角/描边/颜色字面量） | P1.5 已做：HarmonyTheme 语义层 + 前两个原语 + 两处接入（消息操作条、Composer 工具行）。下一步按 P1.5 清单推进（Surface/Button/Card/Popup/Sheet/Dialog/ActionBar/Navigation），每个原语都**当时就接一个真实消费者**，不落没人用的空构件 |
+| `primitives` | ① 原语已落 `NativeChip` / `NativeSectionTitle` / `NativeCard` / `NativeButton` / `NativeActionBar`（+Sheet 参数助手）；**弹层/Dialog/导航**仍未原语化 ② **浮层改原生只做了 2/6**：详情、枚举选择已改 `bindSheet`；`folderSheet` / `credentialSheet` / `textSettingSheet` / `structSettingSheet` 四个仍是"整屏 Column + 自制遮罩"的老形态（遮罩已换成系统语义色 `HarmonyColor.MASK`，但原生拖拽关闭/键盘避让仍缺）③ `deliverableItem` 的保存/分享是**禁用+写明原因**（平台无文件保存能力） ② `WEB_TOKEN_MAP` 目前是**文档化数据 + fixture 可校验**，但还没有"视图必须经映射取色"的强制门禁（现有棘轮只管裸 fontSize/圆角/描边/颜色字面量） | P1.5 已做：HarmonyTheme 语义层 + 前两个原语 + 两处接入（消息操作条、Composer 工具行）。下一步按 P1.5 清单推进（Surface/Button/Card/Popup/Sheet/Dialog/ActionBar/Navigation），每个原语都**当时就接一个真实消费者**，不落没人用的空构件 |
 | `slots` / `renderer` | 官方是 React + 槽位插件化渲染；ArkUI 无槽位系统，第三方不能贡献 UI | 架构边界：**不追平**，能力由"构建期装配 + 设置页开关"替代；本条登记以免被当作缺陷反复讨论 |
 | `session` | 无"会话作用域槽位"；控制器能力（`SessionHub`）已具备 | 不追平（同上）；控制器本身已 DONE |
 | `conversation` | ① 未建立 `Turn → ProcessGroup → Answer` 统一模型（计划 §8）② 已完成回合的折叠语义、tool-only 空节点过滤未确认 ③ PC/2-in-1 列随 `layout` 的缺口 | P1：Conversation 重构（先做模型，再改视图） |

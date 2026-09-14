@@ -151,7 +151,7 @@ import { SettingsPane } from '../view/SettingsPane';
 import { WorkspacePane } from '../view/WorkspacePane';
 import { hitOfKeyEvent } from '../view/ShortcutKeys';
 import type { ShortcutHit } from '../view/ShortcutKeys';
-import { harmonySheetOptions, NativeSectionTitle } from '../view/NativePrimitives';
+import { harmonySheetOptions, NativeButton, NativeSectionTitle } from '../view/NativePrimitives';
 // 端侧核心运行层（D6）：核心版本仓库与激活事务。运行时载体尚未接线，
 // 因此这里现在只用它的"仓库/状态"部分，不声称任何"已启动"。
 import { hilog } from '@kit.PerformanceAnalysisKit';
@@ -1566,9 +1566,6 @@ struct Index {
       // 直接 `dlopen(libnode.so.127)` + `node::Start` 拉起（D6 §4.1 / E30/E31），
       // 不需要 XComponent，也不需要 Electron 的 nativeContext。
       // 阶段一那个 1×1 的 RuntimeHost 已随 web_engine 依赖一起移除。
-      if (this.choosing !== undefined) {
-        this.choiceSheet()
-      }
       if (this.credentialRef.length > 0) {
         this.credentialSheet()
       }
@@ -1747,56 +1744,62 @@ struct Index {
   // ───────────────────── 枚举选择浮层 ─────────────────────
 
   @Builder
-  choiceSheet() {
-    Column() {
-      Column({ space: Sp.S }) {
-        Text(`选择「${this.choosingLabel}」`)
-          .fontSize(Fs.BODY)
-          .width('100%')
-        Text(`上游设置项 ${this.choosingKey}`)
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
-          .width('100%')
-        ForEach(this.choosing, (choice: SettingChoice) => {
-          Row() {
-            Text(choice.label)
-              .fontSize(Fs.BODY)
-              .fontColor(choice.value === this.choosingCurrent
-                ? $r('sys.color.brand') : $r('sys.color.font_primary'))
-              .layoutWeight(1)
-            if (choice.value === this.choosingCurrent) {
-              Text('当前')
-                .fontSize(Fs.CAPTION)
-                .fontColor($r('sys.color.brand'))
+  choiceSheetContent() {
+    // 原生 Sheet 自己就是表面（遮罩/圆角/拖拽由系统提供）⇒ 内容不再自造"居中卡片"，
+    // 只保留标题 + 列表 + 取消。列表套 `Scroll`：模型目录可能很长，
+    // 此前居中卡片里放不下就是溢出，现在半模态内可滚动（原生 Sheet 的正确用法）。
+    Column({ space: Sp.S }) {
+      Text(`选择「${this.choosingLabel}」`)
+        .fontSize(HarmonyType.SUBTITLE.size)
+        .fontColor(HarmonyColor.TEXT_PRIMARY)
+        .width('100%')
+      Text(`上游设置项 ${this.choosingKey}`)
+        .fontSize(HarmonyType.LABEL.size)
+        .fontColor(HarmonyColor.TEXT_TERTIARY)
+        .width('100%')
+      Scroll() {
+        Column({ space: Sp.XS }) {
+          ForEach(this.choosing, (choice: SettingChoice) => {
+            Row({ space: HarmonySpacing.CONTROL_INNER }) {
+              Text(choice.label)
+                .fontSize(HarmonyType.CAPTION.size)
+                .fontColor(choice.value === this.choosingCurrent
+                  ? HarmonyColor.BRAND : HarmonyColor.TEXT_PRIMARY)
+                .layoutWeight(1)
+              if (choice.value === this.choosingCurrent) {
+                Text('当前')
+                  .fontSize(HarmonyType.LABEL.size)
+                  .fontColor(HarmonyColor.BRAND)
+              }
             }
-          }
-          .width('100%')
-          .padding(Sp.M)
-          .borderRadius(Radius.M)
-          .backgroundColor(choice.value === this.choosingCurrent
-            ? $r('sys.color.background_primary') : $r('sys.color.background_secondary'))
-          .onClick(() => {
-            this.applyChoice(choice.value);
-          })
-        }, (choice: SettingChoice) => choice.value)
-        Button('取消')
-          .width('100%')
-          .backgroundColor($r('sys.color.background_secondary'))
-          .fontColor($r('sys.color.font_primary'))
-          .onClick(() => {
-            this.choosing = undefined;
-          })
+            .width('100%')
+            .padding(HarmonySpacing.CONTAINER)
+            .borderRadius(HarmonyRadius.CONTROL)
+            .backgroundColor(choice.value === this.choosingCurrent
+              ? HarmonyColor.SURFACE_TERTIARY : HarmonyColor.SURFACE_RAISED)
+            .onClick(() => {
+              this.applyChoice(choice.value);
+            })
+          }, (choice: SettingChoice) => choice.value)
+        }
+        .width('100%')
       }
-      .width('86%')
-      .padding(Sp.L)
-      .borderRadius(Radius.L)
-      .backgroundColor($r('sys.color.background_secondary'))
+      .layoutWeight(1)
+      .align(Alignment.Top)
+
+      NativeButton({
+        label: '取消',
+        emphasis: 'tonal',
+        tone: 'neutral',
+        a11y: '取消选择',
+        onTap: () => {
+          this.choosing = undefined;
+        }
+      })
     }
     .width('100%')
     .height('100%')
-    .justifyContent(FlexAlign.Center)
-    // 半透明遮罩：明确这是模态，点击空白处不关闭（避免误触丢失选择上下文）
-    .backgroundColor('rgba(0,0,0,0.35)')
+    .padding(HarmonySpacing.CONTAINER)
   }
 
   /**
@@ -2138,7 +2141,7 @@ struct Index {
     .width('100%')
     .height('100%')
     .justifyContent(FlexAlign.Center)
-    .backgroundColor('rgba(0,0,0,0.35)')
+    .backgroundColor(HarmonyColor.MASK)
   }
 
   // ───────────────────── 凭据写入浮层 ─────────────────────
@@ -2225,7 +2228,7 @@ struct Index {
     .width('100%')
     .height('100%')
     .justifyContent(FlexAlign.Center)
-    .backgroundColor('rgba(0,0,0,0.35)')
+    .backgroundColor(HarmonyColor.MASK)
   }
 
   private closeCredentialSheet(): void {
@@ -2362,7 +2365,7 @@ struct Index {
     .width('100%')
     .height('100%')
     .justifyContent(FlexAlign.Center)
-    .backgroundColor('rgba(0,0,0,0.35)')
+    .backgroundColor(HarmonyColor.MASK)
   }
 
   /** 编辑浮层里的约束说明（把服务端约束在**输入前**讲清楚） */
@@ -2545,7 +2548,7 @@ struct Index {
     .width('100%')
     .height('100%')
     .justifyContent(FlexAlign.Center)
-    .backgroundColor('rgba(0,0,0,0.35)')
+    .backgroundColor(HarmonyColor.MASK)
   }
 
   /** 把草稿恢复为进入编辑器时的值（整值编辑的安全网） */
@@ -2694,6 +2697,18 @@ struct Index {
     .width('100%')
     .height(52)
     .padding({ left: Sp.M, right: Sp.S })
+    /*
+     * 枚举选择（模型 / 上游枚举设置）走**原生半模态**。
+     *
+     * 【为什么挂在页头而不是根 Stack】`bindSheet` 是**组件属性**，同一个节点只能绑定一个；
+     * 根 Stack 已经承担了"详情"那个 Sheet。页头在三种形态下都会渲染，挂这里既覆盖全形态，
+     * 又不与详情 Sheet 抢节点。
+     */
+    .bindSheet(this.choosing !== undefined, this.choiceSheetContent(),
+      harmonySheetOptions(() => {
+        // 原生关闭（下拉/关闭按钮/遮罩）必须复位状态，否则选择态永远留着、再也打不开
+        this.choosing = undefined;
+      }, SheetSize.MEDIUM))
   }
 
   private headerTitle(): string {
