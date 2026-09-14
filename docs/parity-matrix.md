@@ -99,7 +99,8 @@
 |---|---|---|
 | Node 静态门禁（`tools/*.mjs`） | ✅ 可跑 | 已实测：架构门禁、接线回归、上架红线、对等门禁全绿；见 §3.1 |
 | **ArkTS 编译（HAR 模块）** | ✅ 可跑 | `devecocli build --modules appstate connection dshcompat hostruntime platform` → **BUILD SUCCESSFUL**（apiVersion 26 SDK，145 任务）。这是**真编译器**，不是解析器 |
-| **ArkTS 编译（entry 应用模块）** | ❌ 被原生构建阻塞 | `entry` 含 `src/main/cpp`（`libdshhost`）：CMake 报 `node.h file not found`，因为 `entry/src/main/cpp/node-headers/` 与 `libnode.so` 都是 **gitignore 的产物**（需按 `tools/node-runtime/sync-node-headers.sh` + `build-node-ohos.sh` 产出）。**结论：UI 层（`Index.ets` 与各 Pane）目前**没有**编译验证** |
+| **ArkTS 编译（entry 应用模块）** | ❌ 被原生构建阻塞，**且无替代守护** | `entry` 含 `src/main/cpp`（`libdshhost`）：CMake 报 `node.h file not found`，因为 `entry/src/main/cpp/node-headers/` 与 `libnode.so` 都是 **gitignore 的产物**（需按 `tools/node-runtime/sync-node-headers.sh` + `build-node-ohos.sh` 产出）。**实测确认**：codelinter **检不出语法错误**（往 `appstate` 注入 `return a +;` 后它一条都不报，而真编译器立刻 BUILD FAILED）⇒ **`entry/src/main/ets/**` 目前没有任何自动验证**。改它的每一个字都必须人工核对，且不得声称"编译通过" |
+| **纯逻辑执行测试（layout fixtures）** | ✅ 可跑 | `tools/check-layout-fixtures.mjs`：把 `appstate/ui` 的三个**纯逻辑** `.ets` 按 `.ts` 编译后**在本机直接执行**（被测的是同一源文件，不是复制品），断言四形态 + 断点边界 + 让步链三分支，共 28 条 |
 | **ArkTS 静态检查（codelinter）** | ✅ 可跑且**覆盖面已证明** | 直接调用 CLT 的 `codelinter/bin/codelinter -c code-linter.json5 <模块目录>`：**16 条 warning / 0 error**（7 个文件）。覆盖用**注入测试**证明：往一个「无问题」文件注入已知违规，能被检出（见 §3.2） |
 | API 兼容扫描（`devecocli check compat`） | ❌ 平台不支持 | CLI 明文：`Unsupported platform: linux. compat only supports macOS and Windows.`——**与 CLT 是否安装无关**，Linux 上永远不可用 |
 | 模型/协议往返（`check-model-roundtrip.mjs`） | ⚠️ 需产物 | 需要 `dist/core/` 物化出来的核心树与可起的 Host |
@@ -122,6 +123,12 @@ node tools/compat-drift.mjs          ⚠️ 跑不了（缺 .research/protocol/c
 
 devecocli build --modules appstate connection dshcompat hostruntime platform   ✅ BUILD SUCCESSFUL（52s）
 codelinter -c code-linter.json5 <6 个模块目录>                                  ✅ 16 warn / 0 error
+node tools/check-layout-fixtures.mjs                                            ✅ 28 条断言通过（四形态 + 边界 + 让步链）
+node tools/check-layout-fixtures.mjs --self-test                                ✅ 注入的失败被如实报出
+
+# 两条"守护本身可信吗"的注入测试（门禁通过 ≠ 覆盖到了）
+注入 `return a +;` 到 appstate → 真编译器 ✅ BUILD FAILED；codelinter ❌ 一条不报（故 codelinter 不能当解析守卫）
+把 MAIN_MIN_VP 280→320 → check-layout-fixtures ✅ 立刻红（正好命中"840vp 详情栏被收窄"这条行为回归）
 ```
 
 **门禁"通过"不等于"覆盖到了"**（docs/README 纪律 9）：上面 4 个跑不动的门禁，其覆盖面在本环境**是盲区**，不是通过。
@@ -151,7 +158,7 @@ codelinter -c code-linter.json5 <6 个模块目录>                             
 
 | Feature | Web 行为（官方实现） | Harmony 状态层 | Harmony 界面 | 协议/端点 | Phone | Tablet | PC | 2-in-1 | Status |
 |---|---|---|---|---|---|---|---|---|---|
-| `layout` 外壳与三栏布局 | 三栏 AppFrame + 拖拽手柄；`ctx.layout` 查看态服务（导航 + 面板） | `appstate/ui/Breakpoints.ets`（`layoutModeOf` / `detailPanelAvailable` / `navPresentation`）、`ui/Tokens.ets`（`Sz.NAV_RAIL` / `NAV_PANEL` / `DETAIL_PANEL`） | `pages/Index.ets` 的 `buildSingle` / `buildDouble` / `buildTriple` + `navRail` / `navPanel` / `detailColumn` / `applyWidth` | 无（纯前端） | DONE | DONE | PARTIAL | PARTIAL | PARTIAL |
+| `layout` 外壳与三栏布局 | 三栏 AppFrame + 拖拽手柄；`ctx.layout` 查看态服务（导航 + 面板） | `appstate/ui/Breakpoints.ets`（`layoutModeOf` / `detailPanelAvailable` / `navPresentation`）、**`ui/LayoutController.ets`（P1 新增：形态/几何决策的唯一落点，含让步链 `concedeDetail`）**、`ui/Tokens.ets`（`Sz.NAV_RAIL` / `NAV_PANEL` / `DETAIL_PANEL` / `DETAIL_MIN`） | `pages/Index.ets` 的 `buildSingle` / `buildDouble` / `buildTriple` + `navRail` / `navPanel` / `detailColumn` / `applyWidth`（**尚未改为消费 LayoutController**） | 无（纯前端） | DONE | DONE | PARTIAL | PARTIAL | PARTIAL |
 | `slots` 槽位注册 | SlotMap 声明合并 + 单次 register 组合 API + 四方共享 props | 无（ArkUI 声明式，无插件槽位系统） | 无 | 无 | BOUNDARY | BOUNDARY | BOUNDARY | BOUNDARY | BOUNDARY |
 | `primitives` 基础组件原子 | 纯 React 原子：控件 / 图标 / Markdown / JSON 检查器 | 无独立层（样式直接内联在各 Pane） | 各 Pane 内联 | 无 | — | — | — | — | TODO |
 | `renderer` 渲染器与应用根 | React 槽位绑定 + `ctx.uiRenderer` + 组装后的应用根 | ArkUI 声明式 UI 由 `@Entry` 组件承载（无等价服务） | `pages/Index.ets` | 无 | BOUNDARY | BOUNDARY | BOUNDARY | BOUNDARY | BOUNDARY |
@@ -251,7 +258,7 @@ codelinter -c code-linter.json5 <6 个模块目录>                             
 
 | id | 缺什么（对等差距） | 下一步（归属） |
 |---|---|---|
-| `layout` | ① 无拖拽调宽手柄（官方 AppFrame 有 drag handles）② 详情栏宽度记忆未落 ③ `navPresentation` 有定义、**无界面调用点**（导航呈现决策仍写在 `Index.ets`） | P1：`LayoutController` 接管形态决策与面板几何；`navPresentation` 或接线或按 E257 判据登记 |
+| `layout` | ① 无拖拽调宽手柄（官方 AppFrame 有 drag handles）；`decideLayoutWithDetail` 已把"用户想要的宽度"这条路径做好并有 fixture，但**没有 UI 去产生这个宽度** ② 详情栏宽度记忆未落 ③ **`Index.ets` 尚未消费 `LayoutController`**：形态决策仍写在自己的 `applyWidth` 里，`navPresentation` 虽已有真实消费者（`LayoutController`）但**渲染层还没接**（`entry` 无编译验证，故此步要单独、小步地做）④ **待决（需真机）**：D3 §2 只按宽度判定 ⇒ **手机横屏（800vp 宽）会落成双栏**；要不要加高度/方向子句，看真机效果后定 | P1：把 `Index.ets` 的 `applyWidth` / 两个硬编码 `Sz.NAV_RAIL` / `Sz.DETAIL_PANEL` 换成消费 `decideLayout()`（行为等价，逐项对照 fixture）；**每步只改一处**，并靠 fixture + 人工核对兜底 |
 | `primitives` | 无组件原子层：字号/圆角/边框/背景直接内联在各 Pane，token 使用不可强制 | P1：`ParityTheme` + `ParityButton` / `ParityChip` / `ParityCard` / `ParityDialog` 等，并加"禁用裸魔数"门禁 |
 | `slots` / `renderer` | 官方是 React + 槽位插件化渲染；ArkUI 无槽位系统，第三方不能贡献 UI | 架构边界：**不追平**，能力由"构建期装配 + 设置页开关"替代；本条登记以免被当作缺陷反复讨论 |
 | `session` | 无"会话作用域槽位"；控制器能力（`SessionHub`）已具备 | 不追平（同上）；控制器本身已 DONE |
@@ -331,6 +338,10 @@ ls -d /opt/dsh/node_modules/@deepseek-ai/dsh-client-ui-* | sed 's#.*/dsh-client-
 node tools/check-parity.mjs              # 校验本矩阵（覆盖 / token / 不变式 / 缺口登记）
 node tools/check-parity.mjs --self-test  # 注入式自检：证明它会失败（未被负测试验证的门禁等于没有门禁）
 node tools/check-parity.mjs --list       # 打印解析出的行与状态
+
+node tools/check-layout-fixtures.mjs              # 四形态 + 断点边界 + 让步链（纯逻辑，无需设备）
+node tools/check-layout-fixtures.mjs --self-test  # 证明断言器会失败
+                                                  # 退出码 3 = 环境受阻（找不到 tsc），**不是通过**
 ```
 
 ---
@@ -389,5 +400,6 @@ node tools/check-parity.mjs --list       # 打印解析出的行与状态
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| v1.2 | 2026-09-14 | **P1 第一刀：`LayoutController` 落地**（`appstate/ui/LayoutController.ets`，形态/几何决策与让步链的唯一落点，被真编译器验证）+ **`tools/check-layout-fixtures.mjs`**（纯逻辑按 TS 编译后本机执行，四形态/边界/让步链 28 条断言，含自检与真实注入验证）。据此更新 `layout` 行与缺口；**新增硬事实**：`entry` 不只是没有编译器——**codelinter 检不出语法错误**（注入实测），故 `entry/src/main/ets/**` 目前**零自动验证**，已写进 §3 |
 | v1.1 | 2026-09-14 | **工具链就位后校准 §3**：HAR 模块可真编译（BUILD SUCCESSFUL）、codelinter 全量可跑且**覆盖面经注入测试证明**、`check compat` 确认 Linux 永不支持、`entry` 因原生构建无编译验证。新增 §3.2 编译器首批发现——其中 `READ_PASTEBOARD` 缺失是**真实缺口**，据此把 `hdsh-clipboard` 由 `DONE` 降为 `PARTIAL`（编译器纠正了本矩阵）。补记 Linux 构建会重写 5 个 lock 文件行尾的环境坑 |
 | v1.0 | 2026-09-14 | 首版：建立四形态口径（更正 PC 与 2-in-1 同为 `deviceType=2in1`）、状态口径与两轴规则、46 行对等矩阵、缺口登记、来源与版本标注、门禁 `check-parity.mjs`、附 A `Index.ets` 拆分基线 |

@@ -1,0 +1,307 @@
+/**
+ * 布局 fixture 门禁（P1）：把「形态/几何决策」变成**无需设备**就能验证的东西。
+ *
+ * 存在理由：
+ *   计划 §16 要求「即使没有设备，也必须测试 width / height / orientation / input mode」，
+ *   §17 要求把「布局分支」与「state → UI 映射」当作可自动化的验收对象。
+ *   而 `entry`（UI 层）在本环境**没有编译验证**（原生构建被 node-headers/libnode 阻塞），
+ *   真机也没有 —— 于是「布局决策对不对」这件事在重构中极易静默劣化。
+ *
+ * 做法（关键点）：
+ *   `appstate/src/main/ets/ui/LayoutController.ets` 是**纯 TypeScript**（不含 ArkUI 装饰器与 DSL），
+ *   所以可以把它连同依赖（`Tokens.ets` / `Breakpoints.ets`）按 `.ts` 编译并**在本机直接执行**——
+ *   被测的是**同一个源文件**，不是复制品（复制一份来测等于测了个假东西）。
+ *   编译器用 CLT 自带的 tsc（`<CLT>/codelinter/node_modules/typescript/bin/tsc`）。
+ *
+ * 四套形态 fixture（计划 §16）+ 断点边界 + 让步链三分支：
+ *   PHONE / PHONE-LANDSCAPE / TABLET-PORTRAIT / TABLET-LANDSCAPE / DESKTOP / TWO-IN-ONE（拖窄两种）
+ *
+ * 退出码：0 通过；1 断言失败；3 **环境受阻**（找不到 tsc）——
+ *   沿用本项目既有约定（无设备时 exit 3 且不建产物），**不把"没跑成"说成"通过"**。
+ *
+ * 用法：
+ *   node tools/check-layout-fixtures.mjs              # 跑全部 fixture
+ *   node tools/check-layout-fixtures.mjs --self-test  # 注入式自检：证明断言真的会失败
+ */
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
+
+const ROOT = process.cwd();
+const WORK = join(ROOT, 'dist', 'layout-fixtures');
+const SRC = join(WORK, 'src');
+const OUT = join(WORK, 'out');
+
+/** 纯逻辑源文件（不依赖 ArkUI DSL，故可当 TS 编译并执行） */
+const PURE_FILES = [
+  'appstate/src/main/ets/ui/Tokens.ets',
+  'appstate/src/main/ets/ui/Breakpoints.ets',
+  'appstate/src/main/ets/ui/LayoutController.ets'
+];
+
+/** ArkUI 全局的声明补丁：Tokens.ets 用它取系统资源色/符号 */
+const GLOBALS_DTS = `
+declare function $r(value: string): Resource;
+declare type Resource = object;
+`;
+
+/** 找 tsc：CLT 自带 typescript，其次看 PATH */
+function findTsc() {
+  const candidates = [];
+  const clt = process.env.DEVECO_CLI_CLT_PATH;
+  if (clt) candidates.push(join(clt, 'codelinter', 'node_modules', 'typescript', 'bin', 'tsc'));
+  candidates.push('/home/node/deveco-clt/command-line-tools/codelinter/node_modules/typescript/bin/tsc');
+  for (const c of candidates) {
+    if (existsSync(c)) return c;
+  }
+  return null;
+}
+
+/** 把 .ets 复制成 .ts 并编译，返回可 require 的模块 */
+function buildAndLoad() {
+  const tsc = findTsc();
+  if (!tsc) {
+    console.error('环境受阻：找不到 tsc（DevEco CLT 自带的 typescript）。');
+    console.error('  设置 DEVECO_CLI_CLT_PATH 指向 Command Line Tools 安装目录后重跑。');
+    console.error('  ⚠️ 这是"没跑成"，不是"通过"——退出码 3。');
+    process.exit(3);
+  }
+
+  rmSync(WORK, { recursive: true, force: true });
+  mkdirSync(SRC, { recursive: true });
+  const tsFiles = [];
+  for (const rel of PURE_FILES) {
+    const from = join(ROOT, rel);
+    if (!existsSync(from)) {
+      console.error(`缺文件：${rel}`);
+      process.exit(2);
+    }
+    const to = join(SRC, rel.split('/').pop().replace(/\.ets$/, '.ts'));
+    cpSync(from, to);
+    tsFiles.push(to);
+  }
+  const globals = join(SRC, 'globals.d.ts');
+  writeFileSync(globals, GLOBALS_DTS, 'utf8');
+
+  try {
+    execFileSync(process.execPath, [
+      tsc,
+      '--target', 'ES2020',
+      '--module', 'commonjs',
+      '--outDir', OUT,
+      '--skipLibCheck',
+      '--strict', 'false',
+      ...tsFiles,
+      globals
+    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (e) {
+    const out = `${e.stdout || ''}${e.stderr || ''}`.toString();
+    console.error('tsc 编译纯逻辑源文件失败——说明 LayoutController/Tokens/Breakpoints 不是合法 TS：');
+    console.error(out.trim() || '(无输出)');
+    process.exit(1);
+  }
+
+  // 运行时垫片：`Tokens.ets` 在**模块顶层**就调 ArkUI 全局 `$r(...)` 取系统资源，
+  // 而 Node 里没有这个全局（实测：直接 require 会 `ReferenceError: $r is not defined`）。
+  // 决策逻辑本身与它无关，故给一个恒等垫片即可——注意这是"让纯逻辑跑起来"，
+  // 不是"假装 ArkUI 环境"：本文件只断言几何/档位，不碰颜色与资源。
+  const bootstrap = join(OUT, '__bootstrap.cjs');
+  writeFileSync(bootstrap,
+    "'use strict';\n"
+    + 'globalThis.$r = (value) => value;\n'
+    + "module.exports = require('./LayoutController.js');\n", 'utf8');
+
+  // 用 bootstrap 作为入口 require：它先装 `$r` 垫片，再转出 LayoutController
+  const req = createRequire(bootstrap);
+  return req(bootstrap);
+}
+
+/** 断言器：收集失败而不是首错即停（一次看清全部差异） */
+function makeAsserter(selfTest) {
+  const failures = [];
+  let checked = 0;
+  return {
+    eq(label, actual, expected) {
+      checked++;
+      const ok = JSON.stringify(actual) === JSON.stringify(expected);
+      if (!ok) failures.push(`  ✗ ${label}\n      期望 ${JSON.stringify(expected)}\n      实际 ${JSON.stringify(actual)}`);
+    },
+    ok(label, cond) {
+      checked++;
+      if (!cond) failures.push(`  ✗ ${label}`);
+    },
+    done() {
+      // 自检模式：故意制造一条失败，验证"断言真的会失败、且退出码会变"
+      if (selfTest) {
+        checked++;
+        failures.push('  ✗ [self-test] 注入的必然失败断言');
+      }
+      console.log(`\n断言 ${checked} 条，失败 ${failures.length} 条。`);
+      if (failures.length === 0) {
+        console.log('✅ 四形态 fixture 与边界全部符合预期。');
+        process.exit(0);
+      }
+      for (const f of failures) console.log(f);
+      console.log(selfTest
+        ? '\n✅ 自检通过：注入的失败被如实报出（断言器有效）。'
+        : '\n❌ 失败：布局决策与 fixture 期望不符（或本文件是重构中的临时状态）。');
+      // 自检模式下"有失败"正是期望结果
+      process.exit(selfTest ? 0 : 1);
+    }
+  };
+}
+
+const selfTest = process.argv.includes('--self-test');
+const require2 = buildAndLoad();
+const LC = require2;
+
+const { decideLayout, decideLayoutWithDetail, concedeDetail, navWidthOf, ConcessionStep, MAIN_MIN_VP } = LC;
+const t = makeAsserter(selfTest);
+
+console.log('# 布局 fixture 门禁（四形态 + 断点边界 + 让步链）\n');
+console.log(`编译：${PURE_FILES.length} 个纯逻辑源文件 → ${OUT.replace(`${ROOT}/`, '')}`);
+console.log(`主区最小宽度 MAIN_MIN_VP = ${MAIN_MIN_VP}\n`);
+
+/** 便捷构造 */
+const input = (widthVp, heightVp, hasKeyboard = false, hasPointer = false) =>
+  ({ widthVp, heightVp, hasKeyboard, hasPointer });
+
+/**
+ * 四套形态 fixture（计划 §16）。
+ * 期望值是**当前实现的行为**（本轮是重构，不改行为）；凡是"行为是否合理"存疑的，
+ * 单独在下面标注为待决，而不是悄悄把期望值写成我们想要的样子。
+ */
+const FIXTURES = [
+  {
+    name: 'PHONE 竖屏 360×800',
+    in: input(360, 800),
+    want: {
+      mode: 'single', nav: 'bottom', navWidthVp: 0, navLabels: false,
+      detailAvailable: false, detailWidthVp: 0, detailOverlay: true,
+      detailStep: 'none', landscape: false, pointerRich: false
+    }
+  },
+  {
+    name: 'PHONE 横屏 800×360（宽 800 ≥ 600 ⇒ 落双栏）',
+    in: input(800, 360),
+    want: {
+      mode: 'double', nav: 'rail', navWidthVp: 56, navLabels: false,
+      detailAvailable: false, detailWidthVp: 0, detailOverlay: false,
+      detailStep: 'none', landscape: true, pointerRich: false
+    },
+    note: '⚠️ 待决：D3 §2 的口径是"只看宽度"，于是**手机横屏会变成双栏**。'
+      + '这是"按宽度决策"的直接后果，不是 bug；但要不要为手机横屏加一条高度/方向子句，需真机看效果后定。'
+  },
+  {
+    name: 'TABLET 竖屏 800×1280',
+    in: input(800, 1280),
+    want: {
+      mode: 'double', nav: 'rail', navWidthVp: 56, navLabels: false,
+      detailAvailable: false, detailWidthVp: 0, detailOverlay: false,
+      detailStep: 'none', landscape: false, pointerRich: false
+    }
+  },
+  {
+    name: 'TABLET 横屏 1280×800',
+    in: input(1280, 800),
+    want: {
+      mode: 'triple', nav: 'panel', navWidthVp: 240, navLabels: true,
+      detailAvailable: true, detailWidthVp: 320, detailOverlay: false,
+      detailStep: 'none', landscape: true, pointerRich: false
+    }
+  },
+  {
+    name: 'DESKTOP/2in1 全屏 1920×1080（键鼠齐备）',
+    in: input(1920, 1080, true, true),
+    want: {
+      mode: 'triple', nav: 'panel', navWidthVp: 240, navLabels: true,
+      detailAvailable: true, detailWidthVp: 320, detailOverlay: false,
+      detailStep: 'none', landscape: true, pointerRich: true
+    }
+  },
+  {
+    name: '2in1 自由窗被拖窄 700×900（应与平板竖屏同构，不重启页面）',
+    in: input(700, 900, true, true),
+    want: {
+      mode: 'double', nav: 'rail', navWidthVp: 56, navLabels: false,
+      detailAvailable: false, detailWidthVp: 0, detailOverlay: false,
+      detailStep: 'none', landscape: false, pointerRich: true
+    }
+  },
+  {
+    name: '2in1 自由窗拖到手机宽度 480×800',
+    in: input(480, 800, true, true),
+    want: {
+      mode: 'single', nav: 'bottom', navWidthVp: 0, navLabels: false,
+      detailAvailable: false, detailWidthVp: 0, detailOverlay: true,
+      detailStep: 'none', landscape: false, pointerRich: true
+    }
+  }
+];
+
+console.log('## 四形态 fixture');
+for (const f of FIXTURES) {
+  const got = decideLayout(f.in);
+  t.eq(f.name, got, f.want);
+  console.log(`  ${JSON.stringify(got) === JSON.stringify(f.want) ? 'ok  ' : 'FAIL'}  ${f.name}`
+    + `  → ${got.mode}/${got.nav}/detail=${got.detailAvailable ? got.detailWidthVp : '—'}`);
+  if (f.note) console.log(`        ${f.note}`);
+}
+
+console.log('\n## 断点边界（599/600/839/840）');
+const BOUNDARIES = [
+  { w: 599, mode: 'single', nav: 'bottom' },
+  { w: 600, mode: 'double', nav: 'rail' },
+  { w: 839, mode: 'double', nav: 'rail' },
+  { w: 840, mode: 'triple', nav: 'panel' }
+];
+for (const b of BOUNDARIES) {
+  const got = decideLayout(input(b.w, 900));
+  t.eq(`宽 ${b.w}vp → 档位`, got.mode, b.mode);
+  t.eq(`宽 ${b.w}vp → 导航`, got.nav, b.nav);
+  console.log(`  ok    宽 ${b.w}vp → ${got.mode} / ${got.nav}`);
+}
+
+console.log('\n## 840vp 处详情栏必须是默认宽度（不得因下限收紧而收窄）');
+{
+  // 这条守的是"重构不改行为"：MAIN_MIN_VP 若被拍成更大的值，840vp 下详情栏会突然收窄甚至关闭
+  const got = decideLayout(input(840, 900));
+  t.eq('840vp 详情宽度', got.detailWidthVp, 320);
+  t.eq('840vp 让步步骤', got.detailStep, 'none');
+  console.log(`  ok    840vp → 详情 ${got.detailWidthVp}vp（${got.detailStep}）`);
+}
+
+console.log('\n## 让步链三分支（D3 §2.1：收窄 → 关闭）');
+{
+  const none = concedeDetail(1280, 240, 320);
+  t.eq('放得下 → NONE/320', none, { widthVp: 320, step: 'none' });
+  const narrow = concedeDetail(840, 240, 400);
+  t.eq('放不下期望值 → NARROW/260', narrow, { widthVp: 260, step: 'detail-narrow' });
+  const tooSmall = concedeDetail(840, 240, 100);
+  t.eq('低于最小值 → NARROW/260', tooSmall, { widthVp: 260, step: 'detail-narrow' });
+  const closed = concedeDetail(500, 240, 320);
+  t.eq('连最小值都放不下 → CLOSED/0', closed, { widthVp: 0, step: 'detail-closed' });
+  console.log(`  ok    NONE / NARROW / CLOSED 三个分支都被直接断言（含当前断点下不可达的 CLOSED）`);
+}
+
+console.log('\n## 未来的拖拽调宽路径（P2）：decideLayoutWithDetail');
+{
+  const wide = decideLayoutWithDetail(input(1280, 800), 400);
+  t.eq('1280vp 想要 400 → 得 400', wide.detailWidthVp, 400);
+  t.eq('1280vp 想要 400 → NONE', wide.detailStep, 'none');
+  const tight = decideLayoutWithDetail(input(840, 800), 400);
+  t.eq('840vp 想要 400 → 收窄到 260', tight.detailWidthVp, 260);
+  t.eq('840vp 想要 400 → NARROW', tight.detailStep, 'detail-narrow');
+  console.log('  ok    同一决策函数同时服务"默认宽度"与"用户拖拽宽度"');
+}
+
+console.log('\n## 导航宽度映射');
+{
+  t.eq('PANEL → 240', navWidthOf('panel'), 240);
+  t.eq('RAIL → 56', navWidthOf('rail'), 56);
+  t.eq('BOTTOM_TABS → 0（不占侧边）', navWidthOf('bottom'), 0);
+  console.log('  ok    panel/rail/bottom 三档映射');
+}
+
+t.done();

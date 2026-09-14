@@ -162,6 +162,18 @@ export {
 // ── 设计令牌 ──
 export { Breakpoint, Dur, Fs, Lh, Radius, SemanticColor, Sp, Sz } from './ui/Tokens';
 
+// ── 布局决策（P1：形态/几何决策的唯一落点，见 LayoutController 的说明） ──
+export {
+  breakpointThresholds,
+  concedeDetail,
+  decideLayout,
+  decideLayoutWithDetail,
+  MAIN_MIN_VP,
+  navWidthOf,
+  ConcessionStep
+} from './ui/LayoutController';
+export type { DetailCapacity, LayoutDecision, LayoutInput } from './ui/LayoutController';
+
 // ── 会话中枢（D1 §7.7.5b：全应用单一连接池 + 单一会话状态机 + 单一待发队列） ──
 export { HubPhase, projectWireRecord, SessionHub, notice, noticeWith, put } from './store/SessionHub';
 export type {
