@@ -268,7 +268,7 @@ class HdshResponse {
 // ── fetch ─────────────────────────────────────────────────────────────────
 const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
 
-function onceFetch(url, init, headers, encoded, signal, redirectsLeft, timeoutMs) {
+function onceFetch(url, init, headers, encoded, signal, redirectsLeft, timeoutMs, lookup, redirectMode) {
   return new Promise((resolve, reject) => {
     let parsed;
     try {
@@ -284,11 +284,27 @@ function onceFetch(url, init, headers, encoded, signal, redirectsLeft, timeoutMs
       signal,
       timeout: timeoutMs,
     };
+    /*
+     * DNS 钉住透传（`web_fetch` 的 SSRF 防护依赖它）。
+     *
+     * 上游 `dsh-web-fetch-http` 先自己解析地址、再用 `createPinnedLookup(addresses)` 把**解析结果钉死**，
+     * 目的是防 DNS 重绑定（解析与连接之间被换掉）。它把这个 lookup 放进 undici 的 `Agent`，
+     * 由 undici 在连接时使用。我们的 undici 垫片把 Agent 里的 lookup 翻译到这里 ——
+     * 于是**钉住语义没有丢**：连接用的仍是上游校验过的那批地址。
+     */
+    if (lookup !== undefined && lookup !== null) {
+      options.lookup = lookup;
+    }
     const req = mod.request(parsed, options, (res) => {
       const status = res.statusCode === undefined ? 0 : res.statusCode;
       const resHeaders = new HdshHeaders();
       for (let i = 0; i + 1 < res.rawHeaders.length; i += 2) resHeaders.append(res.rawHeaders[i], res.rawHeaders[i + 1]);
 
+      if (REDIRECT_STATUS.has(status) && redirectMode === 'error') {
+        res.resume();
+        reject(new TypeError('fetch failed: redirect not allowed (redirect: "error")'));
+        return;
+      }
       if (REDIRECT_STATUS.has(status) && redirectsLeft > 0) {
         const location = resHeaders.get('location');
         res.resume();
@@ -296,7 +312,7 @@ function onceFetch(url, init, headers, encoded, signal, redirectsLeft, timeoutMs
           const nextUrl = new URL(location, parsed).toString();
           const nextInit = { ...init };
           if (status === 303 && options.method !== 'HEAD') nextInit.method = 'GET';
-          resolve(onceFetch(nextUrl, nextInit, headers, undefined, signal, redirectsLeft - 1, timeoutMs));
+          resolve(onceFetch(nextUrl, nextInit, headers, undefined, signal, redirectsLeft - 1, timeoutMs, lookup, redirectMode));
           return;
         }
       }
@@ -357,7 +373,17 @@ async function hdshFetch(input, init = {}, options = {}) {
     headers.set('content-type', encoded.type);
   }
   const timeoutMs = typeof options.timeoutMs === 'number' ? options.timeoutMs : 120000;
-  return await onceFetch(url, init, headers, encoded, init.signal, 5, timeoutMs);
+  /*
+   * `redirect` 模式必须被尊重（此前硬编码跟 5 跳）。
+   *
+   * 【为什么这条很关键】上游 `web_fetch` 用 `redirect: 'manual'`，然后**自己在同源白名单内**逐跳跟进
+   * 并对跨源跳转直接拒绝（`WEB_REDIRECT_BLOCKED`）。垫片若擅自跟跳，
+   * 那套安全策略会被绕过——跨源重定向会被静默跟随，而工具以为自己在做 manual 处理。
+   */
+  const mode = init.redirect === undefined ? 'follow' : String(init.redirect);
+  const redirectsLeft = mode === 'manual' ? 0 : 5;
+  const lookup = typeof options.lookup === 'function' ? options.lookup : undefined;
+  return await onceFetch(url, init, headers, encoded, init.signal, redirectsLeft, timeoutMs, lookup, mode);
 }
 
 /**

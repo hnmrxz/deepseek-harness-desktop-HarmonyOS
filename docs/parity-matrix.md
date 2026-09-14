@@ -200,6 +200,17 @@ devecocli build（全量）                                                     
 | **`Circle().fill(...)` 六处**（`view/ConnectPane.ets:273`、`view/SessionListPane.ets:198`、`view/SettingsPane.ets:1144/1678/1754/1819`）：编译器标注 **`The 'fill' API is supported since SDK version 26.0.0`**，而项目 `build-profile.json5` 声明的是 **`compatibleSdkVersion: 6.1.1(24)`** | **真实兼容性缺陷（本轮最有价值的编译器产出）**：在 API 24 设备上 `fill` 不存在 ⇒ 三个状态点/色点（Host 授权状态、会话运行中脉冲、提供方色点）行为未定义。而这正是 `devecocli check compat` 该抓的东西——它**在 Linux 上不可用**（macOS/Windows only）⇒ **编译器警告是当前唯一的信号源** | 三选一（**需要决策，且要真机看视觉**）：① 改用 API 24 就有的写法（如 `Circle().backgroundColor(...)`，视觉是否等价需真机确认）；② `apiAvailable` 守卫 + 回退；③ 把 `compatibleSdkVersion` 提到 26。**决策前不得当作没问题** |
 | `pages/Index.ets` 多处 `'getContext' has been deprecated`（约 12 处）、`'px2vp' has been deprecated`（3 处）、`'pushUrl' has been deprecated`（1 处）；`hostruntime/core/CoreStore.ets:424/430/438` `Function may throw exceptions. Special handling is required.` | 技术债 / 健壮性提示（可继续用，未来版本会移除） | 进 §6 无需登记（非行缺口）；P2 统一收敛 |
 
+**一处端侧运行时缺陷（2026-09-14 实测确证）：`web_fetch` 在 jitless 下永远失败**
+
+| 环节 | 事实（都有对照实验，不是推断） |
+|---|---|
+| 症状 | `web_search` 正常，`web_fetch` **打不开任何网页、任何 IP** |
+| 机制 | 上游 `dsh-web-fetch-http` **不用全局 fetch**：它 `await import("undici")`、自建 `Agent` 并把 `dispatcher` 传进 fetch；而 **undici 的 HTTP 解析器是 WASM**（`lib/llhttp/llhttp-wasm.js`）。`web_search` 走本仓的 http/https 垫片（纯 JS），所以照常工作 |
+| 对照实验（同一核心树、同一个本地 HTTP 服务） | 无 `--jitless`（WASM 可用）→ `undici.fetch` **200**；`--jitless`（**App 里 Host 的真实运行方式**）→ **`fetch failed`，`cause: WebAssembly is not defined`** |
+| 为什么 `--jitless` 下没有 WASM | V8 的 `--jitless` 与 `--expose_wasm` 互斥（启动即打印 `disabling flag --expose_wasm`），`typeof WebAssembly === 'undefined'` |
+| 在飞修复（**未接线、未端到端验证**） | `hostcore/app/undici-shim.js`（把 `undici` 模块名接到已有 http 垫片，并翻译 `dispatcher → lookup` 以**保住上游的 DNS 钉住/SSRF 防护**）+ `hostcore/app/undici-loader.mjs`（`module.register` 解析钩子）。已验证：钩子生效（`import("undici")` 拿到垫片）；未解决：undici 风格的 pinned lookup 透传给 `node:http` 时的签名兼容（本地测试报 `ERR_INVALID_IP_ADDRESS`） |
+| 顺带修掉的两处垫片缺陷（已生效、Host 复验正常） | ① `hdshFetch` 此前**硬编码自动跟 5 跳、忽略 `init.redirect`** ⇒ 上游用 `redirect:'manual'` 做的"仅同源跟跳 + 跨源拒绝"安全策略会被绕过；现按模式处理（manual/error/follow）。② 新增 `lookup` 透传通道（当前无调用方传入，故对既有行为零影响） |
+
 **一次被编译器揭穿的"仓库不完整"事故（2026-09-14，已修）**
 
 | 环节 | 事实 |
@@ -332,7 +343,7 @@ devecocli build（全量）                                                     
 | `session` | 无"会话作用域槽位"；控制器能力（`SessionHub`）已具备 | 不追平（同上）；控制器本身已 DONE |
 | `conversation` | ① 回合渲染已落地（对话视图按回合 + 过程分组折叠/展开），但**轨迹视图仍是条目级台账**——§8 的"统一模型"目前只在对话视图生效 ② PC/2-in-1 列随 `layout` 的缺口 | P1 已做：回合模型（15 条断言）+ 对话视图按回合渲染 + 行数单位收敛 + **sticky-follow 独立成模型**（`model/Follow`，9 条断言；顺带修掉两个真实缺陷——切会话与发消息都不恢复跟随）。下一步：轨迹视图也按回合组织（或明确"它就是全量台账"并在文档里定死）。**更正一条此前的错误判据**：上一轮把"回答本身可折叠"写成缺口是错的——官方折叠的是**过程**，回答是回合的目的、收起它会把这一轮的意义藏起来；故**不做**，此项从缺口移除 | | P1：Conversation 重构（先做模型，再改视图） |
 | `trajectory` | 无交互式时间总览（timing overview）；无 inspector | P2：`TrajectoryPresenter` |
-| `tool` | ① **`ToolPresenter` 已落地**（`model/ToolPresentation`：终端/读取/写入/编辑/搜索/网络/图像/提问 + 通用，17 条断言；图标、语气、展开默认态、无障碍文案都由模型判定，视图只映射）② 仍缺：**diff 专门呈现**（改动前后对照）、**路径摘要**（现在直接显示参数原文，未按类别提炼 file_path/command 等要点）、结果预览的类别化（图像类应出缩略而非等宽文本） | P2 已做：类别判定 + 每类一个系统符号 + 失败默认展开。下一步：按类别提炼摘要与结果呈现 |
+| `tool` | ⓪ **`web_fetch` 在端侧 jitless 下完全不可用**（根因与在飞修复见 §3.2；`web_search` 不受影响）① **`ToolPresenter` 已落地**（`model/ToolPresentation`：终端/读取/写入/编辑/搜索/网络/图像/提问 + 通用，17 条断言；图标、语气、展开默认态、无障碍文案都由模型判定，视图只映射）② 仍缺：**diff 专门呈现**（改动前后对照）、**路径摘要**（现在直接显示参数原文，未按类别提炼 file_path/command 等要点）、结果预览的类别化（图像类应出缩略而非等宽文本） | P2 已做：类别判定 + 每类一个系统符号 + 失败默认展开。下一步：按类别提炼摘要与结果呈现 |
 | `subagent` | 无续跑路由 UI；子代理不作为 `@` 引用源 | P2 |
 | `deliverables` | 终答正文内的可点文件引用未接（只有独立交付物条目 + 工作区标记） | P2 |
 | `jobs` | 官方在会话头有后台任务列表；HDSH 只在轨迹里显示 `JOB` 行，且不是 live 注册表视图 | P2 |
