@@ -50,7 +50,7 @@
 | 轴 | 取值 | 今天的状态 |
 |---|---|---|
 | **实现侧** | 本矩阵的 `Status` / 四形态列 | 见 §5 统计 |
-| **设备验证** | `PENDING` / `PASS` | **`PENDING`**（本环境无模拟器、无真机、无 DevEco 工具链，见 §3） |
+| **设备验证** | `PENDING` / `PASS` | **`PENDING`**（本环境无模拟器、无真机；**工具链已于 2026-09-14 就位**，HAR 模块可真编译，见 §3） |
 
 **硬规则**：任何 `DONE` 行都不得被读作"已在设备上验收通过"；报告里必须同时给出设备验证轴的取值。
 
@@ -97,9 +97,12 @@
 
 | 手段 | 本环境 | 说明 |
 |---|---|---|
-| Node 静态门禁（`tools/*.mjs`） | ✅ 可跑 | 已实测：架构门禁、接线回归、上架红线全绿；见 §3.1 与 §5 |
+| Node 静态门禁（`tools/*.mjs`） | ✅ 可跑 | 已实测：架构门禁、接线回归、上架红线、对等门禁全绿；见 §3.1 |
+| **ArkTS 编译（HAR 模块）** | ✅ 可跑 | `devecocli build --modules appstate connection dshcompat hostruntime platform` → **BUILD SUCCESSFUL**（apiVersion 26 SDK，145 任务）。这是**真编译器**，不是解析器 |
+| **ArkTS 编译（entry 应用模块）** | ❌ 被原生构建阻塞 | `entry` 含 `src/main/cpp`（`libdshhost`）：CMake 报 `node.h file not found`，因为 `entry/src/main/cpp/node-headers/` 与 `libnode.so` 都是 **gitignore 的产物**（需按 `tools/node-runtime/sync-node-headers.sh` + `build-node-ohos.sh` 产出）。**结论：UI 层（`Index.ets` 与各 Pane）目前**没有**编译验证** |
+| **ArkTS 静态检查（codelinter）** | ✅ 可跑且**覆盖面已证明** | 直接调用 CLT 的 `codelinter/bin/codelinter -c code-linter.json5 <模块目录>`：**16 条 warning / 0 error**（7 个文件）。覆盖用**注入测试**证明：往一个「无问题」文件注入已知违规，能被检出（见 §3.2） |
+| API 兼容扫描（`devecocli check compat`） | ❌ 平台不支持 | CLI 明文：`Unsupported platform: linux. compat only supports macOS and Windows.`——**与 CLT 是否安装无关**，Linux 上永远不可用 |
 | 模型/协议往返（`check-model-roundtrip.mjs`） | ⚠️ 需产物 | 需要 `dist/core/` 物化出来的核心树与可起的 Host |
-| **ArkTS/TS 编译检查** | ❌ 不可跑 | 无 DevEco 工具链。`devecocli` 已装（1.3.2），但 Linux 上 `check lint` / `check compat` / `build` **必须**先有 Command Line Tools 并设 `DEVECO_CLI_CLT_PATH`；未就位前**编译验证是空白**，不得当作通过 |
 | 布局/形态真机验收 | ❌ 不可跑 | 无模拟器、无真机 |
 | 视觉像素、手势、键盘、触控笔、系统权限、文件选择器 | ❌ 不可跑 | 统一进 `docs/device-validation.md`（P4） |
 
@@ -116,9 +119,27 @@ node tools/check-native-closure.mjs  ⚠️ 跳过（无 entry/build 原生库�
 node tools/check-origin-fence.mjs    ⚠️ 跑不了（缺 dist/core/ 核心树）
 node tools/check-plugin-toggle.mjs   ⚠️ 跑不了（同上）
 node tools/compat-drift.mjs          ⚠️ 跑不了（缺 .research/protocol/contracts.json）
+
+devecocli build --modules appstate connection dshcompat hostruntime platform   ✅ BUILD SUCCESSFUL（52s）
+codelinter -c code-linter.json5 <6 个模块目录>                                  ✅ 16 warn / 0 error
 ```
 
 **门禁"通过"不等于"覆盖到了"**（docs/README 纪律 9）：上面 4 个跑不动的门禁，其覆盖面在本环境**是盲区**，不是通过。
+同样地，**`entry`（UI 层）没有编译验证这一点必须一直显式说出来**，不能因为"其他模块编译过了"而默认 UI 也是好的。
+
+### 3.2 编译器与 codelinter 已实测发现的问题（新能力的第一批产出）
+
+| 发现 | 性质 | 处置 |
+|---|---|---|
+| `platform/system/Clipboard.ets:33` 读剪贴板需要 `ohos.permission.READ_PASTEBOARD`（since 12），**应用未声明该权限**（声明的是 INTERNET / GET_NETWORK_INFO / KEEP_BACKGROUND_RUNNING） | **真实缺口**：`readText()` 在未声明权限时拿不到数据（源码自己 catch 成空串，表现为"粘贴没反应"） | 见 §4.6 `hdsh-clipboard` 行已由 `DONE` 降为 `PARTIAL`；登记在 §6。**这是编译器的功劳——此前矩阵把它记成 DONE** |
+| `platform/notify/KeepAlive.ets:76` 同样报权限警告，但 `KEEP_BACKGROUND_RUNNING` **已声明** | 假警报：HAR 编译期看不到宿主 `entry` 的权限声明 | 不改；登记以免下次被当成缺陷 |
+| `platform/system/SecretStore.ets:63` `'encode' has been deprecated` | 技术债（可继续用，未来版本会移除） | 进 §6 登记，P2 处理 |
+| `platform/window/WindowRegistry.ets:151` `'getContext' has been deprecated` | 同上 | 进 §6 登记，P2 处理 |
+| `hostruntime/src/main/ets/Index.ets` 7 条 `export *` 性能规则告警 | 性能建议（`@performance/hp-arkts-no-use-any-export-*`） | 不阻断；P2 视情收敛 |
+
+> **工具链的环境坑（实测，必须记住）**：在 Linux 上跑 `devecocli build` 会让 ohpm 重写 **5 个受版本控制的 `oh-package-lock.json5`**（191 行全变），
+> 原因是构建机把行尾写成 LF 而仓库在 Windows（`core.autocrlf=true`）下是 CRLF——`git diff --ignore-cr-at-eol` 为空即可确认是纯行尾差异。
+> **每次构建后必须 `git checkout --` 回退这些文件**，否则提交里会混进 191 行噪声（本项目对"噪声 diff"有明确纪律）。
 
 ---
 
@@ -201,7 +222,7 @@ node tools/compat-drift.mjs          ⚠️ 跑不了（缺 .research/protocol/c
 | `hdsh-hosttrust` 记住 Host 与凭据 | 无 | `platform/system/HostStore` + `SecretStore` | `view/ConnectPane.ets` | 认证面 | DONE | DONE | DONE | DONE | DONE |
 | `hdsh-multiwindow` 多窗口共享单一连接 | 无（一个标签页一个连接） | `SessionHub` 单例 + `platform/runtime/RuntimeSingleton` | 窗口账本（`registerWindow`） | 1 条 mux + 1 条 `$events` | DONE | DONE | DONE | DONE | PARTIAL |
 | `hdsh-share` 系统分享 | 无 | `platform/system/ShareBoard.ets` | 消息/文件操作 | 无 | DONE | DONE | DONE | DONE | DONE |
-| `hdsh-clipboard` 剪贴板 | 无 | `platform/system/Clipboard.ets`（`copyText`） | 消息复制 | 无 | DONE | DONE | DONE | DONE | DONE |
+| `hdsh-clipboard` 剪贴板 | 无 | `platform/system/Clipboard.ets`：**写**（`copyText` / `clearClipboard`）已接；**读**（`readText`）已实现但**未接线**，且需 `ohos.permission.READ_PASTEBOARD`（未声明） | 消息复制（多处 `copyText`） | 无 | DONE | DONE | DONE | DONE | PARTIAL |
 | `hdsh-window` 窗口记忆 | 无 | `platform/window/WindowMemory.ets` | 由 `EntryAbility` 驱动 | 无 | DONE | DONE | DONE | DONE | DONE |
 | `hdsh-shortcuts` 快捷键 | 无（Web 用浏览器快捷键） | `ui/Shortcuts.ets`（13 个规格，含不可绑定项标记） | `view/ShortcutKeys.ets` + `Index` 分派 | 无 | BOUNDARY | DONE | DONE | DONE | PARTIAL |
 | `hdsh-a11y` 无障碍 | 无（Web 走 ARIA） | `accessibilityText` + `Sz.TOUCH_MIN` | 各 Pane | 无 | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL |
@@ -212,8 +233,8 @@ node tools/compat-drift.mjs          ⚠️ 跑不了（缺 .research/protocol/c
 
 | 状态 | 行数 |
 |---|---|
-| `DONE` | 15 |
-| `PARTIAL` | 29 |
+| `DONE` | 14 |
+| `PARTIAL` | 30 |
 | `BOUNDARY` | 3 |
 | `TODO` | 3 |
 | **合计** | **50** |
@@ -263,6 +284,10 @@ node tools/compat-drift.mjs          ⚠️ 跑不了（缺 .research/protocol/c
 | `hdsh-multiwindow` | "1 条 mux + 1 条 `$events`"的抓包核对待设备 | 真机阶段验证 |
 | `hdsh-shortcuts` | 表与分类完成；**绑定与实机响应待验收**；Phone 不适用（无实体键盘） | 真机阶段验证 |
 | `hdsh-a11y` | 朗读文本与触摸目标已实现，**待真机朗读验收** | 真机阶段验证 |
+| `hdsh-clipboard` | **读**剪贴板不可用：`readText()` 需要 `ohos.permission.READ_PASTEBOARD`（API 12 起），应用未声明该权限；且 `readText` 全仓只有「定义 + 桶导出」2 处 ⇒ 按 E257 判据属**登记了没接**（粘贴入口本就没做）。写（复制）正常 | 决策点：① 若要支持「粘贴到输入区」，需评估声明 READ_PASTEBOARD 对上架/权限最小化策略的影响；② 若不支持，则把 `readText` 从桶导出里摘掉或明确标注为未接。**不允许挂着不动** |
+
+> 与"行"无关的实测发现（构建/静态检查的技术债、以及 `entry` 无编译验证这一环境事实）不放进本表——
+> 它们是**工程事实**，写在 §3 / §3.2；本表的每条必须对应 §4 的一个行 id（门禁会拒绝幽灵登记）。
 
 ---
 
@@ -364,4 +389,5 @@ node tools/check-parity.mjs --list       # 打印解析出的行与状态
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| v1.1 | 2026-09-14 | **工具链就位后校准 §3**：HAR 模块可真编译（BUILD SUCCESSFUL）、codelinter 全量可跑且**覆盖面经注入测试证明**、`check compat` 确认 Linux 永不支持、`entry` 因原生构建无编译验证。新增 §3.2 编译器首批发现——其中 `READ_PASTEBOARD` 缺失是**真实缺口**，据此把 `hdsh-clipboard` 由 `DONE` 降为 `PARTIAL`（编译器纠正了本矩阵）。补记 Linux 构建会重写 5 个 lock 文件行尾的环境坑 |
 | v1.0 | 2026-09-14 | 首版：建立四形态口径（更正 PC 与 2-in-1 同为 `deviceType=2in1`）、状态口径与两轴规则、46 行对等矩阵、缺口登记、来源与版本标注、门禁 `check-parity.mjs`、附 A `Index.ets` 拆分基线 |
