@@ -192,6 +192,16 @@ export struct NativeCard {
   @Prop summary: string = '';
   /** 结果正文（已由调用方截断/预览；空串表示没有结果） */
   @Prop bodyText: string = '';
+  /**
+   * 逐行正文（改动对照用），与 `diffKinds` **按下标一一对应**。
+   *
+   * 【为什么单独一条通道】改动对照的价值一半在"哪些行加了、哪些行删了"，
+   * 而这件事只有**颜色**能在手机上被一眼扫出来（只有 `+`/`-` 前缀很难读）。
+   * 单串 `bodyText` 表达不了逐行颜色，故这里给一个可选的行数组；非空时优先于 `bodyText`。
+   */
+  @Prop diffLines: string[] = [];
+  /** 每行的性质（`context` / `added` / `removed` / `skipped`），只用来取色 */
+  @Prop diffKinds: string[] = [];
   /** 结果被截断时的提示（如「查看完整输出（共 N 字符）」） */
   @Prop bodyTruncatedHint: string = '';
   /** 折叠时显示的入口文案（如「▸ 查看结果」） */
@@ -218,6 +228,26 @@ export struct NativeCard {
     }
     if (this.tone === 'running') {
       return HarmonyColor.BRAND;
+    }
+    return HarmonyColor.TEXT_SECONDARY;
+  }
+
+  /**
+   * 对照行的颜色：加行绿、减行红、上下文次色、折叠提示三级色。
+   *
+   * 语义色由系统给（`sys.color.confirm` / `sys.color.alert`），**不写死红绿**——
+   * 否则深色模式与高对比模式下会不对。
+   */
+  private diffColorOf(index: number): Resource {
+    const kind: string = index < this.diffKinds.length ? this.diffKinds[index] : 'context';
+    if (kind === 'added') {
+      return HarmonyColor.CONFIRM;
+    }
+    if (kind === 'removed') {
+      return HarmonyColor.ALERT;
+    }
+    if (kind === 'skipped') {
+      return HarmonyColor.TEXT_TERTIARY;
     }
     return HarmonyColor.TEXT_SECONDARY;
   }
@@ -278,15 +308,30 @@ export struct NativeCard {
           .width('100%')
       }
 
-      if (this.bodyText.length > 0) {
+      if (this.diffLines.length > 0 || this.bodyText.length > 0) {
         if (this.expanded) {
           Column({ space: HarmonySpacing.INLINE }) {
-            Text(this.bodyText)
-              .fontSize(HarmonyType.LABEL.size)
-              .fontFamily('monospace')
+            if (this.diffLines.length > 0) {
+              Column({ space: 0 }) {
+                ForEach(this.diffLines, (line: string, index: number) => {
+                  Text(line)
+                    .fontSize(HarmonyType.LABEL.size)
+                    .fontFamily('monospace')
+                    .fontColor(this.diffColorOf(index))
+                    .width('100%')
+                    .textAlign(TextAlign.Start)
+                    .copyOption(CopyOptions.LocalDevice)
+                }, (line: string, index: number) => `${index}:${line}`)
+              }
               .width('100%')
-              .textAlign(TextAlign.Start)
-              .copyOption(CopyOptions.LocalDevice)
+            } else {
+              Text(this.bodyText)
+                .fontSize(HarmonyType.LABEL.size)
+                .fontFamily('monospace')
+                .width('100%')
+                .textAlign(TextAlign.Start)
+                .copyOption(CopyOptions.LocalDevice)
+            }
             if (this.bodyTruncatedHint.length > 0) {
               Text(this.bodyTruncatedHint)
                 .fontSize(HarmonyType.LABEL.size)

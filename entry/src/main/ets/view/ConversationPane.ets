@@ -56,11 +56,12 @@ import {
   hoverEnabled,
   MenuGesture,
   presentTool,
+  presentDiff,
   ToolKind,
   toolSummaryOf
 } from 'appstate';
 /** 类型单独 import type（本仓约定：值与类型分开写） */
-import type { ActionNotice, FeedbackCategory, InputModality, ToolPresentation, Turn } from 'appstate';
+import type { ActionNotice, DiffPresentation, FeedbackCategory, InputModality, ToolPresentation, Turn } from 'appstate';
 import type { NativeAction } from './NativePrimitives';
 import { NativeActionBar, NativeCard, NativeChip } from './NativePrimitives';
 import { Composer } from './Composer';
@@ -1144,14 +1145,25 @@ export struct ConversationPane {
       // 参数摘要**按类别提炼**（§11 的 path summary）：终端出命令、读取出路径、搜索出模式+范围；
       // 提炼不到再退回清理后的原文——不再把整段 JSON 糊在卡片第一行。
       summary: toolSummaryOf(presentTool(item, toolStateLabel(item.toolState)).kind, item.toolArgs),
-      bodyText: (this.isExpanded(item.id)
-        || presentTool(item, toolStateLabel(item.toolState)).defaultExpanded)
-        ? previewOutput(item.toolOutput).shown
-        : '',
-      bodyTruncatedHint: previewOutput(item.toolOutput).truncated
-        ? `▸ 查看完整输出（共 ${previewOutput(item.toolOutput).totalLength} 字符）`
-        : '',
-      collapsedHint: item.toolOutput.length > 0 ? '▸ 查看结果' : '',
+      // 编辑类工具优先显示**改动对照**（有对照时不再显示工具的输出确认）：
+      // 用户要看的是"改了什么"，而不是"改成功了"这句话。
+      diffLines: this.diffTextLines(item),
+      diffKinds: this.diffKindLines(item),
+      bodyText: this.diffTextLines(item).length > 0
+        ? ''
+        : ((this.isExpanded(item.id)
+          || presentTool(item, toolStateLabel(item.toolState)).defaultExpanded)
+          ? previewOutput(item.toolOutput).shown
+          : ''),
+      bodyTruncatedHint: this.diffTextLines(item).length > 0
+        ? (this.diffOf(item) !== null && this.diffOf(item)!.truncated
+          ? '▸ 对照较长，已按上限截断' : '')
+        : (previewOutput(item.toolOutput).truncated
+          ? `▸ 查看完整输出（共 ${previewOutput(item.toolOutput).totalLength} 字符）`
+          : ''),
+      collapsedHint: this.diffOf(item) !== null
+        ? `▸ 查看改动 +${this.diffOf(item)!.added} −${this.diffOf(item)!.removed}`
+        : (item.toolOutput.length > 0 ? '▸ 查看结果' : ''),
       expanded: this.isExpanded(item.id)
         || presentTool(item, toolStateLabel(item.toolState)).defaultExpanded,
       a11y: presentTool(item, toolStateLabel(item.toolState)).a11y,
@@ -1159,6 +1171,58 @@ export struct ConversationPane {
         this.toggle(item.id);
       }
     })
+  }
+
+  /**
+   * 取这次工具调用的改动对照（没有则 null）。
+   *
+   * 【失败态刻意不出对照卡】官方渲染器对 `isError` 的块直接返回 null——
+   * 因为失败时参数只是"意图"，真正的结果在输出里；此时把意图画成对照会误导
+   * （看起来"改了"，其实没改成）。我们照此：失败/被拒一律走原输出视图。
+   */
+  private diffOf(item: TrajectoryItem): DiffPresentation | null {
+    if (item.toolState === ToolState.FAILED || item.toolState === ToolState.REJECTED) {
+      return null;
+    }
+    if (item.toolState !== ToolState.SUCCESS && item.toolState !== ToolState.RUNNING) {
+      return null;
+    }
+    return presentDiff(item.toolName, item.toolArgs);
+  }
+
+  /** 对照的行文本（带 +/-/空格前缀——这是 diff 的通用读法） */
+  private diffTextLines(item: TrajectoryItem): string[] {
+    const p: DiffPresentation | null = this.diffOf(item);
+    const out: string[] = [];
+    if (p === null) {
+      return out;
+    }
+    for (let i = 0; i < p.lines.length; i++) {
+      const kind: string = p.lines[i].kind;
+      if (kind === 'added') {
+        out.push('+ ' + p.lines[i].text);
+      } else if (kind === 'removed') {
+        out.push('- ' + p.lines[i].text);
+      } else if (kind === 'skipped') {
+        out.push(`  ⋯ 省略 ${p.lines[i].skipped} 行未改动`);
+      } else {
+        out.push('  ' + p.lines[i].text);
+      }
+    }
+    return out;
+  }
+
+  /** 对照每行的性质（与原语里的取色按下标对应） */
+  private diffKindLines(item: TrajectoryItem): string[] {
+    const p: DiffPresentation | null = this.diffOf(item);
+    const out: string[] = [];
+    if (p === null) {
+      return out;
+    }
+    for (let i = 0; i < p.lines.length; i++) {
+      out.push(p.lines[i].kind);
+    }
+    return out;
   }
 
   /** 徽标：非通用类别时带上类别名（"读取 · 成功"比单说"成功"有用） */

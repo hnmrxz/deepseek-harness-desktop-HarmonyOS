@@ -44,7 +44,8 @@ const PURE_FILES = [
   'appstate/src/main/ets/model/Turns.ets',
   'appstate/src/main/ets/model/Follow.ets',
   'appstate/src/main/ets/model/InputPolicy.ets',
-  'appstate/src/main/ets/model/ToolPresentation.ets'
+  'appstate/src/main/ets/model/ToolPresentation.ets',
+  'appstate/src/main/ets/model/ToolDiff.ets'
 ];
 
 /** ArkUI 全局的声明补丁：Tokens.ets 用它取系统资源色/符号 */
@@ -171,6 +172,7 @@ const TM = require2('./Turns.js');
 const FM = require2('./Follow.js');
 const IP = require2('./InputPolicy.js');
 const TP = require2('./ToolPresentation.js');
+const TD = require2('./ToolDiff.js');
 const TJ = require2('./Trajectory.js');
 const t = makeAsserter(selfTest);
 
@@ -500,6 +502,128 @@ console.log('\n## 工具呈现（§11：按工具类别区分，而不是一视�
   t.eq('截断标记在末尾', sum.endsWith('…'), true);
   t.eq('转义引号还原', toolSummaryOf(ToolKind.TERMINAL, '{"command":"echo \\"hi\\""}'), 'echo "hi"');
   console.log('  ok    12 条断言：按类别提炼要点（终端的命令 / 读取的路径 / 搜索的模式+范围 / 网络的 url …）');
+}
+
+console.log('\n## 改动对照（§11：编辑类工具出"改了什么"，而不是参数原文）');
+{
+  const { intendedDiffOf, diffLines, diffStatOf, collapseContext, presentDiff, DiffLineKind } = TD;
+
+  // ── 意图对照：严格对齐官方 intendedDiff 的规则 ──
+  const w = intendedDiffOf('write', '{"file_path":"/a/b.ts","content":"line1\\nline2"}');
+  t.eq('write → 整文件都是新增（oldText 为 null）', w !== null && w.oldText === null, true);
+  t.eq('write 的 newText 取 content', w !== null && w.newText, 'line1\nline2');
+  t.eq('write 的 path 取 file_path', w !== null && w.path, '/a/b.ts');
+
+  const e = intendedDiffOf('edit', '{"file_path":"/a/b.ts","old_string":"foo","new_string":"bar"}');
+  t.eq('edit → oldText 取 old_string', e !== null && e.oldText, 'foo');
+  t.eq('edit → newText 取 new_string', e !== null && e.newText, 'bar');
+
+  // 官方 `oldText || null`：空串归一成 null（纯新增），不是空串
+  const eEmpty = intendedDiffOf('edit', '{"file_path":"/a/b.ts","old_string":"","new_string":"bar"}');
+  t.eq('edit 空 old_string → 归一成 null（官方 `oldText || null`）', eEmpty !== null && eEmpty.oldText === null, true);
+
+  // 大小写：官方按精确名匹配，我方工具名历史上出现过大小写差异 ⇒ 归一小写
+  t.eq('工具名大小写不敏感', intendedDiffOf('EDIT', '{"file_path":"/a","old_string":"x","new_string":"y"}') !== null, true);
+
+  // 拒绝路径（任一条不成立就**整卡不出**，而不是尽力渲染）
+  t.eq('不认识的名字 → 不出对照卡', intendedDiffOf('bash', '{"command":"ls","file_path":"/a"}'), null);
+  t.eq('非 JSON 参数 → 不出对照卡', intendedDiffOf('edit', 'not json at all'), null);
+  t.eq('缺 file_path → 不出对照卡', intendedDiffOf('edit', '{"old_string":"a","new_string":"b"}'), null);
+  t.eq('file_path 空白串 → 不出对照卡（官方 trim 判空）', intendedDiffOf('edit', '{"file_path":"   ","old_string":"a","new_string":"b"}'), null);
+  t.eq('缺 new_string → 不出对照卡', intendedDiffOf('edit', '{"file_path":"/a","old_string":"a"}'), null);
+  t.eq('replace_all 非布尔 → 不出对照卡（官方校验）', intendedDiffOf('edit', '{"file_path":"/a","old_string":"a","new_string":"b","replace_all":"yes"}'), null);
+  t.eq('replace_all 为 null → 视为"出现但类型不对"→ 拒绝', intendedDiffOf('edit', '{"file_path":"/a","old_string":"a","new_string":"b","replace_all":null}'), null);
+  t.eq('replace_all 合法布尔 → 正常出卡', intendedDiffOf('edit', '{"file_path":"/a","old_string":"a","new_string":"b","replace_all":true}') !== null, true);
+
+  // validEscalationFields：提权字段要么都不出现，要么一起且合法
+  t.eq('只给 sandbox_permissions（缺 justification）→ 拒绝',
+    intendedDiffOf('edit', '{"file_path":"/a","old_string":"a","new_string":"b","sandbox_permissions":"workspace-write"}'), null);
+  t.eq('justification 空白 → 拒绝',
+    intendedDiffOf('edit', '{"file_path":"/a","old_string":"a","new_string":"b","sandbox_permissions":"workspace-write","justification":"  "}'), null);
+  t.eq('sandbox_permissions 取值非法 → 拒绝',
+    intendedDiffOf('edit', '{"file_path":"/a","old_string":"a","new_string":"b","sandbox_permissions":"root","justification":"x"}'), null);
+  t.eq('提权字段合法 → 正常出卡',
+    intendedDiffOf('edit', '{"file_path":"/a","old_string":"a","new_string":"b","sandbox_permissions":"danger-full-access","justification":"需要写工作区外"}') !== null, true);
+  t.eq('提权字段都不出现 → 正常出卡（默认情形）',
+    intendedDiffOf('edit', '{"file_path":"/a","old_string":"a","new_string":"b"}') !== null, true);
+
+  // str_replace_editor（官方单独一支）
+  const c = intendedDiffOf('str_replace_editor', '{"command":"create","path":"/n.ts","file_text":"hello"}');
+  t.eq('str_replace_editor create → oldText null', c !== null && c.oldText === null, true);
+  t.eq('str_replace_editor create → newText 取 file_text', c !== null && c.newText, 'hello');
+  const r = intendedDiffOf('str_replace_editor', '{"command":"str_replace","path":"/n.ts","old_str":"a","new_str":"b"}');
+  t.eq('str_replace_editor str_replace → oldText 取 old_str', r !== null && r.oldText, 'a');
+  t.eq('str_replace_editor 其他 command → 不出卡',
+    intendedDiffOf('str_replace_editor', '{"command":"view","path":"/n.ts"}'), null);
+
+  // ── 行级对照 ──
+  const ins = diffLines('a\nb', 'a\nX\nb');
+  t.eq('插入一行 → 3 行（上下文/新增/上下文）', ins.length, 3);
+  t.eq('插入行的性质', ins[1].kind, DiffLineKind.ADDED);
+  t.eq('插入行内容', ins[1].text, 'X');
+
+  const del = diffLines('a\nX\nb', 'a\nb');
+  t.eq('删除一行 → 中间是 REMOVED', del[1].kind, DiffLineKind.REMOVED);
+
+  const chg = diffLines('a\nold\nb', 'a\nnew\nb');
+  const chgStat = diffStatOf(chg);
+  t.eq('改一行 → 1 增 1 删', chgStat.added === 1 && chgStat.removed === 1, true);
+  t.eq('未改动的行记为上下文（不计入增删）', diffStatOf(diffLines('a\nb\nc', 'a\nb\nc')).added, 0);
+
+  const pure = diffLines(null, 'x\ny');
+  t.eq('oldText 为 null ⇒ 全是新增', diffStatOf(pure).added === 2 && diffStatOf(pure).removed === 0, true);
+
+  // 前后缀削去后仍然给出正确的增删（这是最省的一步，覆盖"只改一行"的多数情况）
+  const big = [];
+  for (let i = 0; i < 60; i++) big.push('line' + i);
+  const bigNew = big.slice(); bigNew[30] = 'CHANGED';
+  const bigStat = diffStatOf(diffLines(big.join('\n'), bigNew.join('\n')));
+  t.eq('60 行里改 1 行 → 恰好 1 增 1 删', bigStat.added === 1 && bigStat.removed === 1, true);
+
+  // 超上限时退回"全删 + 全增"（宁可粗但真，也不把 UI 线程算住）
+  const huge = [];
+  for (let i = 0; i < 400; i++) huge.push('h' + i);
+  const hugeNew = huge.slice().reverse();
+  const hugeStat = diffStatOf(diffLines(huge.join('\n'), hugeNew.join('\n')));
+  t.eq('超出 DP 上限 → 退回全删全增（有界，不假称精确）', hugeStat.added === 400 && hugeStat.removed === 400, true);
+
+  // ── 折叠：改两行、文件 800 行，不能把 799 行上下文铺到手机上 ──
+  const long = [];
+  for (let i = 0; i < 120; i++) long.push('L' + i);
+  const longNew = long.slice(); longNew[60] = 'EDIT';
+  const collapsed = collapseContext(diffLines(long.join('\n'), longNew.join('\n')), 2);
+  let skippedTotal = 0;
+  let contextCount = 0;
+  for (let i = 0; i < collapsed.length; i++) {
+    if (collapsed[i].kind === DiffLineKind.SKIPPED) skippedTotal += collapsed[i].skipped;
+    if (collapsed[i].kind === DiffLineKind.CONTEXT) contextCount += 1;
+  }
+  t.eq('折叠后总行数从 121 降到 12', collapsed.length === 12, true);
+  t.eq('被折叠的行数被如实记录', skippedTotal > 100, true);
+  t.eq('改动两侧保留上下文', contextCount >= 4, true);
+  let skippedAt = -1;
+  for (let i = 0; i < collapsed.length; i++) {
+    if (collapsed[i].kind === DiffLineKind.SKIPPED) { skippedAt = i; break; }
+  }
+  t.eq('跳过标记排在保留的上下文之后', skippedAt > 0 && collapsed[skippedAt - 1].kind === DiffLineKind.CONTEXT, true);
+  t.eq('跳过标记不显示行内容（内容为空）', collapsed[skippedAt].text === '', true);
+
+  // ── 成品：路径 + 行 + 统计 + 截断标记 ──
+  const p1 = presentDiff('edit', '{"file_path":"/a/b.ts","old_string":"foo","new_string":"bar"}');
+  t.eq('成品带路径', p1 !== null && p1.path, '/a/b.ts');
+  t.eq('成品统计 1 增 1 删', p1 !== null && p1.added === 1 && p1.removed === 1, true);
+  t.eq('未截断时 truncated=false', p1 !== null && p1.truncated === false, true);
+  t.eq('不认识的工具 → 成品为 null（视图照常走摘要）', presentDiff('bash', '{"command":"ls"}'), null);
+
+  // 截断：超过 maxLines 时必须如实置 truncated（而不是假装这就是全部）
+  const manyLines = [];
+  for (let i = 0; i < 60; i++) manyLines.push('x' + i);
+  const manyDiff = presentDiff('write', '{"file_path":"/big.ts","content":"' + manyLines.join('\\n') + '"}', 2, 20);
+  t.eq('超过行数上限 → 截断到上限', manyDiff !== null && manyDiff.lines.length, 20);
+  t.eq('截断时如实置 truncated=true', manyDiff !== null && manyDiff.truncated, true);
+  t.eq('截断仍如实统计增删总数（不因截断而少算）', manyDiff !== null && manyDiff.added, 60);
+
+  console.log('  ok    45 条断言：官方 intendedDiff 规则（含提权闸门与拒绝路径）+ 行级对照 + 折叠 + 截断');
 }
 
 t.done();

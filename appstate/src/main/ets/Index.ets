@@ -166,6 +166,10 @@ export { Border, Breakpoint, Dur, Fs, Lh, Radius, SemanticColor, Sp, Sz } from '
 export { presentTool, toolA11y, toolDefaultExpanded, ToolKind, toolKindLabel, toolKindOf, toolSummaryOf, toolToneOf } from './model/ToolPresentation';
 export type { ToolPresentation } from './model/ToolPresentation';
 
+// ── 改动对照（P2 §11：编辑类工具出"改了什么"；纯函数，可本机直接测） ──
+export { collapseContext, diffLines, diffStatOf, DiffLineKind, intendedDiffOf, presentDiff } from './model/ToolDiff';
+export type { DiffLine, DiffPresentation, DiffStat, ToolDiff } from './model/ToolDiff';
+
 // ── 输入模态策略（P1/P3：触控+鼠标+键盘同一套语义；纯函数，可本机直接测） ──
 export { contextMenuGestures, contextMenuHintLabel, hoverEnabled, MenuGesture } from './model/InputPolicy';
 export type { InputModality } from './model/InputPolicy';
