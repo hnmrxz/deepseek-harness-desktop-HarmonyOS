@@ -223,6 +223,32 @@ export function legacyTabOfMainPanel(panelId: string): string {
   return 'workspaces';
 }
 
+/**
+ * **此刻主区实际在显示哪个面板**（P0-2：页面 = 选中的面板）。
+ *
+ * 【为什么需要它】此前这件事由**视图自己组合**出来：`stackPage`（下钻页）
+ * + `showsConversation()` + 当前页签，三条线索在 `mainContent()` 里用 if 链拼出结果。
+ * 组合逻辑散在视图里，就是"栏目/框架看起来不对"的滋生处——而且它**不可测**
+ * （门禁跑不了 ArkUI）。
+ *
+ * 现在：三类线索进同一个函数，视图只按**返回的一个面板 id** 分派。
+ *
+ * @param stackPage 下钻页（`'main'` / `'conversation'` / `'diagnostics'` / `'connect'`）
+ * @param hasSession 是否已选中会话（会话页必须有会话，否则应落回列表）
+ */
+export function activeMainPanelOf(nav: NavigationState, stackPage: string, hasSession: boolean): string {
+  if (stackPage === 'diagnostics') {
+    return MAIN_DIAGNOSTICS;
+  }
+  if (stackPage === 'connect') {
+    return MAIN_CONNECT;
+  }
+  if (stackPage === 'conversation' && hasSession) {
+    return MAIN_CONVERSATION;
+  }
+  return nav.selectedMainPanel;
+}
+
 /* ───────────────────────── 状态转移（都经注册表校验） ───────────────────────── */
 
 /**

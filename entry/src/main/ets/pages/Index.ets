@@ -133,8 +133,12 @@ relativeTime,
   flattenSources,
   createPanelRegistry,
   initialNavigationState,
+  MAIN_CONNECT,
+  MAIN_CONVERSATION,
+  MAIN_DIAGNOSTICS,
   legacyTabOfMainPanel,
   mainPanelOfLegacyTab,
+  activeMainPanelOf,
   navigateToMain,
   guessFromKeyboardForm,
   mainPanels,
@@ -1701,6 +1705,15 @@ struct Index {
    * 全部来自 `appstate/ui/NavigationController.selectTab`（纯函数，有 fixture 覆盖）；
    * 本方法只负责把决策**落到状态**并执行副作用。
    */
+  /**
+   * 此刻主区在显示哪个面板（P0-2：三类线索的组合收在纯模型里，视图只读一个值）。
+   *
+   * 组合规则见 `NavigationState.activeMainPanelOf`（有 fixture）——**视图不再自己拼**。
+   */
+  private activePanel(): string {
+    return activeMainPanelOf(this.nav, this.stackPage, this.selectedSessionId.length > 0);
+  }
+
   /** 当前页签（派生值：由主区面板经桥反查；视图不再持有第二份真值） */
   private currentTab(): NavTab {
     return legacyTabOfMainPanel(this.nav.selectedMainPanel) as NavTab;
@@ -3138,7 +3151,7 @@ struct Index {
     if (this.stackPage === StackPage.CONVERSATION) {
       return this.selectedSessionTitle.length > 0 ? this.selectedSessionTitle : '会话';
     }
-    if (this.stackPage === StackPage.DIAGNOSTICS) {
+    if (this.activePanel() === MAIN_DIAGNOSTICS) {
       return '连接诊断';
     }
     if (this.stackPage === StackPage.CONNECT) {
@@ -3521,7 +3534,7 @@ struct Index {
           this.stackPage = StackPage.MAIN;
         }
       })
-    } else if (this.stackPage === StackPage.CONNECT) {
+    } else if (this.activePanel() === MAIN_CONNECT) {
       ConnectPane({
         hosts: this.hosts,
         address: this.connectAddress,
@@ -3581,7 +3594,7 @@ struct Index {
           this.stackPage = StackPage.MAIN;
         }
       })
-    } else if (this.showsConversation() && this.stackPage === StackPage.CONVERSATION) {
+    } else if (this.activePanel() === MAIN_CONVERSATION) {
       // E125：会话统计行（官方措辞），贴在会话页头部——数据来自投影，没有就不占位置
       if (this.statsLine.length > 0) {
         Text(this.statsLine)

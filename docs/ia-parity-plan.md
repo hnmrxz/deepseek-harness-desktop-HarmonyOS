@@ -63,6 +63,7 @@ AppFrame
 | `view/shell/RightbarShell.ets` | ✅ 已落地：右栏**面板本体**归它所有（标题行 / 关闭入口 / sections / 宽度与底色），三种呈现（真右栏 / 侧边浅层面板 / Sheet）都在它内部 |
 | `@Provide/@Consume` 机制 | ✅ **已小范围验证并在真实用途上用起来**：`Index` `@Provide('panelRegistry')`、`SidebarShell` `@Consume` 并按注册表可用性过滤入口（编译通过）。⚠️ 运行时行为**必须真机确认**（`@BuilderParam` 编译通过但真机崩过，D4）⇒ 见 `docs/device-validation.md` **D9** |
 | `NavigationState` 成为视图唯一真值 | ✅ **已落地**：`Index` 的 `@State tab: NavTab` 已删除，页面选择改由 `nav.selectedMainPanel` 决定；`NavTab` 退化为**迁移期别名**（经 `legacyTabOfMainPanel` / `mainPanelOfLegacyTab` 双向桥，往返有断言）。切页签同样**经注册表校验**（不可用的面板切不过去） |
+| 主区"此刻显示哪个面板" | ✅ **已收进纯模型**（`activeMainPanelOf`：下钻页 > 会话页（须有会话）> 选中的面板），视图只按一个值分派 |
 | `AppShell` / `MainShell` | ❌ **下一步**。阻塞点已查明（见下）|
 
 **AppShell 不能用"注入 Builder"那条路（有真机实证）**

@@ -1214,6 +1214,7 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
     PANEL_SIDEBAR_SETTINGS, PANEL_SIDEBAR_WORKSPACES, PANEL_RIGHT_FILES, PANEL_RIGHT_TRAJECTORY } = PR;
   const { initialNavigationState, mainPanels, mainPanelOfLegacyTab, legacyTabOfMainPanel,
     navigateToMain, selectRightPanel, openSettings, openOverlay, closeOverlay, setDrawer, sidebarPanelIdOfTab,
+    activeMainPanelOf,
     enterSession, defaultRightPanel, copyOf,
     Overlay, DrawerState, MAIN_CONVERSATION, MAIN_WORKSPACES, MAIN_SETTINGS, MAIN_CORE,
     SETTINGS_MODELS, SETTINGS_GENERAL } = NS;
@@ -1305,6 +1306,19 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   t.eq('往返一致 workspaces', legacyTabOfMainPanel(mainPanelOfLegacyTab('workspaces')), 'workspaces');
   t.eq('往返一致 core', legacyTabOfMainPanel(mainPanelOfLegacyTab('core')), 'core');
   t.eq('往返一致 settings', legacyTabOfMainPanel(mainPanelOfLegacyTab('settings')), 'settings');
+
+  // ── 此刻主区在显示哪个面板（三类线索的组合收在模型里，视图只读一个值） ──
+  const n0 = initialNavigationState();
+  t.eq('下钻到诊断 ⇒ 诊断面板', activeMainPanelOf(n0, 'diagnostics', true), 'main.diagnostics');
+  t.eq('下钻到连接 ⇒ 连接面板', activeMainPanelOf(n0, 'connect', false), 'main.connect');
+  t.eq('下钻到会话且有会话 ⇒ 会话面板', activeMainPanelOf(n0, 'conversation', true), 'main.conversation');
+  t.eq('**下钻到会话但没有会话 ⇒ 落回选中的面板**（不显示空会话）',
+    activeMainPanelOf(n0, 'conversation', false), n0.selectedMainPanel);
+  t.eq('没有下钻 ⇒ 选中的面板', activeMainPanelOf(n0, 'main', true), n0.selectedMainPanel);
+  const onSettings = navigateToMain(n0, MAIN_SETTINGS, reg);
+  t.eq('选中设置时没有下钻 ⇒ 设置面板', activeMainPanelOf(onSettings, 'main', true), MAIN_SETTINGS);
+  t.eq('**下钻优先于页签**：选中设置但下钻诊断 ⇒ 诊断面板',
+    activeMainPanelOf(onSettings, 'diagnostics', true), 'main.diagnostics');
 
   // 侧栏入口 → 面板 id（注册表管"能不能用"，NavTab 暂时管"长什么样"）
   t.eq('工作区页签 → 侧栏工作区面板 id', sidebarPanelIdOfTab('workspaces'), 'sidebar.workspaces');

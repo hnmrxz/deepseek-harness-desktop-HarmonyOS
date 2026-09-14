@@ -184,6 +184,7 @@ export {
 } from './model/PanelRegistry';
 export type { PanelDescriptor, PanelList } from './model/PanelRegistry';
 export {
+  activeMainPanelOf,
   closeOverlay, copyOf, defaultRightPanel, defaultSidebarPanel, DrawerState, enterSession,
   initialNavigationState, legacyTabOfMainPanel, mainPanelOfLegacyTab, mainPanels,
   navigateToMain, openOverlay, sidebarPanelIdOfTab, openSettings, selectRightPanel, setDrawer, setSidebarExpanded,
