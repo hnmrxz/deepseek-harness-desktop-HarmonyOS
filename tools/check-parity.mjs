@@ -61,9 +61,23 @@ const LOCAL_PREFIX = 'hdsh-';
 /** 期望的矩阵列数：Feature + 4（Web/状态/界面/协议）+ 4 形态 + Status */
 const EXPECTED_COLUMNS = 1 + 4 + DEVICE_COLUMNS + 1;
 
-/** 把一行 markdown 表格拆成单元格 */
+/**
+ * 把一行 markdown 表格拆成单元格。
+ *
+ * 【必须懂转义竖线】表格里要写类型记法（如 `ifVersion: string | null`）时，竖线必须写成 `\|`，
+ * 否则 markdown 会把它当列分隔符。门禁若按裸 `|` 切，就会把一行合法的 10 列读成 11 列
+ * （实测踩过：`message-feedback` 行因此报「列数 11，期望 10」并连带"覆盖缺失"）。
+ * 做法：先把 `\|` 换成占位符再切，切完还原。
+ */
+const ESCAPED_PIPE = '\u0000PIPE\u0000';
+
 function cells(line) {
-  return line.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').map((c) => c.trim());
+  return line
+    .replace(/\\\|/g, ESCAPED_PIPE)
+    .replace(/^\s*\|/, '')
+    .replace(/\|\s*$/, '')
+    .split('|')
+    .map((c) => c.trim().split(ESCAPED_PIPE).join('|'));
 }
 
 /** 从单元格里取出行 id（第一个反引号片段） */
@@ -297,6 +311,12 @@ function selfTest() {
         + `| \`layout\` 外壳 | w | s | u | p | DONE | DONE | DONE | DONE |\n`
         + gaps([]) + statsWith({ DONE: 1, PARTIAL: 0, BOUNDARY: 0, TODO: 0, 合计: 1 }),
       want: 1
+    },
+    {
+      why: '单元格里的转义竖线 \\| 不得被当成列分隔符（类型记法 string | null）',
+      text: head + `| \`layout\` 外壳 | w | s | u | ifVersion: string \\| null | DONE | DONE | DONE | DONE | DONE |\n`
+        + gaps([]) + statsWith({ DONE: 1, PARTIAL: 0, BOUNDARY: 0, TODO: 0, 合计: 1 }),
+      want: 0
     },
     {
       why: `形态列允许 ${NO_DIFF}（与形态无关的行）`,

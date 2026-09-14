@@ -90,6 +90,7 @@ import {
   SKILLS_LIST_ENDPOINT,
   WORKSPACE_FILES_CHANGES_ENDPOINT,
   GOALS_GET_ENDPOINT,
+  MESSAGE_FEEDBACK_DELETE_ENDPOINT,
   MESSAGE_FEEDBACK_LIST_ENDPOINT,
   MESSAGE_FEEDBACK_PUT_ENDPOINT,
   AGENT_PRESETS_LIST_ENDPOINT,
@@ -3084,7 +3085,15 @@ export class SessionHub {
    * *"Create or replace feedback for one assistant message"*，所以同一个 messageId 再写就是**替换**。
    * `note` 为空串时**不带上该字段**（契约里它是可选，空白由上游记为"无"）。
    */
-  async putFeedback(messageId: string, rating: string, note: string): Promise<ActionNotice> {
+  /**
+   * 写入/替换某条助手消息的反馈。
+   *
+   * @param category 契约里的可选取值（`task-result` / `instruction-following` / `product-interaction` /
+   *   `service-stability` / `resource-cost` / `security-privacy-permission` / `other`）。
+   *   空串 = 未分类（缺省即不分类，与契约一致），此时**不发这个字段**而不是发空串——
+   *   空串不是合法取值，发出去只会换来 `arguments-invalid`。
+   */
+  async putFeedback(messageId: string, rating: string, note: string, category: string = ''): Promise<ActionNotice> {
     if (!this.unaryReady) {
       return noticeWith('offline', 'action', 'messageFeedback.put');
     }
@@ -3102,12 +3111,18 @@ export class SessionHub {
     if (note.length > 0) {
       inner['note'] = note;
     }
+    if (category.length > 0) {
+      inner['category'] = category;
+    }
     /*
-     * E254：`ifVersion` 是契约里的必填（乐观并发）——"值为观察到的版本，或 `null` 表示要求原本不存在"。
-     * 我们**能表达**的是"已有反馈 ⇒ 回传它的 version"；"要求原本不存在"需要传 `null`，
-     * 而 ArkTS 的 `Record<string, Object>` 表达不了 null ⇒ **先按能表达的方式发**，
-     * 若宿主因此报 `arguments-invalid`，那条消息会告诉我们它期望的编码，再据此修正（不猜）。
-     * 该分支记在 account：这是本文件里唯一"契约已知、编码待宿主确认"的字段。
+     * `ifVersion` 是契约里的必填（乐观并发）——"值为观察到的版本，或 `null` 表示要求原本不存在"。
+     * E254 曾把它记成"编码待宿主确认"；**现已按上游源码核对确认**
+     * （`@deepseek-ai/dsh-message-feedback/lib/types/types.d.ts` 的 `MessageFeedbackPutRequest`）：
+     *   `readonly ifVersion: MessageFeedbackVersion | null`，
+     *   `MessageFeedbackVersion = Branded<'MessageFeedbackVersion'>`（即字符串）。
+     * 我们**能表达**的是"已有反馈 ⇒ 回传它的 version"；"要求原本不存在"（`null`）需要
+     * 空值编码，而 ArkTS 的 `Record<string, Object>` 表达不了 null ⇒ 仍按能表达的方式发：
+     * 新建时**不带**该字段（而不是发空串——空串不是合法 token，只会换来 `arguments-invalid`）。
      */
     const known: FeedbackRow | undefined = this.feedbackOf(messageId);
     if (known !== undefined && known.version.length > 0) {
@@ -3128,6 +3143,54 @@ export class SessionHub {
     this.record('messageFeedback/put ok ' + messageId.substring(0, 12) + ' ' + rating);
     await this.refreshFeedback();
     return noticeWith('feedback.saved', 'rating', rating);
+  }
+
+  /**
+   * 撤回某条消息的反馈（官方 `ui-message-feedback` 的 withdraw；§10 要求的闭环最后一步）。
+   *
+   * 【为什么必须带 ifVersion】按上游源码核对（同文件的 `MessageFeedbackDeleteRequest`）：
+   * `ifVersion: MessageFeedbackVersion`（**必填、不可为 null**），语义是"观察到该条目当时的版本"。
+   * 上游对该字段的注释还有一条关键信息：*"ignored when the item is already absent"* ⇒ **删除是幂等的**，
+   * 重复撤回安全（`MessageFeedbackDeleteValue.absent === true` 是稳定后置条件）。
+   *
+   * 我们**只撤回本地已读到 version 的那条**；没读到（或 version 为空）时如实返回原因，
+   * **不猜一个版本号去删**——猜错就是删掉别人/别的状态的记录。
+   */
+  async clearFeedback(messageId: string): Promise<ActionNotice> {
+    if (!this.unaryReady) {
+      return noticeWith('offline', 'action', 'messageFeedback.delete');
+    }
+    const scope: string = this.selectedSessionId;
+    if (scope.length === 0) {
+      return notice('feedback.needs-session');
+    }
+    if (messageId.length === 0) {
+      return notice('feedback.incomplete');
+    }
+    const known: FeedbackRow | undefined = this.feedbackOf(messageId);
+    if (known === undefined || known.version.length === 0) {
+      // 没有版本就无法 CAS：这是"读不到状态"，不是"宿主拒绝了"
+      return noticeWith('feedback.no-version', 'messageId', messageId.substring(0, 12));
+    }
+    const inner: Record<string, Object> = {};
+    inner['sessionId'] = scope;
+    inner['messageId'] = messageId;
+    inner['ifVersion'] = known.version;
+    const args: Object | undefined = argsFor(MESSAGE_FEEDBACK_DELETE_ENDPOINT, inner as Object);
+    if (args === undefined) {
+      return noticeWith('contract.missing', 'endpoint', MESSAGE_FEEDBACK_DELETE_ENDPOINT);
+    }
+    const result: RpcResult = await this.conn.call(MESSAGE_FEEDBACK_DELETE_ENDPOINT, args);
+    if (!result.ok) {
+      const f = result.error;
+      const code: string = f === undefined ? 'unknown' : f.code;
+      const why: string = friendlyFailure(code, f === undefined ? '' : f.message);
+      this.record('messageFeedback/delete fail ' + code + ' ' + (f === undefined ? '' : f.message));
+      return noticeWith('feedback.failed', 'reason', why);
+    }
+    this.record('messageFeedback/delete ok ' + messageId.substring(0, 12));
+    await this.refreshFeedback();
+    return notice('feedback.withdrawn');
   }
 
   /** 从"提供方目录"类端点取名字数组；形状不识别时返回空数组并记账（不猜） */
@@ -4145,6 +4208,29 @@ function goalTextFromReply(value: Object | undefined): string | undefined {
  * 字段按上游契约：`messageId` + `rating`（总体判断）+ `note?`（说明）+ `category?`（分类）。
  * 我们只存渲染需要的四个字符串，避免把上游类型整棵搬进来。
  */
+/**
+ * 反馈类别（契约 D2b §6.7 给出的取值域，7 个）。
+ *
+ * 【为什么把线上取值与界面文案放在一起】取值域是**契约事实**，文案是它的显示名；
+ * 两者分开写必然漂移（加了一个取值，界面还显示旧的 6 个）。放在一处，改的时候一眼看到。
+ */
+export interface FeedbackCategory {
+  /** 线上取值（发 `messageFeedback/put` 的 `category`） */
+  id: string;
+  /** 界面文案 */
+  label: string;
+}
+
+export const FEEDBACK_CATEGORIES: FeedbackCategory[] = [
+  { id: 'task-result', label: '任务结果' },
+  { id: 'instruction-following', label: '指令遵循' },
+  { id: 'product-interaction', label: '产品交互' },
+  { id: 'service-stability', label: '服务稳定性' },
+  { id: 'resource-cost', label: '资源消耗' },
+  { id: 'security-privacy-permission', label: '安全隐私权限' },
+  { id: 'other', label: '其他' }
+];
+
 export interface FeedbackRow {
   messageId: string;
   rating: string;

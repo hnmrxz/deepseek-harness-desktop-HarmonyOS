@@ -35,9 +35,12 @@ import {
   TrajectoryItem,
   TrajectoryKind,
   SessionHub,
+  FEEDBACK_CATEGORIES,
   FeedbackRow,
   Border
 } from 'appstate';
+/** 类型单独 import type（本仓约定：值与类型分开写） */
+import type { ActionNotice, FeedbackCategory } from 'appstate';
 import { Composer } from './Composer';
 import { PendingPane } from './PendingPane';
 
@@ -105,6 +108,24 @@ export struct ConversationPane {
   };
 
   @State expanded: string[] = [];
+
+  /**
+   * 消息操作条（§10）的反馈面板状态。
+   *
+   * 【为什么要有"面板"这一步】契约里 `messageFeedback/put` 除了 `rating` 还有可选的
+   * `category` 与 `note`（D2b §6.7）。只发 rating 等于把官方那套"类别 → 可选说明 → 提交"
+   * 砍成两个文字按钮——那正是 §10 明确不允许的形态。
+   */
+  @State fbFor: string = '';
+  @State fbRating: string = '';
+  @State fbCategory: string = '';
+  @State fbNote: string = '';
+  /** 面板内的结果/失败提示（写入成功后面板关闭，故这里只承载失败与"撤回不可用"两类） */
+  @State fbNote2: string = '';
+
+  /** 复制消息正文（剪贴板是平台能力，由宿主传入回调——视图层不直接依赖 platform） */
+  onCopyMessage: (text: string) => void = () => {
+  };
 
   /**
    * 毫秒时间戳 → **钟点**（E204，官方 `ui-trajectory` 的 `toolbar.actualTime`「实际时间」）。
@@ -540,38 +561,8 @@ export struct ConversationPane {
       }
       .width('100%')
 
-      /*
-       * E255：**消息级反馈**（官方 `ui-message-feedback`；契约取值 `positive` | `negative`）。
-       *
-       * 只对**助手消息**提供（上游语义就是"对某一条助手消息的判断"）。已评则高亮当前选择——
-       * 高亮值取自中枢的 `feedbackOf(item.id)`（它来自 `messageFeedback/list`，每次写成功后重读 ⇒
-       * 界面显示的是**宿主记录的状态**，不是"我以为点了什么"）。
-       * 说明文字留空：官方那套还有 categories/note 的提交面板，我们先把"好评/差评"这步做成可用的。
-       */
       if (item.speaker === Speaker.ASSISTANT) {
-        Row({ space: Sp.M }) {
-          Text('有帮助')
-            .fontSize(Fs.CAPTION)
-            .fontColor(SessionHub.shared().feedbackOf(item.id) !== undefined
-              && (SessionHub.shared().feedbackOf(item.id) as FeedbackRow).rating === 'positive'
-              ? $r('sys.color.brand')
-              : $r('sys.color.font_tertiary'))
-            .onClick(() => {
-              // 结果由中枢记账（`messageFeedback/put ok …`），这里不重复打日志
-              SessionHub.shared().putFeedback(item.id, 'positive', '');
-            })
-          Text('没帮助')
-            .fontSize(Fs.CAPTION)
-            .fontColor(SessionHub.shared().feedbackOf(item.id) !== undefined
-              && (SessionHub.shared().feedbackOf(item.id) as FeedbackRow).rating === 'negative'
-              ? $r('sys.color.brand')
-              : $r('sys.color.font_tertiary'))
-            .onClick(() => {
-              SessionHub.shared().putFeedback(item.id, 'negative', '');
-            })
-          Blank()
-        }
-        .width('100%')
+        this.messageActions(item)
       }
 
       /*
@@ -679,6 +670,181 @@ export struct ConversationPane {
   }
 
   /** 工具调用卡片（D3 §3.3） */
+  /**
+   * 消息操作条（计划 §10：Copy / Retry / Edit / Like / Dislike / More 统一在一处）。
+   *
+   * 【本仓已接的三类】复制（剪贴板）、好评/差评（`messageFeedback/put`，含类别与说明）、
+   * 撤回（`messageFeedback/delete`，用读到的 `version` 做 CAS）。
+   * **Retry / Edit 尚未接**：它们需要"重跑某一轮/改完再发"的协议面，本仓没有对应端点——
+   * 与其放两个点了没反应的按钮（本项目明令禁止的假入口），不如让缺口显式留在台账里。
+   */
+  @Builder
+  messageActions(item: TrajectoryItem) {
+    Column({ space: Sp.XS }) {
+      Row({ space: Sp.L }) {
+        Text('复制')
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.font_tertiary'))
+          .onClick(() => {
+            this.onCopyMessage(item.body);
+          })
+        Text('有帮助')
+          .fontSize(Fs.CAPTION)
+          .fontColor(this.myRating(item.id) === 'positive'
+            ? $r('sys.color.brand') : $r('sys.color.font_tertiary'))
+          .onClick(() => {
+            this.openFeedback(item, 'positive');
+          })
+        Text('没帮助')
+          .fontSize(Fs.CAPTION)
+          .fontColor(this.myRating(item.id) === 'negative'
+            ? $r('sys.color.brand') : $r('sys.color.font_tertiary'))
+          .onClick(() => {
+            this.openFeedback(item, 'negative');
+          })
+        // 已评才给"撤回"：没评就没有可撤的（按钮不该假装有事可做）
+        if (this.myRating(item.id).length > 0) {
+          Text('撤回评价')
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.font_tertiary'))
+            .onClick(() => {
+              SessionHub.shared().clearFeedback(item.id).then((n: ActionNotice) => {
+                this.fbNote2 = this.feedbackNoticeText(n);
+              });
+            })
+        }
+        Blank()
+      }
+      .width('100%')
+
+      if (this.fbFor === item.id) {
+        this.feedbackPanel(item)
+      }
+      if (this.fbNote2.length > 0 && this.fbFor === item.id) {
+        Text(this.fbNote2)
+          .fontSize(Fs.CAPTION_XS)
+          .fontColor($r('sys.color.alert'))
+          .width('100%')
+      }
+    }
+    .width('100%')
+  }
+
+  /**
+   * 反馈面板：类别 → 可选说明 → 提交（契约 D2b §6.7 的 `category` / `note`）。
+   *
+   * 类别取值就是契约给出的那 7 个（不自己发明），未选即"未分类"——契约里 `category` 可选，
+   * 所以**不强迫分类**，这与官方"可选说明"的语义一致。
+   */
+  @Builder
+  feedbackPanel(item: TrajectoryItem) {
+    Column({ space: Sp.XS }) {
+      Text('为什么？可留空')
+        .fontSize(Fs.CAPTION_XS)
+        .fontColor($r('sys.color.font_tertiary'))
+        .width('100%')
+      Flex({ wrap: FlexWrap.Wrap }) {
+        ForEach(FEEDBACK_CATEGORIES, (c: FeedbackCategory) => {
+          Text(c.label)
+            .fontSize(Fs.CAPTION_XS)
+            .fontColor(this.fbCategory === c.id
+              ? $r('sys.color.brand') : $r('sys.color.font_secondary'))
+            .padding({ left: Sp.S, right: Sp.S, top: Sp.XS, bottom: Sp.XS })
+            .borderRadius(Radius.XS)
+            .backgroundColor($r('sys.color.background_secondary'))
+            .margin({ right: Sp.XS, bottom: Sp.XS })
+            .onClick(() => {
+              this.fbCategory = this.fbCategory === c.id ? '' : c.id;
+            })
+        }, (c: FeedbackCategory) => c.id)
+      }
+      .width('100%')
+
+      TextInput({ text: this.fbNote, placeholder: '补充说明（可选）' })
+        .fontSize(Fs.CAPTION)
+        .height(Sz.TOUCH_MIN)
+        .onChange((v: string) => {
+          this.fbNote = v;
+        })
+
+      Row({ space: Sp.L }) {
+        Text('提交')
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.brand'))
+          .onClick(() => {
+            this.submitFeedback(item);
+          })
+        Text('取消')
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.font_tertiary'))
+          .onClick(() => {
+            this.fbFor = '';
+            this.fbNote2 = '';
+          })
+        Blank()
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding(Sp.S)
+    .borderRadius(Radius.S)
+    .backgroundColor($r('sys.color.background_secondary'))
+  }
+
+  /** 打开反馈面板：带上该条当前的类别/说明，便于"改主意"而不是从零填 */
+  private openFeedback(item: TrajectoryItem, rating: string): void {
+    const row: FeedbackRow | undefined = SessionHub.shared().feedbackOf(item.id);
+    this.fbFor = item.id;
+    this.fbRating = rating;
+    this.fbCategory = row === undefined ? '' : row.category;
+    this.fbNote = row === undefined ? '' : row.note;
+    this.fbNote2 = '';
+  }
+
+  private submitFeedback(item: TrajectoryItem): void {
+    SessionHub.shared().putFeedback(item.id, this.fbRating, this.fbNote, this.fbCategory)
+      .then((n: ActionNotice) => {
+        this.fbNote2 = this.feedbackNoticeText(n);
+        if (n.code === 'feedback.saved') {
+          this.fbFor = '';
+        }
+      });
+  }
+
+  /** 该条消息**宿主记录的**评价（不是"我以为点了什么"） */
+  private myRating(messageId: string): string {
+    const row: FeedbackRow | undefined = SessionHub.shared().feedbackOf(messageId);
+    return row === undefined ? '' : row.rating;
+  }
+
+  /**
+   * 反馈回执 → 一句话。
+   *
+   * 【为什么不走 Index 的 noticeText】那是全局回执表，键来自各功能；反馈这几条要贴着面板显示，
+   * 且**失败原因必须原样透出**（`friendlyFailure` 已把宿主错误码翻成人话）。
+   */
+  private feedbackNoticeText(n: ActionNotice): string {
+    if (n.code === 'feedback.saved') {
+      return '';
+    }
+    if (n.code === 'feedback.withdrawn') {
+      return '';
+    }
+    if (n.code === 'feedback.failed') {
+      return '评价未保存：' + n.params.reason;
+    }
+    if (n.code === 'feedback.no-version') {
+      return '无法撤回：没读到该评价的版本（不猜版本号去删）。';
+    }
+    if (n.code === 'offline') {
+      return '未连接：评价需要连上 Host 才能保存。';
+    }
+    if (n.code === 'feedback.needs-session') {
+      return '先打开一个会话。';
+    }
+    return n.code;
+  }
+
   @Builder
   toolItem(item: TrajectoryItem) {
     Column({ space: Sp.XS }) {

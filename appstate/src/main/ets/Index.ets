@@ -63,7 +63,7 @@ export type { WorkspaceRow } from './store/SessionHub';
 /** E160：Agent 预设名单行与其"随附只读"判定 */
 export type { AgentPresetRow } from './store/SessionHub';
 /** E253：消息反馈行（供界面按 messageId 取用） */
-export type { FeedbackRow } from './store/SessionHub';
+export type { FeedbackCategory, FeedbackRow } from './store/SessionHub';
 export { presetIsBundled } from './store/SessionHub';
 /** E135：技能清单行 */
 export type { SkillRow } from './store/SessionHub';
@@ -187,7 +187,7 @@ export {
 export type { NavState, OverlayState, TabSelection } from './ui/NavigationController';
 
 // ── 会话中枢（D1 §7.7.5b：全应用单一连接池 + 单一会话状态机 + 单一待发队列） ──
-export { HubPhase, projectWireRecord, SessionHub, notice, noticeWith, put } from './store/SessionHub';
+export { FEEDBACK_CATEGORIES, HubPhase, projectWireRecord, SessionHub, notice, noticeWith, put } from './store/SessionHub';
 export type {
   AttachOutcome,
   HubSnapshot,

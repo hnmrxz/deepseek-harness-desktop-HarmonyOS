@@ -3183,6 +3183,16 @@ struct Index {
         onTogglePlan: () => {
           this.togglePlan();
         },
+        // 消息操作条的「复制」：剪贴板是平台能力，回调由宿主提供（视图层不依赖 platform）
+        onCopyMessage: (text: string) => {
+          if (text.length === 0) {
+            this.attachNotice = '这条消息没有可复制的正文。';
+            return;
+          }
+          copyText(text).then((ok: boolean) => {
+            this.attachNotice = ok ? '已复制到剪贴板。' : '复制失败：剪贴板不可用。';
+          });
+        },
         onReferenceQuery: (query: string) => {
           if (this.hubConnected) {
             SessionHub.shared().refreshReferences(query);
