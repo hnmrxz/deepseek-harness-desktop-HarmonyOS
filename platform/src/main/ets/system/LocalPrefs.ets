@@ -28,6 +28,14 @@ const DOMAIN: number = 0xD5A1;
 const TAG: string = 'platform/prefs';
 const STORE: string = 'dsh_local_prefs';
 const KEY_THEME: string = 'themeMode';
+/**
+ * 详情栏宽度的偏好键（P3：把用户拖出来的宽度记住）。
+ *
+ * 【为什么是"全局一份"而不是按形态各记一份】四形态的**可用空间**差别很大，但让步链
+ * （`concedeDetail`）已经会在放不下时收窄/关闭详情栏；按形态分记会让"用户在桌面上拖宽了、
+ * 换到平板发现没记住"这种体验更常见。先记一份、由模型按当前窗口夹住，是最少惊讶的做法。
+ */
+const KEY_DETAIL_WIDTH: string = 'detailWidth';
 
 /** 主题模式（D3 §8 的三个取值） */
 export enum ThemeMode {
@@ -117,6 +125,54 @@ export class LocalPrefs {
       const e = err as BusinessError;
       hilog.warn(DOMAIN, TAG, 'loadThemeMode failed: %{public}s', e.message);
       return ThemeMode.SYSTEM;
+    }
+  }
+
+  /**
+   * 读取记住的详情栏宽度（**没有记录时返回 `undefined`**）。
+   *
+   * 【为什么这里不做范围校验】`platform` 在 `appstate` 之下，**不许**导入 `Sz` 等模型常量
+   * （这条边界是由编译器守住的，已在 `InputDevices` 上实测过）。而且"多宽算合法"是**决策**，
+   * 该和布局规则放在一起、被本机测试覆盖 ⇒ 收窄由 `LayoutController.detailWidthOf()` 做。
+   * 这里只回答"偏好里有没有一个数字"。
+   */
+  async loadDetailWidth(): Promise<number | undefined> {
+    if (this.store === undefined) {
+      return undefined;
+    }
+    try {
+      const present: boolean = await this.store.has(KEY_DETAIL_WIDTH);
+      if (!present) {
+        return undefined;
+      }
+      const raw: preferences.ValueType = await this.store.get(KEY_DETAIL_WIDTH, 0 as number);
+      return typeof raw === 'number' ? raw : undefined;
+    } catch (err) {
+      const e = err as BusinessError;
+      hilog.warn(DOMAIN, TAG, 'loadDetailWidth failed: %{public}s', e.message);
+      return undefined;
+    }
+  }
+
+  /**
+   * 记住详情栏宽度。
+   *
+   * @returns 是否真的落盘了。宽度记忆是"下次开同一形态窗口时栏还是这么宽"的兑现，
+   *   落盘失败时**不值得打扰用户**（与主题不同：主题失效用户立刻看得见），
+   *   故调用方只把它记进诊断，不弹提示。
+   */
+  async saveDetailWidth(vp: number): Promise<boolean> {
+    if (this.store === undefined) {
+      return false;
+    }
+    try {
+      await this.store.put(KEY_DETAIL_WIDTH, vp);
+      await this.store.flush();
+      return true;
+    } catch (err) {
+      const e = err as BusinessError;
+      hilog.warn(DOMAIN, TAG, 'saveDetailWidth failed: %{public}s', e.message);
+      return false;
     }
   }
 

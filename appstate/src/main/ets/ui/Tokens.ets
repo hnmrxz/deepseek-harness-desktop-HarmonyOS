@@ -75,6 +75,16 @@ export class Sz {
   static readonly DETAIL_PANEL: number = 320;
   /** 详情栏最小宽度 */
   static readonly DETAIL_MIN: number = 260;
+  /**
+   * 详情栏上限（拖拽与宽度记忆的合法上界）。
+   *
+   * 【为什么需要一个上限】宽度记忆存的是**用户拖出来的值**，而它是从偏好里读回来的：
+   * 坏值（NaN、负数、被改坏的 100000）必须有确定的收敛点，否则一读回来详情栏就吃掉整屏。
+   * 这不是"窗口可用空间"的上限——那个由布局模型的让步链按当前窗口算（`detailRoomOf`）。
+   */
+  static readonly DETAIL_MAX: number = 720;
+  /** 栏间拖拽把手的**视觉**宽度（命中区域另按输入模态放宽，见 `TOUCH_MIN`/`POINTER_MIN`） */
+  static readonly DRAG_GRIP: number = 12;
   /** 触摸目标最小高度（无障碍，D3 §7） */
   static readonly TOUCH_MIN: number = 44;
   /**

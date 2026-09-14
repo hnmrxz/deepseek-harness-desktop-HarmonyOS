@@ -63,7 +63,6 @@ import {
   HarmonySpacing,
   HarmonyType,
   LayoutMode,
-  decideLayout,
   navTabs,
   selectTab as decideTabSelection,
   showsConversation,
@@ -124,6 +123,11 @@ relativeTime,
   SkillRow,
   AgentPresetRow,
   ActionNotice,
+  clampDetailDesired,
+  decideLayoutWithDetail,
+  detailRoomOf,
+  detailWidthOf,
+  dragDetailWidth,
   flattenSources,
   guessFromKeyboardForm,
   modalityFromSources,
@@ -322,7 +326,8 @@ struct Index {
   @State detailOpen: boolean = false;
   /**
    * 当前窗口尺寸（vp）。形态与几何**不再由本文件各算一遍**，
-   * 统一交给 `appstate/ui/LayoutController.decideLayout()`（P1：布局决策出栈）。
+   * 统一交给 `appstate/ui/LayoutController.decideLayoutWithDetail()`（P1：布局决策出栈；
+   * 带"用户想要的栏宽"参数，见 `detailWidthDesired`）。
    * 两者在 `applySize()` 里同时写入，因此 `mode !== SINGLE` 时它们必定有效。
    */
   @State winWidthVp: number = 0;
@@ -353,6 +358,21 @@ struct Index {
 
   /** 上面这次合成的**理由**（诊断用：说不出理由时，只能到真机上猜） */
   @State modalityNote: string = '';
+
+  /**
+   * 详情栏**用户想要的**宽度（P3：拖拽把手与宽度记忆的唯一真值）。
+   *
+   * 【为什么要有它】布局模型里 `decideLayoutWithDetail(input, desiredVp)` 这条路径早就做好了
+   * （含让步链与 fixture），但此前**没有任何 UI 去产生这个宽度** —— `decideLayout()` 直接用常量
+   * `Sz.DETAIL_PANEL`。于是"用户可以调栏宽"这件事在模型里存在、在界面上不存在。
+   *
+   * 注意它存的是**意图**而不是最终宽度：最终宽度由模型按当前窗口可用空间夹取
+   * （`clampDetailDesired`），所以窗口变小时栏会自己收窄，而用户拖出来的意图不丢。
+   */
+  @State detailWidthDesired: number = Sz.DETAIL_PANEL;
+
+  /** 一次拖拽开始时的宽度（PanGesture 的 offsetX 是**累计量**，必须用起点换算） */
+  private dragStartWidth: number = Sz.DETAIL_PANEL;
 
   /** 系统枚举到的输入设备；`null` = 枚举不可用 ⇒ 退回形态猜测（与"当前没有设备"是两件事） */
   private enumeratedModality: InputModality | null = null;
@@ -834,6 +854,8 @@ struct Index {
     this.unwatchInput = watchInputSources((sources: InputSourceReading) => {
       this.applyInputSources(sources);
     });
+    // 详情栏宽度记忆：读回用户上次拖出来的值（没有记录时保持默认）
+    this.loadDetailWidth();
     // 初始值 = 空态。所有真实数据都在 `applyHubSnapshot` 到达时落地；
     // 连接建立前界面显示的是各视图自己的空态文案（D3 §4），而不是编造的示例数据。
     this.diag = emptyDiagReport();
@@ -1468,7 +1490,62 @@ struct Index {
       hasKeyboard: this.modality.hasKeyboard,
       hasPointer: this.modality.hasPointer
     };
-    return decideLayout(input);
+    // 用**用户想要的**栏宽（拖拽把手会改它；窗口装不下时由让步链夹取）
+    return decideLayoutWithDetail(input, this.detailWidthDesired);
+  }
+
+  /** 当前窗口下详情栏可用的最大宽度（拖拽时在这里夹住，避免"拖宽反而跳成最窄"） */
+  private detailRoomVp(): number {
+    return detailRoomOf(this.winWidthVp, this.navWidthVp());
+  }
+
+  /** 抓手的目标尺寸：触控要 44vp 才点得准，指针 24vp 就够（与 `Sz` 的既有取舍一致） */
+  private gripHitWidth(): number {
+    return this.modality.hasPointer ? Sz.POINTER_MIN : Sz.TOUCH_MIN;
+  }
+
+  /**
+   * 开始拖拽：先**归一化**再记起点。
+   *
+   * 【为什么必须先夹一次】窗口缩小后 `detailWidthDesired`（用户意图）会大于当前可用空间，
+   * 而屏幕上显示的是被让步链夹过的宽度。此时若直接拿意图当起点，`offsetX` 从 0 开始的第一帧
+   * 就会把栏宽"刷"到夹取值——表现为**一碰把手栏就跳一下**。先夹再记，拖拽从用户看到的宽度开始。
+   * （`offsetX` 是相对手势起点的累计量，故必须用起点换算而不是逐帧累加。）
+   */
+  private beginDetailDrag(): void {
+    this.detailWidthDesired = clampDetailDesired(this.detailWidthDesired, this.detailRoomVp());
+    this.dragStartWidth = this.detailWidthDesired;
+  }
+
+  /** 拖拽中：把手在详情栏左边缘 ⇒ 往左拖是变宽（方向规则在模型里，有断言） */
+  private updateDetailDrag(deltaXVp: number): void {
+    this.detailWidthDesired = dragDetailWidth(this.dragStartWidth, deltaXVp, this.detailRoomVp());
+  }
+
+  /**
+   * 拖拽结束：把宽度记进本机偏好（下次开窗沿用）。
+   *
+   * 【落盘失败要说出来吗】它与主题不同（主题失效用户立刻看得见），但"静默不生效"正是本项目
+   * 反复批评的形态，故给一句轻提示、不阻断操作。
+   */
+  private endDetailDrag(): void {
+    const prefs: LocalPrefs = new LocalPrefs();
+    const width: number = this.detailWidthDesired;
+    prefs.attach(getContext(this) as common.UIAbilityContext).then(() => {
+      prefs.saveDetailWidth(width).then((ok: boolean) => {
+        if (!ok) {
+          this.attachNotice = '详情栏宽度这次没能记住：下次打开会回到默认宽度。';
+        }
+      });
+    });
+  }
+
+  /** 读回记住的宽度（没有记录/坏值 ⇒ 默认值；收窄规则在模型里，有断言） */
+  private async loadDetailWidth(): Promise<void> {
+    const prefs: LocalPrefs = new LocalPrefs();
+    await prefs.attach(getContext(this) as common.UIAbilityContext);
+    const stored: number | undefined = await prefs.loadDetailWidth();
+    this.detailWidthDesired = detailWidthOf(stored);
   }
 
   /** 导航侧栏宽度（唯一来源：布局决策） */
@@ -3069,7 +3146,9 @@ struct Index {
       .layoutWeight(1)
       .height('100%')
       if (this.detailOpen && this.showsConversation()) {
-        Divider().vertical(true).color($r('sys.color.comp_divider'))
+        // 拖拽把手替代原来那条纯分隔线：它既是分隔（视觉上仍是一条细线），
+        // 又是"调整栏宽"的唯一入口（此前模型里那条 desired 路径没有 UI 去产生宽度）。
+        this.detailResizer()
         this.detailColumn()
       }
     }
@@ -3147,6 +3226,40 @@ struct Index {
       .onClick(() => {
         action();
       })
+  }
+
+  /**
+   * 栏间拖拽把手（P3 §12：官方 AppFrame 有 drag handles）。
+   *
+   * 【为什么视觉只有 12vp】它在两栏之间，视觉上应当只是一条线；但**命中区域**按输入模态放宽
+   * （触控 44vp / 指针 24vp，`responseRegion` 只扩大命中不改布局）——细线点不中是
+   * 移动端最常见的"看起来能用、实际点不到"。
+   */
+  @Builder
+  detailResizer() {
+    Column() {
+      Divider()
+        .vertical(true)
+        .color($r('sys.color.comp_divider'))
+    }
+    .width(Sz.DRAG_GRIP)
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .responseRegion({ x: -(this.gripHitWidth() - Sz.DRAG_GRIP) / 2, y: 0,
+      width: this.gripHitWidth(), height: '100%' })
+    .accessibilityText('调整详情栏宽度')
+    .gesture(
+      PanGesture({ direction: PanDirection.Horizontal })
+        .onActionStart(() => {
+          this.beginDetailDrag();
+        })
+        .onActionUpdate((event: GestureEvent) => {
+          this.updateDetailDrag(event.offsetX);
+        })
+        .onActionEnd(() => {
+          this.endDetailDrag();
+        })
+    )
   }
 
   @Builder

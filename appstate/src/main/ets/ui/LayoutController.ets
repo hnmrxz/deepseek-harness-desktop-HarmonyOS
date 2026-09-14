@@ -112,8 +112,63 @@ export interface LayoutDecision {
  * 保留它不是"假分支"：`tools/check-layout-fixtures.mjs` 会直接对 `concedeDetail`
  * 断言三个分支（含关闭），P2 接入拖拽调宽与更窄断点后它就会真正生效。
  */
+/**
+ * 详情栏**当前窗口下**可用的最大宽度（主内容至少留 `MAIN_MIN_VP`）。
+ *
+ * 【为什么单独暴露】拖拽时必须在这里夹住用户拖出来的值。否则会出现很难看的跳变：
+ * 用户往宽拖、超过了可用空间 ⇒ 让步链判定"想要的大于可用"⇒ 直接缩到 `DETAIL_MIN`
+ * （往右拖一点，栏反而猛地变窄）。夹在可用空间以内，让步链只在**窗口变小**时才需要介入。
+ */
+export function detailRoomOf(widthVp: number, navWidthVp: number): number {
+  return widthVp - navWidthVp - MAIN_MIN_VP;
+}
+
+/**
+ * 把"想要的详情栏宽度"夹进合法区间 `[DETAIL_MIN, room]`。
+ *
+ * `room < DETAIL_MIN` 时返回 `DETAIL_MIN`：此时栏本来就该被让步链关掉，
+ * 这里不再制造一个更小的值（那会让记忆里存下一个不可能成立的宽度）。
+ */
+export function clampDetailDesired(desiredVp: number, roomVp: number): number {
+  const upper: number = roomVp > Sz.DETAIL_MIN ? roomVp : Sz.DETAIL_MIN;
+  if (!Number.isFinite(desiredVp) || desiredVp < Sz.DETAIL_MIN) {
+    return Sz.DETAIL_MIN;
+  }
+  return desiredVp > upper ? upper : desiredVp;
+}
+
+/**
+ * 拖拽一个增量后应有的详情栏宽度。
+ *
+ * 【方向不能弄反】把手在详情栏的**左边缘**：往左拖（`deltaXVp < 0`）是**变宽**，
+ * 往右拖是变窄。故这里是 `start - deltaX` 而不是 `start + deltaX`。
+ * 这个符号写反不会报错、只会让用户觉得"拖反了"，所以它必须是被测试覆盖的一行。
+ */
+export function dragDetailWidth(startVp: number, deltaXVp: number, roomVp: number): number {
+  return clampDetailDesired(startVp - deltaXVp, roomVp);
+}
+
+/**
+ * 把从偏好里读回来的记忆值收窄成可用值。
+ *
+ * 没有记录（`undefined`）、NaN、越界一律回到 `DETAIL_PANEL`——
+ * 偏好存的是"用户可见的行为"，一个坏值不该让详情栏吃掉整屏或缩成一条缝。
+ */
+export function detailWidthOf(stored: number | undefined): number {
+  if (stored === undefined || !Number.isFinite(stored)) {
+    return Sz.DETAIL_PANEL;
+  }
+  if (stored < Sz.DETAIL_MIN) {
+    return Sz.DETAIL_MIN;
+  }
+  if (stored > Sz.DETAIL_MAX) {
+    return Sz.DETAIL_MAX;
+  }
+  return stored;
+}
+
 export function concedeDetail(widthVp: number, navWidthVp: number, desiredVp: number): DetailCapacity {
-  const room: number = widthVp - navWidthVp - MAIN_MIN_VP;
+  const room: number = detailRoomOf(widthVp, navWidthVp);
   if (room < Sz.DETAIL_MIN) {
     return { widthVp: 0, step: ConcessionStep.DETAIL_CLOSED };
   }

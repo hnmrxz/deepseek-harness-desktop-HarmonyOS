@@ -727,4 +727,86 @@ console.log('\n## 输入模态事实（P3：设备枚举 / 事件证据 / 形态
   console.log('  ok    37 条断言：SourceType 映射（含触控不算指针）+ 三个来源的优先级 + 可解释性');
 }
 
+console.log('\n## 详情栏拖拽与宽度记忆（P3：把模型里那条"用户想要的宽度"接通）');
+{
+  const { detailRoomOf, clampDetailDesired, dragDetailWidth, detailWidthOf, decideLayoutWithDetail, MAIN_MIN_VP } = LC;
+  const SZ_MIN = 260;   // Sz.DETAIL_MIN
+  const SZ_DEFAULT = 320;  // Sz.DETAIL_PANEL
+  const SZ_MAX = 720;   // Sz.DETAIL_MAX
+
+  // 可用空间 = 窗口宽 - 导航宽 - 主内容最小宽
+  t.eq('可用空间扣除导航与主内容最小宽', detailRoomOf(1440, 240), 1440 - 240 - MAIN_MIN_VP);
+  t.eq('700vp 单栏宽度下可用空间仍为正（180）', detailRoomOf(700, 240), 180);
+  t.eq('窗口窄到装不下主内容时可用空间为负（由档位判定接手，不会并排）', detailRoomOf(400, 240) < 0, true);
+
+  // 夹取
+  t.eq('低于最小值 ⇒ 收到最小值', clampDetailDesired(100, 800), SZ_MIN);
+  t.eq('高于可用空间 ⇒ 收到可用空间（**不跳回最小** —— 跳变是这里最容易犯的错）', clampDetailDesired(900, 800), 800);
+  t.eq('区间内原样保留', clampDetailDesired(400, 800), 400);
+  t.eq('可用空间小于最小值时收到最小值（不制造不可能的宽度）', clampDetailDesired(400, 200), SZ_MIN);
+  t.eq('NaN ⇒ 收到最小值（坏值必须有确定收敛点）', clampDetailDesired(Number.NaN, 800), SZ_MIN);
+
+  // 拖拽方向：把手在详情栏**左边缘** ⇒ 往左拖（deltaX<0）是变宽
+  t.eq('往左拖 100 ⇒ 变宽 100', dragDetailWidth(400, -100, 1000), 500);
+  t.eq('往右拖 100 ⇒ 变窄 100', dragDetailWidth(400, 100, 1000), 300);
+  t.eq('往左拖到超过可用空间 ⇒ 夹在可用空间', dragDetailWidth(400, -2000, 600), 600);
+  t.eq('往右拖到低于最小值 ⇒ 夹在最小值（不会拖成一条缝）', dragDetailWidth(400, 2000, 1000), SZ_MIN);
+
+  /*
+   * 拖拽**起点必须先归一化**（`beginDetailDrag` 的第一句）。
+   *
+   * 场景：用户在宽窗口把栏拖到 900，随后把窗口缩小 ⇒ 可用空间只剩 480，屏幕上显示的是被夹过的 480，
+   * 而"意图"仍是 900。此时若直接拿 900 当起点，往窄拖会**先卡住一段**（要先把那 420 的差值拖掉），
+   * 表现为"把手推不动"。先夹再记，第一帧就跟随。
+   */
+  t.eq('未经归一化：起点 900、往窄拖 50 仍然没动（这就是"推不动"的症状）',
+    dragDetailWidth(900, 50, 480), 480);
+  t.eq('归一化之后：同一个动作立刻跟随（430）',
+    dragDetailWidth(clampDetailDesired(900, 480), 50, 480), 430);
+  t.eq('归一化不会凭空改变意图内的值', clampDetailDesired(400, 480), 400);
+
+  // 记忆值收窄
+  t.eq('没有记录 ⇒ 默认宽度', detailWidthOf(undefined), SZ_DEFAULT);
+  t.eq('NaN ⇒ 默认宽度', detailWidthOf(Number.NaN), SZ_DEFAULT);
+  t.eq('低于最小值 ⇒ 最小值', detailWidthOf(10), SZ_MIN);
+  t.eq('高于上限 ⇒ 上限（防止一读回来就吃掉整屏）', detailWidthOf(100000), SZ_MAX);
+  t.eq('合法值原样保留', detailWidthOf(480), 480);
+  t.eq('上限本身合法', detailWidthOf(SZ_MAX), SZ_MAX);
+
+  // 与决策衔接：拖出来的宽度真的进了决策
+  const wide = decideLayoutWithDetail({ widthVp: 1600, heightVp: 900, hasKeyboard: true, hasPointer: true }, 600);
+  t.eq('桌面窗口 + 想要 600 ⇒ 详情栏宽 600', wide.detailWidthVp, 600);
+  const tight = decideLayoutWithDetail({ widthVp: 1000, heightVp: 800, hasKeyboard: false, hasPointer: false }, 600);
+  t.eq('窗口放不下想要的宽度 ⇒ 让步到最小并标注变窄',
+    tight.detailWidthVp === SZ_MIN && tight.detailStep === 'detail-narrow', true);
+  t.eq('1000vp 已经是三栏（并排详情可用）', tight.detailAvailable, true);
+
+  // 档位边界：这是"拖拽能不能用"的前提 —— 双栏下详情栏**不并排**，把手根本不该出现
+  const double = decideLayoutWithDetail({ widthVp: 839, heightVp: 800, hasKeyboard: false, hasPointer: false }, 600);
+  t.eq('839vp（LG 边界下）是双栏 ⇒ 详情栏不并排可用', double.detailAvailable, false);
+  t.eq('839vp 下详情宽度为 0（把手不该出现）', double.detailWidthVp, 0);
+  const atLg = decideLayoutWithDetail({ widthVp: 840, heightVp: 800, hasKeyboard: false, hasPointer: false }, 600);
+  t.eq('840vp（LG 边界）起为三栏 ⇒ 详情栏可用', atLg.detailAvailable, true);
+  t.eq('840vp 下可用空间 320 < 想要的 600 ⇒ 让步到最小', atLg.detailWidthVp, SZ_MIN);
+  t.eq('840vp 下主内容仍保住 MAIN_MIN_VP', atLg.detailWidthVp + atLg.navWidthVp + MAIN_MIN_VP <= 840, true);
+
+  /*
+   * 一条**边界事实**（不是缺陷，但值得钉住）：
+   * 详情栏只在三栏档位并排，而三栏从 840vp 起、该档导航为 240、主内容至少 280
+   * ⇒ 可用空间最小为 320 > DETAIL_MIN(260) ⇒ 让步链里的 `DETAIL_CLOSED` 分支
+   * **在当前阈值下不可达**（它只在"可用空间 < 最小宽度"时触发）。
+   * 保留该分支是**防御性**的（常量一旦调整就会生效）；这里把它钉成断言，
+   * 好让将来真的有人调整阈值时，是**有意识地**让这条分支复活，而不是意外发现"历史遗留"。
+   */
+  let closedReachable = false;
+  for (let w = 840; w <= 2400; w += 1) {
+    const d = decideLayoutWithDetail({ widthVp: w, heightVp: 900, hasKeyboard: true, hasPointer: true }, 600);
+    if (d.detailStep === 'detail-closed') { closedReachable = true; break; }
+  }
+  t.eq('三栏档位内 DETAIL_CLOSED 不可达（可用空间恒 > 最小宽度）', closedReachable, false);
+  t.eq('但可用空间小于最小宽度时它确实会触发（模型逻辑本身正确）', LC.concedeDetail(400, 240, 600).step, 'detail-closed');
+
+  console.log('  ok    28 条断言：可用空间 / 夹取（不跳变）/ 拖拽方向（左拖变宽）/ 起点归一化 / 记忆值收窄 / 档位边界 / 与决策衔接');
+}
+
 t.done();

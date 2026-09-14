@@ -214,9 +214,13 @@ export type { ShadowLevel, TypeRole, WebTokenMapping } from './ui/HarmonyTheme';
 // ── 布局决策（P1：形态/几何决策的唯一落点，见 LayoutController 的说明） ──
 export {
   breakpointThresholds,
+  clampDetailDesired,
   concedeDetail,
   decideLayout,
   decideLayoutWithDetail,
+  detailRoomOf,
+  detailWidthOf,
+  dragDetailWidth,
   MAIN_MIN_VP,
   navWidthOf,
   ConcessionStep
