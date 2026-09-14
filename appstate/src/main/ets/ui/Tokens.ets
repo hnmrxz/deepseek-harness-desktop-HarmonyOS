@@ -83,6 +83,8 @@ export class Sz {
    * 这不是"窗口可用空间"的上限——那个由布局模型的让步链按当前窗口算（`detailRoomOf`）。
    */
   static readonly DETAIL_MAX: number = 720;
+  /** 页头高度（原实现写死 52；抽成组件后需要名字，否则新文件会撞设计令牌棘轮） */
+  static readonly HEADER: number = 52;
   /** 栏间拖拽把手的**视觉**宽度（命中区域另按输入模态放宽，见 `TOUCH_MIN`/`POINTER_MIN`） */
   static readonly DRAG_GRIP: number = 12;
   /** 触摸目标最小高度（无障碍，D3 §7） */

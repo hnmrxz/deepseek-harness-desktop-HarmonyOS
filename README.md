@@ -147,8 +147,8 @@ hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 分步计划与验收见 `docs/ia-parity-plan.md`；判断依据与现状对照见 `docs/parity-matrix.md` §5.1。
 
 **进度**：纯逻辑层（`PanelRegistry` / `NavigationState` / `ShellTracks`，46 条断言）、**侧栏外壳**
-（`view/shell/SidebarShell.ets`：品牌行 / 面板清单 / 徽标 / 三种呈现）与**右栏外壳**
-（`view/shell/RightbarShell.ets`：面板本体 / 三种呈现）已完成；
+（`view/shell/SidebarShell.ets`：品牌行 / 面板清单 / 徽标 / 三种呈现）、**右栏外壳**
+（`view/shell/RightbarShell.ets`：面板本体 / 三种呈现）与**主区页头**（`view/shell/MainHeaderShell.ets`）已完成；
 `@Provide/@Consume` 机制已在侧栏上真实验证（侧栏按面板注册表过滤入口）；
 **页面选择已收成唯一真值**（`NavigationState.selectedMainPanel`，`NavTab` 退化为迁移期别名），
 "此刻显示哪个面板"的组合逻辑也已收进纯模型（`activeMainPanelOf`）；

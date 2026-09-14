@@ -182,6 +182,7 @@ import { extractToken, parseJson } from 'connection';
 import { EVENT_HOST_CONNECTED, EVENT_KEY_HOST_TOKEN, EVENT_KEY_HOST_URL } from 'platform';
 import { ConnectPane } from '../view/ConnectPane';
 import { ConversationPane } from '../view/ConversationPane';
+import { MainHeaderShell } from '../view/shell/MainHeaderShell';
 import { RightbarShell } from '../view/shell/RightbarShell';
 import { SidebarShell } from '../view/shell/SidebarShell';
 import { CorePane } from '../view/CorePane';
@@ -3103,50 +3104,6 @@ struct Index {
       }, this.sheetHeight()))
   }
 
-  @Builder
-  header() {
-    Row({ space: Sp.S }) {
-      if (this.stackPage !== StackPage.MAIN) {
-        Button() {
-          SymbolGlyph($r('sys.symbol.chevron_left')).fontSize(20)
-        }
-        .buttonStyle(ButtonStyleMode.TEXTUAL)
-        .accessibilityText('返回')
-        .onClick(() => {
-          this.stackPage = StackPage.MAIN;
-        })
-      }
-      Text(this.headerTitle())
-        .fontSize(Fs.TITLE_L)
-        .fontWeight(FontWeight.Bold)
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .layoutWeight(1)
-
-      if (this.stackPage === StackPage.CONVERSATION && this.mode !== LayoutMode.TRIPLE) {
-        Text('详情')
-          .fontSize(HarmonyType.LABEL.size)
-          .fontColor(HarmonyColor.BRAND)
-          .padding({ left: Sp.S, right: Sp.S, top: Sp.XS, bottom: Sp.XS })
-          .borderRadius(HarmonyRadius.CHIP)
-          .backgroundColor(HarmonyColor.SURFACE_RAISED)
-          .accessibilityText('打开详情面板（会话内容保持可见）')
-          .onClick(() => {
-            this.detailOverlayOpen = true;
-          })
-      }
-      /*
-       * 【页头的 POC 入口已移除（E102）】协议往返验证并入「设置 → 通用 → 本地调试」：
-       * 顶部常驻一个 POC 按钮会让它看起来像一个产品功能，而它其实是排障工具；
-       * 更重要的是"连接诊断（结论）+ POC（逐步证据）"必须**在同一处**，
-       * 否则用户要在两个入口之间来回走。入口保留在诊断页里的「协议往返验证」按钮。
-       */
-    }
-    .width('100%')
-    .height(52)
-    .padding({ left: Sp.M, right: Sp.S })
-  }
-
   private headerTitle(): string {
     if (this.stackPage === StackPage.CONVERSATION) {
       return this.selectedSessionTitle.length > 0 ? this.selectedSessionTitle : '会话';
@@ -3160,6 +3117,23 @@ struct Index {
       return '远程 Host（可选）';
     }
     return navTabLabel(this.currentTab());
+  }
+
+  @Builder
+  header() {
+    // 主区页头归 MainHeaderShell 所有（P0：中间轨道的 chrome）；这里只把**导航与几何事实**
+    // 换算成"两个入口要不要出现"（组件不该知道 stackPage/mode 这类事实）。
+    MainHeaderShell({
+      title: this.headerTitle(),
+      showBack: this.stackPage !== StackPage.MAIN,
+      showDetailEntry: this.stackPage === StackPage.CONVERSATION && this.mode !== LayoutMode.TRIPLE,
+      onBack: () => {
+        this.stackPage = StackPage.MAIN;
+      },
+      onOpenDetail: () => {
+        this.detailOverlayOpen = true;
+      }
+    })
   }
 
   @Builder
