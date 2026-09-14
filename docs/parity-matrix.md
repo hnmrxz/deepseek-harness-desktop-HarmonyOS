@@ -326,7 +326,7 @@ devecocli build（全量）                                                     
 
 | id | 缺什么（对等差距） | 下一步（归属） |
 |---|---|---|
-| `layout` | ① 无拖拽调宽手柄（官方 AppFrame 有 drag handles）；`decideLayoutWithDetail` 已把"用户想要的宽度"这条路径做好并有 fixture，但**没有 UI 去产生这个宽度** ② 详情栏宽度记忆未落 ③ **待决（需真机）**：D3 §2 只按宽度判定 ⇒ **手机横屏（800vp 宽）会落成双栏**；要不要加高度/方向子句，看真机效果后定 ④ 输入模态仍未接入决策（传 `false` 并在源码里注明）：`pointerRich` 无消费点，P3 再统一 | P2：拖拽调宽 + 宽度记忆；P3：把 `readDeviceFacts().keyboardLikely` 接进 `LayoutInput` |
+| `layout` | ① 无拖拽调宽手柄（官方 AppFrame 有 drag handles）；`decideLayoutWithDetail` 已把"用户想要的宽度"这条路径做好并有 fixture，但**没有 UI 去产生这个宽度** ② 详情栏宽度记忆未落 ⑤ **平板（DOUBLE）目前与手机一样用半模态 Sheet**；计划 §12 说的"平板侧边浅层面板"尚未做（三栏已经是真右栏） ③ **待决（需真机）**：D3 §2 只按宽度判定 ⇒ **手机横屏（800vp 宽）会落成双栏**；要不要加高度/方向子句，看真机效果后定 ④ 输入模态仍未接入决策（传 `false` 并在源码里注明）：`pointerRich` 无消费点，P3 再统一 | P2：拖拽调宽 + 宽度记忆；P3：把 `readDeviceFacts().keyboardLikely` 接进 `LayoutInput` |
 | `primitives` | ① 原语只落了 `NativeChip` / `NativeSectionTitle`；按钮/卡片/弹层/Sheet/Dialog/操作条/导航仍未原语化 ② `WEB_TOKEN_MAP` 目前是**文档化数据 + fixture 可校验**，但还没有"视图必须经映射取色"的强制门禁（现有棘轮只管裸 fontSize/圆角/描边/颜色字面量） | P1.5 已做：HarmonyTheme 语义层 + 前两个原语 + 两处接入（消息操作条、Composer 工具行）。下一步按 P1.5 清单推进（Surface/Button/Card/Popup/Sheet/Dialog/ActionBar/Navigation），每个原语都**当时就接一个真实消费者**，不落没人用的空构件 |
 | `slots` / `renderer` | 官方是 React + 槽位插件化渲染；ArkUI 无槽位系统，第三方不能贡献 UI | 架构边界：**不追平**，能力由"构建期装配 + 设置页开关"替代；本条登记以免被当作缺陷反复讨论 |
 | `session` | 无"会话作用域槽位"；控制器能力（`SessionHub`）已具备 | 不追平（同上）；控制器本身已 DONE |

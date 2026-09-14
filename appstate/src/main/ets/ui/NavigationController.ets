@@ -16,11 +16,17 @@
 
 import { NavTab } from './Breakpoints';
 
-/** 单栏形态下逐级下钻的页（多栏形态下这些内容并排显示，不占栈） */
+/**
+ * 下钻页（单栏形态下逐级进入；多栏形态下这些内容并排显示，不占栈）。
+ *
+ * 【为什么没有 `DETAIL`（P1.5 移除）】详情此前是一条全屏栈页。但鸿蒙的
+ * `bindSheet` 语义正是"非全屏、**保留父视图环境**"——把会话内容留在下面、
+ * 详情盖一半，比整页替换更贴合"我要边看对话边看详情"的真实意图。
+ * 因此详情改成**半模态 Sheet**，不属于栈；栈里只留真正逐级下钻的页。
+ */
 export enum StackPage {
   MAIN = 'main',
   CONVERSATION = 'conversation',
-  DETAIL = 'detail',
   DIAGNOSTICS = 'diagnostics',
   CONNECT = 'connect'
 }
@@ -45,6 +51,8 @@ export interface OverlayState {
   settingDraftOpen: boolean;
   searchOpen: boolean;
   choosingOpen: boolean;
+  /** 详情半模态 Sheet（P1.5）：它与"盖在页面上"的浮层同类，故排在浮层段 */
+  detailSheetOpen: boolean;
   previewOpen: boolean;
 }
 
@@ -60,6 +68,7 @@ export enum BackAction {
   CLOSE_SETTING_DRAFT = 'close-setting-draft',
   CLOSE_SEARCH = 'close-search',
   CLOSE_CHOICE = 'close-choice',
+  CLOSE_DETAIL_SHEET = 'close-detail-sheet',
   STACK_TO_MAIN = 'stack-to-main',
   CLOSE_DETAIL = 'close-detail',
   DRILL_UP = 'drill-up',
@@ -87,6 +96,11 @@ export function decideBack(nav: NavState, overlay: OverlayState): BackAction {
   }
   if (overlay.choosingOpen) {
     return BackAction.CLOSE_CHOICE;
+  }
+  // 详情 Sheet 也是"盖在页面上"的一层：它排在其它浮层之后（那些是真正的模态编辑态），
+  // 但排在二级页之前——用户心理上"关掉盖着的东西"优先于"退回上一层"。
+  if (overlay.detailSheetOpen) {
+    return BackAction.CLOSE_DETAIL_SHEET;
   }
   // ② 二级页 → 回主列表
   if (nav.stackPage !== StackPage.MAIN) {

@@ -46,6 +46,10 @@ import {
   HubPhase,
   BackAction,
   decideBack,
+  HarmonyColor,
+  HarmonyRadius,
+  HarmonySpacing,
+  HarmonyType,
   LayoutMode,
   decideLayout,
   navTabs,
@@ -147,6 +151,7 @@ import { SettingsPane } from '../view/SettingsPane';
 import { WorkspacePane } from '../view/WorkspacePane';
 import { hitOfKeyEvent } from '../view/ShortcutKeys';
 import type { ShortcutHit } from '../view/ShortcutKeys';
+import { harmonySheetOptions, NativeSectionTitle } from '../view/NativePrimitives';
 // 端侧核心运行层（D6）：核心版本仓库与激活事务。运行时载体尚未接线，
 // 因此这里现在只用它的"仓库/状态"部分，不声称任何"已启动"。
 import { hilog } from '@kit.PerformanceAnalysisKit';
@@ -302,6 +307,14 @@ struct Index {
    */
   @State winWidthVp: number = 0;
   @State winHeightVp: number = 0;
+  /**
+   * 详情**半模态 Sheet**（P1.5）。
+   *
+   * 【为什么不再是一条栈页】鸿蒙 `bindSheet` 的语义是"非全屏弹窗、底层父视图部分可见"，
+   * 正好对应"边看对话边看详情"的真实意图；整页替换会把对话顶掉，用户还得再退回来。
+   * 三栏形态不走这条（`mode === TRIPLE` 时用真正的右栏，可调宽、可记忆）。
+   */
+  @State detailSheetOpen: boolean = false;
 
   // ── 数据（当前来自桩数据源） ──
   @State sessions: SessionListItem[] = [];
@@ -909,6 +922,11 @@ struct Index {
         this.choosing = undefined;
         hilog.info(DOMAIN, TAG, 'HDSH-BACK 关闭选择浮层');
         return true;
+      case BackAction.CLOSE_DETAIL_SHEET:
+        // 交给 Sheet 自己收起（`shouldDismiss` 里会复位状态）
+        this.detailSheetOpen = false;
+        hilog.info(DOMAIN, TAG, 'HDSH-BACK 关闭详情半模态');
+        return true;
       case BackAction.STACK_TO_MAIN: {
         const from: string = this.stackPage;
         this.stackPage = StackPage.MAIN;
@@ -957,6 +975,7 @@ struct Index {
       settingDraftOpen: this.textSettingDraft.length > 0 || this.structSettingDraft.length > 0,
       searchOpen: this.searchOpen,
       choosingOpen: this.choosing !== undefined,
+      detailSheetOpen: this.detailSheetOpen,
       previewOpen: this.preview !== undefined
     };
   }
@@ -1289,9 +1308,12 @@ struct Index {
       return;
     }
     this.mode = next;
-    if (next !== LayoutMode.SINGLE
-      && (this.stackPage === StackPage.CONVERSATION || this.stackPage === StackPage.DETAIL)) {
+    if (next !== LayoutMode.SINGLE && this.stackPage === StackPage.CONVERSATION) {
       this.stackPage = StackPage.MAIN;
+    }
+    // 变宽到三栏时，详情改由右栏承担 ⇒ 关掉 Sheet（否则两处同时显示详情）
+    if (next === LayoutMode.TRIPLE) {
+      this.detailSheetOpen = false;
     }
     if (!decision.detailAvailable) {
       this.detailOpen = false;
@@ -1502,6 +1524,31 @@ struct Index {
   private showsConversation(): boolean {
     // 判据在控制器里（`NavTab.SESSIONS` 是 `WORKSPACES` 的别名这事只该写在那一处）
     return showsConversation(this.navState());
+  }
+
+  /**
+   * 详情半模态内容（P1.5：手机上详情不再整页替换会话）。
+   *
+   * 复用既有的 `DetailPane`（它本就有 `onLineTap` 的"复制该行"行为），
+   * 所以这不是新功能，而是把**同一份内容换一种更合适的呈现**。
+   */
+  @Builder
+  detailSheet() {
+    Column({ space: HarmonySpacing.CONTAINER }) {
+      NativeSectionTitle({ text: '详情', hint: '工具 / 子代理 / 交付物 / 目标 / 任务' })
+      DetailPane({
+        sections: this.detailSections,
+        onLineTap: (section: string, text: string) => {
+          // E130：详情行看起来可点，就得真的做一件事——复制该行
+          if (text.length > 0) {
+            copyText(text);
+          }
+        }
+      })
+    }
+    .width('100%')
+    .height('100%')
+    .padding(HarmonySpacing.CONTAINER)
   }
 
   build() {
@@ -2597,6 +2644,12 @@ struct Index {
     }
     .width('100%')
     .height('100%')
+    /* 详情半模态：`isShow` 是单向的，故必须给消失回调复位状态，
+       否则下拉关闭后 show 永远停在 true、再也打不开（看起来像点了没反应）。 */
+    .bindSheet(this.detailSheetOpen, this.detailSheet(),
+      harmonySheetOptions(() => {
+        this.detailSheetOpen = false;
+      }))
   }
 
   @Builder
@@ -2609,11 +2662,7 @@ struct Index {
         .buttonStyle(ButtonStyleMode.TEXTUAL)
         .accessibilityText('返回')
         .onClick(() => {
-          if (this.stackPage === StackPage.DETAIL) {
-            this.stackPage = StackPage.CONVERSATION;
-          } else {
-            this.stackPage = StackPage.MAIN;
-          }
+          this.stackPage = StackPage.MAIN;
         })
       }
       Text(this.headerTitle())
@@ -2625,10 +2674,14 @@ struct Index {
 
       if (this.stackPage === StackPage.CONVERSATION && this.mode !== LayoutMode.TRIPLE) {
         Text('详情')
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.brand'))
+          .fontSize(HarmonyType.LABEL.size)
+          .fontColor(HarmonyColor.BRAND)
+          .padding({ left: Sp.S, right: Sp.S, top: Sp.XS, bottom: Sp.XS })
+          .borderRadius(HarmonyRadius.CHIP)
+          .backgroundColor(HarmonyColor.SURFACE_RAISED)
+          .accessibilityText('打开详情面板（半模态，会话内容保持可见）')
           .onClick(() => {
-            this.stackPage = StackPage.DETAIL;
+            this.detailSheetOpen = true;
           })
       }
       /*
@@ -2646,9 +2699,6 @@ struct Index {
   private headerTitle(): string {
     if (this.stackPage === StackPage.CONVERSATION) {
       return this.selectedSessionTitle.length > 0 ? this.selectedSessionTitle : '会话';
-    }
-    if (this.stackPage === StackPage.DETAIL) {
-      return '详情';
     }
     if (this.stackPage === StackPage.DIAGNOSTICS) {
       return '连接诊断';
@@ -3114,16 +3164,6 @@ struct Index {
           this.stackPage = StackPage.MAIN;
         }
       })
-    } else if (this.stackPage === StackPage.DETAIL) {
-      DetailPane({
-        sections: this.detailSections,
-        onLineTap: (section: string, text: string) => {
-          // E130：详情行看起来可点，就得真的做一件事——复制该行
-          if (text.length > 0) {
-            copyText(text);
-          }
-        }
-      })
     } else if (this.showsConversation() && this.stackPage === StackPage.CONVERSATION) {
       // E125：会话统计行（官方措辞），贴在会话页头部——数据来自投影，没有就不占位置
       if (this.statsLine.length > 0) {
@@ -3217,7 +3257,7 @@ struct Index {
           SessionHub.shared().steerQueuedItem(itemId);
         },
         onOpenDetail: () => {
-          this.stackPage = StackPage.DETAIL;
+          this.detailSheetOpen = true;
         },
         searchOpen: this.searchOpen,
         onCloseSearch: () => {

@@ -314,7 +314,7 @@ console.log('\n## 导航：返回键的优先级阶梯（迁移前写在 Index.o
   // 【坑】`NavTab.SESSIONS` 是 `'workspaces'` 的**别名**（E108：会话并入工作区），
   // 所以"在会话页签"与"在工作区页签"是同一个状态；默认值必须写 'workspaces'。
   const nav = (o) => Object.assign({ tab: 'workspaces', stackPage: StackPage.MAIN, wsDrill: 0, hasSession: true, detailOpen: false }, o);
-  const ov = (o) => Object.assign({ credentialOpen: false, settingDraftOpen: false, searchOpen: false, choosingOpen: false, previewOpen: false }, o);
+  const ov = (o) => Object.assign({ credentialOpen: false, settingDraftOpen: false, searchOpen: false, choosingOpen: false, detailSheetOpen: false, previewOpen: false }, o);
 
   // 优先级：浮层之间也有先后（凭据 → 设置草稿 → 搜索 → 选择）
   t.eq('全开时先关凭据浮层', decideBack(nav({}), ov({ credentialOpen: true, settingDraftOpen: true, searchOpen: true, choosingOpen: true, previewOpen: true })), BackAction.CLOSE_CREDENTIAL);
@@ -322,7 +322,12 @@ console.log('\n## 导航：返回键的优先级阶梯（迁移前写在 Index.o
   t.eq('再关搜索', decideBack(nav({}), ov({ searchOpen: true, choosingOpen: true })), BackAction.CLOSE_SEARCH);
   t.eq('再关选择浮层', decideBack(nav({}), ov({ choosingOpen: true, previewOpen: true })), BackAction.CLOSE_CHOICE);
   // 浮层优先于二级页
-  t.eq('浮层优先于二级页', decideBack(nav({ stackPage: StackPage.DETAIL }), ov({ searchOpen: true })), BackAction.CLOSE_SEARCH);
+  t.eq('浮层优先于二级页', decideBack(nav({ stackPage: StackPage.DIAGNOSTICS }), ov({ searchOpen: true })), BackAction.CLOSE_SEARCH);
+  // 详情半模态（P1.5）：它盖在页面上，但排在真正的模态编辑态之后
+  t.eq('详情 Sheet 排在其它浮层之后', decideBack(nav({}), ov({ searchOpen: true, detailSheetOpen: true })), BackAction.CLOSE_SEARCH);
+  t.eq('详情 Sheet 优先于二级页', decideBack(nav({ stackPage: StackPage.DIAGNOSTICS }), ov({ detailSheetOpen: true })), BackAction.CLOSE_DETAIL_SHEET);
+  t.eq('详情 Sheet 优先于详情栏', decideBack(nav({ detailOpen: true }), ov({ detailSheetOpen: true })), BackAction.CLOSE_DETAIL_SHEET);
+  t.eq('详情 Sheet 优先于工作区下钻', decideBack(nav({ tab: 'workspaces', wsDrill: 3 }), ov({ detailSheetOpen: true })), BackAction.CLOSE_DETAIL_SHEET);
   // 二级页
   t.eq('二级页回主列表', decideBack(nav({ stackPage: StackPage.CONVERSATION }), ov({})), BackAction.STACK_TO_MAIN);
   // 详情
@@ -336,7 +341,7 @@ console.log('\n## 导航：返回键的优先级阶梯（迁移前写在 Index.o
   t.eq('不在首页签则回会话', decideBack(nav({ tab: 'settings' }), ov({})), BackAction.TAB_TO_SESSIONS);
   // 根层交给系统（**必须**是 EXIT，否则就是"按返回没反应"的假入口）
   t.eq('根层交给系统（不消费）', decideBack(nav({}), ov({})), BackAction.EXIT);
-  console.log('  ok    7 级阶梯的每一级 + 浮层内部先后都被断言');
+  console.log('  ok    返回键阶梯的每一级 + 浮层内部先后 + 详情半模态的位置，都被断言');
 
   // 页签归一化（E108/E110 的别名）
   t.eq('待决 → 工作区', normalizeTab('pending'), 'workspaces');
@@ -344,7 +349,7 @@ console.log('\n## 导航：返回键的优先级阶梯（迁移前写在 Index.o
   t.eq('设置保持设置', normalizeTab('settings'), 'settings');
 
   // 点页签：清栈 + 清会话选择 + 重读静态事实
-  const toSettings = selectTab(nav({ tab: 'workspaces', stackPage: StackPage.DETAIL, wsDrill: 3, hasSession: true }), 'settings');
+  const toSettings = selectTab(nav({ tab: 'workspaces', stackPage: StackPage.DIAGNOSTICS, wsDrill: 3, hasSession: true }), 'settings');
   t.eq('点设置：清栈', toSettings.stackPage, 'main');
   t.eq('点设置：清下钻', toSettings.wsDrill, 0);
   t.eq('点设置：清会话选择', toSettings.clearSession, true);

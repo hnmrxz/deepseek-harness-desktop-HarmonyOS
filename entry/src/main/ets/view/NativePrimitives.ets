@@ -116,3 +116,31 @@ export struct NativeSectionTitle {
     .width('100%')
   }
 }
+
+
+/**
+ * 半模态 Sheet 的统一参数（P1.5 的 NativeSheet）。
+ *
+ * 【为什么是"参数助手"而不是包装组件】ArkUI 的 Sheet 是**组件属性**（`.bindSheet(...)`），
+ * 不是可以独立摆放的组件；而本项目在真机上踩过「`@BuilderParam` 注入父 Builder 导致 JS 崩溃」
+ * （D4 记载，SettingsPane 因此改成直接传属性）。把 Sheet 包成一个需要注入 Builder 的组件，
+ * 等于把那个已知的坑重新引入。统一**参数**（高度/拖拽条/关闭按钮/消失回调）同样能拿到
+ * "全应用的 Sheet 观感一致"这份收益，且没有那个风险。
+ *
+ * 【消失回调为什么必填】`bindSheet(isShow, …)` 的 `isShow` 是**单向**的：用户下拉关闭或点关闭按钮时，
+ * 组件内部并不会把调用方的状态改回去。不同步的话，调用方的 `show` 会永远停在 true，
+ * 于是 **Sheet 再也打不开**（看起来像"点了没反应"）。所以这里强制要求传入状态复位回调。
+ */
+export function harmonySheetOptions(onGone: () => void, height: SheetSize = SheetSize.MEDIUM): SheetOptions {
+  const options: SheetOptions = {
+    height: height,
+    dragBar: true,
+    showClose: true,
+    // 关闭路径统一在这里收敛：拖拽/关闭按钮/点击遮罩都会走到它
+    shouldDismiss: (dismiss: SheetDismiss) => {
+      onGone();
+      dismiss.dismiss();
+    }
+  };
+  return options;
+}
