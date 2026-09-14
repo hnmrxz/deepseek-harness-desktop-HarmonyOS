@@ -1527,6 +1527,81 @@ struct Index {
   }
 
   /**
+   * 当前该显示哪个浮层（**从既有状态派生，不另立状态**）。
+   *
+   * 【为什么不新增一个 `sheetKind` 字段】那会造成两个真值来源：字段说"credential"、
+   * 而 `credentialRef` 已空——两者一旦不同步，就是"浮层里内容不对/关不掉"这类疑难 bug。
+   * 这里只做**派生**：谁的状态在，就显示谁。顺序即优先级（同时满足时按此取第一个）。
+   */
+  private sheetKind(): string {
+    if (this.detailSheetOpen) {
+      return 'detail';
+    }
+    if (this.choosing !== undefined) {
+      return 'choice';
+    }
+    if (this.credentialRef.length > 0) {
+      return 'credential';
+    }
+    if (this.folderOpen) {
+      return 'folder';
+    }
+    if (this.textSettingKey.length > 0) {
+      return 'text';
+    }
+    if (this.structSettingKey.length > 0) {
+      return 'struct';
+    }
+    return '';
+  }
+
+  /** 各类浮层的高度：内容长（详情/目录/整值编辑）给 LARGE，短表单给 MEDIUM */
+  private sheetHeight(): SheetSize {
+    const kind: string = this.sheetKind();
+    if (kind === 'detail' || kind === 'folder' || kind === 'struct') {
+      return SheetSize.LARGE;
+    }
+    return SheetSize.MEDIUM;
+  }
+
+  /**
+   * 关闭当前浮层：**一处复位全部**。
+   *
+   * 复位与"谁在显示"分开写是有意的——原生关闭路径（下拉/遮罩/关闭按钮）只知道"关了"，
+   * 不知道关的是哪一个；让宿主统一清干净，就不会出现"关掉后状态还留着、再也打不开"。
+   */
+  private closeSheet(): void {
+    this.detailSheetOpen = false;
+    this.choosing = undefined;
+    this.folderOpen = false;
+    this.credentialRef = '';
+    this.credentialDraft = '';
+    this.credentialNote = '';
+    this.textSettingKey = '';
+    this.textSettingDraft = '';
+    this.structSettingKey = '';
+    this.structSettingDraft = '';
+  }
+
+  /** 浮层内容分派（宿主的另一半：谁在显示就渲染谁） */
+  @Builder
+  sheetContent() {
+    if (this.sheetKind() === 'detail') {
+      this.detailSheet()
+    } else if (this.sheetKind() === 'choice') {
+      this.choiceSheetContent()
+    } else if (this.sheetKind() === 'credential') {
+      this.credentialSheetContent()
+    } else if (this.sheetKind() === 'folder') {
+      this.folderSheetContent()
+    } else if (this.sheetKind() === 'text') {
+      this.textSettingSheetContent()
+    } else if (this.sheetKind() === 'struct') {
+      this.structSettingSheetContent()
+    }
+  }
+
+  /**
    * 详情半模态内容（P1.5：手机上详情不再整页替换会话）。
    *
    * 复用既有的 `DetailPane`（它本就有 `onLineTap` 的"复制该行"行为），
@@ -1566,18 +1641,6 @@ struct Index {
       // 直接 `dlopen(libnode.so.127)` + `node::Start` 拉起（D6 §4.1 / E30/E31），
       // 不需要 XComponent，也不需要 Electron 的 nativeContext。
       // 阶段一那个 1×1 的 RuntimeHost 已随 web_engine 依赖一起移除。
-      if (this.credentialRef.length > 0) {
-        this.credentialSheet()
-      }
-      if (this.folderOpen) {
-        this.folderSheet()
-      }
-      if (this.textSettingKey.length > 0) {
-        this.textSettingSheet()
-      }
-      if (this.structSettingKey.length > 0) {
-        this.structSettingSheet()
-      }
     }
     .width('100%')
     .height('100%')
@@ -2040,7 +2103,7 @@ struct Index {
   }
 
   @Builder
-  folderSheet() {
+  folderSheetContent() {
     Column() {
       Column({ space: Sp.S }) {
         Text('选择工作区文件夹')
@@ -2132,16 +2195,13 @@ struct Index {
         }
         .width('100%')
       }
-      .width('86%')
-      .constraintSize({ maxHeight: '82%' })
+      .width('100%')
       .padding(Sp.L)
       .borderRadius(Radius.L)
       .backgroundColor($r('sys.color.background_secondary'))
     }
     .width('100%')
-    .height('100%')
-    .justifyContent(FlexAlign.Center)
-    .backgroundColor(HarmonyColor.MASK)
+    .padding(HarmonySpacing.CONTAINER)
   }
 
   // ───────────────────── 凭据写入浮层 ─────────────────────
@@ -2159,7 +2219,7 @@ struct Index {
    *      不该和「保存」长得一样。
    */
   @Builder
-  credentialSheet() {
+  credentialSheetContent() {
     Column() {
       Column({ space: Sp.S }) {
         Text(`配置 ${this.credentialRef}`)
@@ -2217,7 +2277,7 @@ struct Index {
             .width('100%')
         }
       }
-      .width('86%')
+      .width('100%')
       // 浮层自身也不该铺满：最多占屏高 80%（凭据浮层通常很短；这条是防止
       // "某个字段把面板撑开"这类观感再次发生）
       .constraintSize({ maxHeight: '80%' })
@@ -2226,9 +2286,7 @@ struct Index {
       .backgroundColor($r('sys.color.background_secondary'))
     }
     .width('100%')
-    .height('100%')
-    .justifyContent(FlexAlign.Center)
-    .backgroundColor(HarmonyColor.MASK)
+    .padding(HarmonySpacing.CONTAINER)
   }
 
   private closeCredentialSheet(): void {
@@ -2311,7 +2369,7 @@ struct Index {
    * `256000` 的差别在这里是实打实的后果。
    */
   @Builder
-  textSettingSheet() {
+  textSettingSheetContent() {
     Column() {
       Column({ space: Sp.S }) {
         Text(`编辑「${this.textSettingLabel}」`)
@@ -2363,9 +2421,7 @@ struct Index {
       .backgroundColor($r('sys.color.background_secondary'))
     }
     .width('100%')
-    .height('100%')
-    .justifyContent(FlexAlign.Center)
-    .backgroundColor(HarmonyColor.MASK)
+    .padding(HarmonySpacing.CONTAINER)
   }
 
   /** 编辑浮层里的约束说明（把服务端约束在**输入前**讲清楚） */
@@ -2465,7 +2521,7 @@ struct Index {
    *      不是合并——否则会以为没提到的部分会被保留。
    */
   @Builder
-  structSettingSheet() {
+  structSettingSheetContent() {
     Column() {
       Column({ space: Sp.S }) {
         Text(`编辑「${this.structSettingLabel}」`)
@@ -2540,15 +2596,13 @@ struct Index {
             .width('100%')
         }
       }
-      .width('92%')
+      .width('100%')
       .padding(Sp.L)
       .borderRadius(Radius.L)
       .backgroundColor($r('sys.color.background_secondary'))
     }
     .width('100%')
-    .height('100%')
-    .justifyContent(FlexAlign.Center)
-    .backgroundColor(HarmonyColor.MASK)
+    .padding(HarmonySpacing.CONTAINER)
   }
 
   /** 把草稿恢复为进入编辑器时的值（整值编辑的安全网） */
@@ -2647,12 +2701,21 @@ struct Index {
     }
     .width('100%')
     .height('100%')
-    /* 详情半模态：`isShow` 是单向的，故必须给消失回调复位状态，
-       否则下拉关闭后 show 永远停在 true、再也打不开（看起来像点了没反应）。 */
-    .bindSheet(this.detailSheetOpen, this.detailSheet(),
+    /*
+     * **浮层宿主**（P1.5）：全应用只在这里挂一次 `bindSheet`。
+     *
+     * 【为什么要一个宿主而不是每类浮层各挂一个】`bindSheet` 是**组件属性**，同一节点只能绑一个，
+     * 于是"多类浮层"就必须找多个节点——那样既难保证只有一个是打开的，
+     * 也把"当前该显示什么"散在各处。宿主把这两件事同时解决：
+     *   · 单一绑定 ⇒ 结构上不可能同时开出两个浮层；
+     *   · 单一分派（`sheetKind()`）+ 单一关闭（`closeSheet()`）⇒ 复位逻辑只写一次。
+     * `isShow` 是**单向**的：原生关闭（下拉/遮罩/关闭按钮）不会改调用方状态，
+     * 所以消失回调必须复位，否则 show 永远停在 true、再也打不开（看起来像"点了没反应"）。
+     */
+    .bindSheet(this.sheetKind().length > 0, this.sheetContent(),
       harmonySheetOptions(() => {
-        this.detailSheetOpen = false;
-      }))
+        this.closeSheet();
+      }, this.sheetHeight()))
   }
 
   @Builder
@@ -2697,18 +2760,6 @@ struct Index {
     .width('100%')
     .height(52)
     .padding({ left: Sp.M, right: Sp.S })
-    /*
-     * 枚举选择（模型 / 上游枚举设置）走**原生半模态**。
-     *
-     * 【为什么挂在页头而不是根 Stack】`bindSheet` 是**组件属性**，同一个节点只能绑定一个；
-     * 根 Stack 已经承担了"详情"那个 Sheet。页头在三种形态下都会渲染，挂这里既覆盖全形态，
-     * 又不与详情 Sheet 抢节点。
-     */
-    .bindSheet(this.choosing !== undefined, this.choiceSheetContent(),
-      harmonySheetOptions(() => {
-        // 原生关闭（下拉/关闭按钮/遮罩）必须复位状态，否则选择态永远留着、再也打不开
-        this.choosing = undefined;
-      }, SheetSize.MEDIUM))
   }
 
   private headerTitle(): string {
