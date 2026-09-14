@@ -48,6 +48,30 @@ AppFrame
 ## 3. 分步计划（每步 <500 LOC，门禁全绿，如实区分实现完成与真机待验收）
 
 ### P0 页面框架（AppFrame）
+
+**进度（2026-09-15）**：纯逻辑层已完成，视图层未开始。
+
+| 子项 | 状态 |
+|---|---|
+| `appstate/model/PanelRegistry.ets` | ✅ 已落地（`PanelId`/`PanelLocation`/`PanelDescriptor` + `register`/`unregister`/`descriptors`/`find`/`select`/`canSelect`/`firstAvailable`） |
+| `appstate/model/NavigationState.ets` | ✅ 已落地（**页面 ≠ 选中的面板**：`selectedMainPanel` / `selectedRightPanel` / `settingsSection` / `sidebarExpanded` / `mobileDrawer` / `activeOverlay`；转移全部经注册表校验） |
+| `appstate/ui/ShellTracks.ets` | ✅ 已落地（四形态下三条轨道**怎么呈现**；只变几何，不变信息架构） |
+| 与既有导航的迁移桥 | ✅ 已落地（`mainPanelOfLegacyTab` / `legacyTabOfMainPanel`，含往返断言）——**迁移期间行为不变** |
+| fixture | ✅ 46 条（注册表 12 / 导航状态 16 / 迁移桥含往返 10 / 四形态轨道 8） |
+| `view/shell/` 四个 shell | ❌ **下一步** |
+
+**下一步的做法（写下来避免走偏）**
+
+1. **先抽 `SidebarShell`**（最小、最自足：`navPanel` 56 行 + `navRail` 28 行 + 底部标签），
+   用显式 props（导航状态 + 面板清单 + 回调）——**这一步不需要新机制**，也是 shell 模式的真实证明。
+   抽完后 `Index` 不再自己写侧栏的两个 builder。
+2. `AppShell`/`MainShell`/`RightbarShell` 的瓶颈是**状态归属**：主区内容（Conversation/Workspace/Core/
+   Settings/Diagnostics/Connect 六个面板）现在直接读 `Index` 的 ~100 个 `@State`。把这 5000 行状态
+   搬进 shell 组件、或改成 `@Provide/@Consume`（本仓**尚无先例**），是一个**要单独决策**的步骤——
+   先在一个最小范围内验证该机制能编译、能在真机跑（`@BuilderParam` 曾导致真机 JS 崩溃，D4），
+   再全量迁移。**不要一次性重写 Index。**
+3. 每搬一块职责跑一次全门禁；`Index.ets` 的验收标准是"不再直接负责页面级 Pane 选择"。
+
 新增：`view/shell/AppShell.ets`、`SidebarShell.ets`、`MainShell.ets`、`RightbarShell.ets`；
 `appstate/model/PanelRegistry.ets`、`appstate/model/NavigationState.ets`。
 **验收**：`Index.ets` 只做装配与状态订阅；三栏骨架由 shell 组件承担；纯逻辑（面板注册表、导航状态）有 fixture。

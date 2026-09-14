@@ -1,0 +1,247 @@
+/**
+ * 面板注册表（P0-3：`PanelRegistry`）。
+ *
+ * ## 要解决的问题
+ *
+ * 现在"右侧显示什么"是 `DetailPane` 里的一串 `if`，而"主区显示哪个页面"由 `NavTab`
+ * 决定、`Index.ets` 直接装配 Pane。两者合起来意味着：**谁拥有哪个界面**这件事没有被表达出来，
+ * 于是每加一个面板就要改一遍大装配器。
+ *
+ * 官方 `ui-layout` 的做法是「面板选择 + 注册表」：sidebar / main / rightbar 是三条轨道，
+ * 每条轨道显示哪个面板由 `selectedPanel` 查注册表得到，**面板自己声明它属于哪条轨道**。
+ * 本文件把这件事落成纯逻辑：**位置（location）是面板的属性，不是页面的 if 分支**。
+ *
+ * ## 语义边界（照官方语义，不机械抄 API）
+ *
+ * | 语义 | 本文件如何表达 |
+ * |---|---|
+ * | 面板属于哪条轨道 | `PanelDescriptor.location`（SIDEBAR / MAIN / RIGHTBAR） |
+ * | 谁拥有它 | 注册时给出 `owner`（"workspace"/"settings"/"conversation"…）；**同一轨道同一 owner 的面板互斥** |
+ * | 出现顺序 | `order`（升序；相等时按 id 稳定排序，避免依赖注册顺序） |
+ * | 能不能用 | `available()` 谓词：**不可用的面板不出现在选择集里**，而不是"选得中但打不开" |
+ * | 选中 | `select(location, id)`：**只接受该轨道里可用的面板**，否则保持原值（不做静默回退到第一个） |
+ *
+ * 【为什么不做"静默回退"】回退会让"我点了 A 却显示 B"变成常态，而且不报错。
+ * 官方那侧同样要求面板必须存在/可用才能选中。故 `select` 失败时返回**原状态**，
+ * 由调用方决定是否改选（例如 `firstAvailable()`）。
+ */
+
+/** 一条轨道（官方把 sidebar / main / rightbar 看作独立结构，而不是一个页面里的几个区块） */
+export enum PanelLocation {
+  SIDEBAR = 'sidebar',
+  MAIN = 'main',
+  RIGHTBAR = 'rightbar',
+}
+
+/**
+ * 面板描述。
+ *
+ * `label`/`icon` 只给**默认值**：视图可以按设备改写呈现（四形态共享信息架构，
+ * 允许几何/呈现不同），但 `id`/`location`/`owner` 是语义，不能改。
+ */
+export interface PanelDescriptor {
+  id: string;
+  location: PanelLocation;
+  /** 哪一部分拥有它（互斥组）：例如 SIDEBAR 下的 "workspace" 与 "settings" */
+  owner: string;
+  label: string;
+  /** 系统符号资源名（`$r('sys.symbol.…')` 的键名，交给视图解析；模型不持有 Resource） */
+  icon: string;
+  order: number;
+  /** 是否可用（默认 true）。不可用的面板不进选择集 */
+  available: () => boolean;
+}
+
+/** 注册表快照（纯数据，便于测试与传递） */
+export interface PanelList {
+  location: PanelLocation;
+  panels: PanelDescriptor[];
+}
+
+export function emptyPanelList(location: PanelLocation): PanelList {
+  return { location: location, panels: [] };
+}
+
+/**
+ * 面板注册表。
+ *
+ * 【为什么是类而不是纯函数】注册表**有状态**（注册顺序、已注册集合），
+ * 但它的每个操作都是确定的、不碰 UI、不碰协议 ⇒ 仍可在本机直接测。
+ * 视图只读 `descriptors()` 与 `find()`，不自己维护名单。
+ */
+export class PanelRegistry {
+  private items: PanelDescriptor[] = [];
+
+  /** 注册一个面板。**同 id 重复注册会被拒绝**（返回 false），而不是静默覆盖 */
+  register(descriptor: PanelDescriptor): boolean {
+    if (descriptor.id.length === 0) {
+      return false;
+    }
+    if (this.find(descriptor.id) !== undefined) {
+      return false;
+    }
+    this.items.push(descriptor);
+    return true;
+  }
+
+  /** 注销（面板随能力消失时用，例如某个插件被禁用） */
+  unregister(id: string): boolean {
+    for (let i = 0; i < this.items.length; i++) {
+      if (this.items[i].id === id) {
+        this.items.splice(i, 1);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  find(id: string): PanelDescriptor | undefined {
+    for (let i = 0; i < this.items.length; i++) {
+      if (this.items[i].id === id) {
+        return this.items[i];
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * 某条轨道里**可用**的面板，按 `order` 升序、同序按 id 稳定排序。
+   *
+   * 【为什么不按注册顺序】注册顺序取决于插件装配次序，不同设备/不同版本都可能不同，
+   * 于是同一条侧栏在不同机器上顺序不一样——排序必须由 `order` + `id` 决定。
+   */
+  descriptors(location: PanelLocation): PanelDescriptor[] {
+    const out: PanelDescriptor[] = [];
+    for (let i = 0; i < this.items.length; i++) {
+      const d: PanelDescriptor = this.items[i];
+      if (d.location === location && d.available()) {
+        out.push(d);
+      }
+    }
+    out.sort((left: PanelDescriptor, right: PanelDescriptor): number => {
+      if (left.order !== right.order) {
+        return left.order - right.order;
+      }
+      return left.id < right.id ? -1 : (left.id > right.id ? 1 : 0);
+    });
+    return out;
+  }
+
+  /** 某条轨道里第一个可用面板的 id（没有任何可用面板时返回空串） */
+  firstAvailable(location: PanelLocation): string {
+    const list: PanelDescriptor[] = this.descriptors(location);
+    return list.length > 0 ? list[0].id : '';
+  }
+
+  /**
+   * 校验"这个 id 能不能被选中"。
+   *
+   * 【为什么要单独暴露】调用方常常需要在**改状态之前**知道能不能选
+   * （例如返回键的处理、深链解析）。把判断放在这里，避免各处自己 `find()` 之后
+   * 又忘了查 `available()` 与 `location`。
+   */
+  canSelect(location: PanelLocation, id: string): boolean {
+    const d: PanelDescriptor | undefined = this.find(id);
+    if (d === undefined) {
+      return false;
+    }
+    if (d.location !== location) {
+      return false;
+    }
+    return d.available();
+  }
+
+  /**
+   * 选中：返回**应落到哪个 id**。
+   *
+   * - id 合法且可用 ⇒ 返回 id
+   * - 否则 ⇒ 返回 `current`（**保持原状**，不静默回退到第一个）
+   */
+  select(location: PanelLocation, id: string, current: string): string {
+    return this.canSelect(location, id) ? id : current;
+  }
+
+  /** 当前注册了多少个面板（诊断/断言用） */
+  size(): number {
+    return this.items.length;
+  }
+}
+
+/* ───────────────────────── 内置面板清单（位置与 owner 的单一事实） ───────────────────────── */
+
+/** 侧栏面板 id（官方 sidebar 的固定席位） */
+export const PANEL_SIDEBAR_WORKSPACES: string = 'sidebar.workspaces';
+export const PANEL_SIDEBAR_CORE: string = 'sidebar.core';
+export const PANEL_SIDEBAR_SETTINGS: string = 'sidebar.settings';
+
+/** 右栏面板 id（官方右栏的六个候选） */
+export const PANEL_RIGHT_FILES: string = 'right.files';
+export const PANEL_RIGHT_PREVIEW: string = 'right.preview';
+export const PANEL_RIGHT_TRAJECTORY: string = 'right.trajectory';
+export const PANEL_RIGHT_TOOL: string = 'right.tool';
+export const PANEL_RIGHT_SUBAGENT: string = 'right.subagent';
+export const PANEL_RIGHT_DELIVERABLES: string = 'right.deliverables';
+
+/**
+ * 侧栏的三个固定席位（官方语义：Workspace 浏览器、端侧核心、Settings **固定在底部**）。
+ *
+ * `owner` 都用各自的域："workspace" / "core" / "settings"——侧栏不是"三个同级页签"，
+ * 而是**三个不同的域在侧栏里的入口**（`ui-workspace` 填 `sidebar.workspaces`、
+ * `ui-settings` 填 `sidebar.settings`）。
+ */
+export function sidebarPanels(): PanelDescriptor[] {
+  return [
+    { id: PANEL_SIDEBAR_WORKSPACES, location: PanelLocation.SIDEBAR, owner: 'workspace',
+      label: '工作区', icon: 'sys.symbol.square_stack_3d', order: 10, available: () => true },
+    { id: PANEL_SIDEBAR_CORE, location: PanelLocation.SIDEBAR, owner: 'core',
+      label: '核心', icon: 'sys.symbol.wrench_and_screwdriver', order: 20, available: () => true },
+    // order 很大 ⇒ 始终排在末尾（官方把 Settings 固定在底部）
+    { id: PANEL_SIDEBAR_SETTINGS, location: PanelLocation.SIDEBAR, owner: 'settings',
+      label: '设置', icon: 'sys.symbol.gearshape', order: 900, available: () => true },
+  ];
+}
+
+/**
+ * 右栏候选面板。
+ *
+ * 【`available` 就是"有没有内容"】例如没有交付物时"交付物"面板不该出现在选择集里——
+ * 这比"选得中但打开是空的"诚实。默认全可用，由装配方按实际能力改写。
+ */
+export function rightbarPanels(): PanelDescriptor[] {
+  return [
+    { id: PANEL_RIGHT_FILES, location: PanelLocation.RIGHTBAR, owner: 'workspace',
+      label: '文件', icon: 'sys.symbol.folder', order: 10, available: () => true },
+    { id: PANEL_RIGHT_TRAJECTORY, location: PanelLocation.RIGHTBAR, owner: 'conversation',
+      label: '轨迹', icon: 'sys.symbol.list_bullet', order: 20, available: () => true },
+    { id: PANEL_RIGHT_TOOL, location: PanelLocation.RIGHTBAR, owner: 'conversation',
+      label: '工具', icon: 'sys.symbol.wrench_and_screwdriver', order: 30, available: () => true },
+    { id: PANEL_RIGHT_SUBAGENT, location: PanelLocation.RIGHTBAR, owner: 'conversation',
+      label: '子代理', icon: 'sys.symbol.person_2', order: 40, available: () => true },
+    { id: PANEL_RIGHT_DELIVERABLES, location: PanelLocation.RIGHTBAR, owner: 'conversation',
+      label: '交付物', icon: 'sys.symbol.doc_text', order: 50, available: () => true },
+    { id: PANEL_RIGHT_PREVIEW, location: PanelLocation.RIGHTBAR, owner: 'workspace',
+      label: '预览', icon: 'sys.symbol.picture', order: 60, available: () => true },
+  ];
+}
+
+/**
+ * 按内置清单建一个可用注册表（装配方在启动时调用一次）。
+ *
+ * 三条轨道的清单分别由各自的工厂给（`mainPanels` 在 `NavigationState` 里，
+ * 因为它同时定义主区面板 id 的语义），注册表本身不关心有哪些面板。
+ */
+export function createPanelRegistry(mainPanels: PanelDescriptor[]): PanelRegistry {
+  const registry: PanelRegistry = new PanelRegistry();
+  for (let i = 0; i < mainPanels.length; i++) {
+    registry.register(mainPanels[i]);
+  }
+  const side: PanelDescriptor[] = sidebarPanels();
+  for (let i = 0; i < side.length; i++) {
+    registry.register(side[i]);
+  }
+  const right: PanelDescriptor[] = rightbarPanels();
+  for (let i = 0; i < right.length; i++) {
+    registry.register(right[i]);
+  }
+  return registry;
+}

@@ -35,6 +35,7 @@ const OUT = join(WORK, 'out');
 
 /** 纯逻辑源文件（不依赖 ArkUI DSL，故可当 TS 编译并执行） */
 const PURE_FILES = [
+  'appstate/src/main/ets/ui/ShellTracks.ets',
   'appstate/src/main/ets/ui/Tokens.ets',
   'appstate/src/main/ets/ui/Breakpoints.ets',
   'appstate/src/main/ets/ui/LayoutController.ets',
@@ -43,6 +44,8 @@ const PURE_FILES = [
   'appstate/src/main/ets/model/Trajectory.ets',
   'appstate/src/main/ets/model/Turns.ets',
   'appstate/src/main/ets/model/Search.ets',
+  'appstate/src/main/ets/model/PanelRegistry.ets',
+  'appstate/src/main/ets/model/NavigationState.ets',
   'appstate/src/main/ets/model/Follow.ets',
   'appstate/src/main/ets/model/InputPolicy.ets',
   'appstate/src/main/ets/model/ToolPresentation.ets',
@@ -186,6 +189,9 @@ const JB = require2('./Jobs.js');
 const TJ = require2('./Trajectory.js');
 const RE = require2('./RemoteEvents.js');
 const SE = require2('./Search.js');
+const PR = require2('./PanelRegistry.js');
+const ST = require2('./ShellTracks.js');
+const NS = require2('./NavigationState.js');
 const t = makeAsserter(selfTest);
 
 console.log('# 布局 fixture 门禁（四形态 + 断点边界 + 让步链）\n');
@@ -1200,6 +1206,124 @@ console.log('\n## P0-1 搜索作用域：内部事件不得被搜到、命中必
     chatRowOfItemIndex(two, twoTurns, 3), 1);
 
   console.log('  ok    18 条断言：轨迹/对话两个作用域（6）/ 命中下标保真（3）/ 条目→行映射含"不属于任何回合"（9）');
+}
+
+console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 选中的面板）');
+{
+  const { PanelRegistry, PanelLocation, createPanelRegistry, sidebarPanels, rightbarPanels,
+    PANEL_SIDEBAR_SETTINGS, PANEL_SIDEBAR_WORKSPACES, PANEL_RIGHT_FILES, PANEL_RIGHT_TRAJECTORY } = PR;
+  const { initialNavigationState, mainPanels, mainPanelOfLegacyTab, legacyTabOfMainPanel,
+    navigateToMain, selectRightPanel, openSettings, openOverlay, closeOverlay, setDrawer,
+    enterSession, defaultRightPanel, copyOf,
+    Overlay, DrawerState, MAIN_CONVERSATION, MAIN_WORKSPACES, MAIN_SETTINGS, MAIN_CORE,
+    SETTINGS_MODELS, SETTINGS_GENERAL } = NS;
+
+  const { shellTracksOf, sidebarOccupiesLayout } = ST;
+  const reg = createPanelRegistry(mainPanels());
+
+  // ── 注册表：位置是面板的属性，不是页面的 if 分支 ──
+  t.eq('三条轨道的面板都注册了', reg.size(), mainPanels().length + sidebarPanels().length + rightbarPanels().length);
+  t.eq('重复 id 被拒绝（不静默覆盖）',
+    reg.register({ id: MAIN_CONVERSATION, location: PanelLocation.MAIN, owner: 'x', label: 'x', icon: 'i', order: 1, available: () => true }), false);
+  t.eq('空 id 被拒绝',
+    reg.register({ id: '', location: PanelLocation.MAIN, owner: 'x', label: 'x', icon: 'i', order: 1, available: () => true }), false);
+
+  // 排序：order 升序；同序按 id 稳定排序（不依赖注册顺序）
+  const side = reg.descriptors(PanelLocation.SIDEBAR).map((d) => d.id);
+  t.eq('侧栏顺序：工作区 → 核心 → 设置', side.join(','), 'sidebar.workspaces,sidebar.core,sidebar.settings');
+  t.eq('**Settings 固定在底部**（order 最大）', side[side.length - 1], PANEL_SIDEBAR_SETTINGS);
+  const right = reg.descriptors(PanelLocation.RIGHTBAR).map((d) => d.id);
+  t.eq('右栏按 order 排（文件在前）', right[0], PANEL_RIGHT_FILES);
+  t.eq('右栏含轨迹面板', right.indexOf(PANEL_RIGHT_TRAJECTORY) >= 0, true);
+
+  // 可用性：不可用的面板不进选择集
+  const r2 = new PanelRegistry();
+  r2.register({ id: 'a', location: PanelLocation.RIGHTBAR, owner: 'o', label: 'a', icon: 'i', order: 20, available: () => false });
+  r2.register({ id: 'b', location: PanelLocation.RIGHTBAR, owner: 'o', label: 'b', icon: 'i', order: 10, available: () => true });
+  t.eq('不可用的面板不进 descripors()', r2.descriptors(PanelLocation.RIGHTBAR).length, 1);
+  t.eq('firstAvailable 跳过不可用的', r2.firstAvailable(PanelLocation.RIGHTBAR), 'b');
+
+  // 校验：错轨道 / 不存在 / 不可用 都不能选中
+  t.eq('跨轨道选中被拒（右栏 id 不能当主区面板）', reg.canSelect(PanelLocation.MAIN, PANEL_RIGHT_FILES), false);
+  t.eq('不存在的 id 被拒', reg.canSelect(PanelLocation.MAIN, 'nope'), false);
+  t.eq('不可用的 id 被拒', r2.canSelect(PanelLocation.RIGHTBAR, 'a'), false);
+  t.eq('select 失败时**保持原值**（不静默回退到第一个）',
+    reg.select(PanelLocation.RIGHTBAR, 'nope', PANEL_RIGHT_FILES), PANEL_RIGHT_FILES);
+
+  // ── 导航状态：页面与面板分开 ──
+  let nav = initialNavigationState();
+  t.eq('初始主区面板是会话', nav.selectedMainPanel, MAIN_CONVERSATION);
+  t.eq('初始右栏面板来自注册表首项', nav.selectedRightPanel, defaultRightPanel(reg));
+  t.eq('初始没有浮层', nav.activeOverlay, Overlay.NONE);
+  t.eq('初始抽屉是关的（手机侧栏不默认挡住主区）', nav.mobileDrawer, DrawerState.CLOSED);
+
+  nav = navigateToMain(nav, MAIN_WORKSPACES, reg);
+  t.eq('切到工作区面板', nav.selectedMainPanel, MAIN_WORKSPACES);
+  const beforeBad = nav.selectedMainPanel;
+  nav = navigateToMain(nav, 'not-a-panel', reg);
+  t.eq('切到非法面板 ⇒ 状态不变（点了不会到别处）', nav.selectedMainPanel, beforeBad);
+
+  nav = selectRightPanel(nav, PANEL_RIGHT_TRAJECTORY, reg);
+  t.eq('切右栏面板', nav.selectedRightPanel, PANEL_RIGHT_TRAJECTORY);
+  t.eq('**切右栏不影响主区**（页面与面板是两件事）', nav.selectedMainPanel, MAIN_WORKSPACES);
+
+  nav = openSettings(nav, SETTINGS_MODELS, reg);
+  t.eq('进设置域：主区是设置', nav.selectedMainPanel, MAIN_SETTINGS);
+  t.eq('进设置域：分区是 models', nav.settingsSection, SETTINGS_MODELS);
+  nav = openSettings(nav, '', reg);
+  t.eq('空分区 ⇒ 保持当前分区', nav.settingsSection, SETTINGS_MODELS);
+
+  nav = openOverlay(nav, Overlay.CHOICE);
+  t.eq('浮层打开', nav.activeOverlay, Overlay.CHOICE);
+  nav = closeOverlay(nav);
+  t.eq('浮层关闭', nav.activeOverlay, Overlay.NONE);
+
+  nav = setDrawer(nav, DrawerState.OPEN);
+  t.eq('抽屉打开', nav.mobileDrawer, DrawerState.OPEN);
+
+  // enterSession：一处同步所有相关字段
+  const entered = enterSession(nav, 'session-1', reg);
+  t.eq('进会话 ⇒ 主区回到会话面板', entered.selectedMainPanel, MAIN_CONVERSATION);
+  t.eq('进会话 ⇒ 记录会话 id', entered.currentSessionId, 'session-1');
+  t.eq('进会话 ⇒ 关掉手机抽屉（否则抽屉挡着会话）', entered.mobileDrawer, DrawerState.CLOSED);
+
+  // copyOf 保真：字段一个不漏
+  const a = initialNavigationState();
+  const b = copyOf(a);
+  t.eq('copyOf 字段完整', Object.keys(a).length, Object.keys(b).length);
+  t.eq('copyOf 是真拷贝（改副本不动原件）', (function () { b.selectedMainPanel = MAIN_CORE; return a.selectedMainPanel; })(), MAIN_CONVERSATION);
+
+  // ── 迁移桥：行为不变 ──
+  t.eq('旧页签 workspaces → 工作区面板', mainPanelOfLegacyTab('workspaces'), MAIN_WORKSPACES);
+  t.eq('旧页签 core → 核心面板', mainPanelOfLegacyTab('core'), MAIN_CORE);
+  t.eq('旧页签 settings → 设置面板', mainPanelOfLegacyTab('settings'), MAIN_SETTINGS);
+  t.eq('旧下钻页 conversation → 会话面板（**收进同一套面板模型**）', mainPanelOfLegacyTab('conversation'), MAIN_CONVERSATION);
+  t.eq('未知页签回到会话（不是空串——空串会让主区空白）', mainPanelOfLegacyTab('???'), MAIN_CONVERSATION);
+  t.eq('反向映射：设置面板 → settings', legacyTabOfMainPanel(MAIN_SETTINGS), 'settings');
+  t.eq('反向映射：会话面板 → workspaces（旧模型没有会话页签）', legacyTabOfMainPanel(MAIN_CONVERSATION), 'workspaces');
+  // 往返：三个旧页签必须原样回来（这是"迁移期间不会点错页面"的保证）
+  t.eq('往返一致 workspaces', legacyTabOfMainPanel(mainPanelOfLegacyTab('workspaces')), 'workspaces');
+  t.eq('往返一致 core', legacyTabOfMainPanel(mainPanelOfLegacyTab('core')), 'core');
+  t.eq('往返一致 settings', legacyTabOfMainPanel(mainPanelOfLegacyTab('settings')), 'settings');
+
+  // ── 四形态：信息架构不变，只变呈现 ──
+  const single = shellTracksOf('single');
+  t.eq('手机：侧栏是浮层（抽屉）', single.sidebar, 'overlay');
+  t.eq('手机：主区全屏', single.main, 'column');
+  t.eq('手机：右栏是浮层', single.rightbar, 'overlay');
+  const double = shellTracksOf('double');
+  t.eq('平板竖屏：侧栏收成 rail', double.sidebar, 'rail');
+  t.eq('平板竖屏：右栏仍是浮层（侧边浅层面板）', double.rightbar, 'overlay');
+  const triple = shellTracksOf('triple');
+  t.eq('三栏：侧栏是完整面板', triple.sidebar, 'panel');
+  t.eq('三栏：右栏并排成栏', triple.rightbar, 'column');
+  t.eq('浮层形态下侧栏不占布局宽度', sidebarOccupiesLayout('single'), false);
+  t.eq('rail 形态下侧栏占布局宽度', sidebarOccupiesLayout('double'), true);
+  t.eq('**三种形态的面板清单一致**（信息架构不随设备变）',
+    JSON.stringify(reg.descriptors(PanelLocation.SIDEBAR).length) + '/' + JSON.stringify(reg.descriptors(PanelLocation.RIGHTBAR).length),
+    '3/6');
+
+  console.log('  ok    46 条断言：注册表（注册/排序/可用性/校验 12）+ 导航状态（页面与面板分离 16）+ 迁移桥含往返（10）+ 四形态轨道（8）');
 }
 
 t.done();

@@ -174,6 +174,27 @@ export type { DiffLine, DiffPresentation, DiffStat, ToolDiff } from './model/Too
 export { contextMenuGestures, contextMenuHintLabel, hoverEnabled, MenuGesture } from './model/InputPolicy';
 export type { InputModality } from './model/InputPolicy';
 
+// ── 页面框架：面板注册表与导航状态（P0：官方信息架构对齐；纯逻辑，可本机直接测） ──
+export {
+  createPanelRegistry, PanelLocation, PanelRegistry, rightbarPanels, sidebarPanels,
+  PANEL_RIGHT_DELIVERABLES, PANEL_RIGHT_FILES, PANEL_RIGHT_PREVIEW, PANEL_RIGHT_SUBAGENT,
+  PANEL_RIGHT_TOOL, PANEL_RIGHT_TRAJECTORY, PANEL_SIDEBAR_CORE, PANEL_SIDEBAR_SETTINGS,
+  PANEL_SIDEBAR_WORKSPACES,
+} from './model/PanelRegistry';
+export type { PanelDescriptor, PanelList } from './model/PanelRegistry';
+export {
+  closeOverlay, copyOf, defaultRightPanel, defaultSidebarPanel, DrawerState, enterSession,
+  initialNavigationState, legacyTabOfMainPanel, mainPanelOfLegacyTab, mainPanels,
+  navigateToMain, openOverlay, openSettings, selectRightPanel, setDrawer, setSidebarExpanded,
+  MAIN_CONNECT, MAIN_CONVERSATION, MAIN_CORE, MAIN_DIAGNOSTICS, MAIN_SETTINGS, MAIN_WORKSPACES,
+  Overlay as NavOverlay, SETTINGS_GENERAL, SETTINGS_INVENTORY, SETTINGS_MODELS, SETTINGS_PLUGINS,
+} from './model/NavigationState';
+export type { NavigationState } from './model/NavigationState';
+
+// ── 三条轨道在四形态下的呈现（P0：AppFrame 的几何层） ──
+export { shellTracksOf, sidebarOccupiesLayout, TrackPresentation } from './ui/ShellTracks';
+export type { ShellTracks } from './ui/ShellTracks';
+
 // ── 后台任务（P2：会话头部的任务注册表；纯函数，可本机直接测） ──
 export {
   jobCountLabel, jobDotState, jobDurationText, jobDurationTitle, jobElapsedMs, jobIsLive,

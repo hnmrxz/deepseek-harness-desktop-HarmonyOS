@@ -134,7 +134,7 @@ hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 | `hostcore/` | 端侧 Host 的入口脚本与 profile（`cordis.patch.yml`）、`fetch` 垫片，以及为绕开"端侧无 WASM"而做的 `undici` 模块名解析钩子（后者已接线并端到端验证，见矩阵 §3.2） |
 | `hostruntime/` | 核心版本仓库、激活事务、运行时载体（`RuntimePort` → `NodeRuntime`） |
 | `appstate/` | 客户端状态中枢与投影（会话、轨迹、工作区、设置、凭据、插件、核心视图）；**设计令牌与布局/导航决策**（`ui/Tokens`、`ui/HarmonyTheme`、`ui/Breakpoints`、`ui/LayoutController`、`ui/NavigationController`；**回合模型** `model/Turns`、**贴底跟随模型** `model/Follow`、**输入模态策略** `model/InputPolicy`（长按/右键/悬停的差异收敛成策略）、**输入模态事实** `model/InputFacts`（设备枚举 / 事件证据 / 形态猜测三者的优先级）、**轨迹时间线** `model/Timeline`（官方七种类标签 / 累计比例 / 拖动聚焦 / 会话统计四项）——纯逻辑，可在本机直接测，
-**工具呈现** `model/ToolPresentation`（按工具类别判定图标/语气/展开态）、**改动对照** `model/ToolDiff`（编辑类工具出"改了什么"，规则逐条对齐官方渲染器）、`tools/check-layout-fixtures.mjs` 对它们共 388 条断言） |
+**工具呈现** `model/ToolPresentation`（按工具类别判定图标/语气/展开态）、**改动对照** `model/ToolDiff`（编辑类工具出"改了什么"，规则逐条对齐官方渲染器）、`tools/check-layout-fixtures.mjs` 对它们共 440 条断言） |
 | `platform/` | 系统能力封装（文件选择、剪贴板、通知、窗口记忆等） |
 | `dshcompat/` | 与上游协议有关的**全部**事实：端点、参数形状、事件类型与投影键 |
 | `tools/` | 构建与检查脚本（核心打包、依赖闭包、上架红线、协议往返、死按钮扫描等） |
