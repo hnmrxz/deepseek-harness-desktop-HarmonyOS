@@ -143,6 +143,7 @@ export {
   KNOWN_EVENT_TYPE_COUNT,
   isUserAuthoredEvent,
   isSystemAuthoredEvent,
+  isConversationVisibleEvent,
   FORWARDED_EVENTS,
   ForwardedEventMode,
   forwardedModeOf,

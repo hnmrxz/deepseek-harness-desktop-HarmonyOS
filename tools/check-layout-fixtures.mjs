@@ -42,12 +42,16 @@ const PURE_FILES = [
   // 回合模型（§8）：纯逻辑，可在本机直接执行
   'appstate/src/main/ets/model/Trajectory.ets',
   'appstate/src/main/ets/model/Turns.ets',
+  'appstate/src/main/ets/model/Search.ets',
   'appstate/src/main/ets/model/Follow.ets',
   'appstate/src/main/ets/model/InputPolicy.ets',
   'appstate/src/main/ets/model/ToolPresentation.ets',
   'appstate/src/main/ets/model/ToolDiff.ets',
   'appstate/src/main/ets/model/InputFacts.ets',
   'appstate/src/main/ets/model/Timeline.ets',
+  'appstate/src/main/ets/model/Jobs.ets',
+  'dshcompat/src/main/ets/RemoteEvents.ets',
+  'dshcompat/src/main/ets/EventShape.ets',
   'appstate/src/main/ets/model/Present.ets'
 ];
 
@@ -178,7 +182,10 @@ const TP = require2('./ToolPresentation.js');
 const TD = require2('./ToolDiff.js');
 const IF = require2('./InputFacts.js');
 const TL = require2('./Timeline.js');
+const JB = require2('./Jobs.js');
 const TJ = require2('./Trajectory.js');
+const RE = require2('./RemoteEvents.js');
+const SE = require2('./Search.js');
 const t = makeAsserter(selfTest);
 
 console.log('# 布局 fixture 门禁（四形态 + 断点边界 + 让步链）\n');
@@ -421,9 +428,14 @@ console.log('\n## 回合模型（§8：Turn → ProcessGroup + Answer）');
   // 空过程 ⇒ 不建分组（§8「tool-only 空节点不显示」）
   t.eq('没有过程条目时不建分组', hasProcessGroup(turns[1]), false);
 
-  // 对话视图的可见集合：用户消息 + 回答 + notices（错误要留），不含工具/思考
+  // 对话视图的可见集合：用户消息 + 回答 + notices（**错误要留**），不含工具/思考。
+  //
+  // 【这里曾经自相矛盾】注释写着"错误要留"，期望值却把 `e1` 漏掉了——因为旧判据是
+  // "speaker 不是 SYSTEM 就显示"，而这条错误条的 speaker 恰好是 SYSTEM，
+  // 于是被静默丢掉。**断言的旧期望把 bug 固化了下来**（P0-1 修判据时才发现）。
+  // 新判据按结构与来源判定：ERROR 永远进 notices ⇒ 可见。
   const chat = chatVisibleItems(turns).map((i) => i.id);
-  t.eq('对话视图可见集合', chat, ['u1', 'a1', 'u2', 'a2']);
+  t.eq('对话视图可见集合（含错误）', chat, ['u1', 'a1', 'u2', 'a2', 'e1']);
 
   // 首条用户消息之前的内容单独成回合
   const pre = groupTurns([err, u1, a1], false);
@@ -837,7 +849,7 @@ console.log('\n## 轨迹时间线（P2 §11：交互式时间总览；种类/比
     id, kind, speaker: speaker || 'assistant', elapsedMs: elapsedMs || 0, at: at || 0,
     body: '', reasoning: '', model: '', toolName: '', callId: '', toolArgs: '',
     toolState: 'success', toolOutput: '', subagentName: '', fileName: '', fileSize: 0,
-    title: '', progress: '', percent: -1, streaming: false, expanded: false,
+    title: '', progress: '', percent: -1, streaming: false, expanded: false, internal: false,
   });
 
   // ── 种类标签：逐字取官方中文 ──
@@ -945,6 +957,249 @@ console.log('\n## 轨迹时间线（P2 §11：交互式时间总览；种类/比
     decodeNoTokens.filter((l) => l.key === 'tps').length, 0);
 
   console.log('  ok    47 条断言：官方种类标签 / 条目映射（含"不产生格子"的四类）/ 累计比例 / 拖动聚焦与夹取 / 会话统计四项');
+}
+
+console.log('\n## 后台任务（P2：会话头部的任务注册表；官方 dsh-client-ui-jobs 的规则）');
+{
+  const {
+    JobDot, jobIsLive, jobDotState, jobStatusLabel, jobDurationText, jobElapsedMs,
+    orderedJobs, liveJobCount, jobCountLabel, jobListVisible, jobRowStatusText,
+    jobDurationTitle, jobTickerNeeded, jobListA11y,
+  } = JB;
+
+  const job = (id, status, startedAt, finishedAt, kind, label, detail) => {
+    const j = { id, kind: kind || 'bash', label: label || ('job-' + id), status, startedAt };
+    if (finishedAt !== undefined) { j.finishedAt = finishedAt; }
+    if (detail !== undefined) { j.detail = detail; }
+    return j;
+  };
+
+  // ── live 判定（官方 isLive） ──
+  t.eq('running 算进行中', jobIsLive(job('a', 'running', 0)), true);
+  t.eq('stopping 也算进行中（请求停止尚未落地）', jobIsLive(job('b', 'stopping', 0)), true);
+  t.eq('completed 不算', jobIsLive(job('c', 'completed', 0, 10)), false);
+  t.eq('killed 不算', jobIsLive(job('d', 'killed', 0, 10)), false);
+  t.eq('failed 不算', jobIsLive(job('e', 'failed', 0, 10)), false);
+
+  // ── 状态点语义（官方 dotState；stopping 与 killed 共用 attention 色） ──
+  t.eq('running → ongoing', jobDotState('running'), JobDot.ONGOING);
+  t.eq('stopping → warning', jobDotState('stopping'), JobDot.WARNING);
+  t.eq('killed → warning（与 stopping 同色：都是"按请求结束"）', jobDotState('killed'), JobDot.WARNING);
+  t.eq('completed → done', jobDotState('completed'), JobDot.DONE);
+  t.eq('failed → error', jobDotState('failed'), JobDot.ERROR);
+  t.eq('未知状态 → error（宁可提示异常，也不显示成正常）', jobDotState('forged'), JobDot.ERROR);
+
+  // ── 状态文案（逐字取官方中文） ──
+  t.eq('running 文案', jobStatusLabel('running'), '运行中');
+  t.eq('stopping 文案', jobStatusLabel('stopping'), '正在停止');
+  t.eq('completed 文案', jobStatusLabel('completed'), '已完成');
+  t.eq('killed 文案是「已取消」', jobStatusLabel('killed'), '已取消');
+  t.eq('failed 文案', jobStatusLabel('failed'), '已失败');
+
+  // ── 时长：最多两个相邻单位，小时封顶 ──
+  t.eq('12 秒', jobDurationText(12 * 1000), '12秒');
+  t.eq('0 秒（负数也被夹到 0）', jobDurationText(-5), '0秒');
+  t.eq('1 分 5 秒', jobDurationText(65 * 1000), '1分5秒');
+  t.eq('59 分 59 秒', jobDurationText(3599 * 1000), '59分59秒');
+  t.eq('1 小时 0 分（小时是最大单位，不再长出天/月）', jobDurationText(3600 * 1000), '1小时0分');
+  t.eq('30 小时 0 分（不折成"天"）', jobDurationText(30 * 3600 * 1000), '30小时0分');
+
+  // ── 时长算法 ──
+  t.eq('进行中按 now 算', jobElapsedMs(job('a', 'running', 1000), 5000), 4000);
+  t.eq('已结束按 finishedAt 算（不受 now 影响）', jobElapsedMs(job('b', 'completed', 1000, 3000), 999999), 2000);
+  t.eq('已结束但缺 finishedAt ⇒ 算 0（不拿"现在"去算已结束的任务）', jobElapsedMs(job('c', 'completed', 1000), 999999), 0);
+  t.eq('时钟回退也不出负时长', jobElapsedMs(job('d', 'running', 5000), 1000), 0);
+
+  // ── 排序（官方 ordered）：进行中在前按开始升序，已结束按结束倒序 ──
+  const jobs = [
+    job('done-old', 'completed', 100, 1000),
+    job('live-late', 'running', 500),
+    job('done-new', 'completed', 200, 5000),
+    job('live-early', 'running', 300),
+    job('killed', 'killed', 150, 3000),
+  ];
+  const order = orderedJobs(jobs).map((j) => j.id).join(',');
+  t.eq('进行中在前（按开始时间升序），已结束按结束时间倒序',
+    order, 'live-early,live-late,done-new,killed,done-old');
+  t.eq('原数组不被就地改动（返回副本）', jobs[0].id, 'done-old');
+  // 同毫秒结束的两条退回开始时间升序 —— 官方为了"不依赖宿主 map 迭代顺序"
+  const tie = orderedJobs([
+    job('t-late', 'completed', 200, 5000),
+    job('t-early', 'completed', 100, 5000),
+  ]).map((j) => j.id).join(',');
+  t.eq('同毫秒结束时按开始时间升序（排序不依赖迭代顺序）', tie, 't-early,t-late');
+
+  // ── 计数与可见性 ──
+  t.eq('进行中计数', liveJobCount(jobs), 2);
+  t.eq('有进行中 ⇒ 文案说"运行中"', jobCountLabel(jobs), '2 个后台任务运行中');
+  t.eq('只有已结束 ⇒ 只报数量', jobCountLabel([job('x', 'completed', 0, 10), job('y', 'failed', 0, 10)]), '2 个后台任务');
+  t.eq('**一个任务都没有 ⇒ 控件不出现**（官方：普通对话不该长出没用的控件）', jobListVisible([]), false);
+  t.eq('有任务 ⇒ 出现', jobListVisible([job('x', 'completed', 0, 10)]), true);
+
+  // ── 行上的状态文字：detail 优先 ──
+  t.eq('有 detail ⇒ 显示 detail', jobRowStatusText(job('a', 'running', 0, undefined, undefined, undefined, 'npm run build')), 'npm run build');
+  t.eq('没有 detail ⇒ 退回状态文案', jobRowStatusText(job('b', 'running', 0)), '运行中');
+  t.eq('空串 detail 也退回状态文案', jobRowStatusText(job('c', 'running', 0, undefined, undefined, undefined, '')), '运行中');
+
+  // ── 时长标题（官方 duration.title.live） ──
+  t.eq('进行中的标题是"已运行 …"', jobDurationTitle(job('a', 'running', 0), 65 * 1000), '已运行 1分5秒');
+  t.eq('已结束的标题是"共 …"', jobDurationTitle(job('b', 'completed', 0, 2000), 0), '共 2秒');
+
+  // ── 定时器只在需要时起（移动端不多耗电） ──
+  t.eq('有进行中 ⇒ 需要定时器', jobTickerNeeded([job('a', 'running', 0)]), true);
+  t.eq('全是已结束 ⇒ 不需要定时器', jobTickerNeeded([job('b', 'completed', 0, 10)]), false);
+  t.eq('空列表 ⇒ 不需要定时器', jobTickerNeeded([]), false);
+
+  // ── 无障碍 ──
+  t.eq('列表无障碍文案含计数', jobListA11y([job('a', 'running', 0)]), '后台任务：1 个后台任务运行中');
+
+  console.log('  ok    40 条断言：live 判定 / 状态点语义 / 五种文案 / 时长三档与小时封顶 / 排序（含同毫秒退回） / 计数与"无任务不出现" / detail 优先 / 定时器按需');
+}
+
+console.log('\n## P0-1 对话可见性：内部事件不得进入 Conversation（结构与来源判定，不靠文本）');
+{
+  const { isConversationVisibleEvent } = RE;
+  const { ConversationAudience, conversationAudienceOf, needsInternalIsolation } = TM;
+  const { TrajectoryKind, Speaker } = TJ;
+
+  // ── ① 事件类型白名单（来源事实，在投影时判定） ──
+  t.eq('user/message 可见', isConversationVisibleEvent('user/message'), true);
+  t.eq('assistant/message 可见', isConversationVisibleEvent('assistant/message'), true);
+  t.eq('**system/message 不可见**（系统提示词）', isConversationVisibleEvent('system/message'), false);
+  t.eq('**未识别类型不可见**（正文是原始载荷 JSON）',
+    isConversationVisibleEvent('totally/unknown-event'), false);
+  t.eq('**command/run 不可见**（斜杠命令不是回答）', isConversationVisibleEvent('command/run'), false);
+  t.eq('**compaction/summary 不可见**（内部 context）',
+    isConversationVisibleEvent('compaction/summary'), false);
+  t.eq('request/context 不可见', isConversationVisibleEvent('request/context'), false);
+  t.eq('审计类不可见', isConversationVisibleEvent('permission/preset'), false);
+  t.eq('tool/call 可见（进过程分组）', isConversationVisibleEvent('tool/call'), true);
+  t.eq('tool/result 可见（进过程分组）', isConversationVisibleEvent('tool/result'), true);
+  t.eq('llm/retry 可见（错误要留）', isConversationVisibleEvent('llm/retry'), true);
+  t.eq('todo/write 可见（任务行）', isConversationVisibleEvent('todo/write'), true);
+  t.eq('deliverables/presented 可见', isConversationVisibleEvent('deliverables/presented'), true);
+  // 反向：白名单不能靠"像消息"来猜
+  t.eq('名字里带 message 但不是会话消息 ⇒ 不可见',
+    isConversationVisibleEvent('session/title-llm-request'), false);
+
+  // ── ② 条目 → 对话角色 ──
+  const mk = (id, kind, speaker, internal) => ({
+    id, kind, speaker, internal, at: 0, body: '', reasoning: '', model: '', elapsedMs: 0,
+    toolName: '', callId: '', toolArgs: '', toolState: 'pending', toolOutput: '',
+    subagentName: '', fileName: '', fileSize: 0, title: '', progress: '', percent: -1,
+    streaming: false, expanded: false,
+  });
+  const A = ConversationAudience;
+  t.eq('用户消息 → USER', conversationAudienceOf(mk('u', TrajectoryKind.MESSAGE, Speaker.USER, false)), A.USER);
+  t.eq('助手消息 → ASSISTANT', conversationAudienceOf(mk('a', TrajectoryKind.MESSAGE, Speaker.ASSISTANT, false)), A.ASSISTANT);
+  t.eq('错误 → NOTICE（规格：Conversation 允许 ERROR）',
+    conversationAudienceOf(mk('e', TrajectoryKind.ERROR, Speaker.ASSISTANT, false)), A.NOTICE);
+  t.eq('工具 → PROCESS（只进折叠的过程分组）',
+    conversationAudienceOf(mk('t', TrajectoryKind.TOOL, Speaker.ASSISTANT, false)), A.PROCESS);
+  t.eq('思考 → PROCESS', conversationAudienceOf(mk('r', TrajectoryKind.REASONING, Speaker.ASSISTANT, false)), A.PROCESS);
+  t.eq('系统角色的消息 → HIDDEN（即便来源可见）',
+    conversationAudienceOf(mk('s', TrajectoryKind.MESSAGE, Speaker.SYSTEM, false)), A.HIDDEN);
+  t.eq('**内部条目一律 HIDDEN**（不管它长得多像回答）',
+    conversationAudienceOf(mk('i', TrajectoryKind.MESSAGE, Speaker.ASSISTANT, true)), A.HIDDEN);
+  t.eq('内部条目需要视觉隔离', needsInternalIsolation(mk('i', TrajectoryKind.MESSAGE, Speaker.ASSISTANT, true)), true);
+  t.eq('普通回答不需要隔离', needsInternalIsolation(mk('a', TrajectoryKind.MESSAGE, Speaker.ASSISTANT, false)), false);
+
+  // ── ③ 分组与可见集合：内部事件不占任何位置 ──
+  const items = [
+    mk('sys', TrajectoryKind.MESSAGE, Speaker.SYSTEM, true),        // 系统提示词
+    mk('ctx', TrajectoryKind.REASONING, Speaker.ASSISTANT, true),   // 压缩摘要（内部）
+    mk('unk', TrajectoryKind.MESSAGE, Speaker.ASSISTANT, true),     // 未识别事件（原始 JSON）
+    mk('cmd', TrajectoryKind.MESSAGE, Speaker.ASSISTANT, true),     // 斜杠命令
+    mk('u1', TrajectoryKind.MESSAGE, Speaker.USER, false),
+    mk('r1', TrajectoryKind.REASONING, Speaker.ASSISTANT, false),
+    mk('t1', TrajectoryKind.TOOL, Speaker.ASSISTANT, false),
+    mk('a1', TrajectoryKind.MESSAGE, Speaker.ASSISTANT, false),
+    mk('e1', TrajectoryKind.ERROR, Speaker.ASSISTANT, false),
+  ];
+  const turns = TM.groupTurns(items, false);
+  t.eq('内部事件不产生回合（只有一条真实用户消息）', turns.length, 1);
+  t.eq('内部事件不占过程分组（过程只有思考+工具）', turns[0].process.length, 2);
+  t.eq('内部事件不占 notices（notices 只有错误）', turns[0].notices.length, 1);
+  t.eq('答案仍是那条真实回答', turns[0].answer.id, 'a1');
+  const visible = TM.chatVisibleItems(turns).map((i) => i.id);
+  t.eq('**对话里只剩 用户/回答/错误 三类**', visible.join(','), 'u1,a1,e1');
+  t.eq('对话里没有 system/message', visible.indexOf('sys') < 0, true);
+  t.eq('对话里没有内部 context', visible.indexOf('ctx') < 0, true);
+  t.eq('对话里没有未识别事件（原始 JSON）', visible.indexOf('unk') < 0, true);
+  t.eq('对话里没有斜杠命令', visible.indexOf('cmd') < 0, true);
+  // 内部事件**仍在 items 里**（轨迹要看得到）
+  t.eq('内部事件仍保留在轨迹条目里（可查、可排查）', items.filter((i) => i.internal).length, 4);
+
+  // ── ④ 不靠文本：正文里写着 SYSTEM 也照样按结构判定 ──
+  const sneaky = mk('sneaky', TrajectoryKind.MESSAGE, Speaker.ASSISTANT, false);
+  sneaky.body = 'SYSTEM: you are a helpful assistant';
+  t.eq('正文含 SYSTEM 的正常回答仍可见（判据不看文本）',
+    conversationAudienceOf(sneaky), A.ASSISTANT);
+  const disguisedInternal = mk('disguise', TrajectoryKind.MESSAGE, Speaker.ASSISTANT, true);
+  disguisedInternal.body = '这是一段普通回答';
+  t.eq('长得像回答的内部事件仍被隐藏（判据不看文本）',
+    conversationAudienceOf(disguisedInternal), A.HIDDEN);
+
+  console.log('  ok    36 条断言：事件类型白名单（14）/ 条目角色（9）/ 分组与可见集合（11）/ 不靠文本（2）');
+}
+
+console.log('\n## P0-1 搜索作用域：内部事件不得被搜到、命中必须映射到正确的行');
+{
+  const { matchTrajectoryIndices, matchConversationIndices, chatRowOfItemIndex } = SE;
+  const { TrajectoryKind, Speaker } = TJ;
+  const mk = (id, kind, speaker, internal, body) => ({
+    id, kind, speaker, internal, at: 0, body: body || '', reasoning: '', model: '',
+    elapsedMs: 0, toolName: '', callId: '', toolArgs: '', toolState: 'pending', toolOutput: '',
+    subagentName: '', fileName: '', fileSize: 0, title: '', progress: '', percent: -1,
+    streaming: false, expanded: false,
+  });
+
+  const items = [
+    mk('sys', TrajectoryKind.MESSAGE, Speaker.SYSTEM, true, 'You are an AI agent powered by DeepSeek Harness'),
+    mk('u1', TrajectoryKind.MESSAGE, Speaker.USER, false, '帮我看看 harness 的配置'),
+    mk('t1', TrajectoryKind.TOOL, Speaker.ASSISTANT, false, ''),
+    mk('a1', TrajectoryKind.MESSAGE, Speaker.ASSISTANT, false, 'harness 配置在 settings.yaml'),
+    mk('unk', TrajectoryKind.MESSAGE, Speaker.ASSISTANT, true, '{"huge":"internal payload"}'),
+  ];
+
+  // ── 轨迹范围：全部可搜（内部事件在轨迹里本就该可查） ──
+  t.eq('轨迹范围能搜到提示词（排查需要）', matchTrajectoryIndices(items, 'deepseek harness').length, 1);
+  t.eq('轨迹范围能搜到内部载荷', matchTrajectoryIndices(items, 'internal payload').length, 1);
+
+  // ── 对话范围：内部事件**不可搜**（提示词泄漏的第二形态：能被搜到/被计数） ──
+  const conv = matchConversationIndices(items, 'deepseek harness');
+  t.eq('**对话范围搜不到系统提示词**', conv.length, 0);
+  t.eq('对话范围搜不到未识别事件的原始载荷', matchConversationIndices(items, 'internal payload').length, 0);
+  t.eq('对话范围能搜到用户消息与回答（两处都含"配置"）',
+    matchConversationIndices(items, '配置').join(','), '1,3');
+  const both = matchConversationIndices(items, 'harness');
+  t.eq('同一个词在对话范围只命中可见的两条（提示词那条被排除）', both.join(','), '1,3');
+  t.eq('对话范围的命中下标仍是**原数组下标**（供上层继续用 items 取条目）',
+    items[both[0]].id, 'u1');
+  t.eq('空查询 ⇒ 无命中', matchConversationIndices(items, '   ').length, 0);
+
+  // ── 命中 → 对话视图行号（行是回合，不是条目） ──
+  const turns = TM.groupTurns(items, false);
+  t.eq('这里只有一个回合（内部事件不产生回合）', turns.length, 1);
+  t.eq('用户消息 → 第 0 行', chatRowOfItemIndex(items, turns, 1), 0);
+  t.eq('助手回答 → 同一回合的第 0 行', chatRowOfItemIndex(items, turns, 3), 0);
+  t.eq('工具条目 → 也在第 0 行（过程分组在回合内）', chatRowOfItemIndex(items, turns, 2), 0);
+  t.eq('内部事件不属于任何回合 ⇒ -1（不滚，而不是滚到第 0 行）', chatRowOfItemIndex(items, turns, 0), -1);
+  t.eq('越界下标 ⇒ -1', chatRowOfItemIndex(items, turns, 99), -1);
+
+  // ── 两个回合时行号才真正不同（这正是旧实现滚错行的场景） ──
+  const two = [
+    mk('u1', TrajectoryKind.MESSAGE, Speaker.USER, false, 'x'),
+    mk('a1', TrajectoryKind.MESSAGE, Speaker.ASSISTANT, false, 'x'),
+    mk('u2', TrajectoryKind.MESSAGE, Speaker.USER, false, 'x'),
+    mk('a2', TrajectoryKind.MESSAGE, Speaker.ASSISTANT, false, 'x'),
+  ];
+  const twoTurns = TM.groupTurns(two, false);
+  t.eq('两条用户消息 ⇒ 两个回合', twoTurns.length, 2);
+  t.eq('第 3 个条目属于第 1 回合（条目下标 3 ≠ 行号 1 —— 旧实现直接当行号用，必然滚错）',
+    chatRowOfItemIndex(two, twoTurns, 3), 1);
+
+  console.log('  ok    18 条断言：轨迹/对话两个作用域（6）/ 命中下标保真（3）/ 条目→行映射含"不属于任何回合"（9）');
 }
 
 t.done();

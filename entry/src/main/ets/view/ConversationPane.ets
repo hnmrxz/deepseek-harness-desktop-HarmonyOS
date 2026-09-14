@@ -35,7 +35,9 @@ import {
   TrajectoryItem,
   TrajectoryKind,
   SessionHub,
+  chatRowOfItemIndex,
   chatVisibleItems,
+  matchConversationIndices,
   FEEDBACK_CATEGORIES,
   FeedbackRow,
   groupTurns,
@@ -441,9 +443,31 @@ export struct ConversationPane {
     }
   }
 
-  /** 当前命中集合（每次渲染按关键词算一次；轨迹长度是几十到几百条，代价可忽略） */
+  /**
+   * 当前命中集合（每次渲染按关键词算一次；轨迹长度是几十到几百条，代价可忽略）。
+   *
+   * 【按视图作用域】对话视图只搜**用户可见的那几类**——否则 `system/message` 的正文
+   * （就是完整的 agent 提示词）会被搜到并计入命中数，而那一行根本不在对话里显示
+   * （P0-1 的绕过路径：泄漏不只是"显示"，"能被搜到、能被计数"同样算）。
+   * 轨迹视图搜全部条目：内部事件在那里本来就该可查。
+   */
   private hits(): number[] {
-    return matchTrajectoryIndices(this.items, this.searchQuery);
+    return this.view === 'chat'
+      ? matchConversationIndices(this.items, this.searchQuery)
+      : matchTrajectoryIndices(this.items, this.searchQuery);
+  }
+
+  /**
+   * 命中条目下标 → **当前视图的列表行号**。
+   *
+   * 对话视图的行是**回合**，条目下标直接喂给 `scrollToIndex` 会滚到错误的行
+   * （"搜到了却跳错地方"，且不报错）。找不到所属回合时返回 -1 ⇒ 不滚。
+   */
+  private rowOfHit(itemIndex: number): number {
+    if (this.view === 'chat') {
+      return chatRowOfItemIndex(this.items, this.chatTurns(), itemIndex);
+    }
+    return itemIndex;
   }
 
   /** 某一条是否在命中集合里（`isHit` 只用于左侧色条） */
@@ -464,9 +488,14 @@ export struct ConversationPane {
       return;
     }
     this.matchPos = pos;
+    const row: number = this.rowOfHit(list[pos]);
+    if (row < 0) {
+      // 命中不在当前视图的行里（例如刚切视图）：不滚，而不是滚到第 0 行
+      return;
+    }
     // `scrollToIndex` 失败（索引越界/列表未就绪）不该让整页崩：搜索只是导航辅助。
     try {
-      this.scroller.scrollToIndex(list[pos], true, ScrollAlign.CENTER);
+      this.scroller.scrollToIndex(row, true, ScrollAlign.CENTER);
     } catch (err) {
       // 忽略：下一次按键会再试一次
     }

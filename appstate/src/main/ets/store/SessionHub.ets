@@ -30,6 +30,7 @@
  */
 
 import { Connection } from 'connection';
+import { SessionJob } from '../model/Jobs';
 import { ConnectionState } from 'connection';
 import { MAX_ATTACHMENT_BYTES } from 'platform';
 import type { DiagnosticReport, EventSink, HostFacts, RemoteFailure, RpcResult, StreamSink } from 'connection';
@@ -53,6 +54,7 @@ import {
   isKnownEventType,
   isSessionListEvent,
   isUserAuthoredEvent,
+  isConversationVisibleEvent,
   isSystemAuthoredEvent,
   mayChangeSessionTitle,
   mayChangeTurnState,
@@ -180,6 +182,7 @@ import {
   queueEditAction,
   queueRemoveAction,
   queueSteerAction,
+  jobsOf,
   readControlFrame,
   queuedItemsOf,
   sessionReferencesEndpoint,
@@ -400,6 +403,12 @@ export interface HubSnapshot {
    * 而那条消息 Host 根本还没见过。
    */
   queued: QueuedItem[];
+  /**
+   * 本会话的后台任务注册表（`JOBS` 控制帧 / `BASELINE` 帧）。
+   *
+   * 界面据 `model/Jobs` 的规则决定：要不要出现控件、怎么排、时长怎么算（纯函数，有断言）。
+   */
+  jobs: SessionJob[];
 }
 
 /**
@@ -616,6 +625,14 @@ export class SessionHub {
   private attachmentList: PendingAttachment[] = [];
   /** 当前会话的排队项（由 `session/control` 的 baseline 与 queue 帧驱动） */
   private queuedItems: QueuedItem[] = [];
+
+  /**
+   * 本会话的后台任务注册表（`JOBS` 控制帧 / `BASELINE` 帧里的 `jobs`）。
+   *
+   * 【为什么是"整份替换"】JOBS 帧给的是**当前注册表的全量**（与队列帧同理），
+   * 按 id 做增量合并会引入"哪条被删了"的推断——而帧里根本没表达删除，只有新列表本身。
+   */
+  private jobs: SessionJob[] = [];
   /** 通知发布钩子（由 `EntryAbility` 注入；未注入时一切照常，只是不发通知） */
   private notifyHooks?: NotifyHooks;
   /** 一元读回历史的兜底轮询计时器（-1 = 未启用） */
@@ -903,7 +920,8 @@ export class SessionHub {
       fileTruncated: this.fileTruncated,
       filePreview: this.filePreview,
       attachments: this.attachmentList,
-      queued: this.queuedItems
+      queued: this.queuedItems,
+      jobs: this.jobs
     };
   }
 
@@ -1914,6 +1932,8 @@ export class SessionHub {
       // 排队项同理：它是**每个会话各自**的队列。切会话后旧列表必须清空，
       // 否则用户会对着 A 会话的队列项在 B 会话上点"插话"。
       this.queuedItems = [];
+      // 后台任务同样是**每个会话各自**的注册表：切会话后不清空会把 A 会话的任务显示在 B 上
+      this.jobs = [];
     }
     this.notify();
     if (sessionId.length === 0) {
@@ -3364,6 +3384,10 @@ export class SessionHub {
           // 队列会显示为空——直到下一次 queue 帧到达才恢复。
           this.queuedItems = projectQueuedItems(frame.baseline === undefined
             ? emptyQueued() : queuedItemsOf(frame.baseline.queues, this.selectedSessionId));
+          // 基线里带着本会话的后台任务（与 queues 同构：sessionId → 任务数组）。
+          // 不读它的话，重连后任务列表会空着直到下一次状态变化——"没有"与"没收到"分不开。
+          this.jobs = jobsOf(frame.baseline === undefined ? undefined : frame.baseline.jobs,
+            this.selectedSessionId);
           this.record('control baseline');
           this.notify();
           return;
@@ -3378,8 +3402,17 @@ export class SessionHub {
           }
           return;
         }
-        if (frame.type === ControlFrameType.JOBS || frame.type === ControlFrameType.PROJECTION) {
-          this.record(`control ${frame.type}`);
+        if (frame.type === ControlFrameType.JOBS) {
+          // 整份替换（帧给的是当前注册表全量）；只接受当前会话的帧
+          if (frame.sessionId === this.selectedSessionId) {
+            this.jobs = frame.jobs;
+            this.record(`control jobs ${frame.jobs.length} 条`);
+            this.notify();
+          }
+          return;
+        }
+        if (frame.type === ControlFrameType.PROJECTION) {
+          this.record('control projection');
           return;
         }
         this.noteUnknown(`control:${frame.type}`);
@@ -4310,6 +4343,15 @@ export function projectWireRecord(record: Object): TrajectoryItem | undefined {
    */
   item.speaker = isUserAuthoredEvent(eventType) ? Speaker.USER
     : (isSystemAuthoredEvent(eventType) ? Speaker.SYSTEM : Speaker.ASSISTANT);
+  /*
+   * P0-1：这一条**是不是用户可见的会话内容**，在拿到事件类型名的此刻一次性判定。
+   *
+   * 【为什么必须在这里判定，而不是在视图里】"内部事件"是**来源事实**（系统提示词、斜杠命令、
+   * 上下文压缩、以及**未识别类型**——后者的正文是原始载荷 JSON），不是内容特征；
+   * 靠正文文本或 speaker 去猜必然漏（`command/run` 与 `compaction/summary` 都戴着
+   * "助手"的角色）。判定用 `dshcompat` 的结构化白名单，视图只读结论。
+   */
+  item.internal = !isConversationVisibleEvent(eventType);
 
   if (shape === undefined) {
     // 未识别类型：如实呈现原始载荷（不是猜测，也不丢弃）

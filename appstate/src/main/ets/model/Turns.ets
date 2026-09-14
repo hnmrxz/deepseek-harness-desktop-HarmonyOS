@@ -39,7 +39,60 @@ function isProcessKind(kind: TrajectoryKind): boolean {
     || kind === TrajectoryKind.DELIVERABLE;
 }
 
+/**
+ * 一条条目在**对话视图**里的角色（P0-1：提示词/内部事件泄漏）。
+ *
+ * 【为什么单独成一个判据而不是散在视图里】此前"该不该显示"由两处各自猜：
+ * `groupTurns()` 无条件把 `MESSAGE + 助手` 塞进 `answers`，
+ * `chatVisibleItems()` 又自己写了一条"speaker 不是 SYSTEM 就显示"。
+ * 两处判据不同，且**都不看来源**——于是 `command/run`（斜杠命令）、
+ * `compaction/summary`（上下文压缩）与**未识别事件**（正文是原始 JSON）都漏进了对话。
+ *
+ * 现在只有这一个判据，且它只看**结构**（`internal` 来源事实 + 种类 + 角色）：
+ *   · `HIDDEN`   —— 内部事件：不进对话的任何位置（系统提示词 / 未知类型 / 命令 / 压缩 / 审计）
+ *   · `USER`     —— 用户消息（正文气泡）
+ *   · `ASSISTANT`—— 助手回答（正文气泡）
+ *   · `PROCESS`  —— 过程（工具/子代理/目标/任务/交付物）：只进**折叠的过程分组**，不与回答抢层级
+ *   · `NOTICE`   —— 其它明面提示（当前只有错误）
+ */
+export enum ConversationAudience {
+  HIDDEN = 'hidden',
+  USER = 'user',
+  ASSISTANT = 'assistant',
+  PROCESS = 'process',
+  NOTICE = 'notice',
+}
+
+export function conversationAudienceOf(item: TrajectoryItem): ConversationAudience {
+  if (item.internal) {
+    return ConversationAudience.HIDDEN;
+  }
+  if (item.kind === TrajectoryKind.MESSAGE) {
+    if (item.speaker === Speaker.USER) {
+      return ConversationAudience.USER;
+    }
+    if (item.speaker === Speaker.ASSISTANT) {
+      return ConversationAudience.ASSISTANT;
+    }
+    // SYSTEM 等其它角色：即便来源可见也不进对话（系统提示词就是这一类）
+    return ConversationAudience.HIDDEN;
+  }
+  if (item.kind === TrajectoryKind.ERROR) {
+    return ConversationAudience.NOTICE;
+  }
+  if (isProcessKind(item.kind)) {
+    return ConversationAudience.PROCESS;
+  }
+  return ConversationAudience.HIDDEN;
+}
+
+/** 该条目是否需要与普通回答**视觉隔离**（P0-1 最后一条要求） */
+export function needsInternalIsolation(item: TrajectoryItem): boolean {
+  return item.internal;
+}
+
 /** 回合 */
+
 export interface Turn {
   /** 稳定 id（取回合首条的 id；用于 ForEach 的键与折叠状态记忆） */
   id: string;
@@ -91,7 +144,14 @@ export function groupTurns(items: TrajectoryItem[], sessionRunning: boolean): Tu
   for (let i = 0; i < items.length; i++) {
     const item: TrajectoryItem = items[i];
 
-    if (item.kind === TrajectoryKind.MESSAGE && item.speaker === Speaker.USER) {
+    const audience: ConversationAudience = conversationAudienceOf(item);
+    if (audience === ConversationAudience.HIDDEN) {
+      // 内部事件**根本不进回合**：轨迹视图仍按 `items` 显示它们（排查需要），
+      // 但它们不属于对话——不占用户消息、不算回答、也不进过程分组。
+      continue;
+    }
+
+    if (audience === ConversationAudience.USER) {
       current = newTurn(item.id);
       current.user = item;
       turns.push(current);
@@ -104,10 +164,10 @@ export function groupTurns(items: TrajectoryItem[], sessionRunning: boolean): Tu
       turns.push(current);
     }
 
-    if (item.kind === TrajectoryKind.MESSAGE && item.speaker === Speaker.ASSISTANT) {
+    if (audience === ConversationAudience.ASSISTANT) {
       current.answers.push(item);
       current.answer = item;
-    } else if (isProcessKind(item.kind)) {
+    } else if (audience === ConversationAudience.PROCESS) {
       current.process.push(item);
     } else {
       current.notices.push(item);
@@ -163,8 +223,10 @@ export function chatVisibleItems(turns: Turn[]): TrajectoryItem[] {
       out.push(t.answers[j]);
     }
     for (let j = 0; j < t.notices.length; j++) {
-      // 系统消息不进对话视图（官方也不显示）：它会让用户以为模型在自言自语（真机截图出现过）
-      if (t.notices[j].speaker !== Speaker.SYSTEM) {
+      // 与 `groupTurns()` **共用同一判据**：以前这里另写了一条"speaker 不是 SYSTEM 就显示"，
+      // 两处判据不同 ⇒ 一处改了另一处不会跟着改（那正是内部事件漏进对话的成因之一）。
+      const audience: ConversationAudience = conversationAudienceOf(t.notices[j]);
+      if (audience !== ConversationAudience.HIDDEN) {
         out.push(t.notices[j]);
       }
     }

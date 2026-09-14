@@ -25,6 +25,8 @@
  * ─────────────────────────────────────────────────────────────────────
  */
 
+import { SessionJob } from './Jobs';
+
 import {
   argsFor,
   COMMANDS_LIST_ENDPOINT,
@@ -1132,16 +1134,6 @@ export interface SessionQueuedItem {
  * `Branded<string>`——**编译期独有的标记，线形上就是字符串**（见 `SessionUpdateQueueRequest` 的说明），
  * 因此本文件用 `string` 承载。
  */
-export interface SessionJob {
-  id: string;
-  kind: string;
-  label: string;
-  /** `'running'` / `'stopping'` / `'completed'` / `'killed'` / `'failed'` */
-  status: string;
-  detail?: string;
-  startedAt: number;
-  finishedAt?: number;
-}
 
 /**
  * 控制流的起始基线。
@@ -1247,11 +1239,25 @@ function readQueuedArray(raw: Object[]): SessionQueuedItem[] {
 }
 
 function readJobs(value: Object): SessionJob[] {
-  const out: SessionJob[] = [];
   const raw: Object[] | undefined = getArray(value, 'jobs');
-  if (raw === undefined) {
-    return out;
-  }
+  return raw === undefined ? emptyJobs() : readJobArray(raw);
+}
+
+/**
+ * 基线里的 jobs 与 queues **同构**：`sessionId → 任务数组`（照 `queuedItemsOf` 的先例）。
+ *
+ * 【为什么必须有它】`JOBS` 帧只在**变化时**推送，而重连/首次订阅拿到的是 `BASELINE`。
+ * 不读基线 ⇒ 重连后任务列表会空着，直到下一次任务状态变化——"界面上没有"与
+ * "真的没有"必须分得开。
+ */
+export function jobsOf(jobs: Object | undefined, sessionId: string): SessionJob[] {
+  const raw: Object[] | undefined = getArray(jobs, sessionId);
+  return raw === undefined ? emptyJobs() : readJobArray(raw);
+}
+
+/** 把一个**已经取出的**任务数组解析成条目 */
+function readJobArray(raw: Object[]): SessionJob[] {
+  const out: SessionJob[] = [];
   for (let i = 0; i < raw.length; i++) {
     const job: Object = raw[i];
     if (!isRecord(job)) {

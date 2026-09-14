@@ -16,6 +16,7 @@
  */
 
 import { TrajectoryItem } from './Trajectory';
+import { ConversationAudience, conversationAudienceOf, Turn } from './Turns';
 
 /** 命中的条目下标（升序） */
 export function matchTrajectoryIndices(items: TrajectoryItem[], query: string): number[] {
@@ -30,6 +31,70 @@ export function matchTrajectoryIndices(items: TrajectoryItem[], query: string): 
     }
   }
   return out;
+}
+
+/**
+ * **对话视图**里的命中下标：只搜用户可见的那几类（P0-1 的绕过路径）。
+ *
+ * 【为什么必须单独一个入口】`matchTrajectoryIndices()` 搜的是**全部条目**，
+ * 而其中包含内部事件——最要紧的是 `system/message`，它的 `body` 就是**完整的 agent 提示词**。
+ * 于是"搜一个常见词"会在对话视图里给出命中数，却指着一条**根本不在对话里显示**的行；
+ * 点"下一个"跳到那行的下标，在回合制列表里指向另一个回合（两套下标根本不是一回事）。
+ * 提示词泄漏不只是"显示出来"这一种形态，**"能被搜到、能被计数"同样算泄漏**。
+ *
+ * 轨迹视图仍用 `matchTrajectoryIndices()`（那里内部事件本来就该可查——排查需要）。
+ */
+export function matchConversationIndices(items: TrajectoryItem[], query: string): number[] {
+  const visible: TrajectoryItem[] = [];
+  const origin: number[] = [];
+  for (let i = 0; i < items.length; i++) {
+    if (conversationAudienceOf(items[i]) !== ConversationAudience.HIDDEN) {
+      visible.push(items[i]);
+      origin.push(i);
+    }
+  }
+  const local: number[] = matchTrajectoryIndices(visible, query);
+  const out: number[] = [];
+  for (let i = 0; i < local.length; i++) {
+    out.push(origin[local[i]]);
+  }
+  return out;
+}
+
+/**
+ * 条目下标 → **对话视图的行号**（回合序号）。
+ *
+ * 【为什么需要映射】对话视图的列表行是**回合**（`chatTurns()`），而命中集合是**条目**下标。
+ * 直接把条目下标喂给 `scrollToIndex` 会滚到错误的行——"搜到了却跳错地方"，
+ * 而且不会报错（只表现为"跳到别处了"）。找不到该条目所属回合时返回 -1（调用方不滚）。
+ */
+export function chatRowOfItemIndex(items: TrajectoryItem[], turns: Turn[], itemIndex: number): number {
+  if (itemIndex < 0 || itemIndex >= items.length) {
+    return -1;
+  }
+  const id: string = items[itemIndex].id;
+  for (let i = 0; i < turns.length; i++) {
+    const t: Turn = turns[i];
+    if (t.user !== undefined && t.user.id === id) {
+      return i;
+    }
+    for (let j = 0; j < t.answers.length; j++) {
+      if (t.answers[j].id === id) {
+        return i;
+      }
+    }
+    for (let j = 0; j < t.notices.length; j++) {
+      if (t.notices[j].id === id) {
+        return i;
+      }
+    }
+    for (let j = 0; j < t.process.length; j++) {
+      if (t.process[j].id === id) {
+        return i;
+      }
+    }
+  }
+  return -1;
 }
 
 /**

@@ -89,6 +89,20 @@ export interface TrajectoryItem {
   percent: number;
   /** 是否正在流式输出（UI 显示尾部光标） */
   streaming: boolean;
+  /**
+   * **内部事件**：只属于轨迹详情，不属于对话（P0-1）。
+   *
+   * 【为什么要有这个结构字段】对话视图此前靠"正文文本 + speaker"判断该显示什么，
+   * 而"这个事件是不是用户可见的会话内容"是**来源事实**，不是内容特征：
+   *   · `system/message`（系统提示词）、`command/run`（斜杠命令）、
+   *     `compaction/summary`（上下文压缩摘要）都是 MESSAGE 族，会被当成"助手的回答"；
+   *   · **未识别事件**更糟：投影会把原始载荷 JSON 当正文，对话里就出现一条"助手说：{…}"。
+   * 判定由 `dshcompat.isConversationVisibleEvent()` 在**投影时**（拿到事件类型名那一刻）做出，
+   * 这里只存结论——视图与分组模型都不再猜。
+   *
+   * 轨迹视图**保留**它们（排查需要），但必须与普通回答视觉隔离。
+   */
+  internal: boolean;
   /** 是否默认展开（如失败的工具、错误） */
   expanded: boolean;
 }
@@ -116,7 +130,8 @@ export function makeItem(id: string, kind: TrajectoryKind, at: number): Trajecto
     progress: '',
     percent: -1,
     streaming: false,
-    expanded: false
+    expanded: false,
+    internal: false
   };
 }
 

@@ -125,7 +125,7 @@ export { emptyDiagReport } from './model/Diag';
 export { DiagMode, diagHintOf, diagModeOf, diagTitleOf, filterDiagEntries } from './model/Diag';
 
 // ── 会话内搜索（D3 §5.1 的 Ctrl/Cmd + F） ──
-export { matchCounterText, matchTrajectoryIndices, stepMatch } from './model/Search';
+export { chatRowOfItemIndex, matchConversationIndices, matchCounterText, matchTrajectoryIndices, stepMatch } from './model/Search';
 
 // ── 详情栏分区（从真实轨迹派生，D3 §3.6） ──
 export { projectDetailSections } from './model/Detail';
@@ -174,6 +174,13 @@ export type { DiffLine, DiffPresentation, DiffStat, ToolDiff } from './model/Too
 export { contextMenuGestures, contextMenuHintLabel, hoverEnabled, MenuGesture } from './model/InputPolicy';
 export type { InputModality } from './model/InputPolicy';
 
+// ── 后台任务（P2：会话头部的任务注册表；纯函数，可本机直接测） ──
+export {
+  jobCountLabel, jobDotState, jobDurationText, jobDurationTitle, jobElapsedMs, jobIsLive,
+  jobListA11y, jobListVisible, jobRowStatusText, jobStatusLabel, jobTickerNeeded,
+  liveJobCount, orderedJobs, JobDot,
+} from './model/Jobs';
+
 // ── 轨迹时间线（P2 §11：交互式时间总览；纯函数，可本机直接测） ──
 export {
   cellIdAtRatio, cellIdForListIndex, listIndexForCell, segmentOrdinalOf, statsLinesOf,
@@ -197,12 +204,16 @@ export { followTimerShouldRun, FollowSignal, nextFollowing, shouldJumpOnNewItems
 // ── 回合模型（P1 §8：Turn → ProcessGroup + Answer；纯函数，可本机直接测） ──
 export {
   chatVisibleItems,
+  conversationAudienceOf,
+  ConversationAudience,
   defaultExpanded,
   groupTurns,
   hasProcessGroup,
+  needsInternalIsolation,
   processSummary
 } from './model/Turns';
 export type { Turn } from './model/Turns';
+export type { SessionJob } from './model/Jobs';
 
 // ── HarmonyTheme（P1.5：Web 语义 → HarmonyOS 视觉的映射层） ──
 export {
@@ -435,7 +446,6 @@ export type {
   SessionForkRequest,
   SessionForkValue,
   SessionHistoryRecord,
-  SessionJob,
   SessionListRequest,
   SessionListValue,
   SessionPageRequest,

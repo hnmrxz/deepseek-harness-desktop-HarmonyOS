@@ -270,6 +270,38 @@ export function classifyEventType(name: string): EventFamily {
 }
 
 /**
+ * **对话里用户可见**的事件类型白名单（P0-1：提示词/内部事件泄漏）。
+ *
+ * 【要解决的问题】`groupTurns()` 之前把**任何** `MESSAGE + 助手` 的条目当作"助手的回答"，
+ * 于是三类东西漏进了对话视图：
+ *   · `command/run` —— 斜杠命令的执行事件（MESSAGE 族、standalone）被当成回答；
+ *   · `compaction/summary` —— 上下文压缩摘要（"内部 context"）推进了过程分组；
+ *   · **未识别事件** —— `classifyEventType` 对未知类型**有意降级**为 MESSAGE，
+ *     而投影会把原始载荷 JSON 当正文，于是对话里出现一条"助手说：{"…"}"。
+ *
+ * 【为什么用白名单而不是黑名单】事件类型由各插件通过 declaration merging 扩展，
+ * 完整取值域只能实测得到（见上文）。黑名单意味着"每出现一种新的内部事件就漏一次"，
+ * 而白名单的失败方向是**保守**的：不认识的类型不进对话，但**仍进轨迹**（可查、可排查）。
+ * 这与本仓"宁可少分类，也不要凭想象塞进某类"的一贯取舍一致。
+ *
+ * 【判定依据是结构，不是文案】只看事件类型名与家族，不读任何正文文本——
+ * 因此"模型恰好在回答里写了 SYSTEM"这种情形不会被误判。
+ *
+ * 白名单 = 两条真正的会话消息 + 过程族（工具/子代理/目标/任务/交付物）+ 错误族。
+ * 其中过程族与错误族仍会进对话，但**分别落在折叠的过程分组与错误提示里**（P1-2 的视觉层级）。
+ * 注意 `system/message` 虽与 `user/message` 同族，但**不在**白名单里。
+ */
+export function isConversationVisibleEvent(name: string): boolean {
+  if (name === 'user/message' || name === 'assistant/message') {
+    return true;
+  }
+  const family: EventFamily = classifyEventType(name);
+  return family === EventFamily.TOOL || family === EventFamily.SUBAGENT
+    || family === EventFamily.GOAL || family === EventFamily.JOB
+    || family === EventFamily.DELIVERABLE || family === EventFamily.ERROR;
+}
+
+/**
  * 已认识的事件类型名清单（由 `SESSION_EVENT_FAMILY` 的键派生）。
  *
  * 为什么要单独一个数组：ArkTS **禁止 `Object.prototype` 上的调用**
