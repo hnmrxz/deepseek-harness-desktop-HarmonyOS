@@ -32,7 +32,16 @@ entry/src/main/resources/resfile/resources/
 
 # 阶段一的运行时载体（由 tools/electron-runtime/collect.ps1 从 dist/ 导入）
 # libelectron.so 单个就有 172.7 MB，绝不能进版本库
-runtime/
+#
+# 【必须锚定到根目录 —— 这是一次真实事故的修法（2026-09-14）】
+# 原先写的是裸 `runtime/`。gitignore 的裸目录名**在任何层级都匹配**，于是它同时忽略了
+# `entry/src/main/ets/runtime/`、`hostruntime/src/main/ets/runtime/` 这类**模块源码目录**，
+# 把源码文件悄悄挡在版本库之外：`entry/src/main/ets/runtime/NodeRuntime.ets` 从未被提交
+# （`git log --diff-filter=A -- '*NodeRuntime*'` 为空），而 3 个已跟踪文件导入它
+# （EntryAbility / Index / Poc1）⇒ **新克隆出来的仓库无法编译 entry**（实测 8 个编译错误）。
+# 教训：.gitignore 里的目录规则要锚定（`/runtime/`），或在路径里带上足够的上层目录；
+#       "本地能跑" 与 "仓库完整" 是两件事——被忽略的文件在任何机器上都不会报错，只会消失。
+/runtime/
 # 运行时原生库（libelectron.so 等，由 collect.ps1 + 手工复制进入 entry/libs）
 entry/libs/
 
