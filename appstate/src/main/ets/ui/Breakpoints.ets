@@ -77,6 +77,19 @@ export function navTabSymbol(tab: NavTab): Resource {
   return $r('sys.symbol.gearshape');
 }
 
+/**
+ * 导航项的**文字资源**（底部标签栏用；`navTabSymbol` 是它的图标版）。
+ *
+ * 【为什么它在 appstate 而不是视图里】与 `navTabSymbol` 同类：都是"页签 → 资源"的映射，
+ * 放在一起才只有一份。视图层（如 `SidebarShell`）因此能只依赖 appstate 就把导航项画全。
+ */
+export function navTabLabelRes(tab: NavTab): Resource {
+  if (tab === NavTab.WORKSPACES) {
+    return $r('app.string.tab_workspaces');
+  }
+  return $r('app.string.tab_settings');
+}
+
 /** 详情栏是否在该档位下可用（单栏时详情以全屏下钻呈现） */
 export function detailPanelAvailable(mode: LayoutMode): boolean {
   return mode === LayoutMode.TRIPLE;

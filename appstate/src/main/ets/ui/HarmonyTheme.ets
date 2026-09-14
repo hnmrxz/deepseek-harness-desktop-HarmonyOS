@@ -135,6 +135,16 @@ export class HarmonySpacing {
 export class HarmonyIconSize {
   /** 卡片/列表行内的图标（与现网工具卡的 14 一致） */
   static readonly INLINE: number = 14;
+  /**
+   * 导航面板里的图标（侧栏完整面板）。
+   *
+   * 【为什么要单列】导航图标比行内图标大一号才站得住（原实现写死 20），
+   * 而"写死 20"正是设计令牌棘轮要挡的裸值——搬到 shell 后不再有祖父条款，
+   * 故在这里给它一个名字。
+   */
+  static readonly NAV: number = 20;
+  /** 导航 rail / 底部标签栏里的图标（比面板里再大一号：没有文字陪伴，图标要更醒目） */
+  static readonly NAV_RAIL: number = 22;
 }
 
 /** 圆角角色（值引用原语，不另立数字） */

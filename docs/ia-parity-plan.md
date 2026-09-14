@@ -58,7 +58,9 @@ AppFrame
 | `appstate/ui/ShellTracks.ets` | ✅ 已落地（四形态下三条轨道**怎么呈现**；只变几何，不变信息架构） |
 | 与既有导航的迁移桥 | ✅ 已落地（`mainPanelOfLegacyTab` / `legacyTabOfMainPanel`，含往返断言）——**迁移期间行为不变** |
 | fixture | ✅ 46 条（注册表 12 / 导航状态 16 / 迁移桥含往返 10 / 四形态轨道 8） |
-| `view/shell/` 四个 shell | ❌ **下一步** |
+| `view/shell/SidebarShell.ets` | ✅ 已落地：**侧栏内容归它所有**（品牌行 / 面板清单 / 待决徽标 / 二级入口 / Settings 固定底部），三种呈现（PANEL / RAIL / 底部标签）都在它内部 |
+| `Index` 的三段侧栏 builder | ✅ 已改为委托（只保留"这条轨道的 surface"：宽度与底色） |
+| `AppShell` / `MainShell` / `RightbarShell` | ❌ **下一步**（`Index` 目前仍直接负责页面级 Pane 选择） |
 
 **下一步的做法（写下来避免走偏）**
 

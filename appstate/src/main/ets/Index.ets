@@ -155,6 +155,7 @@ export {
   NavPresentation,
   NavTab,
   navTabLabel,
+  navTabLabelRes,
   navTabSymbol,
   LayoutMode
 } from './ui/Breakpoints';

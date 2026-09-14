@@ -132,6 +132,8 @@ relativeTime,
   dragDetailWidth,
   flattenSources,
   guessFromKeyboardForm,
+  shellTracksOf,
+  TrackPresentation,
   modalityFromSources,
   modalityOf,
   modalityTrace,
@@ -168,6 +170,7 @@ import { extractToken, parseJson } from 'connection';
 import { EVENT_HOST_CONNECTED, EVENT_KEY_HOST_TOKEN, EVENT_KEY_HOST_URL } from 'platform';
 import { ConnectPane } from '../view/ConnectPane';
 import { ConversationPane } from '../view/ConversationPane';
+import { SidebarShell } from '../view/shell/SidebarShell';
 import { CorePane } from '../view/CorePane';
 import { DetailPane } from '../view/DetailPane';
 import { DiagnosticsPane } from '../view/DiagnosticsPane';
@@ -3116,37 +3119,26 @@ struct Index {
   }
 
   @Builder
-  bottomTabs() {
-    Row() {
-      ForEach(navTabs(), (tab: NavTab) => {
-        Column({ space: 2 }) {
-          Stack({ alignContent: Alignment.TopEnd }) {
-            SymbolGlyph(navTabSymbol(tab))
-              .fontSize(22)
-              .fontColor([this.tab === tab ? $r('sys.color.brand') : $r('sys.color.font_secondary')])
-            if (tab === NavTab.WORKSPACES && this.pendingBadge.length > 0) {
-              this.badge(this.pendingBadge)
-            }
-          }
-          Text(navTabLabelRes(tab))
-            .fontSize(Fs.CAPTION)
-            .fontColor(this.tab === tab ? $r('sys.color.brand') : $r('sys.color.font_secondary'))
-        }
-        .layoutWeight(1)
-        .height('100%')
-        .justifyContent(FlexAlign.Center)
-        .accessibilityText(`${navTabLabel(tab)}标签`)
-        .onClick(() => {
+    bottomTabs() {
+    // 侧栏内容归 SidebarShell 所有（P0：AppFrame 第一条轨道）；这里只给这条轨道的 surface。
+    Column() {
+      SidebarShell({
+        brand: APP_NAME,
+        tab: this.tab,
+        pendingBadge: this.pendingBadge,
+        navWidthVp: this.navWidthVp(),
+        presentation: TrackPresentation.OVERLAY,
+        onSelectTab: (tab: NavTab) => {
           this.selectTab(tab);
-        })
-      }, (tab: NavTab) => tab)
+        },
+        onOpenDiagnostics: () => {
+          this.openDiagnostics();
+        }
+      })
     }
     .width('100%')
-    .height(56)
     .backgroundColor($r('sys.color.background_secondary'))
   }
-
-  // ───────────────────── 双栏 ─────────────────────
 
   @Builder
   buildDouble() {
@@ -3194,37 +3186,33 @@ struct Index {
     .height('100%')
   }
 
+  /** 侧栏该用哪种呈现（几何层判定；**栏目不随形态变**，见 docs/ia-parity-plan.md） */
+  private sidebarPresentation(): TrackPresentation {
+    return shellTracksOf(this.mode).sidebar;
+  }
+
   @Builder
-  navRail() {
-    Column({ space: Sp.S }) {
-      ForEach(navTabs(), (tab: NavTab) => {
-        Column() {
-          Stack({ alignContent: Alignment.TopEnd }) {
-            SymbolGlyph(navTabSymbol(tab))
-              .fontSize(22)
-              .fontColor([this.tab === tab ? $r('sys.color.brand') : $r('sys.color.font_secondary')])
-            if (tab === NavTab.WORKSPACES && this.pendingBadge.length > 0) {
-              this.badge(this.pendingBadge)
-            }
-          }
-        }
-        .width(this.navWidthVp())
-        .height(Sz.TOUCH_MIN)
-        .justifyContent(FlexAlign.Center)
-        .borderRadius(Radius.S)
-        .accessibilityText(`${navTabLabel(tab)}标签`)
-        .onClick(() => {
+    navRail() {
+    // 侧栏内容归 SidebarShell 所有（P0：AppFrame 第一条轨道）；这里只给这条轨道的 surface。
+    Column() {
+      SidebarShell({
+        brand: APP_NAME,
+        tab: this.tab,
+        pendingBadge: this.pendingBadge,
+        navWidthVp: this.navWidthVp(),
+        presentation: TrackPresentation.RAIL,
+        onSelectTab: (tab: NavTab) => {
           this.selectTab(tab);
-        })
-      }, (tab: NavTab) => tab)
+        },
+        onOpenDiagnostics: () => {
+          this.openDiagnostics();
+        }
+      })
     }
     .width(this.navWidthVp())
     .height('100%')
-    .padding({ top: Sp.M })
     .backgroundColor($r('sys.color.background_secondary'))
   }
-
-  // ───────────────────── 三栏 ─────────────────────
 
   @Builder
   buildTriple() {
@@ -3255,74 +3243,26 @@ struct Index {
 
   @Builder
   navPanel() {
-    Column({ space: Sp.XS }) {
-      Text(APP_NAME)
-        .fontSize(Fs.TITLE_S)
-        .fontWeight(FontWeight.Bold)
-        .width('100%')
-        .padding({ left: Sp.M, top: Sp.M, bottom: Sp.S })
-
-      ForEach(navTabs(), (tab: NavTab) => {
-        Row({ space: Sp.M }) {
-          SymbolGlyph(navTabSymbol(tab))
-            .fontSize(20)
-            .fontColor([this.tab === tab ? $r('sys.color.brand') : $r('sys.color.font_secondary')])
-          Text(navTabLabel(tab))
-            .fontSize(Fs.SECONDARY)
-            .fontColor(this.tab === tab ? $r('sys.color.brand') : $r('sys.color.font_primary'))
-            .layoutWeight(1)
-          if (tab === NavTab.WORKSPACES && this.pendingBadge.length > 0) {
-            Text(this.pendingBadge)
-              .fontSize(Fs.CAPTION)
-              .fontColor(Color.White)
-              .backgroundColor($r('sys.color.alert'))
-              .borderRadius(9)
-              .padding({ left: 6, right: 6 })
-          }
-        }
-        .width('100%')
-        .height(Sz.TOUCH_MIN)
-        .padding({ left: Sp.M, right: Sp.M })
-        .borderRadius(Radius.S)
-        .backgroundColor(this.tab === tab ? $r('sys.color.background_secondary') : Color.Transparent)
-        .onClick(() => {
+    // 侧栏内容归 SidebarShell 所有（P0：AppFrame 第一条轨道）；这里只给**这条轨道的 surface**
+    // —— 宽度与底色属于"轨道怎么摆"，内容属于 shell。
+    Column() {
+      SidebarShell({
+        brand: APP_NAME,
+        tab: this.tab,
+        pendingBadge: this.pendingBadge,
+        navWidthVp: this.navWidthVp(),
+        presentation: this.sidebarPresentation(),
+        onSelectTab: (tab: NavTab) => {
           this.selectTab(tab);
-        })
-      }, (tab: NavTab) => tab)
-
-      Blank()
-
-      /*
-       * 二级入口：**本地调试**（原「连接诊断」与「POC 协议验证」合并，E96）。
-       *
-       * 【为什么合并】两者回答的是同一个问题——"这台设备上的核心到底通不通"：
-       *   · 连接诊断：跑五项判定并给出可执行结论（面向"哪里断了"）；
-       *   · POC：把 token→cookie→`/api`→WS 的往返逐步打出来（面向"哪一步错了"）。
-       * 分成两个入口时，用户会先点一个、发现信息不够、再退出去点另一个；合并后进一个页面
-       * 就能从"结论"下钻到"逐步证据"。它们本来就都是**给本地调试用的**，不是产品功能。
-       */
-      this.navPanelAction($r('app.string.settings_local_debug'), () => {
-        this.openDiagnostics();
+        },
+        onOpenDiagnostics: () => {
+          this.openDiagnostics();
+        }
       })
     }
     .width(Sz.NAV_PANEL)
     .height('100%')
-    .padding({ left: Sp.S, right: Sp.S, bottom: Sp.S })
     .backgroundColor($r('sys.color.background_secondary'))
-  }
-
-  @Builder
-  navPanelAction(label: ResourceStr, action: () => void) {
-    Text(label)
-      .fontSize(Fs.CAPTION)
-      .fontColor($r('sys.color.font_secondary'))
-      .width('100%')
-      .height(Sz.TOUCH_MIN - 8)
-      .padding({ left: Sp.M })
-      .textAlign(TextAlign.Start)
-      .onClick(() => {
-        action();
-      })
   }
 
   /**
@@ -5103,16 +5043,6 @@ struct Index {
     }
   }
 
-  @Builder
-  badge(text: string) {
-    Text(text)
-      .fontSize(Fs.CAPTION_XS)
-      .fontColor(Color.White)
-      .backgroundColor($r('sys.color.alert'))
-      .borderRadius(Radius.S)
-      .padding({ left: 5, right: 5 })
-      .margin({ top: -4, right: -10 })
-  }
 }
 
 /** 用 display 推导初始窗口宽度（vp）；失败时给一个安全的手机宽度 */
