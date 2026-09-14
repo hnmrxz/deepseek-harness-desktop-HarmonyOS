@@ -39,10 +39,15 @@ import {
   FEEDBACK_CATEGORIES,
   FeedbackRow,
   groupTurns,
-  Border
+  Border,
+  defaultExpanded,
+  hasProcessGroup,
+  processSummary,
+  HarmonyColor,
+  HarmonyType
 } from 'appstate';
 /** 类型单独 import type（本仓约定：值与类型分开写） */
-import type { ActionNotice, FeedbackCategory } from 'appstate';
+import type { ActionNotice, FeedbackCategory, Turn } from 'appstate';
 import type { NativeAction } from './NativePrimitives';
 import { NativeActionBar, NativeCard, NativeChip } from './NativePrimitives';
 import { Composer } from './Composer';
@@ -205,7 +210,7 @@ export struct ConversationPane {
 
   /** 可见区间变化：最后一条可见 ⇔ 用户在底部 ⇒ 恢复跟随；否则解除跟随 */
   private onVisibleRange(start: number, end: number): void {
-    const last: number = this.visibleItems().length - 1;
+    const last: number = this.rowCount() - 1;
     this.stickToBottom = last < 0 || end >= last;
   }
 
@@ -312,6 +317,29 @@ export struct ConversationPane {
    * `chat` 只留**用户可见的对话**：消息与错误（错误必须留在这里——它是"为什么没有回答"的唯一说明）。
    * `trajectory` 保留全部条目：工具、子代理、目标/任务、交付物都在这里可查。
    */
+  /**
+   * 对话视图的回合列表（§8）。
+   *
+   * 【为什么对话视图要以**回合**为单位渲染】§8 要求"已完成的回合可折叠、进行中的回合展开"——
+   * 折叠的单位是回合。此前对话视图根本**不显示**过程条目（工具/思考被整段过滤掉），
+   * 与 D3 §3.2「思考默认折叠为一行、可展开」也不符：用户看不到"模型做过什么"。
+   * 现在改成"每个回合 = 用户消息 + 折叠的过程分组 + 回答"，与官方语义一致。
+   */
+  private chatTurns(): Turn[] {
+    return groupTurns(this.items, this.running);
+  }
+
+  /**
+   * 列表的行数（sticky-follow 的判据）。
+   *
+   * 【为什么单独一个函数】`onVisibleRange` 拿可见区间的 **end** 和"最后一行"比较来决定是否贴底。
+   * 两个视图的行单位不同（轨迹=条目，对话=回合），若两处各写一遍必然错位——
+   * 错位的症状是"明明在底部却不跟随"或"上翻了还被拽回去"，都属于难查的体感缺陷。
+   */
+  private rowCount(): number {
+    return this.view === 'trajectory' ? this.items.length : this.chatTurns().length;
+  }
+
   private visibleItems(): TrajectoryItem[] {
     if (this.view === 'trajectory') {
       return this.items;
@@ -424,15 +452,27 @@ export struct ConversationPane {
       }
 
       List({ space: Sp.M, scroller: this.scroller }) {
-        ForEach(this.visibleItems(), (item: TrajectoryItem) => {
-          ListItem() {
-            this.trajectoryItem(item)
-          }
-          // 命中项加一条左侧色条：**不改变正文**（正文里做高亮要拆 span，
-          // 而拆 span 会让 Markdown/代码块的渲染路径多一条分支，风险大于收益）。
-          .border({ width: { left: this.isHit(item) ? 3 : 0 },
-            color: $r('sys.color.brand') })
-        }, (item: TrajectoryItem) => item.id)
+        if (this.view === 'trajectory') {
+          // 轨迹视图 = 全量台账：条目级扁平列表（工具、子代理、目标/任务、交付物都在这里可查）
+          ForEach(this.visibleItems(), (item: TrajectoryItem) => {
+            ListItem() {
+              this.trajectoryItem(item)
+            }
+            // 命中项加一条左侧色条：**不改变正文**（正文里做高亮要拆 span，
+            // 而拆 span 会让 Markdown/代码块的渲染路径多一条分支，风险大于收益）。
+            .border({ width: { left: this.isHit(item) ? 3 : 0 },
+              color: $r('sys.color.brand') })
+          }, (item: TrajectoryItem) => item.id)
+        } else {
+          // 对话视图 = 按**回合**渲染（§8）：用户消息 + 过程分组（折叠）+ 回答
+          ForEach(this.chatTurns(), (turn: Turn) => {
+            ListItem() {
+              this.turnBlock(turn)
+            }
+            .border({ width: { left: this.turnIsHit(turn) ? 3 : 0 },
+              color: $r('sys.color.brand') })
+          }, (turn: Turn) => turn.id)
+        }
       }
       .layoutWeight(1)
       .width('100%')
@@ -513,6 +553,90 @@ export struct ConversationPane {
   }
 
   // ───────────────────── 轨迹条目 ─────────────────────
+
+  /**
+   * 一个回合（§8 的渲染单位）：用户消息 → 过程分组 → 回答 → 通知。
+   *
+   * 顺序即阅读顺序，且**不做"智能排序"**：官方也是这个次序。
+   */
+  @Builder
+  turnBlock(turn: Turn) {
+    Column({ space: Sp.M }) {
+      if (turn.user !== undefined) {
+        this.trajectoryItem(turn.user)
+      }
+      if (hasProcessGroup(turn)) {
+        this.processGroup(turn)
+      }
+      // ArkTS 规定：`@Builder` 内只能写 UI 语法，循环必须用 `ForEach`
+      ForEach(turn.answers, (it: TrajectoryItem) => {
+        this.trajectoryItem(it)
+      }, (it: TrajectoryItem) => `ans-${it.id}`)
+      ForEach(turn.notices, (it: TrajectoryItem) => {
+        this.trajectoryItem(it)
+      }, (it: TrajectoryItem) => `note-${it.id}`)
+    }
+    .width('100%')
+  }
+
+  /**
+   * 过程分组（思考 / 工具 / 子代理 / 进度 / 交付物）。
+   *
+   * 折叠默认态由**模型**决定（`defaultExpanded`：进行中展开、已完成折叠），
+   * 用户点开才覆盖——而不是"记着用户上次点过什么"当作初值。
+   */
+  @Builder
+  processGroup(turn: Turn) {
+    Column({ space: Sp.XS }) {
+      Row({ space: Sp.XS }) {
+        NativeChip({
+          label: `${this.processExpanded(turn) ? '▾' : '▸'} ${processSummary(turn)}`,
+          active: this.processExpanded(turn),
+          a11y: `${processSummary(turn)}，${this.processExpanded(turn) ? '点击收起' : '点击展开'}`,
+          onTap: () => {
+            this.toggle(turn.id);
+          }
+        })
+        if (turn.running) {
+          Text('进行中')
+            .fontSize(HarmonyType.LABEL.size)
+            .fontColor(HarmonyColor.BRAND)
+        }
+        Blank()
+      }
+      .width('100%')
+
+      if (this.processExpanded(turn)) {
+        ForEach(turn.process, (it: TrajectoryItem) => {
+          this.trajectoryItem(it)
+        }, (it: TrajectoryItem) => `proc-${it.id}`)
+      }
+    }
+    .width('100%')
+  }
+
+  /** 过程分组是否展开（模型给默认态，用户点击覆盖） */
+  private processExpanded(turn: Turn): boolean {
+    return defaultExpanded(turn, this.isExpanded(turn.id));
+  }
+
+  /** 该回合内是否有搜索命中（用于对话视图的命中色条） */
+  private turnIsHit(turn: Turn): boolean {
+    if (turn.user !== undefined && this.isHit(turn.user)) {
+      return true;
+    }
+    for (let i = 0; i < turn.answers.length; i++) {
+      if (this.isHit(turn.answers[i])) {
+        return true;
+      }
+    }
+    for (let i = 0; i < turn.process.length; i++) {
+      if (this.isHit(turn.process[i])) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   @Builder
   trajectoryItem(item: TrajectoryItem) {
