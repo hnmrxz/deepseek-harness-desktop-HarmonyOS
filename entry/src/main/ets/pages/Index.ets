@@ -125,6 +125,8 @@ relativeTime,
   ActionNotice,
   clampDetailDesired,
   decideLayoutWithDetail,
+  DetailPresentation,
+  detailPresentationOf,
   detailRoomOf,
   detailWidthOf,
   dragDetailWidth,
@@ -339,7 +341,14 @@ struct Index {
    * 正好对应"边看对话边看详情"的真实意图；整页替换会把对话顶掉，用户还得再退回来。
    * 三栏形态不走这条（`mode === TRIPLE` 时用真正的右栏，可调宽、可记忆）。
    */
-  @State detailSheetOpen: boolean = false;
+  /**
+   * 详情是否以**浮层**形式打开（P3）。
+   *
+   * 【为什么不再叫 detailSheetOpen】它在单栏下是半模态 Sheet、在双栏下是**侧边浅层面板**
+   * （计划 §12），两者共用这一个"打开"状态；呈现方式由布局决策的 `detailPresentation` 决定
+   * （`underlying` 的档位判定），不在这里各写一套。改名是为了不让名字说谎。
+   */
+  @State detailOverlayOpen: boolean = false;
 
   /**
    * 输入模态事实（**合成结果**：键盘 / 指针各一个布尔）。
@@ -1005,9 +1014,9 @@ struct Index {
         this.choosing = undefined;
         hilog.info(DOMAIN, TAG, 'HDSH-BACK 关闭选择浮层');
         return true;
-      case BackAction.CLOSE_DETAIL_SHEET:
+      case BackAction.CLOSE_DETAIL_OVERLAY:
         // 交给 Sheet 自己收起（`shouldDismiss` 里会复位状态）
-        this.detailSheetOpen = false;
+        this.detailOverlayOpen = false;
         hilog.info(DOMAIN, TAG, 'HDSH-BACK 关闭详情半模态');
         return true;
       case BackAction.STACK_TO_MAIN: {
@@ -1017,7 +1026,7 @@ struct Index {
         return true;
       }
       case BackAction.CLOSE_DETAIL:
-        this.detailOpen = false;
+        this.closeDetail();
         hilog.info(DOMAIN, TAG, 'HDSH-BACK 关闭会话详情');
         return true;
       case BackAction.DRILL_UP:
@@ -1058,7 +1067,7 @@ struct Index {
       settingDraftOpen: this.textSettingDraft.length > 0 || this.structSettingDraft.length > 0,
       searchOpen: this.searchOpen,
       choosingOpen: this.choosing !== undefined,
-      detailSheetOpen: this.detailSheetOpen,
+      detailOverlayOpen: this.detailOverlayOpen,
       previewOpen: this.preview !== undefined
     };
   }
@@ -1400,7 +1409,7 @@ struct Index {
     }
     // 变宽到三栏时，详情改由右栏承担 ⇒ 关掉 Sheet（否则两处同时显示详情）
     if (next === LayoutMode.TRIPLE) {
-      this.detailSheetOpen = false;
+      this.detailOverlayOpen = false;
     }
     if (!decision.detailAvailable) {
       this.detailOpen = false;
@@ -1492,6 +1501,43 @@ struct Index {
     };
     // 用**用户想要的**栏宽（拖拽把手会改它；窗口装不下时由让步链夹取）
     return decideLayoutWithDetail(input, this.detailWidthDesired);
+  }
+
+  /**
+   * 关闭详情。
+   *
+   * 【为什么要一处收口】详情的"打开"状态有两个标志：三栏用 `detailOpen`（真右栏）、
+   * 单栏/双栏用 `detailOverlayOpen`（Sheet / 侧边面板）。面板内的 × 若只清其中一个，
+   * 在另一种呈现下就是**点了没反应**——这正是本项目反复出现的缺陷形态。
+   * 两个标志在任一时刻只有一个是有效的，所以一起清是安全的。
+   */
+  private closeDetail(): void {
+    this.detailOpen = false;
+    this.detailOverlayOpen = false;
+  }
+
+  /** 切换详情：呈现方式随档位（三栏 = 右栏，单栏/双栏 = 浮层） */
+  private toggleDetail(): void {
+    if (this.detailPresentationNow() === DetailPresentation.COLUMN) {
+      this.detailOpen = !this.detailOpen;
+      return;
+    }
+    this.detailOverlayOpen = !this.detailOverlayOpen;
+  }
+
+  /** 当前档位下详情怎么呈现（真右栏 / 侧边浅层面板 / 整页） */
+  private detailPresentationNow(): DetailPresentation {
+    return this.layoutDecision().detailPresentation;
+  }
+
+  /**
+   * 双栏下侧边浅层面板的宽度。
+   *
+   * 复用"用户想要的宽度"与同一套夹取规则（`clampDetailDesired`）：双栏虽然不并排详情栏，
+   * 但面板仍要让列表露出来，故必须夹在可用空间内。用户拖过的宽度在这里也被尊重。
+   */
+  private sidePanelWidthVp(): number {
+    return clampDetailDesired(this.detailWidthDesired, this.detailRoomVp());
   }
 
   /** 当前窗口下详情栏可用的最大宽度（拖拽时在这里夹住，避免"拖宽反而跳成最窄"） */
@@ -1783,7 +1829,8 @@ struct Index {
    * 这里只做**派生**：谁的状态在，就显示谁。顺序即优先级（同时满足时按此取第一个）。
    */
   private sheetKind(): string {
-    if (this.detailSheetOpen) {
+    // 详情仅在**整页**档位（单栏）走半模态；双栏改用侧边浅层面板（见 buildDouble）
+    if (this.detailOverlayOpen && this.detailPresentationNow() === DetailPresentation.OVERLAY) {
       return 'detail';
     }
     if (this.choosing !== undefined) {
@@ -1820,7 +1867,7 @@ struct Index {
    * 不知道关的是哪一个；让宿主统一清干净，就不会出现"关掉后状态还留着、再也打不开"。
    */
   private closeSheet(): void {
-    this.detailSheetOpen = false;
+    this.detailOverlayOpen = false;
     this.choosing = undefined;
     this.folderOpen = false;
     this.credentialRef = '';
@@ -1976,7 +2023,9 @@ struct Index {
       return;
     }
     if (id === 'toggle-detail') {
-      this.detailOpen = !this.detailOpen;
+      // 呈现方式随档位：三栏翻右栏、单栏/双栏翻浮层。
+      // 原先这里只翻 `detailOpen` ⇒ 手机与平板上按了没有任何反应（死开关）。
+      this.toggleDetail();
       return;
     }
     if (id === 'pending-inbox') {
@@ -3011,9 +3060,9 @@ struct Index {
           .padding({ left: Sp.S, right: Sp.S, top: Sp.XS, bottom: Sp.XS })
           .borderRadius(HarmonyRadius.CHIP)
           .backgroundColor(HarmonyColor.SURFACE_RAISED)
-          .accessibilityText('打开详情面板（半模态，会话内容保持可见）')
+          .accessibilityText('打开详情面板（会话内容保持可见）')
           .onClick(() => {
-            this.detailSheetOpen = true;
+            this.detailOverlayOpen = true;
           })
       }
       /*
@@ -3078,20 +3127,45 @@ struct Index {
 
   @Builder
   buildDouble() {
-    Row() {
-      this.navRail()
-      Divider().vertical(true).color($r('sys.color.comp_divider'))
-      Column() {
-        this.header()
-        Divider().color($r('sys.color.comp_divider'))
+    Stack({ alignContent: Alignment.TopEnd }) {
+      Row() {
+        this.navRail()
+        Divider().vertical(true).color($r('sys.color.comp_divider'))
         Column() {
-          this.mainContent(true)
+          this.header()
+          Divider().color($r('sys.color.comp_divider'))
+          Column() {
+            this.mainContent(true)
+          }
+          .layoutWeight(1)
+          .width('100%')
         }
         .layoutWeight(1)
-        .width('100%')
+        .height('100%')
       }
-      .layoutWeight(1)
+      .width('100%')
       .height('100%')
+
+      /**
+       * 详情的**侧边浅层面板**（P3 §12）。
+       *
+       * 【为什么不是半模态 Sheet】600–839vp 放不下"列表 + 真右栏"，但足够宽到让详情与列表
+       * **同时可见**；用 Sheet 会把列表整个盖住，"边看列表边看详情"这件事就没了。
+       *
+       * 【为什么没有遮罩】本仓的规矩是"遮罩由原生 Sheet 提供、不手写颜色"（手写 rgba 会绕过
+       * 设计令牌与深色模式）。故这里用一层**透明**点击层承担"点面板外关闭"，
+       * 靠遮罩表达层级这件事留给真正需要模态的场合。
+       */
+      if (this.detailOverlayOpen && this.showsConversation()
+        && this.detailPresentationNow() === DetailPresentation.SIDE_PANEL) {
+        Column()
+          .width('100%')
+          .height('100%')
+          .onClick(() => {
+            this.detailOverlayOpen = false;
+          })
+        this.detailColumn(this.sidePanelWidthVp())
+      }
     }
     .width('100%')
     .height('100%')
@@ -3149,7 +3223,7 @@ struct Index {
         // 拖拽把手替代原来那条纯分隔线：它既是分隔（视觉上仍是一条细线），
         // 又是"调整栏宽"的唯一入口（此前模型里那条 desired 路径没有 UI 去产生宽度）。
         this.detailResizer()
-        this.detailColumn()
+        this.detailColumn(this.detailWidthVp())
       }
     }
     .width('100%')
@@ -3263,7 +3337,7 @@ struct Index {
   }
 
   @Builder
-  detailColumn() {
+  detailColumn(widthVp: number) {
     Column() {
       Row({ space: Sp.S }) {
         Text('详情')
@@ -3274,9 +3348,9 @@ struct Index {
           SymbolGlyph($r('sys.symbol.xmark')).fontSize(16)
         }
         .buttonStyle(ButtonStyleMode.TEXTUAL)
-        .accessibilityText('关闭详情栏')
+        .accessibilityText('关闭详情')
         .onClick(() => {
-          this.detailOpen = false;
+          this.closeDetail();
         })
       }
       .width('100%')
@@ -3295,7 +3369,7 @@ struct Index {
         }
       })
     }
-    .width(this.detailWidthVp())
+    .width(widthVp)
     .height('100%')
     .backgroundColor($r('sys.color.background_secondary'))
   }
@@ -3635,7 +3709,7 @@ struct Index {
           SessionHub.shared().steerQueuedItem(itemId);
         },
         onOpenDetail: () => {
-          this.detailSheetOpen = true;
+          this.detailOverlayOpen = true;
         },
         searchOpen: this.searchOpen,
         onCloseSearch: () => {

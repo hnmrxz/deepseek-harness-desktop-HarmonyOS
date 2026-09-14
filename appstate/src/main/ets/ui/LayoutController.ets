@@ -77,6 +77,39 @@ export interface DetailCapacity {
 export const MAIN_MIN_VP: number = 280;
 
 /** 完整的布局决策（渲染层只读它，不再自己算） */
+/**
+ * 详情在某个档位下**怎么呈现**（P3 §12：四形态各自的详情呈现方式）。
+ *
+ * 【为什么把它做成三值而不是一个布尔】此前这里是一个 `detailOverlay: boolean`，
+ * 语义只覆盖了"单栏下详情不是并排的栏"，**而且没有任何消费点**（视图用自己的 `sheetKind()` 判断）。
+ * 于是双栏（平板 / 手机横屏）实际上和手机一样弹**半模态 Sheet** —— 而计划 §12 要求平板是
+ * "侧边浅层面板"。一个布尔表达不了三种呈现，把它换成枚举，并且**真的被视图消费**。
+ */
+export enum DetailPresentation {
+  /** 三栏：真右栏，与主内容并排、不遮内容（宽度由一个槽位决定） */
+  COLUMN = 'column',
+  /** 双栏（平板 / 手机横屏）：**侧边浅层面板**——压在内容右缘，不占布局宽度、不挡住列表 */
+  SIDE_PANEL = 'side-panel',
+  /** 单栏（手机竖屏）：整页下钻 / 半模态——详情是一次"进入"，因为并排放不下 */
+  OVERLAY = 'overlay',
+}
+
+/**
+ * 档位 → 详情呈现方式。
+ *
+ * `DOUBLE` 之所以给侧边浅层面板：600–839vp 放不下"列表 + 真右栏"，但**足够宽**到让详情
+ * 与列表同时可见；用半模态 Sheet 会把列表整个盖住，"边看列表边看详情"这件事就没了。
+ */
+export function detailPresentationOf(mode: LayoutMode): DetailPresentation {
+  if (mode === LayoutMode.TRIPLE) {
+    return DetailPresentation.COLUMN;
+  }
+  if (mode === LayoutMode.DOUBLE) {
+    return DetailPresentation.SIDE_PANEL;
+  }
+  return DetailPresentation.OVERLAY;
+}
+
 export interface LayoutDecision {
   /** 单/双/三栏 */
   mode: LayoutMode;
@@ -90,8 +123,12 @@ export interface LayoutDecision {
   detailAvailable: boolean;
   /** 详情栏宽度（available 为 false 时为 0） */
   detailWidthVp: number;
-  /** 详情是否以**全屏下钻**呈现（单栏形态：详情不是并排的栏，而是压在内容上的一页） */
-  detailOverlay: boolean;
+  /**
+   * 详情怎么呈现（三栏 = 真右栏 / 双栏 = 侧边浅层面板 / 单栏 = 整页）。
+   *
+   * 取代了此前那个**没有任何消费点**的 `detailOverlay: boolean`。
+   */
+  detailPresentation: DetailPresentation;
   /** 详情让步到了哪一步 */
   detailStep: ConcessionStep;
   /** 横屏（宽 > 高） */
@@ -231,8 +268,7 @@ export function decideLayoutWithDetail(input: LayoutInput, desiredDetailVp: numb
     navLabels: nav === NavPresentation.PANEL,
     detailAvailable: detailAvailable,
     detailWidthVp: detailWidthVp,
-    // 单栏时详情以全屏下钻呈现（与 detailPanelAvailable 的既有语义一致）
-    detailOverlay: mode === LayoutMode.SINGLE,
+    detailPresentation: detailPresentationOf(mode),
     detailStep: detailStep,
     landscape: input.widthVp > input.heightVp,
     pointerRich: input.hasKeyboard && input.hasPointer

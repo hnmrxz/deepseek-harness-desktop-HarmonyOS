@@ -52,7 +52,12 @@ export interface OverlayState {
   searchOpen: boolean;
   choosingOpen: boolean;
   /** 详情半模态 Sheet（P1.5）：它与"盖在页面上"的浮层同类，故排在浮层段 */
-  detailSheetOpen: boolean;
+  /**
+   * 详情是否以浮层形式打开（P3：单栏 = 半模态 Sheet、双栏 = 侧边浅层面板）。
+   *
+   * 原名 `detailSheetOpen`——双栏改成侧边面板后那个名字会骗人，故一并改。
+   */
+  detailOverlayOpen: boolean;
   previewOpen: boolean;
 }
 
@@ -68,7 +73,7 @@ export enum BackAction {
   CLOSE_SETTING_DRAFT = 'close-setting-draft',
   CLOSE_SEARCH = 'close-search',
   CLOSE_CHOICE = 'close-choice',
-  CLOSE_DETAIL_SHEET = 'close-detail-sheet',
+  CLOSE_DETAIL_OVERLAY = 'close-detail-overlay',
   STACK_TO_MAIN = 'stack-to-main',
   CLOSE_DETAIL = 'close-detail',
   DRILL_UP = 'drill-up',
@@ -99,8 +104,8 @@ export function decideBack(nav: NavState, overlay: OverlayState): BackAction {
   }
   // 详情 Sheet 也是"盖在页面上"的一层：它排在其它浮层之后（那些是真正的模态编辑态），
   // 但排在二级页之前——用户心理上"关掉盖着的东西"优先于"退回上一层"。
-  if (overlay.detailSheetOpen) {
-    return BackAction.CLOSE_DETAIL_SHEET;
+  if (overlay.detailOverlayOpen) {
+    return BackAction.CLOSE_DETAIL_OVERLAY;
   }
   // ② 二级页 → 回主列表
   if (nav.stackPage !== StackPage.MAIN) {

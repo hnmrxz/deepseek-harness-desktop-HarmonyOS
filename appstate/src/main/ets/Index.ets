@@ -218,9 +218,11 @@ export {
   concedeDetail,
   decideLayout,
   decideLayoutWithDetail,
+  detailPresentationOf,
   detailRoomOf,
   detailWidthOf,
   dragDetailWidth,
+  DetailPresentation,
   MAIN_MIN_VP,
   navWidthOf,
   ConcessionStep

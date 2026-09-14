@@ -197,7 +197,7 @@ const FIXTURES = [
     in: input(360, 800),
     want: {
       mode: 'single', nav: 'bottom', navWidthVp: 0, navLabels: false,
-      detailAvailable: false, detailWidthVp: 0, detailOverlay: true,
+      detailAvailable: false, detailWidthVp: 0, detailPresentation: 'overlay',
       detailStep: 'none', landscape: false, pointerRich: false
     }
   },
@@ -206,7 +206,7 @@ const FIXTURES = [
     in: input(800, 360),
     want: {
       mode: 'double', nav: 'rail', navWidthVp: 56, navLabels: false,
-      detailAvailable: false, detailWidthVp: 0, detailOverlay: false,
+      detailAvailable: false, detailWidthVp: 0, detailPresentation: 'side-panel',
       detailStep: 'none', landscape: true, pointerRich: false
     },
     note: '⚠️ 待决：D3 §2 的口径是"只看宽度"，于是**手机横屏会变成双栏**。'
@@ -217,7 +217,7 @@ const FIXTURES = [
     in: input(800, 1280),
     want: {
       mode: 'double', nav: 'rail', navWidthVp: 56, navLabels: false,
-      detailAvailable: false, detailWidthVp: 0, detailOverlay: false,
+      detailAvailable: false, detailWidthVp: 0, detailPresentation: 'side-panel',
       detailStep: 'none', landscape: false, pointerRich: false
     }
   },
@@ -226,7 +226,7 @@ const FIXTURES = [
     in: input(1280, 800),
     want: {
       mode: 'triple', nav: 'panel', navWidthVp: 240, navLabels: true,
-      detailAvailable: true, detailWidthVp: 320, detailOverlay: false,
+      detailAvailable: true, detailWidthVp: 320, detailPresentation: 'column',
       detailStep: 'none', landscape: true, pointerRich: false
     }
   },
@@ -235,7 +235,7 @@ const FIXTURES = [
     in: input(1920, 1080, true, true),
     want: {
       mode: 'triple', nav: 'panel', navWidthVp: 240, navLabels: true,
-      detailAvailable: true, detailWidthVp: 320, detailOverlay: false,
+      detailAvailable: true, detailWidthVp: 320, detailPresentation: 'column',
       detailStep: 'none', landscape: true, pointerRich: true
     }
   },
@@ -244,7 +244,7 @@ const FIXTURES = [
     in: input(700, 900, true, true),
     want: {
       mode: 'double', nav: 'rail', navWidthVp: 56, navLabels: false,
-      detailAvailable: false, detailWidthVp: 0, detailOverlay: false,
+      detailAvailable: false, detailWidthVp: 0, detailPresentation: 'side-panel',
       detailStep: 'none', landscape: false, pointerRich: true
     }
   },
@@ -253,7 +253,7 @@ const FIXTURES = [
     in: input(480, 800, true, true),
     want: {
       mode: 'single', nav: 'bottom', navWidthVp: 0, navLabels: false,
-      detailAvailable: false, detailWidthVp: 0, detailOverlay: true,
+      detailAvailable: false, detailWidthVp: 0, detailPresentation: 'overlay',
       detailStep: 'none', landscape: false, pointerRich: true
     }
   }
@@ -329,7 +329,7 @@ console.log('\n## 导航：返回键的优先级阶梯（迁移前写在 Index.o
   // 【坑】`NavTab.SESSIONS` 是 `'workspaces'` 的**别名**（E108：会话并入工作区），
   // 所以"在会话页签"与"在工作区页签"是同一个状态；默认值必须写 'workspaces'。
   const nav = (o) => Object.assign({ tab: 'workspaces', stackPage: StackPage.MAIN, wsDrill: 0, hasSession: true, detailOpen: false }, o);
-  const ov = (o) => Object.assign({ credentialOpen: false, settingDraftOpen: false, searchOpen: false, choosingOpen: false, detailSheetOpen: false, previewOpen: false }, o);
+  const ov = (o) => Object.assign({ credentialOpen: false, settingDraftOpen: false, searchOpen: false, choosingOpen: false, detailOverlayOpen: false, previewOpen: false }, o);
 
   // 优先级：浮层之间也有先后（凭据 → 设置草稿 → 搜索 → 选择）
   t.eq('全开时先关凭据浮层', decideBack(nav({}), ov({ credentialOpen: true, settingDraftOpen: true, searchOpen: true, choosingOpen: true, previewOpen: true })), BackAction.CLOSE_CREDENTIAL);
@@ -339,10 +339,10 @@ console.log('\n## 导航：返回键的优先级阶梯（迁移前写在 Index.o
   // 浮层优先于二级页
   t.eq('浮层优先于二级页', decideBack(nav({ stackPage: StackPage.DIAGNOSTICS }), ov({ searchOpen: true })), BackAction.CLOSE_SEARCH);
   // 详情半模态（P1.5）：它盖在页面上，但排在真正的模态编辑态之后
-  t.eq('详情 Sheet 排在其它浮层之后', decideBack(nav({}), ov({ searchOpen: true, detailSheetOpen: true })), BackAction.CLOSE_SEARCH);
-  t.eq('详情 Sheet 优先于二级页', decideBack(nav({ stackPage: StackPage.DIAGNOSTICS }), ov({ detailSheetOpen: true })), BackAction.CLOSE_DETAIL_SHEET);
-  t.eq('详情 Sheet 优先于详情栏', decideBack(nav({ detailOpen: true }), ov({ detailSheetOpen: true })), BackAction.CLOSE_DETAIL_SHEET);
-  t.eq('详情 Sheet 优先于工作区下钻', decideBack(nav({ tab: 'workspaces', wsDrill: 3 }), ov({ detailSheetOpen: true })), BackAction.CLOSE_DETAIL_SHEET);
+  t.eq('详情浮层排在其它浮层之后', decideBack(nav({}), ov({ searchOpen: true, detailOverlayOpen: true })), BackAction.CLOSE_SEARCH);
+  t.eq('详情浮层优先于二级页', decideBack(nav({ stackPage: StackPage.DIAGNOSTICS }), ov({ detailOverlayOpen: true })), BackAction.CLOSE_DETAIL_OVERLAY);
+  t.eq('详情浮层优先于详情栏', decideBack(nav({ detailOpen: true }), ov({ detailOverlayOpen: true })), BackAction.CLOSE_DETAIL_OVERLAY);
+  t.eq('详情浮层优先于工作区下钻', decideBack(nav({ tab: 'workspaces', wsDrill: 3 }), ov({ detailOverlayOpen: true })), BackAction.CLOSE_DETAIL_OVERLAY);
   // 二级页
   t.eq('二级页回主列表', decideBack(nav({ stackPage: StackPage.CONVERSATION }), ov({})), BackAction.STACK_TO_MAIN);
   // 详情
@@ -806,7 +806,17 @@ console.log('\n## 详情栏拖拽与宽度记忆（P3：把模型里那条"用�
   t.eq('三栏档位内 DETAIL_CLOSED 不可达（可用空间恒 > 最小宽度）', closedReachable, false);
   t.eq('但可用空间小于最小宽度时它确实会触发（模型逻辑本身正确）', LC.concedeDetail(400, 240, 600).step, 'detail-closed');
 
-  console.log('  ok    28 条断言：可用空间 / 夹取（不跳变）/ 拖拽方向（左拖变宽）/ 起点归一化 / 记忆值收窄 / 档位边界 / 与决策衔接');
+  // ── 详情呈现方式（P3 §12）：四形态各有各的呈现，不再"双栏也弹半模态" ──
+  const { detailPresentationOf } = LC;
+  t.eq('单栏 ⇒ 整页下钻/半模态（并排放不下）', detailPresentationOf('single'), 'overlay');
+  t.eq('双栏 ⇒ 侧边浅层面板（此前与手机一样弹 Sheet，把列表整个盖住）', detailPresentationOf('double'), 'side-panel');
+  t.eq('三栏 ⇒ 真右栏（与主内容并排）', detailPresentationOf('triple'), 'column');
+  t.eq('呈现方式与"栏是否并排"是两件事：双栏不并排但仍要并可见',
+    decideLayoutWithDetail({ widthVp: 800, heightVp: 1280, hasKeyboard: false, hasPointer: false }, 400).detailAvailable, false);
+  t.eq('…而它的呈现方式仍是侧边面板',
+    decideLayoutWithDetail({ widthVp: 800, heightVp: 1280, hasKeyboard: false, hasPointer: false }, 400).detailPresentation, 'side-panel');
+
+  console.log('  ok    33 条断言：可用空间 / 夹取（不跳变）/ 拖拽方向（左拖变宽）/ 起点归一化 / 记忆值收窄 / 档位边界 / 呈现方式 / 与决策衔接');
 }
 
 t.done();
