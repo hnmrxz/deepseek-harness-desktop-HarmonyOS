@@ -41,7 +41,8 @@ import {
 } from 'appstate';
 /** 类型单独 import type（本仓约定：值与类型分开写） */
 import type { ActionNotice, FeedbackCategory } from 'appstate';
-import { NativeCard, NativeChip } from './NativePrimitives';
+import type { NativeAction } from './NativePrimitives';
+import { NativeActionBar, NativeCard, NativeChip } from './NativePrimitives';
 import { Composer } from './Composer';
 import { PendingPane } from './PendingPane';
 
@@ -921,6 +922,41 @@ export struct ConversationPane {
     })
   }
 
+  /**
+   * 交付物的动作行（数据化：review 时一眼看得完"这一行有哪些动作"）。
+   *
+   * 保存/分享都交给宿主（文件系统与系统分享面板是平台能力，视图层不直接依赖 platform），
+   * 与 Composer 的复制同一条约定。
+   */
+  private fileActions(item: TrajectoryItem): NativeAction[] {
+    const out: NativeAction[] = [];
+    /*
+     * 【为什么这两个动作是"可见但禁用"，而不是可点】
+     *
+     * 它们此前是**两个不可点的 Text 标签**（看着像入口、点了没反应）——那正是本项目禁止的假入口形态。
+     * 本轮查清了平台能力后确认：`platform` 只提供 `shareText`（**文本**，不是文件本体）
+     * 与 `pickFolder/pickDocument`（选择，不是保存），**没有"另存为"** ⇒ 现在**无法**把
+     * "保存 / 分享文件"做成真动作。
+     *
+     * 因此按纪律改成：动作**留在原位**（用户能看见这条卡具备这些能力）、
+     * 但**禁用**并把原因写在无障碍文案里（读屏用户点不到也知道为什么）。
+     * 真接线要等文件保存/分享能力就位——缺口已登记在矩阵 `deliverables` 行。
+     */
+    out.push({
+      id: 'save',
+      label: '保存',
+      disabled: true,
+      a11y: '保存到本地：尚未接线（当前平台未提供文件保存能力）'
+    });
+    out.push({
+      id: 'share',
+      label: '分享',
+      disabled: true,
+      a11y: '分享文件：尚未接线（当前平台只支持分享文本，不支持文件本体）'
+    });
+    return out;
+  }
+
   @Builder
   deliverableItem(item: TrajectoryItem) {
     Row({ space: Sp.M }) {
@@ -940,18 +976,19 @@ export struct ConversationPane {
           .width('100%')
       }
       .layoutWeight(1)
-      Text('保存')
-        .fontSize(Fs.CAPTION)
-        .fontColor($r('sys.color.brand'))
-      Text('分享')
-        .fontSize(Fs.CAPTION)
-        .fontColor($r('sys.color.brand'))
     }
     .width('100%')
     .padding(Sp.M)
     .borderRadius(Radius.M)
     .backgroundColor($r('sys.color.background_secondary'))
     .accessibilityText(`交付物 ${item.fileName}`)
+    // 动作行统一交给原语：间距/换行/语气只实现一次（此前是两个手写 Text）
+    Row() {
+      NativeActionBar({
+        actions: this.fileActions(item)
+      })
+    }
+    .width('100%')
   }
 
   @Builder

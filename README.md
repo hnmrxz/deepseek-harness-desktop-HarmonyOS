@@ -47,7 +47,21 @@ HDSH 把 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（d
 
 ## 构建
 
-前置：DevEco Studio / `devecocli`、HarmonyOS SDK（API 24）、Node.js（仅用于仓库内的构建与检查脚本）。
+前置：DevEco Command Line Tools（含 hvigor / ohpm / codelinter / SDK）、JDK 17、Node.js
+（仅用于仓库内的构建与检查脚本）。
+
+> **SDK 版本口径**：`compatibleSdkVersion` / `targetSdkVersion` 固定为 **`6.1.1(24)`**（决策，2026-09-14）。
+> 代价是**不能用 API 26 的「沉浸光感」材质**（官方要求 `targetAPIVersion ≥ 26`）——
+> 界面层次当前由系统阴影表达；升级路径与要改的几处列在 `appstate/ui/HarmonyTheme.ets` 的 `HarmonyMaterial`。
+
+**不入库的产物（新克隆必须先备齐，否则编不过）**：
+
+| 产物 | 路径 | 说明 |
+|---|---|---|
+| Node 头文件 | `entry/src/main/cpp/node-headers/` | 编 `libdshhost` 只需要它（`libnode` **不参与链接**） |
+| 原生库 | `entry/libs/<abi>/` | 运行期需要（含 `libnode.so.127`）；也是"编不编 koffi/flock"的门 |
+| 核心包 | `entry/src/main/resources/resfile/*.zip` | 首启解包出端侧核心树 |
+| 入口脚本 | `entry/src/main/resources/resfile/resources/app/` | 由 `node tools/place-host-app.mjs` 从 `hostcore/app/` 生成 |
 
 ```bash
 # 1) 打完整体（HAP + 原生库 + 内置核心资源）
@@ -55,19 +69,33 @@ devecocli build
 
 # 2) 需要重新打包核心树时（素材来自 dist/core/，产物落到应用资源目录）
 node tools/pack-core.mjs --skip-install --place-in-app
+node tools/place-host-app.mjs
 
-# 3) 安装到已连接设备
+# 3) 安装到已连接设备（注意：产物是 **unsigned**；签名材料不在库内）
 hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 ```
+
+## 设计体系（P1.5：Web 语义 + HarmonyOS 原生表达）
+
+**产品语义对齐官方 Web，视觉与交互用 HarmonyOS 原生表达**——不是把 Web 的 CSS 机械翻译成 ArkUI：
+
+| 层 | 落点 | 作用 |
+|---|---|---|
+| 尺度原语 | `appstate/ui/Tokens.ets` | `Sp` / `Radius` / `Border` / `Fs` / `Sz` / `Dur`（"有哪些档位"） |
+| 语义令牌 | `appstate/ui/HarmonyTheme.ets` | 角色 → 系统语义资源（`sys.color.*`）+ 排版成套角色 + 层级/动效/触控；**`WEB_TOKEN_MAP`** 逐条映射官方 `--dsw-*` |
+| 原生原语 | `entry/src/main/ets/view/NativePrimitives.ets` | `NativeChip` / `NativeCard` / `NativeButton` / `NativeActionBar` / `NativeSectionTitle` + Sheet 参数助手 |
+
+- 图标一律用系统符号（`SymbolGlyph` 只支持系统预置资源，**不引入 Web SVG**）。
+- `tools/check-design-tokens.mjs` 是**棘轮门禁**：裸 `fontSize`/圆角/描边/颜色字面量只许变少。
 
 ## 仓库结构
 
 | 目录 | 作用 |
 |---|---|
-| `entry/` | 鸿蒙应用入口：ArkUI 页面与视图、原生桥（`libdshhost`）、随包资源（核心包与原生库） |
+| `entry/` | 鸿蒙应用入口：ArkUI 页面与视图（含**原生原语** `view/NativePrimitives.ets`）、原生桥（`libdshhost`）、随包资源（核心包与原生库） |
 | `hostcore/` | 端侧 Host 的入口脚本与 profile（`cordis.patch.yml`）、`fetch` 垫片 |
 | `hostruntime/` | 核心版本仓库、激活事务、运行时载体（`RuntimePort` → `NodeRuntime`） |
-| `appstate/` | 客户端状态中枢与投影（会话、轨迹、工作区、设置、凭据、插件、核心视图） |
+| `appstate/` | 客户端状态中枢与投影（会话、轨迹、工作区、设置、凭据、插件、核心视图）；**设计令牌与布局/导航决策**（`ui/Tokens`、`ui/HarmonyTheme`、`ui/Breakpoints`、`ui/LayoutController`、`ui/NavigationController`——纯逻辑，可在本机直接测） |
 | `platform/` | 系统能力封装（文件选择、剪贴板、通知、窗口记忆等） |
 | `dshcompat/` | 与上游协议有关的**全部**事实：端点、参数形状、事件类型与投影键 |
 | `tools/` | 构建与检查脚本（核心打包、依赖闭包、上架红线、协议往返、死按钮扫描等） |
@@ -79,6 +107,9 @@ hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 2. **不申请特殊权限**：需要 JIT、ACL 之类前提的方案一律不进入选型，以保证可正常上架。
 3. **界面不撒谎**：失败必须给出下一步；空态说明"可以做什么"；不可用的动作把原因写在旁边，而不是给一个点了没反应的入口。
 4. **上游知识只出现在 `dshcompat`**：字段名、端点形状、事件类型集中一处，升级上游时改一个地方。
+5. **产品语义跟 Web，视觉与交互用鸿蒙原生**：信息架构与行为对齐官方 Web（对等矩阵逐行登记），
+   但视觉不用 Web CSS 的像素级翻译——用系统语义色、系统符号、原生控件（Sheet/菜单）、触控目标与多窗口语义表达。
+   这样官方主题更新时不需要重做整套界面。
 
 ## 许可
 

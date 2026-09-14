@@ -22,7 +22,7 @@ import {
   Sp,
   Sz
 } from 'appstate';
-import { NativeChip } from './NativePrimitives';
+import { NativeButton, NativeChip } from './NativePrimitives';
 
 /**
  * 附件条目的展示文本：`名字 · 大小`。
@@ -489,20 +489,23 @@ export struct Composer {
 
   @Builder
   sendButton() {
-    Button() {
-      SymbolGlyph(this.running ? $r('sys.symbol.xmark') : $r('sys.symbol.arrow_up'))
-        .fontSize(18)
-        .fontColor([Color.White])
-    }
-    .width(Sz.TOUCH_MIN)
-    .height(Sz.TOUCH_MIN)
-    .enabled(this.running || this.draft.trim().length > 0)
-    .accessibilityText(this.running ? '停止当前轮次' : '发送消息')
-    .onClick(() => {
-      if (this.running) {
-        this.onStop();
-      } else {
-        this.onSend();
+    // 主操作按钮走 P1.5 原语：按下实效/焦点框/键盘可达性由 ArkUI 的 Button 提供；
+    // 图标色用系统"底色之上"的语义色（此前写死 Color.White，换品牌色/深色模式就不一定对）。
+    NativeButton({
+      showIcon: true,
+      iconSymbol: this.running ? $r('sys.symbol.xmark') : $r('sys.symbol.arrow_up'),
+      iconSize: 18,
+      square: true,
+      emphasis: 'solid',
+      tone: this.running ? 'danger' : 'brand',
+      disabled: !(this.running || this.draft.trim().length > 0),
+      a11y: this.running ? '停止当前轮次' : '发送消息',
+      onTap: () => {
+        if (this.running) {
+          this.onStop();
+        } else {
+          this.onSend();
+        }
       }
     })
   }

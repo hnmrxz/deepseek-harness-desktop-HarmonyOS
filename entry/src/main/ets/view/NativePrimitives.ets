@@ -322,3 +322,173 @@ export struct NativeCard {
     .accessibilityText(this.a11y.length > 0 ? this.a11y : `${this.title}，${this.badge}`)
   }
 }
+
+
+/**
+ * 原生按钮（P1.5）。
+ *
+ * ## 四档强调（emphasis）与四种语气（tone）
+ *
+ * 强调决定"这个动作有多重"，语气决定"它是哪一类"。两者分开，是因为
+ * "主要动作"与"危险动作"是两个独立维度——危险的主选（如审批里的「拒绝」）本该
+ * **既是主要、又是危险**，把它们合成一个枚举就表达不了这个组合（D3 §3.4 的
+ * "危险动作把主按钮权重反转"正是这种组合）。
+ *
+ *   emphasis: solid（实底）> tonal（浅底）> outline（描边）> text（纯文字）
+ *   tone:     brand | danger | warning | success | neutral
+ *
+ * 【为什么用 `Button({type, stateEffect}) { … }` 而不是自定义 Row】按压实效、焦点框、
+ * 键盘可达性由 ArkUI 的 Button 提供；自己拿 Row 拼一个"看起来像按钮"的东西，
+ * 就得把这些系统行为逐个补回来，而且必然补不全（键盘用户第一个受影响）。
+ */
+@Component
+export struct NativeButton {
+  @Prop label: string = '';
+  /** 可选图标（与 label 二选一或同时给） */
+  @Prop iconSymbol: Resource = $r('sys.symbol.circle');
+  @Prop showIcon: boolean = false;
+  /** 强调：solid | tonal | outline | text */
+  @Prop emphasis: string = 'solid';
+  /** 语气：brand | danger | warning | success | neutral */
+  @Prop tone: string = 'brand';
+  @Prop disabled: boolean = false;
+  @Prop a11y: string = '';
+  /** 是否为方形图标按钮（如发送键：图标居中、不给文字） */
+  @Prop square: boolean = false;
+  @Prop iconSize: number = HarmonyIconSize.INLINE;
+
+  onTap: () => void = () => {
+  };
+
+  private toneColor(): Resource {
+    if (this.tone === 'danger') {
+      return HarmonyColor.ALERT;
+    }
+    if (this.tone === 'warning') {
+      return HarmonyColor.WARNING;
+    }
+    if (this.tone === 'success') {
+      return HarmonyColor.CONFIRM;
+    }
+    if (this.tone === 'neutral') {
+      return HarmonyColor.TEXT_SECONDARY;
+    }
+    return HarmonyColor.BRAND;
+  }
+
+  private backgroundRes(): Resource {
+    if (this.disabled) {
+      return HarmonyColor.SURFACE_TERTIARY;
+    }
+    if (this.emphasis === 'solid') {
+      return this.toneColor();
+    }
+    if (this.emphasis === 'tonal') {
+      return HarmonyColor.SURFACE_TERTIARY;
+    }
+    if (this.emphasis === 'outline') {
+      return HarmonyColor.SURFACE_RAISED;
+    }
+    return HarmonyColor.SURFACE_RAISED;
+  }
+
+  /** 实底上必须用"底色之上"的前景色（系统语义；此前发送键写死 Color.White） */
+  private foregroundRes(): Resource {
+    if (this.disabled) {
+      return HarmonyColor.TEXT_TERTIARY;
+    }
+    if (this.emphasis === 'solid') {
+      return this.showIcon && this.label.length === 0 ? HarmonyColor.ON_BRAND_ICON : HarmonyColor.ON_BRAND_TEXT;
+    }
+    return this.toneColor();
+  }
+
+  build() {
+    Button({ type: ButtonType.Normal, stateEffect: !this.disabled }) {
+      Row({ space: HarmonySpacing.INLINE }) {
+        if (this.showIcon) {
+          SymbolGlyph(this.iconSymbol)
+            .fontSize(this.iconSize)
+            .fontColor([this.foregroundRes()])
+        }
+        if (this.label.length > 0) {
+          Text(this.label)
+            .fontSize(HarmonyType.LABEL.size)
+            .fontWeight(500)
+            .fontColor(this.foregroundRes())
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+      }
+    }
+    // 方形（图标按钮）固定正方；否则交给内容自适应（`'auto'` 是 SDK 文档支持的取值）
+    .width(this.square ? HarmonyTouch.MIN_TARGET : 'auto')
+    .height(this.square ? HarmonyTouch.MIN_TARGET : HarmonyTouch.MIN_TARGET)
+    .padding(this.square ? 0 : {
+      left: HarmonySpacing.SECTION,
+      right: HarmonySpacing.SECTION
+    })
+    .backgroundColor(this.backgroundRes())
+    .borderRadius(HarmonyRadius.CONTROL)
+    .borderWidth(this.emphasis === 'outline' ? HarmonyBorder.HAIRLINE : 0)
+    .borderColor(this.toneColor())
+    .enabled(!this.disabled)
+    .accessibilityText(this.a11y.length > 0 ? this.a11y : this.label)
+    .onClick(() => {
+      if (!this.disabled) {
+        this.onTap();
+      }
+    })
+  }
+}
+
+/** 动作条里的一项 */
+export interface NativeAction {
+  /** 稳定键（用于 ForEach 与回传） */
+  id: string;
+  label: string;
+  /** 选中态（如已评的"有帮助"） */
+  active?: boolean;
+  /** 语气：neutral | alert */
+  tone?: string;
+  disabled?: boolean;
+  a11y?: string;
+}
+
+/**
+ * 动作条（P1.5）：把"一行操作"从各处的 Row+若干 Text 收成一处。
+ *
+ * 【为什么用数据数组而不是若干子组件】动作条的内容（复制/评价/撤回、保存/分享…）
+ * 是**可枚举的一行按钮**，用数组表达后：间距、换行、禁用与选中样式只实现一次；
+ * 而且"这一行到底有哪些动作"变成了可读的数据（review 时一眼看得完）。
+ * 不用 `@BuilderParam` 的理由与 `NativeCard` 同：本项目真机上踩过它的崩溃（D4 记载）。
+ */
+@Component
+export struct NativeActionBar {
+  @Prop actions: NativeAction[] = [];
+  /** 是否把动作推到左侧并留出弹性空间（右侧放别的） */
+  @Prop leading: boolean = true;
+  onAction: (id: string) => void = () => {
+  };
+
+  build() {
+    Flex({ wrap: FlexWrap.Wrap, justifyContent: this.leading ? FlexAlign.Start : FlexAlign.End }) {
+      ForEach(this.actions, (a: NativeAction) => {
+        Row() {
+          NativeChip({
+            label: a.label,
+            active: a.active === true,
+            tone: a.tone === undefined ? 'neutral' : a.tone,
+            disabled: a.disabled === true,
+            a11y: a.a11y === undefined ? a.label : a.a11y,
+            onTap: () => {
+              this.onAction(a.id);
+            }
+          })
+        }
+        .margin({ right: HarmonySpacing.INLINE, bottom: HarmonySpacing.INLINE })
+      }, (a: NativeAction) => a.id)
+    }
+    .width('100%')
+  }
+}

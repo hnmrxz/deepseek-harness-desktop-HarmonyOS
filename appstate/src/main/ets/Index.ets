@@ -169,6 +169,7 @@ export {
   HarmonyColor,
   HarmonyElevation,
   HarmonyIconSize,
+  HarmonyMaterial,
   HarmonyMotion,
   HarmonyRadius,
   HarmonySpacing,

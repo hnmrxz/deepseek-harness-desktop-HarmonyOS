@@ -20,6 +20,7 @@ import {
   sortPending,
   Border
 } from 'appstate';
+import { NativeButton } from './NativePrimitives';
 
 @Component
 export struct PendingPane {
@@ -142,14 +143,22 @@ export struct PendingPane {
         ForEach(item.choices, (choice: PendingChoice) => {
           this.multiChoiceRow(item, choice)
         }, (choice: PendingChoice) => `${item.id}-${choice.id}`)
-        Button('提交选择')
-          .width('100%')
-          .enabled(this.chosen.length > 0)
-          .onClick(() => {
-            const labels: string[] = this.labelsOf(item, this.chosen);
-            this.chosen = [];
-            this.onAnswer(item, labels, this.textFor(item));
+        // 主操作按钮走原语（P1.5）：实底 + 品牌语气，禁用态也由原语统一表达
+        Row() {
+          NativeButton({
+            label: '提交选择',
+            emphasis: 'solid',
+            tone: 'brand',
+            disabled: this.chosen.length === 0,
+            a11y: this.chosen.length === 0 ? '提交选择（先选至少一项）' : '提交选择',
+            onTap: () => {
+              const labels: string[] = this.labelsOf(item, this.chosen);
+              this.chosen = [];
+              this.onAnswer(item, labels, this.textFor(item));
+            }
           })
+        }
+        .width('100%')
       } else {
         ForEach(item.choices, (choice: PendingChoice, index: number) => {
           this.singleChoiceRow(item, choice, index)
