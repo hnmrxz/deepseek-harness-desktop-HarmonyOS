@@ -1483,6 +1483,22 @@ struct Index {
     }
   }
 
+  /**
+   * 切换计划模式（官方 `ui-plan` 的一级 chip，E202）。
+   *
+   * 【为什么走命令而不是端点】切换没有专用端点——宿主把"进入或退出计划模式"做成了一条
+   * `plan` 命令（见 `ui-commands` 的 `description.plan`），所以这里执行 `/plan`。
+   * 判据（生效值 = `pending ? !active : active`）在 Composer 与这里各用一次，
+   * 但**只由中枢的投影驱动**，不缓存派生值。
+   */
+  private togglePlan(): void {
+    SessionHub.shared().executeCommand('/plan').then((n: ActionNotice) => {
+      this.settingWriteNote = this.noticeText(n);
+    }).catch((e: Object) => {
+      this.settingWriteNote = '切换计划模式失败：' + (e as Error).message;
+    });
+  }
+
   private showsConversation(): boolean {
     // 判据在控制器里（`NavTab.SESSIONS` 是 `WORKSPACES` 的别名这事只该写在那一处）
     return showsConversation(this.navState());
@@ -2915,34 +2931,6 @@ struct Index {
         }
         .width('100%')
         /*
-         * E202：**计划模式**（官方 `ui-plan` 的一级 chip）。
-         *
-         * 显示判据与官方一致：**生效目标**是计划模式 = `pending ? !active : active`
-         * （`pending` 表示刚切换、等宿主确认）。切换没有专用端点 ⇒ 执行 `plan` 命令
-         * （宿主把"进入或退出计划模式"做成了一条命令，见 `ui-commands` 的 `description.plan`）。
-         */
-        Row({ space: Sp.S }) {
-          Text('计划模式')
-            .fontSize(Fs.CAPTION)
-            .layoutWeight(1)
-          Text((this.planPending ? !this.planActive : this.planActive) ? '已开启' : '已关闭')
-            .fontSize(Fs.CAPTION)
-            .fontColor((this.planPending ? !this.planActive : this.planActive)
-              ? $r('sys.color.brand')
-              : $r('sys.color.font_tertiary'))
-          Text('切换')
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.brand'))
-            .onClick(() => {
-              SessionHub.shared().executeCommand('/plan').then((n: ActionNotice) => {
-                this.settingWriteNote = this.noticeText(n);
-              }).catch((e: Object) => {
-                this.settingWriteNote = '切换计划模式失败：' + (e as Error).message;
-              });
-            })
-        }
-        .width('100%')
-        /*
          * E195（§13 第 3 项）：**本会话的模型**。
          *
          * 官方把它做成会话输入区的选择器（`dsh-client-ui-model-selection`，写 `session/selectModel`）。
@@ -3167,6 +3155,9 @@ struct Index {
         references: this.references,
         commands: this.commands,
         notice: this.attachNotice,
+        planActive: this.planActive,
+        planPending: this.planPending,
+        permissionLabel: this.permissionCurrent,
         onDraftChange: (text: string) => {
           this.draft = text;
         },
@@ -3188,6 +3179,9 @@ struct Index {
         },
         onPickModel: () => {
           this.selectTab(NavTab.SETTINGS);
+        },
+        onTogglePlan: () => {
+          this.togglePlan();
         },
         onReferenceQuery: (query: string) => {
           if (this.hubConnected) {

@@ -36,6 +36,7 @@ import {
   TrajectoryKind,
   SessionHub,
   FeedbackRow,
+  Border
 } from 'appstate';
 import { Composer } from './Composer';
 import { PendingPane } from './PendingPane';
@@ -81,6 +82,13 @@ export struct ConversationPane {
   onRemoveAttachment: (receiptId: string) => void = () => {
   };
   onPickModel: () => void = () => {
+  };
+  /** 计划模式（官方 ui-plan 的输入区 chip）与权限模式（只读展示） */
+  @Prop planActive: boolean = false;
+  @Prop planPending: boolean = false;
+  @Prop permissionLabel: string = '';
+
+  onTogglePlan: () => void = () => {
   };
   /** `@` 引用查询词变化（转发给宿主去问 Host） */
   onReferenceQuery: (query: string) => void = () => {
@@ -468,7 +476,11 @@ export struct ConversationPane {
         onStop: this.onStop,
         onAddAttachment: this.onAddAttachment,
         onRemoveAttachment: this.onRemoveAttachment,
+        planActive: this.planActive,
+        planPending: this.planPending,
+        permissionLabel: this.permissionLabel,
         onPickModel: this.onPickModel,
+        onTogglePlan: this.onTogglePlan,
         onReferenceQuery: this.onReferenceQuery,
         onPullQueued: this.onPullQueued,
         onRemoveQueued: this.onRemoveQueued,
@@ -594,7 +606,7 @@ export struct ConversationPane {
         .width('100%')
         .padding(Sp.S)
         .borderRadius(Radius.S)
-        .borderWidth(1)
+        .borderWidth(Border.HAIRLINE)
         .borderColor($r('sys.color.comp_divider'))
         .onClick(() => {
           this.toggle(`${item.id}:r`);
@@ -658,7 +670,7 @@ export struct ConversationPane {
     .width('100%')
     .padding(Sp.S)
     .borderRadius(Radius.S)
-    .borderWidth(1)
+    .borderWidth(Border.HAIRLINE)
     .borderColor($r('sys.color.comp_divider'))
     .accessibilityText('思考过程，点击展开或收起')
     .onClick(() => {
@@ -718,7 +730,7 @@ export struct ConversationPane {
     .padding(Sp.M)
     .borderRadius(Radius.M)
     .backgroundColor($r('sys.color.background_secondary'))
-    .borderWidth(1)
+    .borderWidth(Border.HAIRLINE)
     .borderColor(toolStateIsProblem(item.toolState) ? $r('sys.color.alert') : $r('sys.color.comp_divider'))
     .accessibilityText(`工具 ${item.toolName}，状态 ${toolStateLabel(item.toolState)}`)
   }
@@ -774,7 +786,7 @@ export struct ConversationPane {
     .width('100%')
     .padding(Sp.M)
     .borderRadius(Radius.M)
-    .borderWidth(1)
+    .borderWidth(Border.HAIRLINE)
     .borderColor($r('sys.color.comp_divider'))
     .accessibilityText(`子代理 ${item.subagentName}`)
   }
@@ -844,7 +856,7 @@ export struct ConversationPane {
     .width('100%')
     .padding(Sp.M)
     .borderRadius(Radius.M)
-    .borderWidth(1)
+    .borderWidth(Border.HAIRLINE)
     .borderColor($r('sys.color.comp_divider'))
   }
 

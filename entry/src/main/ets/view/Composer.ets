@@ -77,6 +77,22 @@ export struct Composer {
    * 用户只会反复点。两者都劣于「点了之后明确告诉你为什么现在不能用」。
    */
   @Prop notice: string = '';
+  /**
+   * 计划模式的**生效**状态（官方 `ui-plan` 的一级 chip，E202）。
+   *
+   * `planPending` 表示"刚切换、等宿主确认"——此时生效值要取反，与官方判据一致：
+   * `pending ? !active : active`。把这条判据放在 Composer 里，是因为**chip 显示的就是它**。
+   */
+  @Prop planActive: boolean = false;
+  @Prop planPending: boolean = false;
+  /**
+   * 当前会话的权限模式（只读展示）。
+   *
+   * 官方把它做成输入区的 `/permission` 弹层；本仓的**切换**端点尚未接线（见矩阵
+   * `permission-presets` 行），所以这里**如实只显示当前生效值**——不做一个点了没反应的假入口。
+   * 空串表示中枢还没读到，此时不显示该 chip（而不是显示一个"未知"）。
+   */
+  @Prop permissionLabel: string = '';
 
   /** 文本变化 */
   onDraftChange: (text: string) => void = () => {
@@ -100,6 +116,10 @@ export struct Composer {
   };
   /** 切换模型（宿主弹出选择器） */
   onPickModel: () => void = () => {
+  };
+
+  /** 切换计划模式（执行 `/plan` 命令，宿主把它做成了一条命令） */
+  onTogglePlan: () => void = () => {
   };
   /**
    * 把排队项**取回输入框**编辑（宿主实现为：移除该队列项 + 把正文填进草稿）。
@@ -213,7 +233,7 @@ export struct Composer {
           .fontColor($r('sys.color.font_tertiary'))
           .layoutWeight(1)
         Text('由 Host 维护')
-          .fontSize(10)
+          .fontSize(Fs.CAPTION_XS)
           .fontColor($r('sys.color.font_tertiary'))
       }
       .width('100%')
@@ -228,23 +248,23 @@ export struct Composer {
             .width('100%')
           Row({ space: Sp.L }) {
             Text('取回编辑')
-              .fontSize(10)
+              .fontSize(Fs.CAPTION_XS)
               .fontColor($r('sys.color.brand'))
               .onClick(() => {
                 this.onPullQueued(item.id, item.text);
               })
             Text(placementLabel(item.placement))
-              .fontSize(10)
+              .fontSize(Fs.CAPTION_XS)
               .fontColor($r('sys.color.font_tertiary'))
             Blank()
             Text('插话')
-              .fontSize(10)
+              .fontSize(Fs.CAPTION_XS)
               .fontColor($r('sys.color.brand'))
               .onClick(() => {
                 this.onSteerQueued(item.id);
               })
             Text('移除')
-              .fontSize(10)
+              .fontSize(Fs.CAPTION_XS)
               .fontColor($r('sys.color.alert'))
               .onClick(() => {
                 this.onRemoveQueued(item.id);
@@ -311,7 +331,12 @@ export struct Composer {
     .width('100%')
   }
 
-  /** 工具行：@ / / / 附件 / 模型 chip */
+  /** 计划模式的**生效**值（官方判据：`pending ? !active : active`） */
+  private planOn(): boolean {
+    return this.planPending ? !this.planActive : this.planActive;
+  }
+
+  /** 工具行：@ / / / 附件 / 计划 / 权限 / 模型 */
   @Builder
   toolRow() {
     Row({ space: Sp.S }) {
@@ -345,6 +370,31 @@ export struct Composer {
       .onClick(() => {
         this.onAddAttachment();
       })
+
+      // ── 计划模式（官方 ui-plan：输入区的一级 chip；E202 的判据）──
+      Text('计划')
+        .fontSize(Fs.CAPTION)
+        .fontColor(this.planOn() ? $r('sys.color.brand') : $r('sys.color.font_secondary'))
+        .padding({ left: Sp.S, right: Sp.S, top: Sp.XS, bottom: Sp.XS })
+        .borderRadius(Radius.S)
+        .backgroundColor($r('sys.color.background_secondary'))
+        .accessibilityText(`计划模式：${this.planOn() ? '已开启' : '已关闭'}，点击切换`)
+        .onClick(() => {
+          this.onTogglePlan();
+        })
+
+      // ── 权限模式（只读：切换端点未接线，故不做假入口）──
+      if (this.permissionLabel.length > 0) {
+        Text(`权限：${this.permissionLabel}`)
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.font_tertiary'))
+          .maxLines(1)
+          .constraintSize({ maxWidth: 160 })
+          .padding({ left: Sp.S, right: Sp.S, top: Sp.XS, bottom: Sp.XS })
+          .borderRadius(Radius.S)
+          .backgroundColor($r('sys.color.background_secondary'))
+          .accessibilityText(`当前权限模式：${this.permissionLabel}（只读）`)
+      }
 
       Blank()
 
