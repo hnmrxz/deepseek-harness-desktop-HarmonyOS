@@ -62,7 +62,24 @@ AppFrame
 | `Index` 的三段侧栏 builder | ✅ 已改为委托（只保留"这条轨道的 surface"：宽度与底色） |
 | `view/shell/RightbarShell.ets` | ✅ 已落地：右栏**面板本体**归它所有（标题行 / 关闭入口 / sections / 宽度与底色），三种呈现（真右栏 / 侧边浅层面板 / Sheet）都在它内部 |
 | `@Provide/@Consume` 机制 | ✅ **已小范围验证并在真实用途上用起来**：`Index` `@Provide('panelRegistry')`、`SidebarShell` `@Consume` 并按注册表可用性过滤入口（编译通过）。⚠️ 运行时行为**必须真机确认**（`@BuilderParam` 编译通过但真机崩过，D4）⇒ 见 `docs/device-validation.md` **D9** |
-| `AppShell` / `MainShell` | ❌ **下一步**（`Index` 目前仍直接负责页面级 Pane 选择）。机制已验 ⇒ 这一步现在可负担 |
+| `NavigationState` 成为视图唯一真值 | ✅ **已落地**：`Index` 的 `@State tab: NavTab` 已删除，页面选择改由 `nav.selectedMainPanel` 决定；`NavTab` 退化为**迁移期别名**（经 `legacyTabOfMainPanel` / `mainPanelOfLegacyTab` 双向桥，往返有断言）。切页签同样**经注册表校验**（不可用的面板切不过去） |
+| `AppShell` / `MainShell` | ❌ **下一步**。阻塞点已查明（见下）|
+
+**AppShell 不能用"注入 Builder"那条路（有真机实证）**
+
+`docs/50` 的 **E118** 记录了本仓一次真机崩溃：`@BuilderParam coreSlot`（把父组件的 `@Builder`
+注入子组件再调用）⇒ 真机点按即 `JsError` 杀进程；修复办法是**显式传 6 个属性**。
+所以"`AppShell` 接收三条轨道的内容"这条路**在本仓真机不可用**——`@BuilderParam` 编译能过，
+真机不认。可行的两条路：
+
+1. **显式 props**（E118 已验证的形态）：`MainShell` 接收主区所需的数据与回调。P0 剩下的量在于
+   主区六个面板的 props 面（约 100 项），机械但可观。
+2. **`@Provide/@Consume`**（本轮已在侧栏验证编译通过；**运行时待真机确认**，见 D9）：
+   可以显著缩小 props 面——但按 D9 的闸门，**D9 通过前不用于主区**。
+
+**因此下一步的次序是**：先做 `AppShell` 的**不含内容注入**部分（根容器、overlay/sheet 宿主、
+返回处理、快捷键与输入证据采集挂在同一处），再按上面两条路之一逐步把主区搬出去。
+每搬一块跑一次全门禁。
 
 **下一步的做法（写下来避免走偏）**
 

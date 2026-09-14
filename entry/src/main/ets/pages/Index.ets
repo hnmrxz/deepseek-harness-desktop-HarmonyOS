@@ -132,6 +132,10 @@ relativeTime,
   dragDetailWidth,
   flattenSources,
   createPanelRegistry,
+  initialNavigationState,
+  legacyTabOfMainPanel,
+  mainPanelOfLegacyTab,
+  navigateToMain,
   guessFromKeyboardForm,
   mainPanels,
   PanelRegistry,
@@ -152,6 +156,7 @@ import type {
   AttachOutcome,
   InputModality,
   ModalityEvidence,
+  NavigationState,
   NavState,
   SessionStatsInput,
   OverlayState,
@@ -331,7 +336,15 @@ const TAG: string = 'HDSH-Index';
 struct Index {
   // ── 形态 ──
   @State mode: LayoutMode = LayoutMode.SINGLE;
-  @State tab: NavTab = NavTab.SESSIONS;
+  /**
+   * 导航状态（P0-2：**页面 = 选中的面板**）。
+   *
+   * 【为什么收在这里】此前"当前是哪个页面"是 `@State tab: NavTab`，而右栏选择、设置分区、
+   * 抽屉、浮层各是另一份字段——**页面与面板是两套机制**，于是 `Index` 必须自己写 if 链装配 Pane。
+   * 现在唯一真值是 `NavigationState.selectedMainPanel`，`NavTab` 只是**迁移期的别名**
+   * （`legacyTabOfMainPanel` / `mainPanelOfLegacyTab` 是双向桥，有往返断言）。
+   */
+  @State nav: NavigationState = initialNavigationState();
   @State stackPage: StackPage = StackPage.MAIN;
   @State detailOpen: boolean = false;
   /**
@@ -1093,7 +1106,7 @@ struct Index {
   /** 导航状态快照（视图持有真实状态，控制器只读） */
   private navState(): NavState {
     return {
-      tab: this.tab,
+      tab: this.currentTab(),
       stackPage: this.stackPage,
       wsDrill: this.wsDrill,
       hasSession: this.selectedSessionId.length > 0,
@@ -1688,9 +1701,16 @@ struct Index {
    * 全部来自 `appstate/ui/NavigationController.selectTab`（纯函数，有 fixture 覆盖）；
    * 本方法只负责把决策**落到状态**并执行副作用。
    */
+  /** 当前页签（派生值：由主区面板经桥反查；视图不再持有第二份真值） */
+  private currentTab(): NavTab {
+    return legacyTabOfMainPanel(this.nav.selectedMainPanel) as NavTab;
+  }
+
   private selectTab(tab: NavTab): void {
     const d: TabSelection = decideTabSelection(this.navState(), tab);
-    this.tab = d.tab;
+    // 唯一真值是主区面板：旧页签取值经桥落到面板 id，并且**经注册表校验**
+    // （不可用的面板切不过去——要么切过去，要么不动，不会"点了却到别处"）
+    this.nav = navigateToMain(this.nav, mainPanelOfLegacyTab(d.tab), this.panelRegistry);
     this.stackPage = d.stackPage;
     this.wsDrill = d.wsDrill;
     if (d.clearSession) {
@@ -3126,7 +3146,7 @@ struct Index {
       // 因此标题不再叫"添加 Host"——那会让用户以为这是必经步骤。
       return '远程 Host（可选）';
     }
-    return navTabLabel(this.tab);
+    return navTabLabel(this.currentTab());
   }
 
   @Builder
@@ -3135,7 +3155,7 @@ struct Index {
     Column() {
       SidebarShell({
         brand: APP_NAME,
-        tab: this.tab,
+        tab: this.currentTab(),
         pendingBadge: this.pendingBadge,
         navWidthVp: this.navWidthVp(),
         presentation: TrackPresentation.OVERLAY,
@@ -3208,7 +3228,7 @@ struct Index {
     Column() {
       SidebarShell({
         brand: APP_NAME,
-        tab: this.tab,
+        tab: this.currentTab(),
         pendingBadge: this.pendingBadge,
         navWidthVp: this.navWidthVp(),
         presentation: TrackPresentation.RAIL,
@@ -3259,7 +3279,7 @@ struct Index {
     Column() {
       SidebarShell({
         brand: APP_NAME,
-        tab: this.tab,
+        tab: this.currentTab(),
         pendingBadge: this.pendingBadge,
         navWidthVp: this.navWidthVp(),
         presentation: this.sidebarPresentation(),
@@ -4858,9 +4878,9 @@ struct Index {
      * 官方 web 的侧栏就是"工作区为组、会话挂在组下"；待决属于**当前这次对话**，显示在列表顶部。
      * 文件浏览仍是工作区里的下钻（`wsDrill > 0`，见下一个分支）。
      */
-    if (this.tab === NavTab.WORKSPACES && this.wsDrill === 0) {
+    if (this.currentTab() === NavTab.WORKSPACES && this.wsDrill === 0) {
       this.workspaceHub(compact)
-    } else if (this.tab === NavTab.WORKSPACES) {
+    } else if (this.currentTab() === NavTab.WORKSPACES) {
       WorkspacePane({
         workspaces: this.workspaces,
         onPickFolder: () => {
