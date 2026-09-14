@@ -41,6 +41,7 @@ import {
 } from 'appstate';
 /** 类型单独 import type（本仓约定：值与类型分开写） */
 import type { ActionNotice, FeedbackCategory } from 'appstate';
+import { NativeChip } from './NativePrimitives';
 import { Composer } from './Composer';
 import { PendingPane } from './PendingPane';
 
@@ -681,37 +682,41 @@ export struct ConversationPane {
   @Builder
   messageActions(item: TrajectoryItem) {
     Column({ space: Sp.XS }) {
-      Row({ space: Sp.L }) {
-        Text('复制')
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
-          .onClick(() => {
+      Row({ space: Sp.XS }) {
+        NativeChip({
+          label: '复制',
+          a11y: '复制这条消息的正文',
+          onTap: () => {
             this.onCopyMessage(item.body);
-          })
-        Text('有帮助')
-          .fontSize(Fs.CAPTION)
-          .fontColor(this.myRating(item.id) === 'positive'
-            ? $r('sys.color.brand') : $r('sys.color.font_tertiary'))
-          .onClick(() => {
+          }
+        })
+        NativeChip({
+          label: '有帮助',
+          active: this.myRating(item.id) === 'positive',
+          a11y: '评价为有帮助，可选择原因',
+          onTap: () => {
             this.openFeedback(item, 'positive');
-          })
-        Text('没帮助')
-          .fontSize(Fs.CAPTION)
-          .fontColor(this.myRating(item.id) === 'negative'
-            ? $r('sys.color.brand') : $r('sys.color.font_tertiary'))
-          .onClick(() => {
+          }
+        })
+        NativeChip({
+          label: '没帮助',
+          active: this.myRating(item.id) === 'negative',
+          a11y: '评价为没帮助，可选择原因',
+          onTap: () => {
             this.openFeedback(item, 'negative');
-          })
+          }
+        })
         // 已评才给"撤回"：没评就没有可撤的（按钮不该假装有事可做）
         if (this.myRating(item.id).length > 0) {
-          Text('撤回评价')
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_tertiary'))
-            .onClick(() => {
+          NativeChip({
+            label: '撤回评价',
+            a11y: '撤回这条消息的反馈',
+            onTap: () => {
               SessionHub.shared().clearFeedback(item.id).then((n: ActionNotice) => {
                 this.fbNote2 = this.feedbackNoticeText(n);
               });
-            })
+            }
+          })
         }
         Blank()
       }
@@ -745,17 +750,18 @@ export struct ConversationPane {
         .width('100%')
       Flex({ wrap: FlexWrap.Wrap }) {
         ForEach(FEEDBACK_CATEGORIES, (c: FeedbackCategory) => {
-          Text(c.label)
-            .fontSize(Fs.CAPTION_XS)
-            .fontColor(this.fbCategory === c.id
-              ? $r('sys.color.brand') : $r('sys.color.font_secondary'))
-            .padding({ left: Sp.S, right: Sp.S, top: Sp.XS, bottom: Sp.XS })
-            .borderRadius(Radius.XS)
-            .backgroundColor($r('sys.color.background_secondary'))
-            .margin({ right: Sp.XS, bottom: Sp.XS })
-            .onClick(() => {
-              this.fbCategory = this.fbCategory === c.id ? '' : c.id;
+          Row() {
+            NativeChip({
+              label: c.label,
+              active: this.fbCategory === c.id,
+              a11y: `评价原因：${c.label}`,
+              onTap: () => {
+                // 再点一次取消选择 ⇒ 回到"未分类"（契约里 category 可选，不强迫分类）
+                this.fbCategory = this.fbCategory === c.id ? '' : c.id;
+              }
             })
+          }
+          .margin({ right: Sp.XS, bottom: Sp.XS })
         }, (c: FeedbackCategory) => c.id)
       }
       .width('100%')

@@ -162,6 +162,21 @@ export {
 // ── 设计令牌 ──
 export { Border, Breakpoint, Dur, Fs, Lh, Radius, SemanticColor, Sp, Sz } from './ui/Tokens';
 
+// ── HarmonyTheme（P1.5：Web 语义 → HarmonyOS 视觉的映射层） ──
+export {
+  harmonyTokenFor,
+  HarmonyBorder,
+  HarmonyColor,
+  HarmonyElevation,
+  HarmonyMotion,
+  HarmonyRadius,
+  HarmonySpacing,
+  HarmonyTouch,
+  HarmonyType,
+  WEB_TOKEN_MAP
+} from './ui/HarmonyTheme';
+export type { ShadowLevel, TypeRole, WebTokenMapping } from './ui/HarmonyTheme';
+
 // ── 布局决策（P1：形态/几何决策的唯一落点，见 LayoutController 的说明） ──
 export {
   breakpointThresholds,

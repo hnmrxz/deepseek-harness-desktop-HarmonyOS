@@ -22,6 +22,7 @@ import {
   Sp,
   Sz
 } from 'appstate';
+import { NativeChip } from './NativePrimitives';
 
 /**
  * 附件条目的展示文本：`名字 · 大小`。
@@ -336,34 +337,32 @@ export struct Composer {
     return this.planPending ? !this.planActive : this.planActive;
   }
 
-  /** 工具行：@ / / / 附件 / 计划 / 权限 / 模型 */
+  /** 工具行：@ / / / 附件 / 计划 / 权限 / 模型（全部走 P1.5 的原生原语） */
   @Builder
   toolRow() {
-    Row({ space: Sp.S }) {
-      Text('@ 引用')
-        .fontSize(Fs.CAPTION)
-        .fontColor(this.panel === 'ref' ? $r('sys.color.brand') : $r('sys.color.font_secondary'))
-        .padding({ left: Sp.S, right: Sp.S, top: Sp.XS, bottom: Sp.XS })
-        .borderRadius(Radius.S)
-        .backgroundColor($r('sys.color.background_secondary'))
-        .onClick(() => {
+    Row({ space: Sp.XS }) {
+      NativeChip({
+        label: '@ 引用',
+        active: this.panel === 'ref',
+        a11y: '插入文件或会话引用',
+        onTap: () => {
           this.panel = this.panel === 'ref' ? '' : 'ref';
           this.filter = '';
-        })
+        }
+      })
 
-      Text('/ 命令')
-        .fontSize(Fs.CAPTION)
-        .fontColor(this.panel === 'cmd' ? $r('sys.color.brand') : $r('sys.color.font_secondary'))
-        .padding({ left: Sp.S, right: Sp.S, top: Sp.XS, bottom: Sp.XS })
-        .borderRadius(Radius.S)
-        .backgroundColor($r('sys.color.background_secondary'))
-        .onClick(() => {
+      NativeChip({
+        label: '/ 命令',
+        active: this.panel === 'cmd',
+        a11y: '运行命令',
+        onTap: () => {
           this.panel = this.panel === 'cmd' ? '' : 'cmd';
           this.filter = '';
-        })
+        }
+      })
 
       Button() {
-        SymbolGlyph($r('sys.symbol.paperclip')).fontSize(16)
+        SymbolGlyph($r('sys.symbol.paperclip')).fontSize(Sz.TOUCH_MIN / 2)
       }
       .buttonStyle(ButtonStyleMode.TEXTUAL)
       .accessibilityText('添加附件')
@@ -372,44 +371,37 @@ export struct Composer {
       })
 
       // ── 计划模式（官方 ui-plan：输入区的一级 chip；E202 的判据）──
-      Text('计划')
-        .fontSize(Fs.CAPTION)
-        .fontColor(this.planOn() ? $r('sys.color.brand') : $r('sys.color.font_secondary'))
-        .padding({ left: Sp.S, right: Sp.S, top: Sp.XS, bottom: Sp.XS })
-        .borderRadius(Radius.S)
-        .backgroundColor($r('sys.color.background_secondary'))
-        .accessibilityText(`计划模式：${this.planOn() ? '已开启' : '已关闭'}，点击切换`)
-        .onClick(() => {
+      NativeChip({
+        label: '计划',
+        active: this.planOn(),
+        a11y: `计划模式：${this.planOn() ? '已开启' : '已关闭'}，点击切换`,
+        onTap: () => {
           this.onTogglePlan();
-        })
+        }
+      })
 
-      // ── 权限模式（只读：切换端点未接线，故不做假入口）──
+      // ── 权限模式：**只读状态**，不是按钮 ──
+      // 用 disabled 的原语表达，是因为它既不该看起来可点、也不该被当成"暂时不可用的动作"。
+      // 真正的切换端点尚未接线（矩阵 permission-presets 行为 PARTIAL），所以不做假入口。
       if (this.permissionLabel.length > 0) {
-        Text(`权限：${this.permissionLabel}`)
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
-          .maxLines(1)
-          .constraintSize({ maxWidth: 160 })
-          .padding({ left: Sp.S, right: Sp.S, top: Sp.XS, bottom: Sp.XS })
-          .borderRadius(Radius.S)
-          .backgroundColor($r('sys.color.background_secondary'))
-          .accessibilityText(`当前权限模式：${this.permissionLabel}（只读）`)
+        NativeChip({
+          label: `权限：${this.permissionLabel}`,
+          disabled: true,
+          maxWidth: 160,
+          a11y: `当前权限模式：${this.permissionLabel}（只读，暂不支持在此切换）`
+        })
       }
 
       Blank()
 
-      Text(this.modelLabel())
-        .fontSize(Fs.CAPTION)
-        .fontColor($r('sys.color.font_secondary'))
-        .maxLines(1)
-        .constraintSize({ maxWidth: 160 })
-        .padding({ left: Sp.S, right: Sp.S, top: Sp.XS, bottom: Sp.XS })
-        .borderRadius(Radius.S)
-        .backgroundColor($r('sys.color.background_secondary'))
-        .accessibilityText(`当前模型：${this.modelLabel()}，点击切换`)
-        .onClick(() => {
+      NativeChip({
+        label: this.modelLabel(),
+        maxWidth: 160,
+        a11y: `当前模型：${this.modelLabel()}，点击切换`,
+        onTap: () => {
           this.onPickModel();
-        })
+        }
+      })
     }
     .width('100%')
   }

@@ -75,8 +75,16 @@ export class Sz {
   static readonly DETAIL_PANEL: number = 320;
   /** 详情栏最小宽度 */
   static readonly DETAIL_MIN: number = 260;
-  /** 触摸目标最小高度（无障碍） */
+  /** 触摸目标最小高度（无障碍，D3 §7） */
   static readonly TOUCH_MIN: number = 44;
+  /**
+   * **指针**（鼠标/触控笔）可接受的最小目标（P1.5）。
+   *
+   * 【为什么要和 TOUCH_MIN 分开】手指与鼠标不是一回事：手指要 44vp 才点得准，
+   * 鼠标 24vp 就足够。合成一个数必然二选一——要么桌面端目标过大显得笨重，
+   * 要么手机端点不中。P3 接输入模态时按设备取（`HarmonyTouch` 已经分好两个名字）。
+   */
+  static readonly POINTER_MIN: number = 24;
 }
 
 /** 断点阈值（vp，D3 §2） */
