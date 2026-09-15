@@ -161,7 +161,7 @@ hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 **页面选择已收成唯一真值**（`NavigationState.selectedMainPanel`，`NavTab` 退化为迁移期别名），
 "此刻显示哪个面板"的组合逻辑也已收进纯模型（`activeMainPanelOf`）；
 **P0 到此完成**，**P1（Sidebar）已推进三步**：① 工作区→会话那棵树抽成 `view/WorkspaceBrowser.ets`
-（可挂主区、也可挂侧栏；`TabContentView` 595 → 319 行），并删掉一个**长期没人渲染的死 Pane**
+（可挂主区、也可挂侧栏；`TabContentView` 595 → 341 行），并删掉一个**长期没人渲染的死 Pane**
 （`SessionListPane`，221 行）——顺带把设计令牌棘轮调紧（53 → 40 处）；② 为 240vp 侧栏做**窄版行**
 （名字一行、动作一行；动作**不收进菜单**——菜单在真机打不开就等于功能不可达，见 `docs/50` E301）；
 ③ 树挂进侧栏 PANEL 轨道（品牌行下方，官方顺序），**三栏下主区不再重复一份**（判据取自 `ShellTracks`，
