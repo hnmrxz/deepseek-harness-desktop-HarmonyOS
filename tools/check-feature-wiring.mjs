@@ -169,7 +169,14 @@ const FEATURES = [
    * 我们此前是"往草稿末尾追加" ⇒ 半截查询词留在正文里（`@src/fo@src/foo.ts`），
    * 而它长得像一条引用、会被 Host 当引用去解析。钉两端：纯模型（识别 + 替换）与视图调用点。
    */
-  { name: '输入触发', patterns: [['detectTrigger', 2], ['applyPick', 2], ['draftAfterPick', 2]] }
+  { name: '输入触发', patterns: [['detectTrigger', 2], ['applyPick', 2], ['draftAfterPick', 2]] },
+  /*
+   * 提交失败后的草稿恢复（P7-15）。官方的 composer sink 是"乐观清空 + 失败后**只在
+   * 用户没动过输入框时**还回去"（`dsh-client-ui-conversation` 的 sink 注释）。我们此前
+   * 只管清空：发送失败时用户的长消息凭空消失，只能重敲。钉三段：纯规则 + 中枢的
+   * "这次是否已排队"标记 + 视图的恢复调用点。
+   */
+  { name: '失败恢复草稿', patterns: [['shouldRestoreDraft', 2], ['lastSendQueued', 3], ['draft = submitted', 1]] }
 ];
 
 /**

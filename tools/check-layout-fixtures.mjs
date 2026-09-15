@@ -68,6 +68,8 @@ const PURE_FILES = [
   'appstate/src/main/ets/model/InputAttachment.ets',
   // 输入触发管线（P7-14）：零依赖，`@` 引用与 `/` 命令的词法
   'appstate/src/main/ets/model/InputTrigger.ets',
+  // 提交失败后的草稿恢复规则（P7-15）：零依赖
+  'appstate/src/main/ets/model/ComposerSend.ets',
   // 浮层回执归属（P2-8，E353）：零依赖
   'appstate/src/main/ets/model/Sheets.ets',
   // 设置编辑浮层的输入提示（P2-10）：零依赖
@@ -240,6 +242,7 @@ const PD = require2('./PrivacyDisclosure.js');
 const MI = require2('./MessageImage.js');
 const IA = require2('./InputAttachment.js');
 const IT = require2('./InputTrigger.js');
+const CS = require2('./ComposerSend.js');
 const t = makeAsserter(selfTest);
 
 console.log('# 布局 fixture 门禁（四形态 + 断点边界 + 让步链）\n');
@@ -2407,6 +2410,25 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   t.eq('普通路径要补空格', needsTrailingSpace('@src/foo.ts'), true);
   t.eq('目录插入后引号仍开着',
     applyPick('看 @sr', detectTrigger('看 @sr'), '@"src/'), '看 @"src/');
+}
+
+
+// ── P7-15：提交失败后的草稿恢复（官方 sink："restored only while untouched"） ──
+{
+  const { shouldRestoreDraft } = CS;
+
+  t.eq('成功 ⇒ 不恢复（消息已经在会话里了）',
+    shouldRestoreDraft(true, false, '', '你好'), false);
+  t.eq('失败且未排队且输入框空 ⇒ 恢复',
+    shouldRestoreDraft(false, false, '', '你好'), true);
+  t.eq('**离线已排队 ⇒ 不恢复**（否则既排队又留在输入框，一按发送发两条）',
+    shouldRestoreDraft(false, true, '', '你好'), false);
+  t.eq('**用户在失败后又敲了字 ⇒ 不覆盖他的新内容**',
+    shouldRestoreDraft(false, false, '新的内容', '你好'), false);
+  t.eq('输入框里只剩空格也算"动过"（不覆盖）',
+    shouldRestoreDraft(false, false, ' ', '你好'), false);
+  t.eq('原文为空 ⇒ 没什么可恢复',
+    shouldRestoreDraft(false, false, '', ''), false);
 }
 
 

@@ -356,6 +356,14 @@ export interface HubSnapshot {
   activeStreams: number;
   /** 离线待发条数 */
   outbox: number;
+  /**
+   * 最近一次 `sendPrompt` 是否**已进待发队列**（P7-15）。
+   *
+   * 【为什么要暴露它】视图在失败后要决定"要不要把草稿还回输入框"：离线排队时**不能**还
+   * （否则既排队又留在输入框 ⇒ 用户一按发送就发出两条）。中枢自己知道这件事，
+   * 让视图去解析 `lastError` 的文案来猜是脆弱的。
+   */
+  lastSendQueued: boolean;
   lastError: string;
   /** 协议旁路日志（诊断页；仅在开启时累积） */
   trace: string[];
@@ -725,6 +733,8 @@ export class SessionHub {
    * 要求是"移除时能精确命中那一行"，而不是"跨进程可复现"。
    */
   private imageDraftSeq: number = 0;
+  /** 最近一次 `sendPrompt` 是否已进待发队列（见 `HubSnapshot.lastSendQueued`） */
+  private lastSendQueued: boolean = false;
   /** 当前会话的排队项（由 `session/control` 的 baseline 与 queue 帧驱动） */
   private queuedItems: QueuedItem[] = [];
 
@@ -989,6 +999,7 @@ export class SessionHub {
       connected: this.unaryReady,
       activeStreams: this.activeStreamCount(),
       outbox: this.outboxList.length,
+      lastSendQueued: this.lastSendQueued,
       lastError: this.lastError,
       trace: this.traceLines,
       unknownEventTypes: this.unknownTypes,
@@ -4252,9 +4263,12 @@ export class SessionHub {
         this.lastError = '当前离线：已加入待发队列，连接恢复后自动发送';
       }
       this.outboxList.push({ requestId: requestId, sessionId: sessionId, text: trimmed, at: Date.now() });
+      // 已排队 ⇒ 视图**不得**把草稿还回输入框（否则这条消息会被发两次）
+      this.lastSendQueued = true;
       this.notify();
       return false;
     }
+    this.lastSendQueued = false;
     return await this.sendPromptNow(requestId, sessionId, trimmed);
   }
 

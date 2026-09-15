@@ -158,6 +158,7 @@ import {
   modalityOf,
   modalityTrace,
   unionModality,
+  shouldRestoreDraft,
 } from 'appstate';
 /**
  * 类型单独用 `import type` 引入。
@@ -3066,13 +3067,32 @@ struct Index {
     if (text.length === 0) {
       return;
     }
+    // 恢复时用**原文**（用户敲的空行也是他的输入，官方恢复的也是原文而不是 trim 版本）
+    const submitted: string = this.draft;
     this.draft = '';
     // 【附件列表**不在这里**清空】它由中枢拥有：回执只在 Host 确认接受这次提示词后
     // 才会被回收，那时中枢清空并广播。在这里乐观清空会让「发送失败」时
     // 附件条目凭空消失——用户既发不出去，也看不到自己加过什么。
-    if (this.hubConnected) {
-      SessionHub.shared().sendPrompt(text);
+    if (!this.hubConnected) {
+      // 未连接时既不发也不排队 ⇒ 把草稿还回去，别让用户以为自己发出去了
+      this.draft = submitted;
+      return;
     }
+    SessionHub.shared().sendPrompt(text).then((ok: boolean) => {
+      /*
+       * P7-15：失败后按官方语义**把草稿还回输入框**（`dsh-client-ui-conversation` 的 sink：
+       * "optimistic clear + prompt … draft restored **only while untouched**"）。
+       * 此前失败时用户的长消息直接消失，只能重敲一遍 —— 而失败往往只是"宿主拒绝了一次参数"。
+       *
+       * 两条不能还的情形都在纯模型里（`shouldRestoreDraft`）：
+       *   · **已进待发队列**（离线）⇒ 还回去会变成"既排队又留在输入框"，一按发送发两条；
+       *   · 用户已经敲了新内容 ⇒ 不能覆盖（那是更糟的错）。
+       */
+      const snap = SessionHub.shared().snapshot();
+      if (shouldRestoreDraft(ok, snap.lastSendQueued, this.draft, submitted)) {
+        this.draft = submitted;
+      }
+    });
   }
 
   /** 旁路日志尾部（最多 4 行）：状态条只展示最近发生的几步，完整日志在诊断页 */
