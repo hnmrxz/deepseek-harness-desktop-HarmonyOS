@@ -1361,65 +1361,17 @@ export function projectApprovalRequest(request: Object): ApprovalRequestPayload 
   };
 }
 
-/** 审批结果词表（实测的**闭集**，四个值，没有第五个）。 */
-export enum ApprovalOutcome {
-  /** 只批准这一次 */
-  ALLOWED_ONCE = 'allowed-once',
-  /** 明确拒绝 */
-  REJECTED = 'rejected',
-  /** 请求已被撤回 */
-  CANCELLED = 'cancelled',
-  /** 没有可用的答复者（**fail closed**：视为拒绝） */
-  UNAVAILABLE = 'unavailable'
-}
-
-/** 审批卡上的三选（产品层词汇，与线形词表刻意分开）。 */
-export enum ApprovalDecision {
-  /** 仅本次允许 */
-  ALLOW_ONCE = 'allow-once',
-  /** 拒绝 */
-  DENY = 'deny',
-  /** 总是允许 */
-  ALWAYS = 'always'
-}
-
-/**
- * 产品决策 → 线形结果。
+/*
+ * 审批结果词表（实测**闭集**：`allowed-once | rejected | cancelled | unavailable`）
+ * 的活常量住在 `dshcompat`（`APPROVAL_OUTCOMES` / `APPROVAL_ALLOWED_ONCE` / …）——
+ * 那一层才是"上游事实"的家（`tools/arch-check.mjs` 的红线）。
  *
- * ⚠ `取舍`（**产品决策，需要确认，不许静默糊过去**）：
- *   上游的结果词表是 `'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'`，
- *   **没有 `'allow-always'`**（也不接受把 `'always'` 当值发出去）。
- *   因此 UI 上的「总是允许」在本线协议里**无处表达**，只能落成 `allowed-once`。
- *   后果必须说清楚：
- *     - 若 UI 保留「总是允许」按钮，那它**只能是纯客户端行为**——
- *       把该工具名记进本地白名单，后续同工具的审批在本端自动回答「允许一次」。
- *       换了设备、清了数据、或另一个客户端在答，就都不生效。
- *     - 更诚实的做法是**去掉这个按钮**，避免用户以为「Host 记住了」。
- *   本文件按最保守的方式映射（`always → allowed-once`），
- *   并提供 `decisionIsClientSideOnly()` 让 UI 能显式提示这一点。
- *   最终保留哪个形态属产品决策，此处只把事实与代价钉在代码里。
+ * 【这里原本还有一套产品层词汇，已删（P7-17）】曾经有 `ApprovalDecision{ALLOW_ONCE,DENY,ALWAYS}`
+ * 与 `approvalOutcomeFor()` / `decisionIsClientSideOnly()` / `approvalAnswer()`。
+ * 它们**没有任何调用点**（只有 barrel 再导出把它撑着），而其中的 `ALWAYS`（"总是允许"）
+ * 正是我们这一轮从界面上删掉的那颗假按钮 —— 留着它等于给下一个人留一条"把它接回去"的歧路。
+ * 现在审批的词汇只有一处：`dshcompat` 的闭集词表。
  */
-export function approvalOutcomeFor(decision: ApprovalDecision): ApprovalOutcome {
-  if (decision === ApprovalDecision.DENY) {
-    return ApprovalOutcome.REJECTED;
-  }
-  return ApprovalOutcome.ALLOWED_ONCE;
-}
-
-/** 该决策是否只在客户端生效（见 `approvalOutcomeFor()` 的取舍说明）。 */
-export function decisionIsClientSideOnly(decision: ApprovalDecision): boolean {
-  return decision === ApprovalDecision.ALWAYS;
-}
-
-/** 审批答复值（`allowed-once` 只需要回一个词）。 */
-export interface ApprovalAnswerValue {
-  outcome: string;
-}
-
-/** 构造审批答复值。 */
-export function approvalAnswer(decision: ApprovalDecision): ApprovalAnswerValue {
-  return { outcome: approvalOutcomeFor(decision) };
-}
 
 // ── 提问 ──
 

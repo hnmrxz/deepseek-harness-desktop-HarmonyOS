@@ -304,14 +304,15 @@ export interface PendingChoice {
  * 而界面看起来完全正常，只是权重反转悄悄失效了（正是最难发现的那类不一致）。
  * 因此把 id 提为唯一契约，桩数据与中枢都从这里取，视图也用它判定。
  *
- * 与上游的对应关系：上游审批结果词表是 `allowed-once | rejected | cancelled | unavailable`
- * （见 `dshcompat.APPROVAL_OUTCOMES`），**没有**「始终允许」。
- * `APPROVAL_CHOICE_ALLOW_ALWAYS` 因此只表达**客户端侧**的「本会话内不再打扰」，
- * 发往 Host 的仍然是 `allowed-once`。
+ * 【只有两选：与官方一致（P7-17）】
+ * 上游结果词表是 `allowed-once | rejected | cancelled | unavailable`（`dshcompat.APPROVAL_OUTCOMES`），
+ * **没有**「始终允许」；官方审批卡（`dsh-client-ui-approval`）渲染的也正是**两颗按钮**：
+ * `reject`（`answer("rejected")`）与 `allowOnce`（`answer("allowed-once")`）。
+ * 我们曾经有第三项「本次会话内均允许」，但它**在本客户端也没有实现任何记忆**
+ * （`always` 标记只写进旁路日志）⇒ 那是一个**承诺了却做不到的按钮**。
+ * 按本仓"不放点了没反应的假入口"的规矩，直接去掉，回到官方的两选。
  */
 export const APPROVAL_CHOICE_ALLOW: string = 'allow';
-/** 客户端侧的「本会话内不再打扰」（**不是**一个上游 outcome） */
-export const APPROVAL_CHOICE_ALLOW_ALWAYS: string = 'allow-always';
 /** 拒绝 */
 export const APPROVAL_CHOICE_DENY: string = 'deny';
 

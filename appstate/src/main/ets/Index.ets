@@ -11,7 +11,6 @@ export type { SessionListItem, SessionListPage } from './model/SessionList';
 // ── 轨迹与待决的呈现层契约 ──
 export {
   APPROVAL_CHOICE_ALLOW,
-  APPROVAL_CHOICE_ALLOW_ALWAYS,
   APPROVAL_CHOICE_DENY,
   PendingKind,
   RiskLevel,
@@ -485,10 +484,6 @@ export type { ShortcutSpec } from './ui/Shortcuts';
 
 // ── 真实连接接线契约（请求构造器 + 回复投影；端点名一律来自 dshcompat） ──
 export {
-  approvalAnswer,
-  ApprovalDecision,
-  ApprovalOutcome,
-  approvalOutcomeFor,
   APPROVAL_REQUEST_EVENT,
   authorityOfUrl,
   basenameOf,
@@ -496,7 +491,6 @@ export {
   commandsListPayload,
   ControlFrameType,
   cwdBasename,
-  decisionIsClientSideOnly,
   eventResultArgs,
   eventResultEndpoint,
   filePart,
@@ -579,7 +573,6 @@ export type {
   AskUserQuestionItem,
   AskUserQuestionOption,
   AskUserQuestionRequest,
-  ApprovalAnswerValue,
   ApprovalRequestPayload,
   CommandCandidate,
   ControlBaseline,

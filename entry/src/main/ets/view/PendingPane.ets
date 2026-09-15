@@ -28,13 +28,13 @@ export struct PendingPane {
   @Prop items: PendingItem[] = [];
 
   /**
-   * 答复审批。`choiceId` 取值来自 `appstate` 的审批选项目契约
-   * （`APPROVAL_CHOICE_ALLOW` / `APPROVAL_CHOICE_ALLOW_ALWAYS` / `APPROVAL_CHOICE_DENY`），
-   * `reason` 是可选的拒绝理由（空串表示未填）。
+   * 答复审批。`choiceId` 取值来自 `appstate` 的审批选项契约
+   * （`APPROVAL_CHOICE_ALLOW` / `APPROVAL_CHOICE_DENY`），`reason` 是可选的拒绝理由（空串表示未填）。
    *
-   * **重要**：`APPROVAL_CHOICE_ALLOW_ALWAYS` 不是上游 outcome——上游只有
-   * `allowed-once | rejected | cancelled | unavailable`。上层收到它时应映射为
-   * `allowed-once` 并只在本客户端记住「不再打扰」，**不得伪造上游不认识的词**。
+   * **只有两选**（P7-17）：上游结果词表是 `allowed-once | rejected | cancelled | unavailable`，
+   * **没有**持久授权；官方审批卡也只有 `reject` / `allowOnce` 两颗按钮。
+   * 我们曾经多一颗「本次会话内均允许」，但它在本端什么都没记住（只写一行旁路日志）
+   * ⇒ 那是"点了没反应"的假入口，已删。要做持久授权得先有协议侧载体。
    */
   onDecide: (item: PendingItem, choiceId: string, reason: string) => void = () => {
   };

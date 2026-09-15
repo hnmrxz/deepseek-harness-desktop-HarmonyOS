@@ -133,7 +133,6 @@ import type { SessionListItem } from '../model/SessionList';
 import {
   answerableDrafts,
   APPROVAL_CHOICE_ALLOW,
-  APPROVAL_CHOICE_ALLOW_ALWAYS,
   APPROVAL_CHOICE_DENY,
   indexOfItem,
   makeItem,
@@ -185,6 +184,7 @@ import {
   fileUploadEndpoint,
   fileUploadPayload,
   projectCommandOutcome,
+  projectApprovalRequest,
   projectCommands,
   projectFileReferences,
   projectFileUpload,
@@ -228,6 +228,7 @@ import {
 import type {
   CommandCandidate,
   CommandOutcome,
+  ApprovalRequestPayload,
   ControlFrame,
   FileUploadValue,
   ImageAttachmentRefValue,
@@ -1164,9 +1165,26 @@ export class SessionHub {
   }
 
   private addApprovalPending(eventId: string, agentId: string, request: Object): void {
-    const toolName: string = getString(request, 'toolName') ?? '未知操作';
-    const reason: string = getString(request, 'reason') ?? '';
-    const callId: string = getString(request, 'callId') ?? '';
+    /*
+     * 用 `Wire.projectApprovalRequest()` 读载荷，而不是在这里就地 `getString`：
+     * 形状知识只该有一处（本文件此前那三行是它的第二份实现）。
+     *
+     * 【缺 `toolName` 为什么交还链条，而不是摆一张卡】`toolName` 是唯一必填的业务字段
+     * （见 `ApprovalRequestPayload`）：没有它，卡片**说不出"在批准什么"**，
+     * 而卡片上却仍然有「允许一次」——那就是让用户批准一个自己看不见的操作。
+     * 本仓对审批一贯是 fail-closed（上游 `unavailable` 也按拒绝处理），这里同样：
+     * 交还给 Host 的链条（`declineToHandle`），并如实记账。
+     */
+    const payload: ApprovalRequestPayload | undefined = projectApprovalRequest(request);
+    if (payload === undefined) {
+      this.declineToHandle(eventId);
+      this.noteUnknown('waterfall:approval:no-toolName');
+      this.record('waterfall approval 缺 toolName ⇒ 交还链条（不能摆一张"未知操作"的可批准卡片）');
+      return;
+    }
+    const toolName: string = payload.toolName;
+    const reason: string = payload.reason === undefined ? '' : payload.reason;
+    const callId: string = payload.callId === undefined ? '' : payload.callId;
 
     const item: PendingItem = {
       id: eventId,
@@ -1289,11 +1307,8 @@ export class SessionHub {
    * 因此 `allowAlways` 在当前实现里只影响**本地**不再重复打扰的策略，
    * 发到 Host 的仍然是 `allowed-once`——绝不伪造一个上游不认识的词。
    */
-  async decideApproval(pendingId: string, allow: boolean, allowAlways: boolean): Promise<boolean> {
+  async decideApproval(pendingId: string, allow: boolean): Promise<boolean> {
     const outcome: string = allow ? APPROVAL_ALLOWED_ONCE : APPROVAL_REJECTED;
-    if (allowAlways) {
-      this.record('注意：上游无持久授权词汇，本次仍按 allowed-once 上报');
-    }
     const ok: boolean = await this.answerWaterfall(pendingId, outcome);
     if (ok) {
       this.resolvePending(pendingId, allow ? '已允许' : '已拒绝');
@@ -5535,9 +5550,18 @@ function familyKind(family: EventFamily): TrajectoryKind {
  * 不能让用户以为它改变了 Host 的行为。
  */
 function approvalChoices(): PendingChoice[] {
+  /*
+   * **两颗按钮，与官方一致（P7-17）**。
+   *
+   * 官方 `dsh-client-ui-approval` 的卡片只有 `reject` 与 `allowOnce` 两个动作
+   * （源码里就是两处 `answer("rejected")` / `answer("allowed-once")`），因为上游的结果
+   * 词表里**没有**任何持久授权（`allowed-once | rejected | cancelled | unavailable`）。
+   * 我们此前多一颗「本次会话内均允许」，而它在本端**什么都没记住**（只写一行旁路日志）
+   * ⇒ 用户以为点了"以后别问了"，实际上下次照样问 —— 假入口，已删。
+   * 真要做持久授权，得先有协议侧的载体（那是 Host 的能力，不是前端的文案）。
+   */
   return [
     { id: APPROVAL_CHOICE_ALLOW, label: '允许一次', detail: '仅本次放行' },
-    { id: APPROVAL_CHOICE_ALLOW_ALWAYS, label: '本次会话内均允许', detail: '仅在本客户端生效，Host 侧仍逐次询问' },
     { id: APPROVAL_CHOICE_DENY, label: '拒绝', detail: '阻止该操作' }
   ];
 }

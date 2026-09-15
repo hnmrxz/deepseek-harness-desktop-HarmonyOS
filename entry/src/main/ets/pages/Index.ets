@@ -48,7 +48,6 @@ import {
 import type { InputSourceReading, NotifyRoute, PickedFile, PickedFolder } from 'platform';
 import { common } from '@kit.AbilityKit';
 import {
-  APPROVAL_CHOICE_ALLOW_ALWAYS,
   APPROVAL_CHOICE_DENY,
   CommandCandidate,
   CredentialItem,
@@ -3004,8 +3003,7 @@ struct Index {
     // `unavailable`，与「用户明确拒绝」语义完全不同，会把一次明确拒绝变成一次失败。
     // 已作为能力缺口登记在 D2 §8.7.5 与 D3 §3.4 的偏离记录里。
     const allow: boolean = choiceId !== APPROVAL_CHOICE_DENY;
-    const always: boolean = choiceId === APPROVAL_CHOICE_ALLOW_ALWAYS;
-    SessionHub.shared().decideApproval(item.id, allow, always);
+    SessionHub.shared().decideApproval(item.id, allow);
   }
 
   /**
