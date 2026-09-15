@@ -107,6 +107,35 @@ const FEATURES = [
   { name: '侧栏收起', patterns: [['sidebarPresentationOf', 2], ['onToggleSidebarExpanded', 2], ['showExpandToggle', 2]] }
 ];
 
+/**
+ * 「不许出现」的接线（E366）。
+ *
+ * 【为什么要反面规则】`FEATURES` 只能表达"某特征至少出现 N 次"，而这一轮查出的缺陷恰恰是
+ * **多了一个不该有的东西**：`AppShell.buildDouble` 自己画了一份 rail surface，把侧栏呈现
+ * **硬编码**成 `TrackPresentation.RAIL`，于是双栏下「展开侧栏」是个死按钮（偏好变了、纯函数
+ * 判定也变了，只有这一个调用点没问判定）。这类缺陷正面计数拦不住 —— 该在的特征（`sidebarPresentationOf`
+ * 的定义与调用）全都在。
+ *
+ * 【为什么只拦 RAIL，不拦 PANEL / OVERLAY】`RAIL` 在本仓**永远是判定的结果**（形态默认或用户
+ * 收起），任何地方把它写成常量就等于绕过了判定；而 `PANEL`（手机抽屉）与 `OVERLAY`（底部标签）
+ * 在 `AppShell` 里是**结构上固定**的表面，写常量是对的。
+ *
+ * 【注释先剥掉】规则命中的是代码；本轮修复留下的那段注释里就写着那个常量名，
+ * 不剥注释的话门禁会拦下自己的说明文字。
+ */
+const FORBIDDEN = [
+  {
+    name: '侧栏呈现判定不得被硬编码',
+    files: ['entry/src/main/ets/view/shell/AppShell.ets'],
+    patterns: ['TrackPresentation\\.RAIL']
+  }
+];
+
+/** 剥掉块注释与行注释（只做这一步：规则关心的常量名不会出现在字符串字面量里） */
+function stripComments(text) {
+  return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+}
+
 const problems = [];
 for (const f of FEATURES) {
   for (const [pattern, min] of f.patterns) {
@@ -117,7 +146,27 @@ for (const f of FEATURES) {
   }
 }
 
-console.log(`# 功能接线回归（扫描 ${files.length} 个文件，${FEATURES.length} 个功能）`);
+for (const rule of FORBIDDEN) {
+  for (const rel of rule.files) {
+    const src = sources.find((x) => x.path === rel);
+    if (src === undefined) {
+      problems.push(`  ✗ ${rule.name}：受检文件不存在 ${rel}`);
+      continue;
+    }
+    const body = stripComments(src.text);
+    const lines = body.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      for (const pattern of rule.patterns) {
+        if (new RegExp(pattern).test(lines[i])) {
+          problems.push(`  ✗ ${rule.name}：${rel}:${i + 1} 出现了 "${pattern.replace(/\\/g, '')}"`
+            + '（呈现判定必须走 sidebarPresentation()，不许写常量）');
+        }
+      }
+    }
+  }
+}
+
+console.log(`# 功能接线回归（扫描 ${files.length} 个文件，${FEATURES.length} 个功能，${FORBIDDEN.length} 条反面规则）`);
 if (problems.length === 0) {
   console.log('✅ 全部功能的接线都在（中枢实现 + 界面调用点）。');
   process.exit(0);

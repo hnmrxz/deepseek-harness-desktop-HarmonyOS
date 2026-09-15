@@ -6,7 +6,8 @@
  * 「窗口宽度分成几条轨道、每条轨道怎么摆」是 **AppFrame** 的事，与「轨道里有什么」无关：
  *   · `buildSingle` / `buildDouble` / `buildTriple` —— 三形态的轨道拼装；
  *   · `header` —— 中间轨道的页头（内容归 `MainHeaderShell`，这里只给几何/导航事实）；
- *   · `navPanel` / `navRail` / `bottomTabs` —— 侧栏在三种档位下的三种 surface；
+ *   · `navPanel` / `bottomTabs` —— 侧栏的两种 surface（并排轨道 / 底部标签；手机的抽屉走 `sidePanelSurface`）；
+ *     **并排轨道的呈现不是常量**（rail ↔ panel 由用户决定）⇒ 只有 `navPanel` 一处算它（E366）；
  *   · `detailColumn` / `detailResizer` —— 右栏的 surface 与轨间把手；
  *   · `sidebarPresentation` / `headerTitle` —— 「哪条轨道该以什么形式出现」的判定。
  *
@@ -223,7 +224,14 @@ export struct AppShell {
     Stack({ alignContent: Alignment.TopEnd }) {
 
       Row() {
-        this.navRail()
+        /*
+         * 【为什么这里必须调 navPanel 而不是自己画一条 rail】双栏的侧栏呈现**不是常量**：
+         * 默认是 rail（`shellTracksOf(DOUBLE).sidebar`），但用户可以展开成完整面板（P2-15）。
+         * 这里曾经写死 `presentation: TrackPresentation.RAIL` ⇒ 点「展开侧栏」什么都不发生
+         * （偏好变了、判定也变了，只有这一个调用点没问判定）——**死按钮**，且 D19 第 2 条
+         * 在真机上必然失败。两份 surface 也必然走样，故只留 `sidePanelSurface` 一份。
+         */
+        this.navPanel()
         Divider().vertical(true).color($r('sys.color.comp_divider'))
         Column() {
           this.header()
@@ -272,37 +280,6 @@ export struct AppShell {
    */
   private sidebarPresentation(): TrackPresentation {
     return sidebarPresentationOf(this.f.mode, this.f.sidebarExpanded);
-  }
-
-  @Builder
-  navRail() {
-    // 侧栏内容归 SidebarShell 所有（P0：AppFrame 第一条轨道）；这里只给这条轨道的 surface。
-    Column() {
-
-      SidebarShell({
-        brand: this.f.appName,
-        browser: this.f.browser,
-        selectedPanelId: this.f.selectedSidebarPanel,
-        pendingBadge: this.f.pendingBadge,
-        presentation: TrackPresentation.RAIL,
-        onSelectPanel: (panelId: string) => {
-          this.f.onSelectSidebarPanel(panelId);
-        },
-        onNewSession: () => {
-          this.f.onNewSession();
-        },
-        onOpenDiagnostics: () => {
-          this.f.openDiagnostics();
-        },
-        showExpandToggle: this.f.mode !== LayoutMode.SINGLE,
-        onToggleExpanded: () => {
-          this.f.onToggleSidebarExpanded();
-        }
-      })
-    }
-    .width(this.f.sidebarTrackWidthVp())
-    .height('100%')
-    .backgroundColor($r('sys.color.background_secondary'))
   }
 
   @Builder
