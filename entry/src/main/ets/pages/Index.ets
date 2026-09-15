@@ -3897,9 +3897,6 @@ struct Index {
       this.choosingLabel = value;
     },
     confirmingDeletePath: this.confirmingDeletePath,
-    setConfirmingDeletePath: (value: string) => {
-      this.confirmingDeletePath = value;
-    },
     connectBusy: this.connectBusy,
     connectSettled: this.connectSettled,
     coreNotice: this.coreNotice,
@@ -3950,9 +3947,6 @@ struct Index {
     resetSetting: (key: string) => this.resetSetting(key),
     selectedSessionId: this.selectedSessionId,
     selection: this.selection,
-    setSelection: (value: ModelSelection) => {
-      this.selection = value;
-    },
     sessionForWorkspace: (workspaceId: string) => this.sessionForWorkspace(workspaceId),
     sessionsOf: (w: WorkspaceItem) => this.sessionsOf(w),
     settingItemOf: (key: string) => this.settingItemOf(key),

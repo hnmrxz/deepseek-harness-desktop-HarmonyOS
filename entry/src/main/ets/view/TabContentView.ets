@@ -57,7 +57,6 @@ export interface TabContentFacade {
   choosingLabel: string;
   setChoosingLabel: (value: string) => void;
   confirmingDeletePath: string;
-  setConfirmingDeletePath: (value: string) => void;
   connectBusy: boolean;
   connectSettled: boolean;
   coreNotice: string;
@@ -106,7 +105,6 @@ export interface TabContentFacade {
   resetSetting: (key: string) => void;
   selectedSessionId: string;
   selection: ModelSelection;
-  setSelection: (value: ModelSelection) => void;
   sessionForWorkspace: (workspaceId: string) => string;
   sessionsOf: (w: WorkspaceItem) => SessionListItem[];
   settingItemOf: (key: string) => SettingItem | undefined;

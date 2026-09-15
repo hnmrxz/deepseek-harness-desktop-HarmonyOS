@@ -14,21 +14,25 @@
  *
  * 三次都是我手工写 Python 扫出来的。手工会漏、会随轮次漂移 ⇒ 固化成门禁。
  *
- * ## 判定规则（三条，都是"零使用"级别的硬事实）
+ * ## 判定规则（四条，都是"零使用"级别的硬事实）
  *
  * 1. **零使用 import**：`import { A, B } from 'x'` 里的名字在**本文件其余部分**一次都没出现；
  * 2. **零使用 `@Builder`**：与 `tools/check-builder-recursion.mjs` 同源的检测——
  *    体内/全文件都没有 `this.<名字>(` 调用点；
  * 3. **零使用成员**：组件里 `@Prop` / `@State` / `@Provide` / 回调 prop（`name: (…) => void = () => {}`）
- *    / `private` 方法，在本文件里只出现 1 次（= 只有那一行声明）。
+ *    / `private` 方法，在本文件里只出现 1 次（= 只有那一行声明）；
+ * 4. **门面字段零读点**（跨文件，E367）：`export interface *Facade` 的字段在**整仓**里搜不到一个
+ *    `.字段`。前三条只看本文件，而门面通道的写法天生跨文件（**声明与读者在子组件、实现在宿主**）——
+ *    只看一个文件既数不到读者也数不到写者。
  *
  * ## 三条刻意写下来的边界（避免误报，也避免"把门禁写成噪音"）
  *
  * · **只看"本文件其余部分"**：跨文件的成员使用不做数据流分析（那会误报）；
  * · **保守排除**：`export` 出来的东西、`build()` / `aboutToAppear` / `onPageShow` 这类**框架回调**、
  *   名字以 `_` 开头的（显式"我知道它没用到"）、以及只有声明没有实现的接口成员，都不判；
- * · **`--self-test` 是注入式的**：样例里既有真缺陷，也有五类**必须不误报**的写法
- *   （被 `as` 改名、只在字符串里出现、被 `.点前缀` 使用、跨文件同名、export 导出）。
+ * · **`--self-test` 是注入式的**：样例里既有真缺陷，也有各类**必须不误报**的写法
+ *   （被 `as` 改名、只在字符串里出现、被 `.点前缀` 使用、跨文件同名、export 导出；
+ *   门面那一条另配 4 例：真死通道 / 读者在别的文件 / 只写不读 / 声明行 `dead-exempt:`）。
  *   门禁必须先在已知坏版本上红过一次才算证明——本轮用 `git show` 取修前的 `Index.ets` 做归真验证。
  *
  * 用法：
@@ -209,6 +213,56 @@ function builderNames(stripped) {
   return out;
 }
 
+/**
+ * `export interface XFacade { … }` 的顶层字段（两空格缩进的 `name:` / `name?:`）。
+ *
+ * 【为什么只盯 `*Facade`】它是本仓约定俗成的**写回通道**（子组件 → 宿主：值快照 + setter +
+ * 回调闭包）。这类字段的读者**必然**长成 `this.f.<名字>` 或 `this.f.<名字>(...)`，
+ * 所以"整仓搜不到一个 `.名字`"就是死通道的硬事实。数据型接口不能这么判 —— 它们
+ * 常被整体传参（`{ title, kind }`）而不是逐字段读，那样判会误报。
+ */
+export function facadeFields(text) {
+  const out = [];
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^export interface (\w*Facade\w*)\s*\{/);
+    if (m === null) continue;
+    for (let j = i + 1; j < lines.length && !/^\}/.test(lines[j]); j++) {
+      const f = lines[j].match(/^ {2}([A-Za-z_][A-Za-z0-9_]*)\??\s*:/);
+      if (f !== null) out.push({ iface: m[1], name: f[1], line: j + 1 });
+    }
+  }
+  return out;
+}
+
+/**
+ * 门面字段的**读点**检查（跨文件）：`.<字段>` 在整仓里出现 0 次即为死通道。
+ *
+ * 【为什么必须跨文件】声明的读者在**子组件**里，而实现（`field: this.x`）在宿主里 ——
+ * 只看一个文件既数不到读者、也数不到写者。语料 = 本次扫描的全部文件（entry + appstate，
+ * 六份 `*Facade` 都在其中）。
+ *
+ * 【为什么这是"零误报"级别的判据】字段名前面那个 `.` 就是"有人在读它"。搜不到任何
+ * `.名字`，只能是**没有任何调用点** —— 那正是本门禁要拦的"通道有、没消费者"。
+ * 反方向的漏报（同名点读出现在别的对象上）是已知且可接受的：宁可漏，不可吵。
+ */
+export function deadFacadeFields(sources) {
+  const corpus = sources.map((x) => stripStringsOnly(x.text)).join('\n');
+  const out = [];
+  for (const src of sources) {
+    const lines = src.text.split('\n');
+    for (const f of facadeFields(src.text)) {
+      const re = new RegExp(`\\.${f.name}(?![\\w$])`, 'g');
+      if ((corpus.match(re) || []).length > 0) continue;
+      const lineText = lines[f.line - 1];
+      const above = f.line >= 2 ? lines[f.line - 2] : '';
+      if (lineText.includes('dead-exempt:') || above.includes('dead-exempt:')) continue;
+      out.push({ file: src.path, line: f.line, name: f.name, kind: `门面字段零读点（${f.iface}）` });
+    }
+  }
+  return out;
+}
+
 /** 分析单个文件的文本，返回违规清单 */
 export function scanText(text) {
   const lines = text.split('\n');
@@ -328,6 +382,47 @@ function selfTest() {
       expect: 0
     }
   ];
+  const facadeCases = [
+    {
+      what: '门面字段零读点（E367 的真实形态：写回通道声明了、没人调）',
+      sources: [
+        { path: 'a.ets', text: 'export interface AFacade {\n  confirmingDeletePath: string;\n  setConfirmingDeletePath: (v: string) => void;\n}\n' },
+        { path: 'b.ets', text: 'struct X {\n  @Prop f: AFacade;\n  build() {\n    Text(this.f.confirmingDeletePath)\n  }\n}\n' }
+      ],
+      expect: 1
+    },
+    {
+      what: '门面字段在**别的文件**里被调用（不误报：读者在子组件）',
+      sources: [
+        { path: 'a.ets', text: 'export interface AFacade {\n  onToggle: () => void;\n}\n' },
+        { path: 'b.ets', text: 'struct X {\n  @Prop f: AFacade;\n  go() {\n    this.f.onToggle();\n  }\n}\n' }
+      ],
+      expect: 0
+    },
+    {
+      what: '门面字段只被宿主写入、没有任何读者（仍算死通道）',
+      sources: [
+        { path: 'a.ets', text: 'export interface AFacade {\n  panelId: string;\n}\n' },
+        { path: 'b.ets', text: 'const facade: AFacade = {\n  panelId: this.nav.selectedRightPanel\n};\n' }
+      ],
+      expect: 1
+    },
+    {
+      what: '声明行写 `dead-exempt:` ⇒ 有意保留（不误报）',
+      sources: [
+        { path: 'a.ets', text: 'export interface AFacade {\n  reserved: string; // dead-exempt: 预留给下一轮的远端面板\n}\n' },
+        { path: 'b.ets', text: 'struct X {\n  build() {\n    Text(\'x\')\n  }\n}\n' }
+      ],
+      expect: 0
+    }
+  ];
+  for (const c of facadeCases) {
+    const got = deadFacadeFields(c.sources).length;
+    const ok = got === c.expect;
+    if (!ok) bad++;
+    console.log(`${ok ? '✅' : '❌'} ${c.what}：期望 ${c.expect}，实得 ${got}`);
+  }
+
   let bad = 0;
   for (const c of cases) {
     const got = scanText(c.text).length;
@@ -340,7 +435,7 @@ function selfTest() {
     console.log(`❌ 自检失败 ${bad} 项：检测器本身不可信。`);
     process.exit(1);
   }
-  console.log('✅ 自检通过：会命中真实缺陷，且五类写法不误报。');
+  console.log('✅ 自检通过：会命中真实缺陷，且各类「看着像使用」的写法都不误报。');
 }
 
 function main(argv) {
@@ -363,26 +458,32 @@ function main(argv) {
 
   const violations = [];
   let checked = 0;
+  let facadeChecked = 0;
+  const sources = [];
   for (const f of files) {
     const rel = relative(ROOT, f).replace(/\\/g, '/');
     const text = readFileSync(f, 'utf8');
     const lines = text.split('\n');
     checked += importedNames(lines).length + declaredMembers(lines).length;
+    facadeChecked += facadeFields(text).length;
+    sources.push({ path: rel, text: text });
     for (const v of scanText(text)) violations.push({ file: rel, ...v });
   }
+  // ④ 门面字段零读点（跨文件）：读者在子组件、写在宿主 —— 必须整仓一起数
+  for (const v of deadFacadeFields(sources)) violations.push(v);
 
   console.log('# 死代码门禁：搬迁留下的壳不许留在原地\n');
-  console.log(`扫描文件 ${files.length} 个 · 判定声明 ${checked} 处`);
+  console.log(`扫描文件 ${files.length} 个 · 判定声明 ${checked} 处 · 门面字段 ${facadeChecked} 个`);
   if (argv.includes('--list')) {
     console.log('（--list 只打印统计；逐条清单见违规列表）');
   }
 
   if (violations.length === 0) {
-    console.log('✅ 无死代码：没有零使用的 import / @Builder / 组件成员。');
+    console.log('✅ 无死代码：没有零使用的 import / @Builder / 组件成员，也没有零读点的门面字段。');
     process.exit(0);
   }
 
-  console.log(`❌ 检出 ${violations.length} 处零使用声明（E345 / E346 / E346b 都是这一类）：\n`);
+  console.log(`❌ 检出 ${violations.length} 处零使用声明（E345 / E346 / E346b / E367 都是这一类）：\n`);
   for (const v of violations) {
     console.log(`  ${v.file}:${v.line}  ${v.kind}：${v.name}`);
   }
