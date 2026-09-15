@@ -21,7 +21,7 @@
  * 而它**已经是组件 `HubBanner`**，故这里直接渲染组件。
  */
 
-import { ActionNotice, AgentPresetRow, CoreViewState, CredentialItem, FileNode, FilePreview, HostRecord, HubPhase, LayoutMode, ModelOption, ModelSelection, NavTab, PendingItem, PluginItem, SessionHub, SessionListItem, SettingGroup, SkillRow, StackPage, WorkspaceItem, aboutInfo, projectGeneralGroups } from 'appstate';
+import { ActionNotice, AgentPresetRow, CoreViewState, CredentialItem, FileNode, FilePreview, Fs, HostRecord, HubPhase, LayoutMode, ModelOption, ModelSelection, NavTab, PendingItem, PluginItem, SessionHub, SessionListItem, SettingGroup, SkillRow, Sp, StackPage, WorkspaceItem, aboutInfo, projectGeneralGroups } from 'appstate';
 import type { SettingChoice, SettingItem, SettingsNamespaceState } from 'appstate';
 import { LocalPrefs } from 'platform';
 import { HubBanner } from './HubBanner';
@@ -41,6 +41,8 @@ export interface TabContentFacade {
   attachWorkspaceFileToComposer: (node: FileNode) => Promise<void>;
   /** 工作区浏览器（P1：可挂主区页签，也可挂侧栏） */
   browser: WorkspaceBrowserFacade;
+  /** 工作区树是否已经由侧栏承载（三栏档位）：主区就不该再重复一份 */
+  browserInSidebar: boolean;
   choosing: SettingChoice[] | undefined;
   setChoosing: (value: SettingChoice[] | undefined) => void;
   choosingCurrent: string;
@@ -136,7 +138,28 @@ export struct TabContentView {
      * 文件浏览仍是工作区里的下钻（`wsDrill > 0`，见下一个分支）。
      */
     if (this.f.currentTab() === NavTab.WORKSPACES && this.f.wsDrill === 0) {
-      WorkspaceBrowser({ f: this.f.browser, compact: compact })
+      if (this.f.browserInSidebar) {
+        /*
+         * 三栏：树的座位在侧栏（官方 `ui-workspace` 就在 Sidebar 里），主区**不再重复一份**。
+         * 【为什么不是空白】"这里什么都没有"和"列表搬到左边了"是两件事：前者看起来像坏了。
+         * 文件浏览仍留在主区（工作区行点「浏览文件」即进入下钻分支），所以这句话不是安慰。
+         */
+        Column({ space: Sp.S }) {
+          Text('会话列表在左侧「工作区」浏览器里')
+            .fontSize(Fs.BODY)
+            .fontColor($r('sys.color.font_secondary'))
+          Text('在左侧点某个工作区的「浏览文件」可进入文件浏览；这个页面不再重复一份列表。')
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.font_tertiary'))
+            .textAlign(TextAlign.Center)
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center)
+      } else {
+        // 单栏 / 双栏：侧栏容不下树（底部标签 / 图标条），主区这一页签仍然是它的家
+        WorkspaceBrowser({ f: this.f.browser, compact: false })
+      }
     } else if (this.f.currentTab() === NavTab.WORKSPACES) {
       WorkspacePane({
         workspaces: this.f.workspaces,

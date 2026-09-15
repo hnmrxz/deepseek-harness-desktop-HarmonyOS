@@ -25,6 +25,7 @@ import { copyText } from 'platform';
 import { MainHeaderShell } from './MainHeaderShell';
 import { MainShell } from './MainShell';
 import type { MainShellFacade } from './MainShell';
+import type { WorkspaceBrowserFacade } from '../WorkspaceBrowser';
 import { RightbarShell } from './RightbarShell';
 import { SidebarShell } from './SidebarShell';
 import { TrackResizer } from './TrackResizer';
@@ -32,6 +33,8 @@ import { TrackResizer } from './TrackResizer';
 export interface AppShellFacade {
   activePanel: () => string;
   appName: string;
+  /** 工作区→会话浏览器（侧栏 PANEL 呈现里用；其余呈现不接受它） */
+  browser: WorkspaceBrowserFacade;
   beginDetailDrag: () => void;
   closeDetail: () => void;
   currentTab: () => NavTab;
@@ -122,6 +125,7 @@ export struct AppShell {
 
       SidebarShell({
         brand: this.f.appName,
+        browser: this.f.browser,
         tab: this.f.currentTab(),
         pendingBadge: this.f.pendingBadge,
         navWidthVp: this.f.navWidthVp(),
@@ -196,6 +200,7 @@ export struct AppShell {
 
       SidebarShell({
         brand: this.f.appName,
+        browser: this.f.browser,
         tab: this.f.currentTab(),
         pendingBadge: this.f.pendingBadge,
         navWidthVp: this.f.navWidthVp(),
@@ -249,6 +254,7 @@ export struct AppShell {
 
       SidebarShell({
         brand: this.f.appName,
+        browser: this.f.browser,
         tab: this.f.currentTab(),
         pendingBadge: this.f.pendingBadge,
         navWidthVp: this.f.navWidthVp(),

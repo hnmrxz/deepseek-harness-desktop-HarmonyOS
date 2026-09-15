@@ -65,6 +65,8 @@ import {
   HarmonyType,
   LayoutMode,
   showsConversation,
+  shellTracksOf,
+  TrackPresentation,
   selectTab as decideTabSelection,
   StackPage,
   ModelOption,
@@ -1995,6 +1997,8 @@ struct Index {
     const facade: AppShellFacade = {
     activePanel: () => this.activePanel(),
     appName: APP_NAME,    // 品牌名是宿主给的事实（同 brand 入参）
+    // 侧栏 PANEL 呈现里要挂工作区→会话树（P1）：与主区那份**同源**（同一个门面构建器）
+    browser: this.buildBrowserFacade(),
     beginDetailDrag: () => this.beginDetailDrag(),
     closeDetail: () => this.closeDetail(),
     currentTab: () => this.currentTab(),
@@ -4095,26 +4099,61 @@ struct Index {
 
   /** 标签页内容所需能力的门面（**每次渲染重建**：值型快照、写型 setter、方法型闭包） */
   /** 工作区浏览器所需能力的门面（由 `buildTabFacade()` 的同类包装行筛出：同源同形状） */
+  /**
+   * 归档一个会话（视图只给 id）。
+   *
+   * 【为什么提到宿主】宽版行与窄版菜单都要归档 —— 副作用（提示文案、失败处理）写两遍必然走样。
+   * 线协议只有 `workspace/archiveSession`，**没有反向端点**，故没有"取消归档"。
+   */
+  /**
+   * 删除工作区登记的**两步确认**（E132：只删注册，不删磁盘目录）。
+   *
+   * 【为什么在宿主】宽版行与窄版行都要这个两步确认；判定（当前是否在确认态）与提示文案
+   * 写在视图里就会有两份，而"两份确认态"必然走样。视图只问"按下去了"。
+   */
+  private toggleDeleteConfirm(w: WorkspaceItem): void {
+    if (this.confirmingDeletePath === w.path) {
+      this.confirmingDeletePath = '';
+      this.deleteWorkspaceByPath(w);
+      return;
+    }
+    this.confirmingDeletePath = w.path;
+    // E140：状态字符串经资源管理器取值；并附上名字——确认框必须指名道姓
+    const note: string = this.localized($r('app.string.confirm_delete_workspace_note'));
+    const label: string = w.name.length > 0 ? w.name : w.path;
+    this.settingWriteNote = note.length > 0
+      ? `${note}（${label}）`
+      : `再按一次「确认删除」即移除该工作区的登记；磁盘上的目录与文件不会被删除。（${label}）`;
+  }
+
+  private archiveSessionById(id: string): void {
+    SessionHub.shared().archiveSession(id).then((n: ActionNotice) => {
+      this.settingWriteNote = this.noticeText(n);
+    }).catch((e: Object) => {
+      const err = e as Error;
+      this.settingWriteNote = `${this.localized($r('app.string.note_archive_failed'))}${err.message}`;
+    });
+  }
+
   private buildBrowserFacade(): WorkspaceBrowserFacade {
     const facade: WorkspaceBrowserFacade = {
     answerPending: (item: PendingItem, selected: string[], custom: string) => this.answerPending(item, selected, custom),
     archiveOpen: this.archiveOpen,
     archivedSessionIds: this.archivedSessionIds,
     archivedSessions: () => this.archivedSessions(),
+    archiveSession: (id: string) => this.archiveSessionById(id),
+    toggleDeleteConfirm: (w: WorkspaceItem) => this.toggleDeleteConfirm(w),
     confirmingDeletePath: this.confirmingDeletePath,
     connectBusy: this.connectBusy,
     connectSettled: this.connectSettled,
     coreView: this.coreView,
     createSessionIn: (w: WorkspaceItem) => this.createSessionIn(w),
     decidePending: (item: PendingItem, choiceId: string, reason: string) => this.decidePending(item, choiceId, reason),
-    deleteWorkspaceByPath: (w: WorkspaceItem) => this.deleteWorkspaceByPath(w),
     hubAuthority: this.hubAuthority,
     hubError: this.hubError,
     hubPhase: this.hubPhase,
     hubStreams: this.hubStreams,
     hubTraceTail: () => this.hubTraceTail(),
-    localized: (id: Resource) => this.localized(id),
-    noticeText: (n: ActionNotice) => this.noticeText(n),
     openDiagnostics: () => this.openDiagnostics(),
     openFolderPicker: () => this.openFolderPicker(),
     openSession: (id: string) => this.openSession(id),
@@ -4126,12 +4165,6 @@ struct Index {
     setArchiveOpen: (value: boolean) => {
       this.archiveOpen = value;
     },
-    setConfirmingDeletePath: (value: string) => {
-      this.confirmingDeletePath = value;
-    },
-    setSettingWriteNote: (value: string) => {
-      this.settingWriteNote = value;
-    },
     workspaces: this.workspaces,
     };
     return facade;
@@ -4139,6 +4172,7 @@ struct Index {
 
   private buildTabFacade(): TabContentFacade {
     const facade: TabContentFacade = {
+    browserInSidebar: shellTracksOf(this.mode).sidebar === TrackPresentation.PANEL,
     browser: this.buildBrowserFacade(),
     answerPending: (item: PendingItem, selected: string[], custom: string) => this.answerPending(item, selected, custom),
     applyDefaultModel: (provider: string, model: string, effort: string) => this.applyDefaultModel(provider, model, effort),

@@ -19,27 +19,28 @@
 
 import { HubBanner } from './HubBanner';
 import { PendingPane } from './PendingPane';
-import { ActionNotice, CoreViewState, Fs, HarmonyIconSize, HubPhase, PendingItem, Radius, SessionHub, SessionListItem, Sp, Sz, WorkspaceItem, formatClock, relativeTime, sessionEmptyCopy } from 'appstate';
+import { CoreViewState, Fs, HarmonyIconSize, HubPhase, PendingItem, Radius, SessionListItem, Sp, Sz, WorkspaceItem, formatClock, relativeTime, sessionEmptyCopy } from 'appstate';
 
 export interface WorkspaceBrowserFacade {
   answerPending: (item: PendingItem, selected: string[], custom: string) => void;
   archiveOpen: boolean;
   archivedSessionIds: string[];
   archivedSessions: () => SessionListItem[];
+  /** 归档一个会话（副作用与失败文案留在宿主：宽版与窄版共用） */
+  archiveSession: (id: string) => void;
+  /** 删除登记的两步确认（判定与提示文案归宿主，宽窄两版共用） */
+  toggleDeleteConfirm: (w: WorkspaceItem) => void;
   confirmingDeletePath: string;
   connectBusy: boolean;
   connectSettled: boolean;
   coreView: CoreViewState;
   createSessionIn: (w: WorkspaceItem) => void;
   decidePending: (item: PendingItem, choiceId: string, reason: string) => void;
-  deleteWorkspaceByPath: (w: WorkspaceItem) => void;
   hubAuthority: string;
   hubError: string;
   hubPhase: HubPhase;
   hubStreams: number;
   hubTraceTail: () => string[];
-  localized: (id: Resource) => string;
-  noticeText: (n: ActionNotice) => string;
   openDiagnostics: () => void;
   openFolderPicker: () => void;
   openSession: (id: string) => void;
@@ -49,8 +50,6 @@ export interface WorkspaceBrowserFacade {
   selectedSessionId: string;
   sessionsOf: (w: WorkspaceItem) => SessionListItem[];
   setArchiveOpen: (value: boolean) => void;
-  setConfirmingDeletePath: (value: string) => void;
-  setSettingWriteNote: (value: string) => void;
   workspaces: WorkspaceItem[];
 }
 
@@ -213,10 +212,15 @@ export struct WorkspaceBrowser {
         .layoutWeight(1)
         .justifyContent(FlexAlign.Center)
       } else {
-        List({ space: Sp.M }) {
+        List({ space: this.compact ? Sp.XS : Sp.M }) {
           ForEach(this.f.workspaces, (w: WorkspaceItem) => {
             ListItem() {
-              this.workspaceGroup(w)
+              // 宽窄之别只在这里：树本身（工作区分组、会话归属）两种宽度完全一样
+              if (this.compact) {
+                this.narrowGroup(w)
+              } else {
+                this.workspaceGroup(w)
+              }
             }
           }, (w: WorkspaceItem) => w.path)
         }
@@ -280,23 +284,45 @@ export struct WorkspaceBrowser {
             .fontSize(Fs.CAPTION)
             .fontColor($r('sys.color.alert'))
             .onClick(() => {
-              if (this.f.confirmingDeletePath === w.path) {
-                this.f.setConfirmingDeletePath('');
-                this.f.deleteWorkspaceByPath(w);
-              } else {
-                this.f.setConfirmingDeletePath(w.path);
-                // E140：状态字符串经资源管理器取值；并附上名字——确认框必须指名道姓
-                const note: string = this.f.localized($r('app.string.confirm_delete_workspace_note'));
-                this.f.setSettingWriteNote(note.length > 0
-                  ? `${note}（${w.name.length > 0 ? w.name : w.path}）`
-                  : `再按一次「确认删除」即移除该工作区的登记；磁盘上的目录与文件不会被删除。（${w.name.length > 0 ? w.name : w.path}）`);
-              }
+              this.f.toggleDeleteConfirm(w);
             })
         }
       }
       .width('100%')
 
       ForEach(this.f.sessionsOf(w), (s: SessionListItem) => {
+        this.sessionRow(s)
+      }, (s: SessionListItem) => s.id)
+    }
+    .width('100%')
+    .padding(Sp.M)
+    .borderRadius(Radius.M)
+    .backgroundColor($r('sys.color.background_secondary'))
+  }
+
+  /* ───────────────── 窄版（挂进侧栏时用） ─────────────────
+   *
+   * 【为什么必须有窄版】侧栏 PANEL 轨道只有 `Sz.NAV_PANEL`（240vp）。宽版把 `+ 会话` / `文件` /
+   * `删除` 三个**文字**入口与「路径 · 会话数」挤在名字右侧 ⇒ 240vp 下名字只剩几个字。
+   * 窄版的做法是**改行不改树**：
+   *   · 第 1 行：图标 + 名字（拿满宽度）+ 会话数；
+   *   · 第 2 行：三个动作，各自给足触控高度；
+   *   · 会话行与宽版**共用** `sessionRow`（240vp 本来就放得下）。
+   *   · 删掉「路径 · 会话数」副标题行里的路径（240vp 下路径会被截成无意义的片段；
+   *     路径本身在"浏览文件"视图里完整可见）。
+   *
+   * 【为什么动作不藏进 `⋯` 菜单】官方 Web 侧栏是"悬停才显出图标按钮"，但那需要一个**能验证**的
+   * 悬停/菜单态；本仓当前做不了真机验收（D3 签名阻塞）。而「新建会话 / 浏览文件 / 删除登记」在窄版里
+   * 只有这一个入口——菜单一旦在真机上打不开，功能就不可达。宁可先用两行把它们摆在明处，
+   * 等能真机验收再谈收进菜单（**不预留"以后会收"的空壳**）。
+   */
+
+  /**
+   * 会话行（宽版与窄版**共用同一份**：240vp 下这一行本来就放得下——
+   * 名字 + 运行中 + 归档，不需要为窄版再写一遍）。
+   */
+  @Builder
+  sessionRow(s: SessionListItem) {
         Column({ space: 2 }) {
           Row({ space: Sp.S }) {
             Text(s.title.length > 0 ? s.title : $r('app.string.label_unnamed_session'))
@@ -318,12 +344,7 @@ export struct WorkspaceBrowser {
               .fontSize(Fs.CAPTION)
               .fontColor($r('sys.color.font_tertiary'))
               .onClick(() => {
-                SessionHub.shared().archiveSession(s.id).then((n: ActionNotice) => {
-                  this.f.setSettingWriteNote(this.f.noticeText(n));
-                }).catch((e: Object) => {
-                  const err = e as Error;
-                  this.f.setSettingWriteNote(`${this.f.localized($r('app.string.note_archive_failed'))}${err.message}`);
-                });
+                this.f.archiveSession(s.id);
               })
           }
           .width('100%')
@@ -343,6 +364,61 @@ export struct WorkspaceBrowser {
         .onClick(() => {
           this.f.openSession(s.id);
         })
+  }
+
+  @Builder
+  narrowGroup(w: WorkspaceItem) {
+    Column({ space: Sp.XS }) {
+      Row({ space: Sp.S }) {
+        SymbolGlyph($r('sys.symbol.folder')).fontSize(HarmonyIconSize.STATUS)
+          .fontColor([w.primary ? $r('sys.color.brand') : $r('sys.color.font_secondary')])
+        Text(w.name.length > 0 ? w.name : w.path)
+          .fontSize(Fs.BODY)
+          .fontWeight(FontWeight.Medium)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .layoutWeight(1)
+        Text(`${w.sessionCount} 会话`)
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.font_tertiary'))
+      }
+      .width('100%')
+
+      Row({ space: Sp.M }) {
+        Text('+ 会话')
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.brand'))
+          .height(Sz.TOUCH_MIN)
+          .onClick(() => {
+            this.f.createSessionIn(w);
+          })
+        Text($r('app.string.action_files'))
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.brand'))
+          .height(Sz.TOUCH_MIN)
+          .onClick(() => {
+            this.f.openWorkspaceFiles(w);
+          })
+        /*
+         * E132：删除工作区（只删**注册**，不删目录）+ 两步确认。
+         * 判定与提示文案归宿主（`toggleDeleteConfirm`）——宽窄两版共用同一处，避免写两遍。
+         */
+        if (this.f.registryIdOf(w).length > 0) {
+          Text(this.f.confirmingDeletePath === w.path
+            ? $r('app.string.action_delete_confirm')
+            : $r('app.string.action_delete'))
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.alert'))
+            .height(Sz.TOUCH_MIN)
+            .onClick(() => {
+              this.f.toggleDeleteConfirm(w);
+            })
+        }
+      }
+      .width('100%')
+
+      ForEach(this.f.sessionsOf(w), (s: SessionListItem) => {
+        this.sessionRow(s)
       }, (s: SessionListItem) => s.id)
     }
     .width('100%')
@@ -350,6 +426,7 @@ export struct WorkspaceBrowser {
     .borderRadius(Radius.M)
     .backgroundColor($r('sys.color.background_secondary'))
   }
+
 
   build() {
     this.workspaceHub(this.compact)

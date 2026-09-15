@@ -44,6 +44,8 @@ import {
   Sz,
   TrackPresentation,
 } from 'appstate';
+import { WorkspaceBrowser } from '../WorkspaceBrowser';
+import type { WorkspaceBrowserFacade } from '../WorkspaceBrowser';
 
 /** 侧栏里一个主入口的徽标（当前只有"待决"用它） */
 interface SidebarBadge {
@@ -63,6 +65,13 @@ export struct SidebarShell {
   @Prop navWidthVp: number = 0;
   /** 呈现方式（由 `ui/ShellTracks` 按形态算出；这里只映射几何） */
   @Prop presentation: TrackPresentation = TrackPresentation.PANEL;
+  /**
+   * 工作区→会话浏览器（P1：官方 `ui-workspace` 的座位就在 Sidebar 里）。
+   *
+   * 【为什么侧栏拿它而不是自己造】树本身（工作区分组、会话归属、待决、归档）归 `WorkspaceBrowser`；
+   * 侧栏只决定"这条轨道里放不放它、放多宽"——窄版行由 `compact: true` 触发。
+   */
+  @Prop browser: WorkspaceBrowserFacade;
 
   /**
    * 面板注册表（由 `Index` `@Provide`）。
@@ -130,6 +139,17 @@ export struct SidebarShell {
         .fontWeight(FontWeight.Bold)
         .width('100%')
         .padding({ left: Sp.M, top: Sp.M, bottom: Sp.S })
+
+      /*
+       * P1：工作区→会话树摆在**品牌行下面、面板入口上面**（官方 Sidebar 的顺序：
+       * Brand → 树 → Panel 列表 → Settings）。P0 时它长在主区的「工作区」页签里，
+       * 现由侧栏承载（三栏档位），主区那份改成一句说明（见 `TabContentView`）。
+       */
+      Column() {
+        WorkspaceBrowser({ f: this.browser, compact: true })
+      }
+      .width('100%')
+      .layoutWeight(1)
 
       ForEach(this.visibleTabs(), (tab: NavTab) => {
         Row({ space: Sp.M }) {
