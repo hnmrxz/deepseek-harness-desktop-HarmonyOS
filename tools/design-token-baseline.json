@@ -1,7 +1,7 @@
 {
   "note": "设计令牌棘轮基线：每个文件的裸值处数上限。只允许下降（改完存量后跑 --update-baseline 下调）。",
   "generatedAt": "2026-09-15",
-  "total": 29,
+  "total": 26,
   "files": {
     "entry/src/main/ets/pages/Index.ets": 2,
     "entry/src/main/ets/pages/Poc1.ets": 4,
@@ -11,7 +11,7 @@
     "entry/src/main/ets/view/DetailPane.ets": 1,
     "entry/src/main/ets/view/DiagnosticsPane.ets": 3,
     "entry/src/main/ets/view/PendingPane.ets": 2,
-    "entry/src/main/ets/view/SettingsPane.ets": 4,
+    "entry/src/main/ets/view/SettingsPane.ets": 1,
     "entry/src/main/ets/view/WorkspacePane.ets": 4
   }
 }
