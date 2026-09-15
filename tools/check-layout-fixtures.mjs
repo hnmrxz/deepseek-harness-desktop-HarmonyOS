@@ -53,6 +53,8 @@ const PURE_FILES = [
   // 【依赖说明】它 import 了 `SessionList`（行类型）与 `SessionContext`（工作区名），
   // 两者都在本表里 ⇒ fixture 摊平后能解析（`tsc` 会在缺依赖时直接报出来，这正是我们要的）。
   'appstate/src/main/ets/model/SessionSearch.ets',
+  // 输入区接管的焦点规则（P7-2）：零依赖（只 import 同为零依赖的 Trajectory 的类型）
+  'appstate/src/main/ets/model/PendingFocus.ets',
   // 浮层回执归属（P2-8，E353）：零依赖
   'appstate/src/main/ets/model/Sheets.ets',
   // 设置编辑浮层的输入提示（P2-10）：零依赖
@@ -218,6 +220,7 @@ const SE2 = require2('./SettingEditors.js');
 const CP = require2('./CoreProjection.js');
 const PRT = require2('./PluginRowsText.js');
 const SS = require2('./SessionSearch.js');
+const PF = require2('./PendingFocus.js');
 const t = makeAsserter(selfTest);
 
 console.log('# 布局 fixture 门禁（四形态 + 断点边界 + 让步链）\n');
@@ -1864,6 +1867,41 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
     // ⑦ 降级说明必须说清"这是按标题匹配"（不是报错、也不能让用户以为搜不到就是没有）
     t.eq('降级文案点名了原因与范围',
       localOnlySearchNote().includes('session/search') && localOnlySearchNote().includes('按标题匹配'), true);
+  }
+  // ── P7-2：输入区接管的焦点规则（官方 approval/user-questions 的 composer takeover）──
+  {
+    const { pendingForSession, pendingElsewhere, takeoverStripText, takeoverHeadline, takeoverCommand } = PF;
+    const mk = (id, kind, sessionId, title, raw) => ({
+      id: id, kind: kind, sessionId: sessionId, sessionTitle: '', title: title, detail: '',
+      raw: raw ?? '', risk: 'medium', choices: [], multiSelect: false, allowFreeText: false
+    });
+    const items = [
+      mk('p1', 'approval', 's2', 'bash', '{"command":"rm -rf /tmp/x"}'),
+      mk('p2', 'question', 's1', '用哪个数据库？'),
+      mk('p3', 'approval', 's1', 'write_file', '{"path":"a.ts"}'),
+    ];
+
+    t.eq('取本会话的**第一条**（到达顺序，不是最新一条）', pendingForSession(items, 's1').id, 'p2');
+    t.eq('本会话只有一条待决时也取得到', pendingForSession(items, 's2').id, 'p1');
+    t.eq('本会话没有待决 ⇒ undefined（输入区不被接管）', pendingForSession(items, 's9'), undefined);
+    t.eq('空会话 id ⇒ undefined（未选中会话时不接管）', pendingForSession(items, ''), undefined);
+
+    t.eq('**其它会话的待决要数出来**（否则用户不知道别处还卡着）',
+      pendingElsewhere(items, 's1'), 1);   // 只有 s2 的那条在别处
+    t.eq('本会话没有待决 ⇒ 全量都是"别处"', pendingElsewhere(items, 's9'), 3);
+    t.eq('没有待决 ⇒ 0（不提示）', pendingElsewhere([], 's1'), 0);
+
+    t.eq('状态带：审批用官方原文「等待审批」', takeoverStripText(items[0]), '等待审批');
+    t.eq('状态带：提问用同句式（官方无对应串，本仓措辞）', takeoverStripText(items[1]), '等待回答');
+
+    t.eq('标题：审批用官方句式「工具 X 请求越权执行」',
+      takeoverHeadline(items[0]), '工具 bash 请求越权执行');
+    t.eq('标题：提问直接用问题正文', takeoverHeadline(items[1]), '用哪个数据库？');
+    t.eq('标题：审批没给工具名也不产出半截句子',
+      takeoverHeadline(mk('x', 'approval', 's1', '')), '工具请求越权执行');
+
+    t.eq('等宽原始请求只对审批给', takeoverCommand(items[0]), '{"command":"rm -rf /tmp/x"}');
+    t.eq('提问不给等宽原始请求（整组 JSON 摆那一行读不懂）', takeoverCommand(items[1]), '');
   }
 }
 

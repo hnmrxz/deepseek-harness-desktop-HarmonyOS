@@ -93,6 +93,9 @@ export {
 } from './model/Settings';
 export { sessionContextLine, workspaceNameOf } from './model/SessionContext';
 // 会话搜索（官方 sidebar 的 search：Host 内容命中 + 本地标题命中合并成扁平结果）
+// 输入区接管的焦点规则（P7-2，对齐官方 approval/user-questions 的 composer takeover）
+export { pendingElsewhere, pendingForSession, takeoverCommand, takeoverHeadline, takeoverStripText } from './model/PendingFocus';
+
 export { SESSION_SEARCH_LIMIT, localOnlySearchNote, mergeSessionSearch } from './model/SessionSearch';
 export type { SessionSearchHit, SessionSearchLocal, SessionSearchRow } from './model/SessionSearch';
 export { sheetNoteText, sheetNoteVisible } from './model/Sheets';

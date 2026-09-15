@@ -112,6 +112,13 @@ const FEATURES = [
    * 本机闭环实测走的就是这条（见 tools/check-core-loop.mjs 的 M2 段）。
    */
   { name: '会话搜索', patterns: [['mergeSessionSearch', 2], ['searchSessions', 2], ['sessionSearchRows', 2]] },
+  /*
+   * 输入区接管（P7-2）。官方 `dsh-client-ui-approval` / `-user-questions` 都是往
+   * `conversation.composer` 槽位注册"只选本会话当前那一条"的组件（composer takeover）。
+   * 我们此前把**中枢全量**待决都铺在输入区上方 ⇒ 在会话 A 里能替会话 B 放行（误操作）。
+   * 钉三段：焦点规则 + 文案规则 + 视图里的判定方法。
+   */
+  { name: '输入区接管', patterns: [['pendingForSession', 2], ['takeoverHeadline', 2], ['focusPending', 2]] },
   { name: '侧栏收起', patterns: [['sidebarPresentationOf', 2], ['onToggleSidebarExpanded', 2], ['showExpandToggle', 2]] }
 ];
 

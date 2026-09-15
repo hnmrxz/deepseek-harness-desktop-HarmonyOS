@@ -8,7 +8,8 @@
  * 所有动作通过回调上报宿主，便于接入真实连接时只改宿主。
  */
 
-import { Border, CommandCandidate, FeedbackRow, FollowSignal, Fs, HarmonyColor, HarmonyType, ModelOption, ModelSelection, PendingAttachment, PendingItem, QueuedItem, Radius, ReferenceCandidate, SessionHub, Sp, Speaker, TrajectoryItem, TrajectoryKind, cellIdForListIndex, chatRowOfItemIndex, chatVisibleItems, contextMenuGestures, defaultExpanded, followTimerShouldRun, formatDuration, groupTurns, hasProcessGroup, jobTickerNeeded, listIndexForCell, matchConversationIndices, matchTrajectoryIndices, modelSelectionLabel, nextFollowing, parseMarkdown, plainTextOf, presentTool, processSummary, shouldJumpOnNewItems, stepMatch, toolStateLabel } from 'appstate';
+import { pendingElsewhere, pendingForSession, takeoverCommand, takeoverHeadline, takeoverStripText,
+  Border, CommandCandidate, FeedbackRow, FollowSignal, Fs, HarmonyColor, HarmonyType, ModelOption, ModelSelection, PendingAttachment, PendingItem, QueuedItem, Radius, ReferenceCandidate, SessionHub, Sp, Speaker, TrajectoryItem, TrajectoryKind, cellIdForListIndex, chatRowOfItemIndex, chatVisibleItems, contextMenuGestures, defaultExpanded, followTimerShouldRun, formatDuration, groupTurns, hasProcessGroup, jobTickerNeeded, listIndexForCell, matchConversationIndices, matchTrajectoryIndices, modelSelectionLabel, nextFollowing, parseMarkdown, plainTextOf, presentTool, processSummary, shouldJumpOnNewItems, stepMatch, toolStateLabel } from 'appstate';
 /** 类型单独 import type（本仓约定：值与类型分开写） */
 import type { ActionNotice, SessionJob, SessionStatsInput, Turn } from 'appstate';
 import type { NativeAction } from './NativePrimitives';
@@ -400,6 +401,16 @@ export struct ConversationPane {
    * `DeliverableCard`）——那才是"同一份呈现"该共享的粒度；分派逻辑各写各的，
    * 因为它俩的上下文不同（这与 P3 各面板和过程流共用卡片是同一条规矩）。
    */
+  /**
+   * 本会话当前该接管输入区的那一条待决（判定在 `model/PendingFocus`，有 fixture 钉住）。
+   *
+   * 【为什么先算出来】ArkUI 的 `@Builder` 内联表达式里调用 struct 方法**不可靠**
+   * （本仓实测过：值变化后 `ForEach` 内的行不重新求值）⇒ 判定放方法里，Builder 只读结果。
+   */
+  private focusPending(): PendingItem | undefined {
+    return pendingForSession(this.pending, this.sessionId);
+  }
+
   @Builder
   flatItem(item: TrajectoryItem) {
     if (item.kind === TrajectoryKind.MESSAGE) {
@@ -883,21 +894,46 @@ export struct ConversationPane {
        * 这里放在**输入区正上方**：眼睛在对话上，手指就在按钮附近，一次点击即可放行。
        * 只在这一轮真的有待决时出现，平时不占一行。
        */
-      if (this.pending.length > 0) {
+      if (this.focusPending() !== undefined) {
         Column({ space: Sp.XS }) {
+          /* 状态带（官方 strip：圆点 + 文案 + 警示语气） */
           Row({ space: Sp.S }) {
-            SymbolGlyph($r('sys.symbol.exclamationmark_triangle'))
-              .fontSize(14)
-              .fontColor([$r('sys.color.warning')])
-            Text(`待你决定 · ${this.pending.length}`)
+            Circle({ width: 8, height: 8 })   // token-exempt: 状态点几何（与官方 strip 的圆点同义）
+              .fill($r('sys.color.warning'))
+            Text(takeoverStripText(this.focusPending()!))
               .fontSize(Fs.CAPTION)
               .fontColor($r('sys.color.warning'))
               .layoutWeight(1)
           }
           .width('100%')
+          .padding({ left: Sp.M, right: Sp.M, top: Sp.S, bottom: Sp.S })
+          .backgroundColor($r('sys.color.background_secondary'))
+          .borderRadius(Radius.S)
+
+          /* 标题（官方 headline）：审批是「工具 X 请求越权执行」，提问是问题正文 */
+          Text(takeoverHeadline(this.focusPending()!))
+            .fontSize(Fs.BODY)
+            .fontWeight(FontWeight.Medium)
+            .width('100%')
+
+          /* 原始请求（官方 command：等宽、可换行）——只对审批给 */
+          if (takeoverCommand(this.focusPending()!).length > 0) {
+            Text(takeoverCommand(this.focusPending()!))
+              .fontSize(Fs.CAPTION)
+              .fontColor($r('sys.color.font_tertiary'))
+              .fontFamily('monospace')
+              .width('100%')
+          }
+
+          if (pendingElsewhere(this.pending, this.sessionId) > 0) {
+            Text(`其它会话还有 ${pendingElsewhere(this.pending, this.sessionId)} 项待决，可在「待决」页查看。`)
+              .fontSize(Fs.CAPTION)
+              .fontColor($r('sys.color.font_tertiary'))
+              .width('100%')
+          }
 
           PendingPane({
-            items: this.pending,
+            items: [this.focusPending()!],
             onDecide: (item: PendingItem, choiceId: string, reason: string) => {
               this.onDecidePending(item, choiceId, reason);
             },
