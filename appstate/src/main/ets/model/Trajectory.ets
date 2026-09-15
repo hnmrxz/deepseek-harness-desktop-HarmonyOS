@@ -259,6 +259,93 @@ export const APPROVAL_CHOICE_ALLOW_ALWAYS: string = 'allow-always';
 /** 拒绝 */
 export const APPROVAL_CHOICE_DENY: string = 'deny';
 
+/**
+ * 提问组里的**一道题**（字段与上游 `AskUserQuestionItem` 对齐，只留我们界面要用的）。
+ *
+ * 【为什么必须有"整组"这一层】官方 `dsh-client-ui-user-questions` 是一张**整组**卡片：
+ * 上一题 / 下一题 / 收起展开 / 放弃整组 / 推荐标记 / 跳过本题，一次请求问多道题。
+ * 我们此前**只投影 `questions[0]`**（代码里那句注释写着"同一 waterfall 可能带多个问题"，
+ * 但实现把后面的丢了）⇒ 后几道题**答不了**，而 Host 要等整组答案才继续 —— 这不是排版差距，
+ * 是**会把一轮对话卡死**的缺陷（P7-5 / E377）。
+ */
+export interface PendingQuestion {
+  id: string;
+  /** 题目正文 */
+  text: string;
+  /** 补充说明 */
+  detail: string;
+  /** 短标题（官方 `header`，窄屏一行显示用） */
+  header: string;
+  choices: PendingChoice[];
+  multiSelect: boolean;
+}
+
+/** 一道题的作答草稿（官方提交前要逐题校验：`error.incomplete` / `error.unanswered`） */
+export interface PendingAnswerDraft {
+  questionId: string;
+  /** 选中的**选项标签**（不是下标） */
+  selected: string[];
+  /** 自由文本答案（可为空串） */
+  custom: string;
+  /** 本题被显式跳过（官方 `action.skip: 跳过本题`） */
+  skipped: boolean;
+}
+
+/**
+ * 上一题 / 下一题的下标步进（**不循环**）。
+ *
+ * 官方 `nav.prev` / `nav.next`：到头就停住 —— 循环会让人在"最后一题点下一题"时莫名其妙回到第一题。
+ */
+export function questionIndexStep(current: number, total: number, delta: number): number {
+  if (total <= 0) {
+    return 0;
+  }
+  const next: number = current + delta;
+  if (next < 0) {
+    return 0;
+  }
+  return next > total - 1 ? total - 1 : next;
+}
+
+/** 进度文案（官方没有这串原文，是我们为了让"这是第几题"一眼可见而加的，如实标注） */
+export function questionNavLabel(current: number, total: number): string {
+  if (total <= 1) {
+    return '';
+  }
+  return `第 ${current + 1} / ${total} 题`;
+}
+
+/** 一道题算不算答过了（选了选项 或 填了自定义文本；被跳过的算"处理过"） */
+export function draftAnswered(draft: PendingAnswerDraft): boolean {
+  return draft.skipped || draft.selected.length > 0 || draft.custom.trim().length > 0;
+}
+
+/**
+ * 提交前的拦阻文案（**逐字取官方字典**）：
+ *   · 当前题还没答 ⇒ `error.incomplete: 请先完成这道问题。`
+ *   · 还有别的题没答 ⇒ `error.unanswered: 请选择一个选项或填写自定义答案。`
+ * 返回空串 = 可以提交。
+ */
+export function submitBlockedText(drafts: PendingAnswerDraft[], currentIndex: number): string {
+  for (let i = 0; i < drafts.length; i++) {
+    if (!draftAnswered(drafts[i])) {
+      return i === currentIndex ? '请先完成这道问题。' : '请选择一个选项或填写自定义答案。';
+    }
+  }
+  return '';
+}
+
+/** 可提交的答案清单（只送**答过的**题；被跳过的题送空选择，表示"明确不作答"） */
+export function answerableDrafts(drafts: PendingAnswerDraft[]): PendingAnswerDraft[] {
+  const out: PendingAnswerDraft[] = [];
+  for (let i = 0; i < drafts.length; i++) {
+    if (draftAnswered(drafts[i])) {
+      out.push(drafts[i]);
+    }
+  }
+  return out;
+}
+
 /** 待决事项（审批或提问；D3 §3.4 / §3.5） */
 export interface PendingItem {
   id: string;
@@ -277,10 +364,17 @@ export interface PendingItem {
   risk: RiskLevel;
   /** 选项（审批为三选，提问来自 Host） */
   choices: PendingChoice[];
-  /** 是否允许多选（仅提问） */
+  /** 是否允许多选（仅提问）——**第一条**题的摘要，逐题交互读 `questions[i]` */
   multiSelect: boolean;
   /** 是否允许自由文本（仅提问） */
   allowFreeText: boolean;
+  /**
+   * 提问的**整组**题目（审批为空数组）。
+   *
+   * `title` / `detail` / `choices` / `multiSelect` 是**第一条**的摘要（聚合页"待决"一行显示用）；
+   * 逐题交互一律读这里 —— 单一真值在 `questions[]`，摘要只是给"一行呈现"用的。
+   */
+  questions: PendingQuestion[];
   /** 入队时间 */
   at: number;
 }

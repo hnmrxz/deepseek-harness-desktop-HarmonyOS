@@ -115,6 +115,7 @@ import {
 import type { NotifyInput } from '../model/Notify';
 import type { SessionListItem } from '../model/SessionList';
 import {
+  answerableDrafts,
   APPROVAL_CHOICE_ALLOW,
   APPROVAL_CHOICE_ALLOW_ALWAYS,
   APPROVAL_CHOICE_DENY,
@@ -127,7 +128,7 @@ import {
   ToolState,
   TrajectoryKind
 } from '../model/Trajectory';
-import type { PendingChoice, PendingItem, TrajectoryItem } from '../model/Trajectory';
+import type { PendingAnswerDraft, PendingChoice, PendingItem, PendingQuestion, TrajectoryItem } from '../model/Trajectory';
 import {
   projectCredentials,
   projectSettingsEntries,
@@ -1072,6 +1073,7 @@ export class SessionHub {
       choices: approvalChoices(),
       multiSelect: false,
       allowFreeText: false,
+      questions: [],
       at: Date.now()
     };
     this.upsertPending(item);
@@ -1086,6 +1088,39 @@ export class SessionHub {
       this.declineToHandle(eventId);
       this.noteUnknown(`waterfall:${WATERFALL_QUESTION}:no-questions`);
       return;
+    }
+    /*
+     * 【P7-5 / E377：整组投影】官方一次请求可以带**多道题**（`questions[]`），
+     * 而这里此前只取 `questions[0]`：后几道题界面上根本不存在，用户答不了，
+     * 而 Host 要等**整组**答案才继续 ⇒ 一轮对话卡死。现在整组都进来。
+     *
+     * 顶层那四个字段（title/detail/choices/multiSelect）保留为**第一条的摘要**：
+     * 「待决」聚合页只用一行摘要，逐题交互读 `questions[]`（单一真值在那里）。
+     */
+    const group: PendingQuestion[] = [];
+    for (let i = 0; i < questions.length; i++) {
+      const q: Object = questions[i];
+      const qidRaw: string = getString(q, 'id') ?? `q${i}`;
+      const choices: PendingChoice[] = [];
+      const options: Object[] | undefined = getArray(q, 'options');
+      if (options !== undefined) {
+        for (let j = 0; j < options.length; j++) {
+          const opt: Object = options[j];
+          choices.push({
+            id: getString(opt, 'label') ?? `option-${j}`,
+            label: getString(opt, 'label') ?? `选项 ${j + 1}`,
+            detail: getString(opt, 'description') ?? ''
+          });
+        }
+      }
+      group.push({
+        id: qidRaw,
+        text: getString(q, 'question') ?? '',
+        detail: getString(q, 'detail') ?? '',
+        header: getString(q, 'header') ?? '',
+        choices: choices,
+        multiSelect: getBoolean(q, 'multiSelect') === true
+      });
     }
     const first: Object = questions[0];
     const qid: string = getString(first, 'id') ?? 'q0';
@@ -1120,11 +1155,12 @@ export class SessionHub {
       choices: choices,
       multiSelect: multi,
       allowFreeText: true,
+      questions: group,
       at: Date.now()
     };
     this.upsertPending(item);
     this.waterfallEventIds.set(eventId, item.id);
-    this.record(`waterfall question eventId=${eventId.substring(0, 8)} qid=${qid} options=${choices.length} multi=${multi}`);
+    this.record(`waterfall question eventId=${eventId.substring(0, 8)} qid=${qid} 题数=${group.length} options=${choices.length} multi=${multi}`);
   }
 
   // ───────────────────────── 应答（核心价值路径） ─────────────────────────
@@ -1150,23 +1186,43 @@ export class SessionHub {
   }
 
   /** 答复提问（结构化答案：选中项 + 可选自由文本） */
-  async answerQuestion(pendingId: string, selected: string[], custom: string): Promise<boolean> {
+  /**
+   * 答复提问（**整组一次回**）。
+   *
+   * 【为什么一次回整组】Host 等的是**一个**答复值：`{answers:[{id,selected,custom?}…]}`
+   * （见 `dshcompat`/`docs/11` 的 `AskUserQuestionAnswer`）。逐题各自发一次会得到
+   * "第一次就结掉、后面的答案没处去"。所以界面攒齐草稿，这里一次性构造。
+   *
+   * 【被跳过的题怎么送】按"**明确不作答**"送：`selected: []` 且不带 `custom`
+   * —— 这是协议允许的取值（空选择）。**如实登记**：官方 `action.skip` 的线上确切语义
+   * 我们没取证（上游把 skip 与"自定义答案"混在一处），所以取这个最保守的合法值，
+   * 而不是编一个上游不认识的词。
+   */
+  async answerQuestionGroup(pendingId: string, drafts: PendingAnswerDraft[]): Promise<boolean> {
     const hash: number = pendingId.indexOf('#');
     const eventId: string = hash > 0 ? pendingId.substring(0, hash) : pendingId;
-    const qid: string = hash > 0 ? pendingId.substring(hash + 1) : 'q0';
     const answers: Object[] = [];
-    const one: Record<string, Object> = {};
-    one['id'] = qid;
-    one['selected'] = selected;
-    if (custom.length > 0) {
-      one['custom'] = custom;
+    const usable: PendingAnswerDraft[] = answerableDrafts(drafts);
+    for (let i = 0; i < usable.length; i++) {
+      const draft: PendingAnswerDraft = usable[i];
+      const one: Record<string, Object> = {};
+      one['id'] = draft.questionId;
+      one['selected'] = draft.selected;
+      if (!draft.skipped && draft.custom.trim().length > 0) {
+        one['custom'] = draft.custom;
+      }
+      answers.push(one as Object);
     }
-    answers.push(one as Object);
+    if (answers.length === 0) {
+      this.lastError = '没有可提交的答案：请先作答（或显式跳过）至少一题';
+      this.notify();
+      return false;
+    }
     const value: Record<string, Object> = {};
     value['answers'] = answers;
     const ok: boolean = await this.answerWithResultValue(eventId, value as Object);
     if (ok) {
-      this.resolvePending(pendingId, '已回答');
+      this.resolvePending(pendingId, `已回答 ${answers.length} 题`);
     }
     return ok;
   }

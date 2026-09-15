@@ -11,7 +11,7 @@
 import { pendingElsewhere, pendingForSession, takeoverCommand, takeoverHeadline, takeoverStripText,
   Border, CommandCandidate, FeedbackRow, FollowSignal, Fs, HarmonyColor, HarmonyType, ModelOption, ModelSelection, PendingAttachment, PendingItem, QueuedItem, Radius, ReferenceCandidate, SessionHub, Sp, Speaker, TrajectoryItem, TrajectoryKind, cellIdForListIndex, chatRowOfItemIndex, chatVisibleItems, contextMenuGestures, defaultExpanded, followTimerShouldRun, formatDuration, groupTurns, hasProcessGroup, jobTickerNeeded, listIndexForCell, matchConversationIndices, matchTrajectoryIndices, modelSelectionLabel, nextFollowing, parseMarkdown, plainTextOf, presentTool, processSummary, shouldJumpOnNewItems, stepMatch, toolStateLabel } from 'appstate';
 /** 类型单独 import type（本仓约定：值与类型分开写） */
-import type { ActionNotice, SessionJob, SessionStatsInput, Turn } from 'appstate';
+import type { PendingAnswerDraft, ActionNotice, SessionJob, SessionStatsInput, Turn } from 'appstate';
 import type { NativeAction } from './NativePrimitives';
 import { NativeCard, NativeChip } from './NativePrimitives';
 import { Composer } from './Composer';
@@ -56,7 +56,7 @@ export struct ConversationPane {
   @Prop pending: PendingItem[] = [];
   onDecidePending: (item: PendingItem, choiceId: string, reason: string) => void = () => {
   };
-  onAnswerPending: (item: PendingItem, selected: string[], custom: string) => void = () => {
+  onAnswerPending: (item: PendingItem, drafts: PendingAnswerDraft[]) => void = () => {
   };
 
   onDraftChange: (text: string) => void = () => {
@@ -940,8 +940,8 @@ export struct ConversationPane {
             onDecide: (item: PendingItem, choiceId: string, reason: string) => {
               this.onDecidePending(item, choiceId, reason);
             },
-            onAnswer: (item: PendingItem, selected: string[], custom: string) => {
-              this.onAnswerPending(item, selected, custom);
+            onAnswer: (item: PendingItem, drafts: PendingAnswerDraft[]) => {
+              this.onAnswerPending(item, drafts);
             }
           })
         }

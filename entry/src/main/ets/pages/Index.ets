@@ -160,7 +160,7 @@ import {
  * 原因：`HubSnapshot` / `HubSubscriber` 在 appstate 里是 `export type` 导出的类型，
  * 与值导入分开写更贴近 ArkTS 的类型/值导入区分。
  */
-import type { AttachOutcome, PluginInventoryTotals, CredentialWriteResult, HubSnapshot, HubSubscriber, InputModality, LayoutDecision, LayoutInput, ModalityEvidence, NavState, NavigationState, OverlayState, PluginRow, SessionJob, SessionSearchRow, SessionStatsInput, SettingChoice, SettingInputResult, SettingItem, SettingsKeyParts, SettingsWriteResult, TabSelection } from 'appstate';
+import type { AttachOutcome, PendingAnswerDraft, PluginInventoryTotals, CredentialWriteResult, HubSnapshot, HubSubscriber, InputModality, LayoutDecision, LayoutInput, ModalityEvidence, NavState, NavigationState, OverlayState, PluginRow, SessionJob, SessionSearchRow, SessionStatsInput, SettingChoice, SettingInputResult, SettingItem, SettingsKeyParts, SettingsWriteResult, TabSelection } from 'appstate';
 import { emitter } from '@kit.BasicServicesKit';
 import { parseJson } from 'connection';
 import { EVENT_HOST_CONNECTED, EVENT_KEY_HOST_TOKEN, EVENT_KEY_HOST_URL } from 'platform';
@@ -2798,7 +2798,7 @@ struct Index {
     storageBaseUrl: (url: string) => storageBaseUrl(url),
     reportConnectedHost: (baseUrl: string, token: string) => reportConnectedHost(baseUrl, token),
     activePanel: () => this.activePanel(),
-    answerPending: (item: PendingItem, selected: string[], custom: string) => this.answerPending(item, selected, custom),
+    answerPending: (item: PendingItem, drafts: PendingAnswerDraft[]) => this.answerPending(item, drafts),
     attachNotice: this.attachNotice,
     setAttachNotice: (value: string) => {
       this.attachNotice = value;
@@ -2942,12 +2942,17 @@ struct Index {
     SessionHub.shared().decideApproval(item.id, allow, always);
   }
 
-  /** 答复提问（`selected` 是选项 label 原文，符合上游 `AskUserQuestionAnswerItem`）。 */
-  private answerPending(item: PendingItem, selected: string[], custom: string): void {
+  /**
+   * 答复提问（**整组一次回**）。
+   *
+   * Host 等的是**一个**答复值 `{answers:[{id,selected,custom?}…]}`（`dshcompat`/`docs/11`），
+   * 逐题各发一次会让"第一次就结掉、后面的答案没处去" ⇒ 界面攒齐草稿，这里一次交上去。
+   */
+  private answerPending(item: PendingItem, drafts: PendingAnswerDraft[]): void {
     if (!this.hubConnected) {
       return;
     }
-    SessionHub.shared().answerQuestion(item.id, selected, custom);
+    SessionHub.shared().answerQuestionGroup(item.id, drafts);
   }
 
   /**
@@ -3850,7 +3855,7 @@ struct Index {
 
   private buildBrowserFacade(): WorkspaceBrowserFacade {
     const facade: WorkspaceBrowserFacade = {
-    answerPending: (item: PendingItem, selected: string[], custom: string) => this.answerPending(item, selected, custom),
+    answerPending: (item: PendingItem, drafts: PendingAnswerDraft[]) => this.answerPending(item, drafts),
     archiveOpen: this.archiveOpen,
     archivedSessionIds: this.archivedSessionIds,
     archivedSessions: () => this.archivedSessions(),
@@ -3898,7 +3903,7 @@ struct Index {
     settingsSections: this.panelRegistry.descriptors(PanelLocation.SETTINGS),
     onSelectSettingsSection: (sectionId: string) => this.selectSettingsSection(sectionId),
     browser: this.buildBrowserFacade(),
-    answerPending: (item: PendingItem, selected: string[], custom: string) => this.answerPending(item, selected, custom),
+    answerPending: (item: PendingItem, drafts: PendingAnswerDraft[]) => this.answerPending(item, drafts),
     applyDefaultModel: (provider: string, model: string, effort: string) => this.applyDefaultModel(provider, model, effort),
     archiveOpen: this.archiveOpen,
     setArchiveOpen: (value: boolean) => {

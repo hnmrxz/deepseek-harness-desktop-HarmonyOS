@@ -1961,6 +1961,41 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
       trajectoryDetailRows(base('error', { body: '连不上' })).map((r) => `${r.label}=${r.value}`).join(','),
       '来源=错误,错误=连不上');
   }
+  // ── P7-5：提问**整组**（官方 composer takeover：一个按钮前进，最后一题变提交）──
+  {
+    const TR = require2('./Trajectory.js');
+    const { questionIndexStep, questionNavLabel, draftAnswered, submitBlockedText, answerableDrafts } = TR;
+
+    // ① 上一题 / 下一题：**到头就停住，不循环**（官方 nav.prev/next 的语义）
+    t.eq('下一步越界 ⇒ 停在最后一题', questionIndexStep(2, 3, 1), 2);
+    t.eq('上一步越界 ⇒ 停在第一题', questionIndexStep(0, 3, -1), 0);
+    t.eq('正常步进', questionIndexStep(1, 3, 1), 2);
+    t.eq('没有题时返回 0（不产生 -1 这种下标）', questionIndexStep(0, 0, 1), 0);
+
+    t.eq('单题不显示进度（只有一道题时"第 1/1 题"是噪音）', questionNavLabel(0, 1), '');
+    t.eq('多题显示进度', questionNavLabel(1, 3), '第 2 / 3 题');
+
+    // ② 逐题"答过没有"：选了选项 / 填了自定义 / 显式跳过 都算处理过
+    const d = (selected, custom, skipped) => ({ questionId: 'q', selected: selected, custom: custom, skipped: skipped });
+    t.eq('选了选项 ⇒ 答过', draftAnswered(d(['A'], '', false)), true);
+    t.eq('填了自定义 ⇒ 答过', draftAnswered(d([], '自己写', false)), true);
+    t.eq('显式跳过 ⇒ 处理过', draftAnswered(d([], '', true)), true);
+    t.eq('只有空白 ⇒ 没答', draftAnswered(d([], '   ', false)), false);
+
+    // ③ 提交前的拦阻文案**逐字取官方字典**
+    t.eq('当前题没答 ⇒ 官方 error.incomplete',
+      submitBlockedText([d([], '', false)], 0), '请先完成这道问题。');
+    t.eq('别的题没答 ⇒ 官方 error.unanswered',
+      submitBlockedText([d(['A'], '', false), d([], '', false)], 0), '请选择一个选项或填写自定义答案。');
+    t.eq('全答完 ⇒ 可以提交（空串）',
+      submitBlockedText([d(['A'], '', false), d([], 'x', false)], 0), '');
+
+    // ④ 只送答过的题（跳过的题送空选择，表示"明确不作答"）
+    const list = [d(['A'], '', false), d([], '', false), d([], '', true)];
+    t.eq('未处理的题不进答案清单', answerableDrafts(list).length, 2);
+    t.eq('跳过的题进清单（selected 为空）', answerableDrafts(list)[1].selected.length, 0);
+    t.eq('草稿本身不被修改（纯函数）', list.length, 3);
+  }
 }
 
 t.done();

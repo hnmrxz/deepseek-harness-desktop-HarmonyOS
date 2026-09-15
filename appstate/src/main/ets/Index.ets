@@ -95,6 +95,9 @@ export { sessionContextLine, workspaceNameOf } from './model/SessionContext';
 // 轨迹条目的事件详情（P7-4，对齐官方 details.* 的字段对）
 export { TRAJECTORY_DETAIL_TITLE, itemKindLabel, trajectoryDetailRows } from './model/TrajectoryDetail';
 export type { DetailRow } from './model/TrajectoryDetail';
+// 提问组（P7-5）：整组题目 + 逐题草稿 + 官方提交拦阻文案
+export { answerableDrafts, draftAnswered, questionIndexStep, questionNavLabel, submitBlockedText } from './model/Trajectory';
+export type { PendingAnswerDraft, PendingQuestion } from './model/Trajectory';
 // 会话搜索（官方 sidebar 的 search：Host 内容命中 + 本地标题命中合并成扁平结果）
 // 输入区接管的焦点规则（P7-2，对齐官方 approval/user-questions 的 composer takeover）
 export { pendingElsewhere, pendingForSession, takeoverCommand, takeoverHeadline, takeoverStripText } from './model/PendingFocus';

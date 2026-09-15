@@ -19,10 +19,10 @@
 
 import { HubBanner } from './HubBanner';
 import { PendingPane } from './PendingPane';
-import { CoreViewState, Fs, HarmonyIconSize, HubPhase, PendingItem, Radius, SessionListItem, SessionSearchRow, Sp, Sz, WorkspaceItem, formatClock, relativeTime, sessionEmptyCopy } from 'appstate';
+import { PendingAnswerDraft, CoreViewState, Fs, HarmonyIconSize, HubPhase, PendingItem, Radius, SessionListItem, SessionSearchRow, Sp, Sz, WorkspaceItem, formatClock, relativeTime, sessionEmptyCopy } from 'appstate';
 
 export interface WorkspaceBrowserFacade {
-  answerPending: (item: PendingItem, selected: string[], custom: string) => void;
+  answerPending: (item: PendingItem, drafts: PendingAnswerDraft[]) => void;
   archiveOpen: boolean;
   archivedSessionIds: string[];
   archivedSessions: () => SessionListItem[];
@@ -210,8 +210,8 @@ export struct WorkspaceBrowser {
             onDecide: (item: PendingItem, choiceId: string, reason: string) => {
               this.f.decidePending(item, choiceId, reason);
             },
-            onAnswer: (item: PendingItem, selected: string[], custom: string) => {
-              this.f.answerPending(item, selected, custom);
+            onAnswer: (item: PendingItem, drafts: PendingAnswerDraft[]) => {
+              this.f.answerPending(item, drafts);
             }
           })
         }

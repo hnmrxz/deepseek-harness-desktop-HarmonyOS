@@ -6,6 +6,7 @@
  */
 
 import {
+  PendingAnswerDraft,
   APPROVAL_CHOICE_ALLOW,
   APPROVAL_CHOICE_DENY,
   Fs,
@@ -20,6 +21,7 @@ import {
   Border
 } from 'appstate';
 import { NativeButton } from './NativePrimitives';
+import { QuestionGroupCard } from './QuestionGroupCard';
 
 @Component
 export struct PendingPane {
@@ -38,18 +40,19 @@ export struct PendingPane {
   };
 
   /**
-   * 答复提问。`selected` 必须是**选项 label 原文**（不是 id 或下标）——
-   * 上游 `AskUserQuestionAnswerItem.selected` 要的就是 label。
-   * `custom` 是自由文本「其他」答案。
+   * 提交提问的**整组**答案（P7-5）。
+   *
+   * Host 等的是**一个**答复值 `{answers:[{id,selected,custom?}…]}` ⇒ 逐题各发一次会让
+   * "第一次就结掉、后面的答案没处去"。故这里交回的是**逐题草稿**，由宿主一次构造。
+   * `selected` 里放的是**选项 label 原文**（上游 `AskUserQuestionAnswerItem.selected` 要 label）。
    */
-  onAnswer: (item: PendingItem, selected: string[], custom: string) => void = () => {
+  onAnswer: (item: PendingItem, drafts: PendingAnswerDraft[]) => void = () => {
   };
 
   /** 自由文本输入（按待决 id 保存） */
   @State freeText: string = '';
   @State freeTextFor: string = '';
   /** 多选状态（仅提问多选使用） */
-  @State chosen: string[] = [];
   /** 当前展开原始请求的待决 id（空 = 全部收起） */
   @State rawExpanded: string = '';
 
@@ -71,7 +74,11 @@ export struct PendingPane {
         List({ space: Sp.M }) {
           ForEach(sortPending(this.items), (item: PendingItem) => {
             ListItem() {
-              this.pendingCard(item)
+              if (item.kind === PendingKind.APPROVAL) {
+                this.pendingCard(item)
+              } else {
+                this.questionCard(item)
+              }
             }
           }, (item: PendingItem) => item.id)
         }
@@ -137,36 +144,11 @@ export struct PendingPane {
         this.rawBlock(item)
       }
 
-      // 选项
-      if (item.multiSelect) {
-        ForEach(item.choices, (choice: PendingChoice) => {
-          this.multiChoiceRow(item, choice)
-        }, (choice: PendingChoice) => `${item.id}-${choice.id}`)
-        // 主操作按钮走原语（P1.5）：实底 + 品牌语气，禁用态也由原语统一表达
-        Row() {
-          NativeButton({
-            label: '提交选择',
-            emphasis: 'solid',
-            tone: 'brand',
-            disabled: this.chosen.length === 0,
-            a11y: this.chosen.length === 0 ? '提交选择（先选至少一项）' : '提交选择',
-            onTap: () => {
-              const labels: string[] = this.labelsOf(item, this.chosen);
-              this.chosen = [];
-              this.onAnswer(item, labels, this.textFor(item));
-            }
-          })
-        }
-        .width('100%')
-      } else {
+      // 选项（审批：三选，点一下即应答）
+      if (item.kind === PendingKind.APPROVAL) {
         ForEach(item.choices, (choice: PendingChoice, index: number) => {
           this.singleChoiceRow(item, choice, index)
         }, (choice: PendingChoice) => `${item.id}-${choice.id}`)
-      }
-
-      // 自由文本（审批允许附理由 / 提问允许自定义）
-      if (item.allowFreeText) {
-        this.freeTextBlock(item)
       }
     }
     .width('100%')
@@ -175,21 +157,25 @@ export struct PendingPane {
     .backgroundColor($r('sys.color.background_secondary'))
   }
 
+  /**
+   * 提问：**整组**卡片（P7-5，官方 `dsh-client-ui-user-questions` 的交互）。
+   *
+   * 逐题导航、跳过、提交前的官方拦阻文案都在 `QuestionGroupCard` 自己身上
+   * （它持有"第几题 + 每题选了什么"这份逐题草稿）；这里只把整组答案交回宿主。
+   */
+  @Builder
+  questionCard(item: PendingItem) {
+    QuestionGroupCard({
+      item: item,
+      onSubmit: (it: PendingItem, drafts: PendingAnswerDraft[]) => {
+        this.onAnswer(it, drafts);
+      }
+    })
+  }
+
   /** 取当前卡片已填的自由文本（只认属于该卡片的输入，避免串到别的卡片） */
   private textFor(item: PendingItem): string {
     return this.freeTextFor === item.id ? this.freeText : '';
-  }
-
-  /** 把选中的 choice id 映射成选项 label 原文（上游要 label，不要 id） */
-  private labelsOf(item: PendingItem, ids: string[]): string[] {
-    const out: string[] = [];
-    for (let i = 0; i < item.choices.length; i++) {
-      const choice: PendingChoice = item.choices[i];
-      if (ids.indexOf(choice.id) >= 0) {
-        out.push(choice.label);
-      }
-    }
-    return out;
   }
 
   @Builder
@@ -239,77 +225,9 @@ export struct PendingPane {
       : $r('sys.color.comp_divider'))
     .margin({ top: Sp.XS })
     .onClick(() => {
-      // 审批 → 交给上层的审批应答；提问 → 单选即提交（选中的是 label 原文）
-      if (item.kind === PendingKind.APPROVAL) {
-        this.onDecide(item, choice.id, this.textFor(item));
-      } else {
-        this.onAnswer(item, [choice.label], this.textFor(item));
-      }
+      // 这张卡现在只服务**审批**（提问走 `QuestionGroupCard`）⇒ 点一下就是应答
+      this.onDecide(item, choice.id, this.textFor(item));
     })
-  }
-
-  @Builder
-  multiChoiceRow(item: PendingItem, choice: PendingChoice) {
-    Row({ space: Sp.S }) {
-      Checkbox({ name: `${item.id}-${choice.id}`, group: item.id })
-        .select(this.chosen.indexOf(choice.id) >= 0)
-        .onChange((checked: boolean) => {
-          this.chosen = this.toggle(this.chosen, choice.id, checked);
-        })
-      Column({ space: 2 }) {
-        Text(choice.label)
-          .fontSize(Fs.SECONDARY)
-          .width('100%')
-        if (choice.detail.length > 0) {
-          Text(choice.detail)
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_tertiary'))
-            .width('100%')
-        }
-      }
-      .layoutWeight(1)
-    }
-    .width('100%')
-    .padding({ top: Sp.XS, bottom: Sp.XS })
-  }
-
-  @Builder
-  freeTextBlock(item: PendingItem) {
-    Column({ space: Sp.XS }) {
-      Text(item.kind === PendingKind.APPROVAL ? '拒绝理由（可选）' : '其他（自定义回答）')
-        .fontSize(Fs.CAPTION)
-        .fontColor($r('sys.color.font_tertiary'))
-        .width('100%')
-      TextInput({
-        text: this.freeTextFor === item.id ? this.freeText : '',
-        placeholder: item.kind === PendingKind.APPROVAL ? '说明为什么拒绝…' : '输入你的回答…'
-      })
-        .onChange((value: string) => {
-          this.freeTextFor = item.id;
-          this.freeText = value;
-        })
-        .width('100%')
-    }
-    .width('100%')
-  }
-
-  private toggle(list: string[], id: string, on: boolean): string[] {
-    const out: string[] = [];
-    if (on) {
-      for (let i = 0; i < list.length; i++) {
-        out.push(list[i]);
-      }
-      if (out.indexOf(id) < 0) {
-        out.push(id);
-      }
-    } else {
-      for (let i = 0; i < list.length; i++) {
-        if (list[i] !== id) {
-          out.push(list[i]);
-        }
-      }
-    }
-    return out;
   }
 
   /**

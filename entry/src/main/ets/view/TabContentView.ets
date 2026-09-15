@@ -22,7 +22,7 @@
  */
 
 import { ActionNotice, AgentPresetRow, CoreViewState, CredentialItem, FileNode, FilePreview, Fs, HostRecord, HubPhase, LayoutMode, ModelOption, ModelSelection, NavTab, PendingItem, PluginItem, SessionHub, SessionListItem, SettingGroup, SkillRow, Sp, StackPage, WorkspaceItem, aboutInfo, projectGeneralGroups } from 'appstate';
-import type { PanelDescriptor, SettingChoice, SettingItem } from 'appstate';
+import type { PendingAnswerDraft, PanelDescriptor, SettingChoice, SettingItem } from 'appstate';
 import { LocalPrefs } from 'platform';
 import { HubBanner } from './HubBanner';
 import { SettingsPane } from './SettingsPane';
@@ -31,7 +31,7 @@ import { WorkspaceBrowser } from './WorkspaceBrowser';
 import type { WorkspaceBrowserFacade } from './WorkspaceBrowser';
 
 export interface TabContentFacade {
-  answerPending: (item: PendingItem, selected: string[], custom: string) => void;
+  answerPending: (item: PendingItem, drafts: PendingAnswerDraft[]) => void;
   applyDefaultModel: (provider: string, model: string, effort: string) => void;
   archiveOpen: boolean;
   setArchiveOpen: (value: boolean) => void;

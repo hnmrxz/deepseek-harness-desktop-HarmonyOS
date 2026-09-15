@@ -26,7 +26,7 @@ import { DiagnosticsPane } from '../DiagnosticsPane';
 import { GoalBar } from '../GoalBar';
 import { SessionModelPicker } from '../SessionModelPicker';
 import { copyText } from 'platform';
-import type { HubSnapshot, InputModality, NavigationState, SessionStatsInput } from 'appstate';
+import type { PendingAnswerDraft, HubSnapshot, InputModality, NavigationState, SessionStatsInput } from 'appstate';
 import { TabContentView } from '../TabContentView';
 import { extractToken } from 'connection';
 import type { TabContentFacade } from '../TabContentView';
@@ -38,7 +38,7 @@ export interface MainShellFacade {
   storageBaseUrl: (url: string) => string;
   reportConnectedHost: (baseUrl: string, token: string) => void;
   activePanel: () => string;
-  answerPending: (item: PendingItem, selected: string[], custom: string) => void;
+  answerPending: (item: PendingItem, drafts: PendingAnswerDraft[]) => void;
   attachNotice: string;
   setAttachNotice: (value: string) => void;
   attachments: PendingAttachment[];
@@ -312,8 +312,8 @@ export struct MainShell {
         onDecidePending: (item: PendingItem, choiceId: string, reason: string) => {
           this.f.decidePending(item, choiceId, reason);
         },
-        onAnswerPending: (item: PendingItem, selected: string[], custom: string) => {
-          this.f.answerPending(item, selected, custom);
+        onAnswerPending: (item: PendingItem, drafts: PendingAnswerDraft[]) => {
+          this.f.answerPending(item, drafts);
         },
         sessionId: this.f.selectedSessionId,
         workspaceName: this.f.sessionWorkspaceName,
