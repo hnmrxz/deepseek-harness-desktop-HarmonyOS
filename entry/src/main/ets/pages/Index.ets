@@ -1988,6 +1988,8 @@ struct Index {
       deliverables: deliverablesOf(this.trajectoryItems),
       subagents: itemsOfKind(this.trajectoryItems, TrajectoryKind.SUBAGENT),
       tools: itemsOfKind(this.trajectoryItems, TrajectoryKind.TOOL),
+      trajectoryItems: this.trajectoryItems,
+      stats: this.sessionStats,
       onSelectPanel: (panelId: string) => {
         this.selectRightPanelById(panelId);
       },
@@ -2024,6 +2026,8 @@ struct Index {
     rightDeliverables: deliverablesOf(this.trajectoryItems),
     rightSubagents: itemsOfKind(this.trajectoryItems, TrajectoryKind.SUBAGENT),
     rightTools: itemsOfKind(this.trajectoryItems, TrajectoryKind.TOOL),
+    rightTrajectoryItems: this.trajectoryItems,
+    rightStats: this.sessionStats,
     mobileDrawerOpen: this.nav.mobileDrawer === DrawerState.OPEN,
     onOpenDrawer: () => this.setDrawerOpen(true),
     onCloseDrawer: () => this.setDrawerOpen(false),

@@ -274,8 +274,8 @@ export function rightbarPanels(): PanelDescriptor[] {
     { id: PANEL_RIGHT_DETAIL, location: PanelLocation.RIGHTBAR, owner: 'conversation',
       label: '详情', order: 5, available: () => true },
     /*
-     * 官方右栏的候选里，**内容视图还没做的**（`available: () => false`）：
-     * 只剩「轨迹」（它与主区的「轨迹视图」是同一份列表，要先想清楚两者的差别）。
+     * 至此官方右栏的六个候选**全部接上**（文件 / 预览 / 交付物 / 子代理 / 工具 / 轨迹）。
+     * 右栏的面板体系（注册表 → 选择 → 切换器 → 各面板内容）到此完整。
      *
      * 【为什么不先"可选"再补内容】按 E110 的口径：不能填的入口不进选择集。
      * 若让它们可选，用户点进去会看到一个空面板——那比"暂时少一个入口"糟得多。
@@ -284,8 +284,11 @@ export function rightbarPanels(): PanelDescriptor[] {
     // 「文件」在 P3-3 接上：呈现用 `FileTreePane`（与工作区页签**同一份**）⇒ 可用
     { id: PANEL_RIGHT_FILES, location: PanelLocation.RIGHTBAR, owner: 'workspace',
       label: '文件', order: 10, available: () => true },
+    // 「轨迹」在 P3-6 接上：右栏只放**时间总览**（`TimelineOverview`）——
+    // 官方右栏的 trajectory 是"当前回合的过程"，而本仓 `TrajectoryItem` 没有回合字段，
+    // 没有"回合作用域的过程列表"这个概念 ⇒ **宁可只放总览，也不把主区那份全量台账在 320vp 里照抄**
     { id: PANEL_RIGHT_TRAJECTORY, location: PanelLocation.RIGHTBAR, owner: 'conversation',
-      label: '轨迹', order: 20, available: () => false },
+      label: '轨迹', order: 20, available: () => true },
     // 「工具」在 P3-5 接上：呈现用 `ToolCard`（与会话过程流里那张卡**同一份**）⇒ 可用
     { id: PANEL_RIGHT_TOOL, location: PanelLocation.RIGHTBAR, owner: 'conversation',
       label: '工具', order: 30, available: () => true },

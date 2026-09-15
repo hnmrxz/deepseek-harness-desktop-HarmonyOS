@@ -26,13 +26,14 @@
  * 而不是继续吃一份 sections）。
  */
 
-import { DetailPresentation, DetailSection, Fs, HarmonyIconSize, HarmonySpacing, PANEL_RIGHT_DELIVERABLES, PANEL_RIGHT_DETAIL, PANEL_RIGHT_FILES, PANEL_RIGHT_PREVIEW, PANEL_RIGHT_SUBAGENT, PANEL_RIGHT_TOOL, Sp, Sz, presentTool, toolStateLabel } from 'appstate';
-import type { FileNode, FilePreview, PanelDescriptor, TrajectoryItem } from 'appstate';
+import { DetailPresentation, DetailSection, Fs, HarmonyIconSize, HarmonySpacing, PANEL_RIGHT_DELIVERABLES, PANEL_RIGHT_DETAIL, PANEL_RIGHT_FILES, PANEL_RIGHT_PREVIEW, PANEL_RIGHT_SUBAGENT, PANEL_RIGHT_TOOL, PANEL_RIGHT_TRAJECTORY, Sp, Sz, presentTool, toolStateLabel } from 'appstate';
+import type { FileNode, FilePreview, PanelDescriptor, SessionStatsInput, TrajectoryItem } from 'appstate';
 import { DetailPane } from '../DetailPane';
 import { FilePreviewPane } from '../FilePreviewPane';
 import { DeliverableCard } from '../DeliverableCard';
 import { FileTreePane } from '../FileTreePane';
 import { SubagentCard } from '../SubagentCard';
+import { TimelineOverview } from '../TimelineOverview';
 import { ToolCard } from '../ToolCard';
 import type { FileTreeFacade } from '../FileTreePane';
 import { NativeChip } from '../NativePrimitives';
@@ -74,6 +75,10 @@ export struct RightbarShell {
   @Prop subagents: TrajectoryItem[] = [];
   /** 「工具」面板的内容（同上） */
   @Prop tools: TrajectoryItem[] = [];
+  /** 「轨迹」面板的内容：本会话的全部过程条目（总览自己算格子与比例） */
+  @Prop trajectoryItems: TrajectoryItem[] = [];
+  /** 「轨迹」面板的会话统计（总览右上角那四项） */
+  @Prop stats: SessionStatsInput;
 
   /**
    * 工具面板里**被用户手动展开过**的条目 id。
@@ -83,6 +88,10 @@ export struct RightbarShell {
    * （卡片的 `expanded` 仍是入参 —— 组件本身不持状态，见 `ToolCard` 的说明）。
    */
   @State toolExpanded: string[] = [];
+  /** 「轨迹」总览在右栏里聚焦的格子（右栏**不滚动主列表**，故只高亮不跳转） */
+  @State timelineFocused: string = '';
+  /** 「轨迹」总览是否正在拖动（受控项：拖动期间暂停"列表 → 条"，与主区同一判据） */
+  @State timelineDragging: boolean = false;
 
   /** 切换右栏面板（宿主经注册表校验后落到 `selectedRightPanel`） */
   onSelectPanel: (panelId: string) => void = () => {
@@ -223,6 +232,53 @@ export struct RightbarShell {
     this.toolExpanded = out;
   }
 
+  /**
+   * 轨迹面板：**只放时间总览**（见 `PanelRegistry` 里这一项的说明）。
+   *
+   * 【为什么不在右栏放全量台账】那是主区「轨迹视图」的职责；320vp 里照抄一遍，
+   * 既看不清也没必要。这里给的是"这次会话的时间分布 + 聚焦那一格的详情"。
+   *
+   * 【为什么右栏聚焦不滚列表】主区此刻可能根本不在轨迹视图（用户在对话视图里），
+   * 这时"跳过去"会把人从正在读的内容上拽走。故右栏只高亮 + 显示详情行。
+   */
+  @Builder
+  trajectoryBody() {
+    if (this.trajectoryItems.length === 0) {
+      Column({ space: Sp.S }) {
+        Text('本次会话还没有过程数据')
+          .fontSize(Fs.SECONDARY)
+          .fontColor($r('sys.color.font_secondary'))
+        Text('助手开始工作后，这里会给出时间分布')
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.font_tertiary'))
+          .textAlign(TextAlign.Center)
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .justifyContent(FlexAlign.Center)
+      .padding(Sp.M)
+    } else {
+      Column() {
+        TimelineOverview({
+          items: this.trajectoryItems,
+          stats: this.stats,
+          focusedCellId: this.timelineFocused,
+          dragging: this.timelineDragging,
+          onFocusCell: (cellId: string) => {
+            this.timelineFocused = cellId;
+          },
+          onCommit: () => {
+          },
+          onDragChange: (dragging: boolean) => {
+            this.timelineDragging = dragging;
+          }
+        })
+      }
+      .width('100%')
+      .padding({ top: Sp.S })
+    }
+  }
+
   /** 并排（真右栏）与侧边浅层面板共用一套带标题行的形态 */
   @Builder
   framedBody() {
@@ -270,6 +326,8 @@ export struct RightbarShell {
             this.onLineTap(section, text);
           }
         })
+      } else if (this.panelId === PANEL_RIGHT_TRAJECTORY) {
+        this.trajectoryBody()
       } else if (this.panelId === PANEL_RIGHT_TOOL) {
         this.toolsBody()
       } else if (this.panelId === PANEL_RIGHT_SUBAGENT) {
@@ -306,6 +364,8 @@ export struct RightbarShell {
             this.onLineTap(section, text);
           }
         })
+      } else if (this.panelId === PANEL_RIGHT_TRAJECTORY) {
+        this.trajectoryBody()
       } else if (this.panelId === PANEL_RIGHT_TOOL) {
         this.toolsBody()
       } else if (this.panelId === PANEL_RIGHT_SUBAGENT) {

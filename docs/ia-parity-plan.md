@@ -273,7 +273,9 @@ Composer 的官方字段：Model / Reasoning effort / Permission / Plan / @ Refe
 | 「文件」面板（P3-3） | ✅ **已落地**：文件树（展开 / 选中 / 交付物标记）从 `WorkspacePane` 抽成 **`view/FileTreePane.ets`**（133 行，带 `FileTreeFacade` 门面），右栏「文件」面板与工作区页签**共用同一份**；`right.files` 从此 `available: true`。空态文案仍由宿主按三种事实分档给（"没选工作区 / 目录下没会话 / 列目录失败"）。`WorkspacePane` **464 → 274 行**（预览 + 文件树两轮搬出）|
 | 「交付物」面板（P3-4） | ✅ **已落地**：交付物卡（图标 / 文件名 / 大小 / 动作行）从 `ConversationPane` 抽成 **`view/DeliverableCard.ets`**（86 行），右栏「交付物」面板与会话过程流里那张卡**共用同一份**；`right.deliverables` 从此可用。筛选是**纯模型**（新增 `itemsOfKind` / `deliverablesOf`：保序 + **同 id 只留最后一条**——过程流里同一条会被流式 merge 多次，「有几件事」不能等于「更新了几次」；4 条断言）|
 | 「工具」+「子代理」面板（P3-5） | ✅ **已落地**：工具卡抽成 **`view/ToolCard.ets`**（163 行，含 `diffOf` / `diffTextLines` / `diffKindLines` / `toolBadge` / `toolIcon` ——**判定与呈现同处一组件**，宿主只给"数据 + 展开态 + 回调"）、子代理卡抽成 **`view/SubagentCard.ets`**（40 行）。两个面板与过程流**共用同一份卡**；`right.tool` / `right.subagent` 从此可用。工具卡展开态是**入参**（主区"展开全部/收起全部"要能一次控制所有卡），右栏面板持自己那一条列表的展开集合 |
-| 下一步（P3-6…） | ① 最后一个候选「**轨迹**」——它与主区「轨迹视图」是同一份列表，**要先想清楚两者的差别**（官方右栏的 trajectory 是「当前回合的过程」，不是全量台账）再动手，否则会把主区那份视图照抄一遍 ② 侧边面板滑入动画、面板自身拖拽调宽（P0 遗留）③ 单栏 Sheet 里要不要也放切换器（待真机看）④ 「设置」域（P4）|
+| 「轨迹」面板（P3-6） | ✅ **已落地**：时间总览（总计 + 每格比例条 + 拖动聚焦 + 聚焦详情行 + 统计四项）从 `ConversationPane` 抽成 **`view/TimelineOverview.ets`**（194 行），主区「轨迹视图」与右栏「轨迹」面板**共用同一份**。**两处的差别写进了模型注释**：主区是"全量台账 + 总览"，右栏**只放总览**——官方右栏的 trajectory 是"当前回合的过程"，而本仓 `TrajectoryItem` 没有回合字段、没有"回合作用域的过程列表"这个概念 ⇒ **宁可少放一份列表，也不把主区台账在 320vp 里照抄一遍**。右栏聚焦**只高亮不跳转**（主区此刻可能不在轨迹视图，跳过去会把用户从正在读的内容上拽走）|
+| **P3 收口** | ✅ 官方右栏**六个候选全部接上**（文件 / 预览 / 交付物 / 子代理 / 工具 / 轨迹）+ 本仓特有的「详情」= 七个可用面板；`selectedRightPanel` 有消费者、切换器按可用面板数出现、每个面板的呈现都与"另一个挂载点"**共用同一份组件**。`ConversationPane` 1714 → **1414 行**（本轮又搬出 121 行）。**仍缺**（登记在案）：侧边面板滑入动画、面板自身拖拽调宽、单栏 Sheet 里的切换器 |
+| 下一步（P4：设置域） | ① 设置页的域划分（General / Models / Plugins / Plugin Inventory，官方 `ui-settings` 的四个分区）——现在是一个 `SettingsPane` ② 设置项写入的统一事务与失败回执（已有 `SettingsWriteResult`，但要按域收口）③ 手机抽屉里的设置入口与「Settings 固定底部」在四形态下的观感（真机）|
 
 ### P4 Settings 域
 `SettingsShell`（General / Models / Plugins / Plugin Inventory / …）。**不再往 `SettingsPane.ets` 里堆内容。**

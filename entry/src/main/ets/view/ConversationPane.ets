@@ -8,9 +8,9 @@
  * 所有动作通过回调上报宿主，便于接入真实连接时只改宿主。
  */
 
-import { Border, CommandCandidate, FeedbackRow, FollowSignal, Fs, HarmonyColor, HarmonyRadius, HarmonySpacing, HarmonyType, JobDot, MenuGesture, ModelOption, ModelSelection, PendingAttachment, PendingItem, QueuedItem, Radius, ReferenceCandidate, SemanticColor, SessionHub, Sp, Speaker, StatsUnit, Sz, TimelineKind, ToolKind, ToolState, TrajectoryItem, TrajectoryKind, cellIdAtRatio, cellIdForListIndex, chatRowOfItemIndex, chatVisibleItems, contextMenuGestures, contextMenuHintLabel, defaultExpanded, followTimerShouldRun, formatClock, formatDuration, groupTurns, hasProcessGroup, hoverEnabled, jobCountLabel, jobDotState, jobDurationText, jobDurationTitle, jobElapsedMs, jobListA11y, jobListVisible, jobRowStatusText, jobTickerNeeded, listIndexForCell, matchConversationIndices, matchCounterText, matchTrajectoryIndices, nextFollowing, orderedJobs, parseMarkdown, plainTextOf, presentDiff, presentTool, previewOutput, processSummary, segmentOrdinalOf, shouldJumpOnNewItems, statsLinesOf, stepMatch, timelineCellsOf, timelineKindLabel, timelineScaleOf, timelineStartedLabel, timelineTotalLabel, toolStateLabel, toolSummaryOf } from 'appstate';
+import { Border, CommandCandidate, FeedbackRow, FollowSignal, Fs, HarmonyColor, HarmonyRadius, HarmonySpacing, HarmonyType, JobDot, MenuGesture, ModelOption, ModelSelection, PendingAttachment, PendingItem, QueuedItem, Radius, ReferenceCandidate, SemanticColor, SessionHub, Sp, Speaker, Sz, TrajectoryItem, TrajectoryKind, cellIdForListIndex, chatRowOfItemIndex, chatVisibleItems, contextMenuGestures, contextMenuHintLabel, defaultExpanded, followTimerShouldRun, formatClock, formatDuration, groupTurns, hasProcessGroup, hoverEnabled, jobCountLabel, jobDotState, jobDurationText, jobDurationTitle, jobElapsedMs, jobListA11y, jobListVisible, jobRowStatusText, jobTickerNeeded, listIndexForCell, matchConversationIndices, matchCounterText, matchTrajectoryIndices, nextFollowing, orderedJobs, parseMarkdown, plainTextOf, presentTool, processSummary, shouldJumpOnNewItems, stepMatch, toolStateLabel } from 'appstate';
 /** 类型单独 import type（本仓约定：值与类型分开写） */
-import type { ActionNotice, InputModality, SessionJob, SessionStatsInput, StatsLine, TimelineCell, TimelineScale, TimelineSegment, Turn } from 'appstate';
+import type { ActionNotice, InputModality, SessionJob, SessionStatsInput, Turn } from 'appstate';
 import type { NativeAction } from './NativePrimitives';
 import { NativeActionBar, NativeCard, NativeChip } from './NativePrimitives';
 import { Composer } from './Composer';
@@ -19,6 +19,7 @@ import { MessageFeedback } from './MessageFeedback';
 import { DeliverableCard } from './DeliverableCard';
 import { SubagentCard } from './SubagentCard';
 import { ToolCard } from './ToolCard';
+import { TimelineOverview } from './TimelineOverview';
 import { PendingPane } from './PendingPane';
 
 @Component
@@ -171,62 +172,13 @@ export struct ConversationPane {
    * 少一份状态、少一个入口，信息一点不少。
    */
   /** 时间线格子（每次都按当前条目算一次；条目数是几十到几百，代价可忽略） */
-  private timelineCells(): TimelineCell[] {
-    return timelineCellsOf(this.items);
-  }
 
-  private timelineScale(): TimelineScale {
-    return timelineScaleOf(this.timelineCells());
-  }
 
   /** 聚焦格子的详情行（官方：「总计」「开始于」「首 token … · 解码 …」「无计时数据」） */
-  private focusedTimelineNote(): string {
-    const cells: TimelineCell[] = this.timelineCells();
-    let cell: TimelineCell | undefined = undefined;
-    for (let i = 0; i < cells.length; i++) {
-      if (cells[i].id === this.focusedCellId) {
-        cell = cells[i];
-        break;
-      }
-    }
-    if (cell === undefined) {
-      return '';
-    }
-    const parts: string[] = [];
-    parts.push(`${timelineKindLabel(cell.kind)} · ${segmentOrdinalOf(this.timelineScale().segments, cell.id)}/${this.timelineScale().segments.length}`);
-    const started: string = timelineStartedLabel(cell, (at: number) => this.clockOf(at));
-    if (started.length > 0) {
-      parts.push(started);
-    }
-    if (cell.durationMs > 0) {
-      parts.push(formatDuration(cell.durationMs));
-    }
-    return parts.join(' · ');
-  }
 
   /** 会话统计（时间相关四项）的文案：单位由模型给，排版在这里 */
-  private statsLineText(line: StatsLine): string {
-    if (line.unit === StatsUnit.MS) {
-      return `${line.label} ${formatDuration(Math.round(line.value))}`;
-    }
-    if (line.unit === StatsUnit.TPS) {
-      return `${line.label} ${line.value.toFixed(1)}`;
-    }
-    return `${line.label} ${line.value}`;
-  }
 
   /** 拖动/点选：把条上的比例位置换算成"聚焦哪一格"（越界夹到首尾，规则在模型里） */
-  private focusTimelineAt(deltaXVp: number): void {
-    const scale: TimelineScale = this.timelineScale();
-    if (scale.segments.length === 0 || this.timelineBarWidth <= 0) {
-      return;
-    }
-    const ratio: number = deltaXVp / this.timelineBarWidth;
-    const id: string = cellIdAtRatio(scale.segments, ratio);
-    if (id.length > 0) {
-      this.focusedCellId = id;
-    }
-  }
 
   /**
    * 条 → 列表：把聚焦的那一格滚进视野。
@@ -678,95 +630,8 @@ export struct ConversationPane {
    * 拖动 → 按条宽把偏移量换算成比例 → 落到哪一格就聚焦哪一格（越界夹到首尾）。
    * 判定规则全在 `model/Timeline`（60 条断言），视图只把比例映射成宽度。
    */
-  @Builder
-  timelineOverview() {
-    Column({ space: Sp.XS }) {
-      Row({ space: Sp.S }) {
-        Text(timelineTotalLabel(this.timelineScale()))
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_secondary'))
-        Text(`${this.timelineScale().count} 格`)
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
-        Blank()
-        // 会话统计的**时间四项**（轮次/步数由会话头部那行承担，不在这里重复）
-        ForEach(statsLinesOf(this.stats), (line: StatsLine) => {
-          Text(this.statsLineText(line))
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_tertiary'))
-        }, (line: StatsLine) => line.key)
-      }
-      .width('100%')
-
-      if (this.timelineScale().hasData) {
-        // 比例条：每段用**累计起点 + 宽度**摆放（不是浮动相加，避免四舍五入出缝隙）
-        Stack({ alignContent: Alignment.Start }) {
-          Row() {
-            ForEach(this.timelineScale().segments, (seg: TimelineSegment) => {
-              Column()
-                .width(`${seg.ratio * 100}%`)
-                .height(this.focusedCellId === seg.id ? Sz.POINTER_MIN : Sp.M)
-                .backgroundColor(this.timelineColorOf(seg.kind))
-            }, (seg: TimelineSegment) => seg.id)
-          }
-          .width('100%')
-          .height(Sp.M)
-          .borderRadius(Radius.XS)
-          .clip(true)
-        }
-        .width('100%')
-        .onAreaChange((_oldArea: Area, newArea: Area) => {
-          this.timelineBarWidth = Number(newArea.width);
-        })
-        .gesture(
-          PanGesture({ direction: PanDirection.Horizontal })
-            .onActionStart(() => {
-              this.timelineDragging = true;
-            })
-            .onActionUpdate((event: GestureEvent) => {
-              this.focusTimelineAt(event.offsetX);
-            })
-            .onActionEnd(() => {
-              this.timelineDragging = false;
-              // 松手才滚（见 `scrollToFocusedCell` 的说明）
-              this.scrollToFocusedCell();
-            })
-        )
-        .onClick((event: ClickEvent) => {
-          // `event.x` 是**相对本组件**的横坐标，正是比例条的换算起点（`displayX` 是相对窗口的）
-          this.focusTimelineAt(Number(event.x));
-          this.scrollToFocusedCell();
-        })
-
-        if (this.focusedTimelineNote().length > 0) {
-          Text(this.focusedTimelineNote())
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_secondary'))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-        }
-      } else {
-        // 官方 `timeline.noTimingData` 的情形：如实说"无计时数据"，而不是画一条空条
-        Text('这一轮的条目没有计时数据，无法给出时间分布。')
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
-      }
-    }
-    .width('100%')
-    .padding({ left: Sp.M, right: Sp.M, top: Sp.XS, bottom: Sp.XS })
-    .backgroundColor($r('sys.color.background_primary'))
-  }
 
   /** 格子种类的颜色：只有"工具"与"助手"需要区分，其余用中性色（不靠颜色表达状态） */
-  private timelineColorOf(kind: TimelineKind): Resource {
-    if (kind === TimelineKind.TOOL) {
-      return $r('sys.color.brand');
-    }
-    if (kind === TimelineKind.USER) {
-      return $r('sys.color.comp_background_tertiary');
-    }
-    return $r('sys.color.comp_divider');
-  }
 
   build() {
     Column() {
@@ -812,7 +677,22 @@ export struct ConversationPane {
 
       // 轨迹视图的时间总览（P2 §11 的 TrajectoryPresenter）
       if (this.view === 'trajectory') {
-        this.timelineOverview()
+        // 时间总览归 TimelineOverview（右栏「轨迹」面板用**同一份**）
+        TimelineOverview({
+          items: this.items,
+          stats: this.stats,
+          focusedCellId: this.focusedCellId,
+          dragging: this.timelineDragging,
+          onFocusCell: (cellId: string) => {
+            this.focusedCellId = cellId;
+          },
+          onCommit: () => {
+            this.scrollToFocusedCell();
+          },
+          onDragChange: (dragging: boolean) => {
+            this.timelineDragging = dragging;
+          }
+        })
       }
 
       if (this.searchOpen) {

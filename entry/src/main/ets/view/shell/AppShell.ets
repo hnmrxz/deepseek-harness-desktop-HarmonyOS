@@ -22,7 +22,7 @@
 import { DetailPresentation, DetailSection, LayoutMode, MAIN_DIAGNOSTICS, StackPage, Sz, TrackPresentation, shellTracksOf, showsConversation } from 'appstate';
 import { copyText } from 'platform';
 
-import type { FileNode, FilePreview, PanelDescriptor, TrajectoryItem } from 'appstate';
+import type { FileNode, FilePreview, PanelDescriptor, SessionStatsInput, TrajectoryItem } from 'appstate';
 import { MainHeaderShell } from './MainHeaderShell';
 import { MainShell } from './MainShell';
 import type { MainShellFacade } from './MainShell';
@@ -74,6 +74,9 @@ export interface AppShellFacade {
   rightSubagents: TrajectoryItem[];
   /** 右栏「工具」面板的内容（同上） */
   rightTools: TrajectoryItem[];
+  /** 右栏「轨迹」面板的内容（全部过程条目 + 会话统计） */
+  rightTrajectoryItems: TrajectoryItem[];
+  rightStats: SessionStatsInput;
   /** 当前面板的中文名（页头标题用；由注册表的 label 给） */
   panelLabel: string;
   beginDetailDrag: () => void;
@@ -387,6 +390,8 @@ export struct AppShell {
       deliverables: this.f.rightDeliverables,
       subagents: this.f.rightSubagents,
       tools: this.f.rightTools,
+      trajectoryItems: this.f.rightTrajectoryItems,
+      stats: this.f.rightStats,
       onSelectPanel: (panelId: string) => {
         this.f.onSelectRightPanel(panelId);
       },

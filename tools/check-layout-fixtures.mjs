@@ -1252,12 +1252,12 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   const right = reg.descriptors(PanelLocation.RIGHTBAR).map((d) => d.id);
   // P3-1：右栏当前**唯一有内容**的面板是"详情"（sections 清单）；官方那六个候选登记着但不可用
   // P3-2/P3-3：预览与文件面板接上了（呈现分别与工作区页签的预览/文件树共用同一份组件）
-  t.eq('右栏可用面板：详情 + 文件 + 工具 + 子代理 + 交付物 + 预览', right.join(','),
-    'right.detail,right.files,right.tool,right.subagent,right.deliverables,right.preview');
+  t.eq('右栏可用面板：详情 + 文件 + 轨迹 + 工具 + 子代理 + 交付物 + 预览（官方六个候选全接上）', right.join(','),
+    'right.detail,right.files,right.trajectory,right.tool,right.subagent,right.deliverables,right.preview');
   t.eq('官方候选仍登记在清单里（内容视图未做的按 E110 不进选择集）',
     rightbarPanels().length, 7);
-  t.eq('可用面板恰好 6 个（只剩「轨迹」内容未做）',
-    rightbarPanels().filter((d) => d.available()).length, 6);
+  t.eq('七个面板全部可用（官方六个候选 + 本仓的「详情」）',
+    rightbarPanels().filter((d) => d.available()).length, 7);
   t.eq('默认右栏面板 = 详情（firstAvailable）', defaultRightPanel(reg), 'right.detail');
   t.eq('初值也指向详情（宿主不调 defaultRightPanel 时也不会落到空面板）',
     initialNavigationState().selectedRightPanel, 'right.detail');
@@ -1289,8 +1289,11 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   nav = navigateToMain(nav, 'not-a-panel', reg);
   t.eq('切到非法面板 ⇒ 状态不变（点了不会到别处）', nav.selectedMainPanel, beforeBad);
 
-  t.eq('**不可用的右栏面板切不过去**（内容未做的候选不进选择集）',
-    selectRightPanel(nav, PANEL_RIGHT_TRAJECTORY, reg).selectedRightPanel, nav.selectedRightPanel);
+  // P3-6 之后七个面板全部可用 ⇒ "切不过去"改用不存在的 id 来断言（注册表校验仍在）
+  t.eq('**不存在/不可用的右栏面板切不过去**（注册表校验仍在）',
+    selectRightPanel(nav, 'right.nope', reg).selectedRightPanel, nav.selectedRightPanel);
+  t.eq('可用的轨迹面板切得过去',
+    selectRightPanel(nav, PANEL_RIGHT_TRAJECTORY, reg).selectedRightPanel, PANEL_RIGHT_TRAJECTORY);
   t.eq('可用面板（详情）切得过去、且是幂等的',
     selectRightPanel(nav, PANEL_RIGHT_DETAIL, reg).selectedRightPanel, PANEL_RIGHT_DETAIL);
   t.eq('**切右栏不影响主区**（页面与面板是两件事）', nav.selectedMainPanel, MAIN_WORKSPACES);
@@ -1387,10 +1390,10 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   t.eq('三栏：右栏并排成栏', triple.rightbar, 'column');
   t.eq('浮层形态下侧栏不占布局宽度', sidebarOccupiesLayout('single'), false);
   t.eq('rail 形态下侧栏占布局宽度', sidebarOccupiesLayout('double'), true);
-  // 侧栏 2（工作区 / 设置；核心席位按 E110 不可用）、右栏 6（详情 / 文件 / 工具 / 子代理 / 交付物 / 预览）—— 可用清单与形态无关，只与注册表有关
+  // 侧栏 2（工作区 / 设置；核心席位按 E110 不可用）、右栏 7（详情 / 文件 / 轨迹 / 工具 / 子代理 / 交付物 / 预览）—— 可用清单与形态无关，只与注册表有关
   t.eq('**三种形态的面板清单一致**（信息架构不随设备变）',
     JSON.stringify(reg.descriptors(PanelLocation.SIDEBAR).length) + '/' + JSON.stringify(reg.descriptors(PanelLocation.RIGHTBAR).length),
-    '2/6');
+    '2/7');
 
   console.log('  ok    注册表（注册/排序/可用性/沉底/校验）+ 导航状态（页面与面板分离）+ 迁移桥含往返 + 四形态轨道');
 }
