@@ -8,13 +8,14 @@
  * 所有动作通过回调上报宿主，便于接入真实连接时只改宿主。
  */
 
-import { Border, CommandCandidate, FEEDBACK_CATEGORIES, FeedbackRow, FollowSignal, Fs, HarmonyColor, HarmonyRadius, HarmonySpacing, HarmonyType, JobDot, MenuGesture, ModelOption, ModelSelection, PendingAttachment, PendingItem, QueuedItem, Radius, ReferenceCandidate, SemanticColor, SessionHub, Sp, Speaker, StatsUnit, Sz, TimelineKind, ToolKind, ToolState, TrajectoryItem, TrajectoryKind, cellIdAtRatio, cellIdForListIndex, chatRowOfItemIndex, chatVisibleItems, contextMenuGestures, contextMenuHintLabel, defaultExpanded, followTimerShouldRun, formatBytes, formatClock, formatDuration, groupTurns, hasProcessGroup, hoverEnabled, jobCountLabel, jobDotState, jobDurationText, jobDurationTitle, jobElapsedMs, jobListA11y, jobListVisible, jobRowStatusText, jobTickerNeeded, listIndexForCell, matchConversationIndices, matchCounterText, matchTrajectoryIndices, nextFollowing, orderedJobs, parseMarkdown, plainTextOf, presentDiff, presentTool, previewOutput, processSummary, segmentOrdinalOf, shouldJumpOnNewItems, statsLinesOf, stepMatch, timelineCellsOf, timelineKindLabel, timelineScaleOf, timelineStartedLabel, timelineTotalLabel, toolStateLabel, toolSummaryOf } from 'appstate';
+import { Border, CommandCandidate, FeedbackRow, FollowSignal, Fs, HarmonyColor, HarmonyRadius, HarmonySpacing, HarmonyType, JobDot, MenuGesture, ModelOption, ModelSelection, PendingAttachment, PendingItem, QueuedItem, Radius, ReferenceCandidate, SemanticColor, SessionHub, Sp, Speaker, StatsUnit, Sz, TimelineKind, ToolKind, ToolState, TrajectoryItem, TrajectoryKind, cellIdAtRatio, cellIdForListIndex, chatRowOfItemIndex, chatVisibleItems, contextMenuGestures, contextMenuHintLabel, defaultExpanded, followTimerShouldRun, formatBytes, formatClock, formatDuration, groupTurns, hasProcessGroup, hoverEnabled, jobCountLabel, jobDotState, jobDurationText, jobDurationTitle, jobElapsedMs, jobListA11y, jobListVisible, jobRowStatusText, jobTickerNeeded, listIndexForCell, matchConversationIndices, matchCounterText, matchTrajectoryIndices, nextFollowing, orderedJobs, parseMarkdown, plainTextOf, presentDiff, presentTool, previewOutput, processSummary, segmentOrdinalOf, shouldJumpOnNewItems, statsLinesOf, stepMatch, timelineCellsOf, timelineKindLabel, timelineScaleOf, timelineStartedLabel, timelineTotalLabel, toolStateLabel, toolSummaryOf } from 'appstate';
 /** 类型单独 import type（本仓约定：值与类型分开写） */
 import type { ActionNotice, DiffPresentation, FeedbackCategory, InputModality, SessionJob, SessionStatsInput, StatsLine, TimelineCell, TimelineScale, TimelineSegment, ToolPresentation, Turn } from 'appstate';
 import type { NativeAction } from './NativePrimitives';
 import { NativeActionBar, NativeCard, NativeChip } from './NativePrimitives';
 import { Composer } from './Composer';
 import { MarkdownRenderer } from './MarkdownRenderer';
+import { MessageFeedback } from './MessageFeedback';
 import { PendingPane } from './PendingPane';
 
 @Component
@@ -136,11 +137,17 @@ export struct ConversationPane {
   /** 当前被指针悬停的消息 id（有指针设备时才有值） */
   @State hoveredId: string = '';
 
+  /** 哪个消息的反馈面板开着（空串 = 都没开） */
   @State fbFor: string = '';
+  /** 本次评价是"有帮助"还是"没帮助"（契约取值 positive / negative） */
   @State fbRating: string = '';
-  @State fbCategory: string = '';
-  @State fbNote: string = '';
-  /** 面板内的结果/失败提示（写入成功后面板关闭，故这里只承载失败与"撤回不可用"两类） */
+  /**
+   * 反馈回执。
+   *
+   * 【为什么留在宿主而不进组件】"提交成功要不要关面板"是宿主的策略；回执文本也要贴着面板显示，
+   * 而它由宿主的中枢调用产生 ⇒ 组件只接收显示（见 `MessageFeedback.notice`）。
+   * （表单里的类别与说明已随组件走：`fbCategory` / `fbNote` 两个状态**已删除**。）
+   */
   @State fbNote2: string = '';
 
   /** 复制消息正文（剪贴板是平台能力，由宿主传入回调——视图层不直接依赖 platform） */
@@ -1312,92 +1319,50 @@ export struct ConversationPane {
       .width('100%')
 
       if (this.fbFor === item.id) {
-        this.feedbackPanel(item)
-      }
-      if (this.fbNote2.length > 0 && this.fbFor === item.id) {
-        Text(this.fbNote2)
-          .fontSize(Fs.CAPTION_XS)
-          .fontColor($r('sys.color.alert'))
-          .width('100%')
-      }
-    }
-    .width('100%')
-  }
-
-  /**
-   * 反馈面板：类别 → 可选说明 → 提交（契约 D2b §6.7 的 `category` / `note`）。
-   *
-   * 类别取值就是契约给出的那 7 个（不自己发明），未选即"未分类"——契约里 `category` 可选，
-   * 所以**不强迫分类**，这与官方"可选说明"的语义一致。
-   */
-  @Builder
-  feedbackPanel(item: TrajectoryItem) {
-    Column({ space: Sp.XS }) {
-      Text('为什么？可留空')
-        .fontSize(Fs.CAPTION_XS)
-        .fontColor($r('sys.color.font_tertiary'))
-        .width('100%')
-      Flex({ wrap: FlexWrap.Wrap }) {
-        ForEach(FEEDBACK_CATEGORIES, (c: FeedbackCategory) => {
-          Row() {
-            NativeChip({
-              label: c.label,
-              active: this.fbCategory === c.id,
-              a11y: `评价原因：${c.label}`,
-              onTap: () => {
-                // 再点一次取消选择 ⇒ 回到"未分类"（契约里 category 可选，不强迫分类）
-                this.fbCategory = this.fbCategory === c.id ? '' : c.id;
-              }
-            })
-          }
-          .margin({ right: Sp.XS, bottom: Sp.XS })
-        }, (c: FeedbackCategory) => c.id)
-      }
-      .width('100%')
-
-      TextInput({ text: this.fbNote, placeholder: '补充说明（可选）' })
-        .fontSize(Fs.CAPTION)
-        .height(Sz.TOUCH_MIN)
-        .onChange((v: string) => {
-          this.fbNote = v;
-        })
-
-      Row({ space: Sp.L }) {
-        Text('提交')
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.brand'))
-          .onClick(() => {
-            this.submitFeedback(item);
-          })
-        Text('取消')
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
-          .onClick(() => {
+        // 表单态归组件（每敲一个字不再重绘整个会话列表）；初值来自"打开那一刻"的已存反馈
+        MessageFeedback({
+          itemId: item.id,
+          initialCategory: this.storedCategoryOf(item.id),
+          initialNote: this.storedNoteOf(item.id),
+          notice: this.fbNote2,
+          onSubmit: (category: string, note: string) => {
+            this.submitFeedback(item, category, note);
+          },
+          onCancel: () => {
             this.fbFor = '';
             this.fbNote2 = '';
-          })
-        Blank()
+          }
+        })
       }
-      .width('100%')
     }
     .width('100%')
-    .padding(Sp.S)
-    .borderRadius(Radius.S)
-    .backgroundColor($r('sys.color.background_secondary'))
   }
 
   /** 打开反馈面板：带上该条当前的类别/说明，便于"改主意"而不是从零填 */
   private openFeedback(item: TrajectoryItem, rating: string): void {
-    const row: FeedbackRow | undefined = SessionHub.shared().feedbackOf(item.id);
     this.fbFor = item.id;
     this.fbRating = rating;
-    this.fbCategory = row === undefined ? '' : row.category;
-    this.fbNote = row === undefined ? '' : row.note;
     this.fbNote2 = '';
   }
 
-  private submitFeedback(item: TrajectoryItem): void {
-    SessionHub.shared().putFeedback(item.id, this.fbRating, this.fbNote, this.fbCategory)
+  /**
+   * 该条**已存**的反馈类别 / 说明（反馈面板的初值）。
+   *
+   * 【为什么只取两段文字而不是整行】`FeedbackRow` 还带 `version` 等并发令牌字段，
+   * 拼一个"假装没有版本"的行等于凭空造一个语义不完整的对象；面板只要这两段。
+   */
+  private storedCategoryOf(messageId: string): string {
+    const row: FeedbackRow | undefined = SessionHub.shared().feedbackOf(messageId);
+    return row === undefined ? '' : row.category;
+  }
+
+  private storedNoteOf(messageId: string): string {
+    const row: FeedbackRow | undefined = SessionHub.shared().feedbackOf(messageId);
+    return row === undefined ? '' : row.note;
+  }
+
+  private submitFeedback(item: TrajectoryItem, category: string, note: string): void {
+    SessionHub.shared().putFeedback(item.id, this.fbRating, note, category)
       .then((n: ActionNotice) => {
         this.fbNote2 = this.feedbackNoticeText(n);
         if (n.code === 'feedback.saved') {

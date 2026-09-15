@@ -277,6 +277,7 @@ Composer 的官方字段：Model / Reasoning effort / Permission / Plan / @ Refe
 | 输入模态事实 | 🟢（设备枚举 + 事件证据 + 形态猜测三级链） |
 | **Prompt 泄漏（P0-1）** | 🟢 **本轮关闭**：`internal` 结构字段 + `conversationAudienceOf` 单一判据 + 搜索按视图作用域。此前两条路径都通（直接显示 / 被搜到并计数） |
 | Conversation 数据模型（回合） | 🟢（`groupTurns` / `Follow` / `chatVisibleItems`） |
+| 消息反馈面板拆出（P2-3：Message Action 第一块） | 🟢 **已落地**：`view/MessageFeedback.ets`（121 行）。原先它长在 `ConversationPane` 里（`@Builder feedbackPanel` + **5 个** `@State`：`fbFor/fbRating/fbCategory/fbNote/fbNote2`），表单态与消息列表态共享一个组件 ⇒ **每敲一个字都会把整个会话列表重绘**。拆出后表单态（类别/说明）归组件，宿主只留"哪条开着"（`fbFor`）+ 回执（`fbNote2`）+ 提交策略（成功才关面板）。初值由宿主在**打开那一刻**给，之后编辑不回调灌（避免打字打到一半被覆盖）|
 | 后台任务条（官方 `conversation.header.jobs`） | 🟢 **P2-2 已落地**：`Jobs` 模型的 40 条断言早已就位、中枢也一直维护 `jobs`，但**视图零消费者**（同 `mobileDrawer` / `enterSession` 的「通道有、没接」）。现已接成：中枢 → `Index` → `MainShell` → 会话头任务条（`Flex(wrap)` 任务块 + live 每秒走字 + 无障碍整段），并用接线门禁钉住三段 |
 | Markdown | 🟢 **P2-1 已落地**（顺序说明：P0/P1 把框架与侧栏做完之后，Markdown 才轮到——"框架错则 Markdown 白做"这条理由已经消解）。模型 `appstate/model/Markdown`（切块 + 行内标记，**流式未闭合围栏不算错误**、未配对标记原样保留），视图 `entry/view/MarkdownRenderer.ets`；三处正文已接入，无障碍文案改为**去标记**文本 |
 | Sidebar 信息架构 / AppFrame / Panel Registry / Settings 域 | 🔴 **本阶段要做的** |

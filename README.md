@@ -181,7 +181,10 @@ hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 **P2-2 已落地**：会话头的**后台任务条** —— `Jobs` 模型 40 条断言与中枢 `jobs` 字段一直都在，
 但视图零消费者（又一次"通道有、没接"）；现已接成 中枢 → `Index` → `MainShell` → 会话头任务条
 （live 任务每秒走字、无障碍整段取自模型），并把这条接线登记进功能接线门禁（第 16 条）。
-下一步：`ConversationShell` 拆分（Header / Content / ProcessGroup / Answer）+ Message Action + Tool Card
+**P2-3 已落地**：消息反馈面板拆成独立组件 `view/MessageFeedback.ets` ——
+表单态（类别/说明）归组件，宿主只留"哪条开着 + 回执 + 提交策略"；
+原先它与消息列表共用一个组件，**每敲一个字都会重绘整个会话列表**。
+下一步：`ConversationShell` 继续拆（Header / Content / ProcessGroup / Answer）+ 消息操作条与长按菜单 + Tool Card
 （⚠️ 观感与交互须真机确认：侧栏/抽屉见 D11·D12，**正文渲染与链接见 D13**）。
 
 理由：功能不少、页面还是不像官方，根因是**信息架构没落地**——框架错则间距、颜色、Markdown 全白做。
