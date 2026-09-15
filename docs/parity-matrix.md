@@ -528,6 +528,7 @@ node tools/check-arkts-entry.mjs --self-test  # 判定器自检（8 个样例，
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| v1.22 | 2026-09-15 | **P2-17 侧栏收起状态落盘（E363）**：照抄详情栏宽度记忆那一套（`LocalPrefs` + 启动读回 + 变更落盘），并处理三态 —— `KEY_SIDEBAR_EXPANDED` 存 `'true'`/`'false'` 字符串、缺失即 `undefined`（否则"从没设置过"会被读成"收起"，用户第一次启动只看到一条 rail）；默认值放纯模型 `sidebarExpandedOf`（fixture +3 → **577**）。落盘失败**不弹提示**（与宽度记忆**有意不同**：没有信息损失）|
 | v1.21 | 2026-09-15 | **P2-16 「新建会话」补到 rail 与底部标签（E362）**：该一级入口此前只在 `panelBody`（PANEL 呈现）里⇒ 三栏收起侧栏、或单栏走底部标签时**都开不了新会话**（只能靠空态按钮或 Ctrl+N）。rail 里排在「展开侧栏」下面、底部标签排第一位（都用本仓已在用的 `plus_circle`）；`onNewSession()` 调用点 1 → **3 处**，并修正组件头部那句"只在品牌行下方"的口径 |
 | v1.20 | 2026-09-15 | **P2-15 侧栏可收起（E361）**：`NavigationState.sidebarExpanded` 长期无控制点 ⇒ 官方「收起侧栏腾出宽度」在本仓**做不到**（功能缺口，非字段冗余）；新增纯函数 `sidebarPresentationOf(mode, expanded)`（单栏一律浮层；双栏默认 rail、可展开；三栏默认 panel、可收起），品牌行加「收起」、rail 顶部加「展开」（**双向门**）。fixture 567 → **574**；功能接线门禁 17 → **18** |
 | v1.19 | 2026-09-15 | **P2-14 删掉"只有 fixture 在用"的浮层状态机（E360）**：`NavigationState.activeOverlay` / `Overlay` / `openOverlay` / `closeOverlay` 在 `entry` 侧 **0 引用**（真实浮层优先级由 `Index.overlayState()` 从六个布尔派生），而 fixture 里有 3 条断言**只测它自己**（自证循环）。已删除；fixture 570 → **567**（少的是自证断言，不是回归）。同清单里 `sidebarExpanded` 是下一个同类候选（**需先定产品语义**，登记未动）|

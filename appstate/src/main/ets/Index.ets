@@ -209,7 +209,7 @@ copyOf, defaultRightPanel, DrawerState, enterSession,
 export type { NavigationState } from './model/NavigationState';
 
 // ── 三条轨道在四形态下的呈现（P0：AppFrame 的几何层） ──
-export { shellTracksOf, sidebarOccupiesLayout, sidebarPresentationOf, TrackPresentation } from './ui/ShellTracks';
+export { shellTracksOf, sidebarExpandedOf, sidebarOccupiesLayout, sidebarPresentationOf, TrackPresentation } from './ui/ShellTracks';
 export type { ShellTracks } from './ui/ShellTracks';
 
 // ── 后台任务（P2：会话头部的任务注册表；纯函数，可本机直接测） ──

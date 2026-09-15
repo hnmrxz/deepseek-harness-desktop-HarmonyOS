@@ -1428,6 +1428,12 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
     t.eq('**单栏一律浮层**：那个档位没有第二个选项', sidebarPresentationOf('single', true), 'overlay');
     t.eq('单栏收起也还是浮层', sidebarPresentationOf('single', false), 'overlay');
     t.eq('收起后的 rail 仍占布局宽度（只是窄）', sidebarOccupiesLayout('triple', false), true);
+
+    // 三态取值（P2-17）：偏好层只回答"有没有存过"，"没存过时用什么"是产品语义
+    const { sidebarExpandedOf } = ST;
+    t.eq('没存过 ⇒ 默认展开', sidebarExpandedOf(undefined), true);
+    t.eq('存过 true ⇒ 展开', sidebarExpandedOf(true), true);
+    t.eq('存过 false ⇒ 保持收起（下次启动不擅自展开）', sidebarExpandedOf(false), false);
   }
   // 侧栏 2（工作区 / 设置；核心席位按 E110 不可用）、右栏 7（详情 / 文件 / 轨迹 / 工具 / 子代理 / 交付物 / 预览）—— 可用清单与形态无关，只与注册表有关
   t.eq('**三种形态的面板清单一致**（信息架构不随设备变）',

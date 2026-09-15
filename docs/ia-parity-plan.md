@@ -310,7 +310,8 @@ Composer 的官方字段：Model / Reasoning effort / Permission / Plan / @ Refe
 | 删掉平行状态机（P2-14） | ✅ **已落地**：`activeOverlay` / `Overlay` / `openOverlay` / `closeOverlay` 真实界面**从不读**（优先级由 `Index.overlayState()` 派生），而 fixture 有 3 条断言只测它自己（自证循环）⇒ 删除，fixture 570 → 567。**同清单下一个候选**：`sidebarExpanded`（字段 + setter + 无人读；"侧栏收成 rail"要么接成真功能、要么同样删——**需先定产品语义**）|
 | 侧栏可收起（P2-15） | ✅ **已落地**：`NavigationState.sidebarExpanded` 此前没有任何控制点（侧栏呈现完全由形态决定）⇒ 官方「收起侧栏」在本仓做不到。新增纯函数 `sidebarPresentationOf(mode, expanded)`（单栏一律浮层；双栏默认 rail 可展开；三栏默认 panel 可收起），品牌行给「收起」、rail 顶部给「展开」（**双向门**）；+7 条 fixture（574），并钉进功能接线门禁（第 18 项）|
 | 新建会话入口补全（P2-16） | ✅ **已落地**：`＋ 新建会话` 此前只在 `panelBody`（PANEL 呈现）里⇒ 收起侧栏（rail）或单栏底部标签下**都没有入口**。rail 里排在「展开侧栏」下面，底部标签排第一位；`onNewSession()` 调用点 1 → 3 处，并修正组件头部"只在品牌行下方"的过期口径 |
-| 下一步（P2-17…） | ① 侧栏**收起状态的持久化**（`LocalPrefs`：下次启动是否记住；与详情栏宽度记忆同一套做法）② `Index.ets`（4026 行）里宿主处理器按域收口 ③ 右栏**滑入动画**与**拖拽调宽** —— 观感项且**必须真机验收** ④ 会话头剩余三项需要协议面 ⑤ **真机复验 E343 / D18** ——无真机不得宣称设备验收完成 |
+| 侧栏收起状态持久化（P2-17） | ✅ **已落地**：`LocalPrefs` 新增 `load/saveSidebarExpanded`（存 `'true'`/`'false'` 字符串，**缺失即 undefined** —— 否则"从没设置过"会被读成"收起"）；默认值规则在零依赖 `sidebarExpandedOf`（`undefined ⇒ true`，+3 条 fixture → 577）；启动读回、切换落盘（失败**不弹提示**，与宽度记忆有意不同）|
+| 下一步（P2-18…） | ① `Index.ets`（4026 行）里宿主处理器按域收口（会话 / 工作区 / 诊断各一处）② 右栏**滑入动画**与**拖拽调宽** —— 观感项且**必须真机验收** ③ 会话头剩余三项需要协议面 ④ 把「侧栏收起 / 新建会话」这两条也写进 `docs/device-validation.md` 的待验清单（D19）⑤ **真机复验 E343 / D18** ——无真机不得宣称设备验收完成 |
 
 `SettingsShell`（General / Models / Plugins / Plugin Inventory / …）。**不再往 `SettingsPane.ets` 里堆内容。**
 

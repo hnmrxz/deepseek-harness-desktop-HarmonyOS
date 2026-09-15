@@ -37,6 +37,17 @@ const KEY_THEME: string = 'themeMode';
  */
 const KEY_DETAIL_WIDTH: string = 'detailWidth';
 
+/**
+ * 侧栏展开 / 收起的偏好键（P2-17：把用户收没收起记住）。
+ *
+ * 【为什么存字符串而不是布尔】本仓的偏好读取习惯是"没有记录 ⇒ 用默认"
+ * （`has()` 判存在 + `get(键, 默认)`）。存布尔时"没记过"与"记过 false"读出来都是 `false`，
+ * 就分不清"用户收起过"与"从没设置过"—— 而这两者的**默认**是相反的（默认展开）。
+ * 故存 `'true'` / `'false'` 字符串，缺失即 `undefined` ⇒ 由 `Index` 决定用什么默认值。
+ * （`loadThemeMode` 用字符串枚举、`loadDetailWidth` 用 `has()`，走的都是同一条"三态"思路。）
+ */
+const KEY_SIDEBAR_EXPANDED: string = 'sidebarExpanded';
+
 /** 主题模式（D3 §8 的三个取值） */
 export enum ThemeMode {
   /** 跟随系统（默认） */
@@ -151,6 +162,53 @@ export class LocalPrefs {
       const e = err as BusinessError;
       hilog.warn(DOMAIN, TAG, 'loadDetailWidth failed: %{public}s', e.message);
       return undefined;
+    }
+  }
+
+  /**
+   * 读取记住的侧栏展开状态（**没有记录时返回 `undefined`**）。
+   *
+   * 【为什么不在这里定默认值】"没记过时该展开还是收起"是**产品语义**（本仓：展开），
+   * 属 `appstate` 那一层的判断；`platform` 只回答"偏好里有没有一个值"
+   * （与 `loadDetailWidth` 的分工一致）。
+   */
+  async loadSidebarExpanded(): Promise<boolean | undefined> {
+    if (this.store === undefined) {
+      return undefined;
+    }
+    try {
+      const present: boolean = await this.store.has(KEY_SIDEBAR_EXPANDED);
+      if (!present) {
+        return undefined;
+      }
+      const raw: preferences.ValueType = await this.store.get(KEY_SIDEBAR_EXPANDED, '');
+      const text: string = typeof raw === 'string' ? raw : `${raw}`;
+      return text === 'true';
+    } catch (err) {
+      const e = err as BusinessError;
+      hilog.warn(DOMAIN, TAG, 'loadSidebarExpanded failed: %{public}s', e.message);
+      return undefined;
+    }
+  }
+
+  /**
+   * 记住侧栏展开状态。
+   *
+   * @returns 是否真的落盘了。落盘失败**不值得打扰用户**（与详情栏宽度同类：
+   *   下次启动回到默认展开），故调用方只记诊断、不弹提示。
+   */
+  async saveSidebarExpanded(expanded: boolean): Promise<boolean> {
+    if (this.store === undefined) {
+      return false;
+    }
+    try {
+      await this.store.put(KEY_SIDEBAR_EXPANDED, expanded ? 'true' : 'false');
+      await this.store.flush();
+      return true;
+    } catch (err) {
+      const e = err as BusinessError;
+      hilog.warn(DOMAIN, TAG, 'saveSidebarExpanded failed: %{public}s', e.message);
+      return false;
     }
   }
 

@@ -74,6 +74,17 @@ export function shellTracksOf(mode: LayoutMode): ShellTracks {
  *    宽度不够时**不阻止**用户——`LayoutController` 的档位判定已经保证了"能到这个形态
  *    就有基本空间"，而"我要不要这 200vp"是用户的判断。
  */
+/**
+ * 侧栏展开状态的**取值规则**（P2-17）：偏好里没有记录时用默认。
+ *
+ * 【为什么这个三态判断要放在纯模型里】偏好层（`LocalPrefs`）只回答"有没有存过"，
+ * 返回 `boolean | undefined`；"没存过时该展开"是**产品语义**。把它放在这里的好处是
+ * 它可以被 fixture 直接钉住（`undefined ⇒ true`），而不必依赖真机上的 preferences。
+ */
+export function sidebarExpandedOf(stored: boolean | undefined): boolean {
+  return stored === undefined ? true : stored;
+}
+
 export function sidebarPresentationOf(mode: LayoutMode, expanded: boolean): TrackPresentation {
   if (mode === LayoutMode.SINGLE) {
     return TrackPresentation.OVERLAY;

@@ -91,6 +91,7 @@ import {
   SettingValueType,
   DEFAULT_MODEL_NS,
   SettingsWriteOutcome,
+  sidebarExpandedOf,
   setSidebarExpanded,
   settingsDomainOfNs,
   sheetNoteVisible,
@@ -923,6 +924,8 @@ struct Index {
     });
     // 详情栏宽度记忆：读回用户上次拖出来的值（没有记录时保持默认）
     this.loadDetailWidth();
+    // 侧栏收起状态记忆：读回用户上次的选择（没有记录 ⇒ 默认展开）
+    this.loadSidebarExpanded();
     // 初始值 = 空态。所有真实数据都在 `applyHubSnapshot` 到达时落地；
     // 连接建立前界面显示的是各视图自己的空态文案（D3 §4），而不是编造的示例数据。
     this.diag = emptyDiagReport();
@@ -3692,7 +3695,23 @@ struct Index {
    * 现在：形态给默认（双栏 rail / 三栏 panel），用户展开或收起给偏好。
    */
   private toggleSidebarExpanded(): void {
-    this.nav = setSidebarExpanded(this.nav, !this.nav.sidebarExpanded);
+    const next: boolean = !this.nav.sidebarExpanded;
+    this.nav = setSidebarExpanded(this.nav, next);
+    // 落盘：下次启动沿用它（与详情栏宽度同一套做法）。
+    // 【失败不弹提示】与宽度记忆同类：下次启动回到默认展开，不值得打断用户；
+    // 真要看落盘结果时去设置里的诊断。
+    const prefs: LocalPrefs = new LocalPrefs();
+    prefs.attach(getContext(this) as common.UIAbilityContext).then(() => {
+      prefs.saveSidebarExpanded(next);
+    });
+  }
+
+  /** 读回记住的侧栏展开状态（没有记录 ⇒ 默认展开；规则在 `sidebarExpandedOf`，有 fixture） */
+  private async loadSidebarExpanded(): Promise<void> {
+    const prefs: LocalPrefs = new LocalPrefs();
+    await prefs.attach(getContext(this) as common.UIAbilityContext);
+    const stored: boolean | undefined = await prefs.loadSidebarExpanded();
+    this.nav = setSidebarExpanded(this.nav, sidebarExpandedOf(stored));
   }
 
   private setDrawerOpen(open: boolean): void {
