@@ -528,6 +528,7 @@ node tools/check-arkts-entry.mjs --self-test  # 判定器自检（8 个样例，
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| v1.15 | 2026-09-15 | **P2-11 凭据浮层 + 选项浮层（E356）**：`CredentialSheet`（127 行）/ `ChoiceSheet`（99 行）成组件；`sheetContent` 的六个分支现在各是一句组件调用。`Index.ets` **4133 → 4019 行**（P2-9…P2-11 四刀合计 4480 → 4019）。死代码门禁连续抓出搬迁残留的四批导入 |
 | v1.14 | 2026-09-15 | **P2-10 两个设置编辑浮层（E355）**：`SettingTextSheet`（131 行）/ `SettingStructSheet`（142 行）成组件，输入提示进零依赖的 `model/SettingEditors.ets`（fixture +12 → **570 条**）；两处重复的"当前值占位"合并为 `placeholderOf`。`Index.ets` **4297 → 4133 行**（P2-9/P2-10 合计 4480 → 4133） |
 | v1.13 | 2026-09-15 | **P2-9 `Index.ets` 第一刀（E354）**：沙箱文件夹选择器拆成 `view/FolderPicker.ets`（297 行，4 状态 + 6 方法 + 1 段 UI），`Index.ets` **4480 → 4297 行**；打开它的两个入口用**控制器对象**（与 `TurnViewController` 同源），且控制器上必须有 `close()` —— 原生 Sheet 关闭路径不经过组件 |
 | v1.12 | 2026-09-15 | **P2-8 三个浮层共用结果出口（E353）**：凭据 / 文本设置 / 结构设置三个浮层共用 `credentialNote` 与 `credentialBusy` ⇒ **串浮层**（凭据的失败文案出现在文本编辑浮层里）与**跨浮层置忙**。修法：回执带归属（`sheetNoteOwner`，判定在零依赖的 `model/Sheets.ets`）+ 每个浮层自己的 busy；fixture 547 → **558 条**。原计划的"拆 960 行浮层"留到下一轮（修完缺陷后是零风险搬家） |

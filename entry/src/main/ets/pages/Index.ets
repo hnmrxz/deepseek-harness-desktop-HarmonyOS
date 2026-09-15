@@ -62,7 +62,6 @@ import {
   HarmonyColor,
   HarmonyRadius,
   HarmonySpacing,
-  HarmonyType,
   LayoutMode,
   showsConversation,
   deliverablesOf,
@@ -84,7 +83,6 @@ import {
   PendingAttachment,
   PluginItem,
   QueuedItem,
-  Radius,
   ReferenceCandidate,
   SessionListItem,
   SettingGroup,
@@ -94,14 +92,12 @@ import {
   DEFAULT_MODEL_NS,
   SettingsWriteOutcome,
   settingsDomainOfNs,
-  sheetNoteText,
   sheetNoteVisible,
   workspaceNameOf,
   splitSettingKey,
   parseSettingInput,
   parseStructInput,
   parseNotifyRoute,
-  Sp,
   buildCoreView,
   classifyPlugin,
   CoreFact,
@@ -166,6 +162,8 @@ import { parseJson } from 'connection';
 import { EVENT_HOST_CONNECTED, EVENT_KEY_HOST_TOKEN, EVENT_KEY_HOST_URL } from 'platform';
 import { ConnectPane } from '../view/ConnectPane';
 import { FolderPicker, FolderPickerController } from '../view/FolderPicker';
+import { ChoiceSheet } from '../view/ChoiceSheet';
+import { CredentialSheet } from '../view/CredentialSheet';
 import { SettingStructSheet } from '../view/SettingStructSheet';
 import { SettingTextSheet } from '../view/SettingTextSheet';
 import { MainShell } from '../view/shell/MainShell';
@@ -2000,9 +1998,39 @@ struct Index {
     if (this.sheetKind() === 'detail') {
       this.detailSheet()
     } else if (this.sheetKind() === 'choice') {
-      this.choiceSheetContent()
+      ChoiceSheet({
+        label: this.choosingLabel,
+        settingKey: this.choosingKey,
+        current: this.choosingCurrent,
+        choices: this.choosing === undefined ? [] : this.choosing,
+        onPick: (value: string) => {
+          this.applyChoice(value);
+        },
+        onCancel: () => {
+          this.choosing = undefined;
+        }
+      })
     } else if (this.sheetKind() === 'credential') {
-      this.credentialSheetContent()
+      CredentialSheet({
+        credentialRef: this.credentialRef,
+        configured: this.credentialConfigured,
+        draft: this.credentialDraft,
+        note: this.credentialNote,
+        noteOwned: sheetNoteVisible(this.sheetNoteOwner, 'credential'),
+        busy: this.credentialBusy,
+        onDraftChange: (v: string) => {
+          this.credentialDraft = v;
+        },
+        onSubmit: () => {
+          this.submitCredential();
+        },
+        onClear: () => {
+          this.clearCredential();
+        },
+        onClose: () => {
+          this.closeCredentialSheet();
+        }
+      })
     } else if (this.sheetKind() === 'folder') {
       FolderPicker({
         sandboxRoot: this.filesDirOf(),
@@ -2364,65 +2392,6 @@ struct Index {
 
   // ───────────────────── 枚举选择浮层 ─────────────────────
 
-  @Builder
-  choiceSheetContent() {
-    // 原生 Sheet 自己就是表面（遮罩/圆角/拖拽由系统提供）⇒ 内容不再自造"居中卡片"，
-    // 只保留标题 + 列表 + 取消。列表套 `Scroll`：模型目录可能很长，
-    // 此前居中卡片里放不下就是溢出，现在半模态内可滚动（原生 Sheet 的正确用法）。
-    Column({ space: Sp.S }) {
-      Text(`选择「${this.choosingLabel}」`)
-        .fontSize(HarmonyType.SUBTITLE.size)
-        .fontColor(HarmonyColor.TEXT_PRIMARY)
-        .width('100%')
-      Text(`上游设置项 ${this.choosingKey}`)
-        .fontSize(HarmonyType.LABEL.size)
-        .fontColor(HarmonyColor.TEXT_TERTIARY)
-        .width('100%')
-      Scroll() {
-        Column({ space: Sp.XS }) {
-          ForEach(this.choosing, (choice: SettingChoice) => {
-            Row({ space: HarmonySpacing.CONTROL_INNER }) {
-              Text(choice.label)
-                .fontSize(HarmonyType.CAPTION.size)
-                .fontColor(choice.value === this.choosingCurrent
-                  ? HarmonyColor.BRAND : HarmonyColor.TEXT_PRIMARY)
-                .layoutWeight(1)
-              if (choice.value === this.choosingCurrent) {
-                Text('当前')
-                  .fontSize(HarmonyType.LABEL.size)
-                  .fontColor(HarmonyColor.BRAND)
-              }
-            }
-            .width('100%')
-            .padding(HarmonySpacing.CONTAINER)
-            .borderRadius(HarmonyRadius.CONTROL)
-            .backgroundColor(choice.value === this.choosingCurrent
-              ? HarmonyColor.SURFACE_TERTIARY : HarmonyColor.SURFACE_RAISED)
-            .onClick(() => {
-              this.applyChoice(choice.value);
-            })
-          }, (choice: SettingChoice) => choice.value)
-        }
-        .width('100%')
-      }
-      .layoutWeight(1)
-      .align(Alignment.Top)
-
-      NativeButton({
-        label: '取消',
-        emphasis: 'tonal',
-        tone: 'neutral',
-        a11y: '取消选择',
-        onTap: () => {
-          this.choosing = undefined;
-        }
-      })
-    }
-    .width('100%')
-    .height('100%')
-    .padding(HarmonySpacing.CONTAINER)
-  }
-
   /**
    * 写入一个 Host 设置项并把结果如实告诉用户。
    *
@@ -2585,89 +2554,6 @@ struct Index {
   }
 
   // ───────────────────── 凭据写入浮层 ─────────────────────
-
-  /**
-   * 凭据编辑浮层。
-   *
-   * 三条刻意的设计：
-   *   1. **输入框是密码型**（`InputType.Password`）：凭据值不该在有人旁观时明文显示，
-   *      也不该被输入法学习/记录（`enableAutoFill(false)` 关掉自动填充联想）。
-   *   2. **明确写出「明文只在本机内存里存在一次」**：用户有权知道他们的密钥
-   *      去了哪里——写到 Host 的凭据存储，本客户端不留副本（D1 §11.5 S3/S4）。
-   *      不写这句，用户会合理地担心自己的密钥被留在了手机上。
-   *   3. **清除是单独的、二次确认的动作**：删除凭据会让依赖它的功能立刻失效，
-   *      不该和「保存」长得一样。
-   */
-  @Builder
-  credentialSheetContent() {
-    Column() {
-      Column({ space: Sp.S }) {
-        Text(`配置 ${this.credentialRef}`)
-          .fontSize(Fs.BODY)
-          .width('100%')
-        Text('值会写入 Host 的凭据存储；本客户端只在这一次请求里持有明文，不会保存副本。')
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
-          .width('100%')
-
-        TextInput({ placeholder: '粘贴凭据值', text: this.credentialDraft })
-          .type(InputType.Password)
-          .enableAutoFill(false)
-          .width('100%')
-          // 【显式高度（E95）】不给高度时，输入框会跟着父级约束变化；真机上出现过
-          // "凭据值铺满整屏"的观感。44vp 是单行输入的标准高度，明确写出来最省事。
-          .height(44)
-          .onChange((v: string) => {
-            this.credentialDraft = v;
-          })
-
-        Row({ space: Sp.S }) {
-          Button('取消')
-            .layoutWeight(1)
-            .backgroundColor($r('sys.color.background_secondary'))
-            .fontColor($r('sys.color.font_primary'))
-            .enabled(!this.credentialBusy)
-            .onClick(() => {
-              this.closeCredentialSheet();
-            })
-          Button(this.credentialBusy ? '写入中…' : '保存到 Host')
-            .layoutWeight(1)
-            .enabled(this.credentialDraft.length > 0 && !this.credentialBusy)
-            .onClick(() => {
-              this.submitCredential();
-            })
-        }
-        .width('100%')
-
-        if (this.credentialConfigured) {
-          Button('清除 Host 上的这项凭据')
-            .width('100%')
-            .enabled(!this.credentialBusy)
-            .backgroundColor($r('sys.color.background_secondary'))
-            .fontColor($r('sys.color.warning'))
-            .onClick(() => {
-              this.clearCredential();
-            })
-        }
-
-        if (sheetNoteVisible(this.sheetNoteOwner, 'credential')) {
-          Text(sheetNoteText(this.sheetNoteOwner, 'credential', this.credentialNote))
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_secondary'))
-            .width('100%')
-        }
-      }
-      .width('100%')
-      // 浮层自身也不该铺满：最多占屏高 80%（凭据浮层通常很短；这条是防止
-      // "某个字段把面板撑开"这类观感再次发生）
-      .constraintSize({ maxHeight: '80%' })
-      .padding(Sp.L)
-      .borderRadius(Radius.L)
-      .backgroundColor($r('sys.color.background_secondary'))
-    }
-    .width('100%')
-    .padding(HarmonySpacing.CONTAINER)
-  }
 
   private closeCredentialSheet(): void {
     this.credentialRef = '';

@@ -303,7 +303,8 @@ Composer 的官方字段：Model / Reasoning effort / Permission / Plan / @ Refe
 | 浮层结果出口按归属（P2-8） | ✅ **已落地**：查出三个浮层（凭据 / 文本设置 / 结构设置）共用 `credentialNote` 与 `credentialBusy` ⇒ **串浮层** + **跨浮层置忙**（与 E347 同一缺陷类）。修法：回执带 `sheetNoteOwner` 归属、每个浮层自己的 busy；判定在零依赖 `appstate/model/Sheets.ets`（+11 条 fixture → 558 条）。**拆那 960 行浮层的计划推到下一轮**——修完缺陷后它们是零风险搬家 |
 | `Index.ets` 第一刀（P2-9） | ✅ **已落地**：`view/FolderPicker.ets`（297 行）带走沙箱目录选择器的全部状态与动作（4 状态 + 6 方法 + 1 段 UI）；两个入口经**控制器对象**唤起，控制器带 `close()`（原生 Sheet 关闭不经过组件）。`Index.ets` 4480 → **4297 行** |
 | 设置编辑浮层（P2-10） | ✅ **已落地**：`view/SettingTextSheet.ets`（131 行）与 `view/SettingStructSheet.ets`（142 行）成组件；输入提示（类型/范围/步长/正则/必填/当前值）进零依赖 `appstate/model/SettingEditors.ets`（+12 条 fixture → 570 条）。组件接受**可空 item**（不造 20 字段占位项）。`Index.ets` 4297 → **4133 行** |
-| 下一步（P2-11…） | ① `Index.ets`（4133 行）继续拆：详情浮层 / 选择浮层 / 凭据浮层（≈480 行）② 右栏面板滑入动画与拖拽调宽、单栏 Sheet 切换器 ③ 会话头剩余三项需要协议面 ④ **真机复验 E343 / D18** ——无真机不得宣称设备验收完成 |
+| 凭据 / 选项浮层（P2-11） | ✅ **已落地**：`view/CredentialSheet.ets`（127 行，保留 E95 显式 44vp 高、"明文只在一个请求里"、"成功才关面板"三条语义）与 `view/ChoiceSheet.ets`（99 行，单选即提交、原生 Sheet 即表面）。`sheetContent` 的六个分支现在各是一句组件调用。`Index.ets` 4133 → **4019 行**（合计 4480 → 4019）|
+| 下一步（P2-12…） | ① `Index.ets`（4019 行）最后一刀：详情浮层（36 行，但依赖 10 个门面成员，需要先想清"详情面板的呈现该由谁给"）② 右栏面板滑入动画与拖拽调宽、单栏 Sheet 切换器 ③ 会话头剩余三项需要协议面 ④ **真机复验 E343 / D18** ——无真机不得宣称设备验收完成 |
 
 `SettingsShell`（General / Models / Plugins / Plugin Inventory / …）。**不再往 `SettingsPane.ets` 里堆内容。**
 
