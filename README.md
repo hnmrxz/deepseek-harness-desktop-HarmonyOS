@@ -194,6 +194,13 @@ hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 （`hubBanner` / `coreTabContent` / `tabContent`——内容都已在 AppShell 与两束组件里，只剩宿主这份壳；
 `@Entry` 组件不会渲染它们）与**全仓 22 个零使用 import**（`Index` 12 个、`MainShell` 9 个、其余 6 文件各 1 个）。
 `Index.ets` 4460 → **4384 行**，全仓零使用 import 归零。
+**P2-4 已落地（会话正文第一刀）**：把"**一条消息**"整块抽成 `view/MessageRow.ets`（221 行）——
+它带走了此前散在正文组件里的**五份行级状态**（悬停、上下文菜单开关与归属、反馈面板归属与回执）、
+两个 `@Builder`（行内操作条、上下文菜单）与三条输入策略判定包装（悬停 / 右键 / 手势提示）。
+**边界如实划定**：跨行的「展开全部」态、要读中枢反馈记录的动作清单、以及反馈的持久化，
+都**留在父组件**（与 `ToolCard` 的 `expanded` 同一条规矩）。顺带删掉一处重复实现：
+视图私有的 `clockOf` 与模型的 `formatClock` 逐字等价，保留带 fixture 的那个。
+`ConversationPane` 1414 → **1234 行**。
 **P4-6 已落地**：① 最后一段内联内容拆成 `view/SettingsCore.ets`（78 行，包住 `CorePane` + 两块提示；
 它是 E118「`@BuilderParam` 注入在真机崩溃」的修复形态，不是多余转发层）。
 ② **修掉一个真缺陷（E347）**：设置写入回执是一个全局字符串、只有**一个**读取点（设置页顶部那条回显），

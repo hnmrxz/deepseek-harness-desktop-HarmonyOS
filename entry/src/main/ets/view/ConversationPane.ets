@@ -8,14 +8,15 @@
  * 所有动作通过回调上报宿主，便于接入真实连接时只改宿主。
  */
 
-import { Border, CommandCandidate, FeedbackRow, FollowSignal, Fs, HarmonyColor, HarmonyRadius, HarmonySpacing, HarmonyType, JobDot, MenuGesture, ModelOption, ModelSelection, PendingAttachment, PendingItem, QueuedItem, Radius, ReferenceCandidate, SemanticColor, SessionHub, Sp, Speaker, Sz, TrajectoryItem, TrajectoryKind, cellIdForListIndex, chatRowOfItemIndex, chatVisibleItems, contextMenuGestures, contextMenuHintLabel, defaultExpanded, followTimerShouldRun, formatClock, formatDuration, groupTurns, hasProcessGroup, hoverEnabled, jobCountLabel, jobDotState, jobDurationText, jobDurationTitle, jobElapsedMs, jobListA11y, jobListVisible, jobRowStatusText, jobTickerNeeded, listIndexForCell, matchConversationIndices, matchCounterText, matchTrajectoryIndices, nextFollowing, orderedJobs, parseMarkdown, plainTextOf, presentTool, processSummary, shouldJumpOnNewItems, stepMatch, toolStateLabel } from 'appstate';
+import { Border, CommandCandidate, FeedbackRow, FollowSignal, Fs, HarmonyColor, HarmonyType, JobDot, ModelOption, ModelSelection, PendingAttachment, PendingItem, QueuedItem, Radius, ReferenceCandidate, SemanticColor, SessionHub, Sp, Speaker, Sz, TrajectoryItem, TrajectoryKind, cellIdForListIndex, chatRowOfItemIndex, chatVisibleItems, contextMenuGestures, contextMenuHintLabel, defaultExpanded, followTimerShouldRun, formatDuration, groupTurns, hasProcessGroup, jobCountLabel, jobDotState, jobDurationText, jobDurationTitle, jobElapsedMs, jobListA11y, jobListVisible, jobRowStatusText, jobTickerNeeded, listIndexForCell, matchConversationIndices, matchCounterText, matchTrajectoryIndices, nextFollowing, orderedJobs, parseMarkdown, plainTextOf, presentTool, processSummary, shouldJumpOnNewItems, stepMatch, toolStateLabel } from 'appstate';
 /** 类型单独 import type（本仓约定：值与类型分开写） */
 import type { ActionNotice, InputModality, SessionJob, SessionStatsInput, Turn } from 'appstate';
 import type { NativeAction } from './NativePrimitives';
-import { NativeActionBar, NativeCard, NativeChip } from './NativePrimitives';
+import { NativeCard, NativeChip } from './NativePrimitives';
 import { Composer } from './Composer';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { MessageFeedback } from './MessageFeedback';
+import { MessageRow } from './MessageRow';
 import { DeliverableCard } from './DeliverableCard';
 import { SubagentCard } from './SubagentCard';
 import { ToolCard } from './ToolCard';
@@ -110,8 +111,6 @@ export struct ConversationPane {
    * 于是"长按 ≡ 右键 → 同一个菜单"是**显式实现**的（手势集合由 `contextMenuGestures` 决定），
    * 而不是靠两套绑定碰巧长得一样。
    */
-  @State menuForId: string = '';
-  @State menuShown: boolean = false;
   /** 输入模态（宿主从设备事实派生后传入；视图不认识 deviceInfo） */
   /**
    * 会话统计（时间总览用）。由宿主把快照字段映射成这个形状——
@@ -122,7 +121,6 @@ export struct ConversationPane {
   };
 
   /** 时间总览条已测量的宽度（拖动聚焦要按它把偏移量换算成比例） */
-  @State timelineBarWidth: number = 0;
 
   /** 当前聚焦的格子 id（拖动/点选/滚动列表都会改它，见下面的双向联动） */
   @State focusedCellId: string = '';
@@ -139,7 +137,6 @@ export struct ConversationPane {
   @Prop hasPointer: boolean = false;
   @Prop hasKeyboard: boolean = false;
   /** 当前被指针悬停的消息 id（有指针设备时才有值） */
-  @State hoveredId: string = '';
 
   /** 哪个消息的反馈面板开着（空串 = 都没开） */
   @State fbFor: string = '';
@@ -216,16 +213,6 @@ export struct ConversationPane {
     if (id.length > 0 && id !== this.focusedCellId) {
       this.focusedCellId = id;
     }
-  }
-
-  private clockOf(ms: number): string {
-    if (ms <= 0) {
-      return '';
-    }
-    const d: Date = new Date(ms);
-    const hh: string = d.getHours() < 10 ? `0${d.getHours()}` : `${d.getHours()}`;
-    const mm: string = d.getMinutes() < 10 ? `0${d.getMinutes()}` : `${d.getMinutes()}`;
-    return `${hh}:${mm}`;
   }
 
   /**
@@ -932,117 +919,6 @@ export struct ConversationPane {
       this.errorItem(item)
     }
   }
-
-  @Builder
-  messageItem(item: TrajectoryItem) {
-    Column({ space: Sp.XS }) {
-      Row({ space: Sp.S }) {
-        Text(item.speaker === Speaker.USER ? '我'
-          : (item.speaker === Speaker.SYSTEM ? '系统' : '助手'))
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
-        Text(formatClock(item.at))
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
-        if (item.elapsedMs > 0) {
-          // E204：钟点 + 时长并列（官方"实际时间"的信息，不额外做开关）
-          Text(this.clockOf(item.at).length > 0
-            ? `${this.clockOf(item.at)} · ${formatDuration(item.elapsedMs)}`
-            : formatDuration(item.elapsedMs))
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_tertiary'))
-        }
-        Blank()
-        if (item.model.length > 0) {
-          Text(item.model)
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_tertiary'))
-        }
-      }
-      .width('100%')
-
-      if (item.speaker === Speaker.ASSISTANT) {
-        this.messageActions(item)
-      }
-
-      /*
-       * 【思考单独成块（E107）】助手消息常把"思考"与"正文"作为两个内容块一起发来。
-       * 这里照做：思考块在上、默认收起、点击展开；正文保持主字号。
-       */
-      if (item.reasoning.length > 0) {
-        Column({ space: Sp.XS }) {
-          Row({ space: Sp.S }) {
-            SymbolGlyph($r('sys.symbol.lightbulb'))
-              .fontSize(14)
-              .fontColor([$r('sys.color.font_tertiary')])
-            Text(`思考过程 · ${item.reasoning.length} 字`)
-              .fontSize(Fs.CAPTION)
-              .fontColor($r('sys.color.font_tertiary'))
-              .layoutWeight(1)
-            Text(this.isExpanded(`${item.id}:r`) ? '收起' : '展开')
-              .fontSize(Fs.CAPTION)
-              .fontColor($r('sys.color.brand'))
-          }
-          .width('100%')
-
-          if (this.isExpanded(`${item.id}:r`)) {
-            MarkdownRenderer({ text: item.reasoning, muted: true })
-          }
-        }
-        .width('100%')
-        .padding(Sp.S)
-        .borderRadius(Radius.S)
-        .borderWidth(Border.HAIRLINE)
-        .borderColor($r('sys.color.comp_divider'))
-        .onClick(() => {
-          this.toggle(`${item.id}:r`);
-        })
-      }
-
-      /*
-       * 正文走 Markdown 渲染（P2）：此前是 `Text(item.body)` **原文照显** ——
-       * 于是 `**加粗**`、列表、围栏都以标记的形式出现在屏幕上。
-       * 流式光标仍跟着文本末尾（放进解析输入里，光标落在句尾而不是另起一行）。
-       */
-      MarkdownRenderer({ text: item.streaming ? item.body + ' ▌' : item.body })
-        .accessibilityText(this.speakableText(item))
-
-    }
-    .width('100%')
-    .padding(Sp.M)
-    .borderRadius(Radius.M)
-    .backgroundColor(this.isHovered(item)
-      ? HarmonyColor.SURFACE_TERTIARY
-      : (item.speaker === Speaker.USER
-        ? HarmonyColor.SURFACE_RAISED
-        : HarmonyColor.SURFACE))
-    // 悬停反馈：只有指针设备才有"悬停"这个概念（策略模型回答，视图不自己判断）
-    .onHover((isHover: boolean) => {
-      if (!hoverEnabled(this.inputModality())) {
-        return;
-      }
-      this.hoveredId = isHover ? item.id : '';
-    })
-    .accessibilityText(`${item.speaker === Speaker.USER ? '我' : '助手'}的消息，${contextMenuHintLabel(this.inputModality())}打开操作菜单`)
-    // 触控：长按；指针：右键。**两者唤起同一个菜单**（§P3「同一套交互语义」）——
-    // 手势集合由输入策略模型决定（`contextMenuGestures`），此处只做映射。
-    .gesture(LongPressGesture().onAction(() => {
-      this.openMessageMenu(item);
-    }))
-    .onMouse((e: MouseEvent) => {
-      if (this.rightClickMenuEnabled() && e.button === MouseButton.Right) {
-        this.openMessageMenu(item);
-      }
-    })
-    .bindContextMenu(this.menuShown, this.messageMenu(), {
-      placement: Placement.BottomLeft,
-      // 原生关闭（点空白/返回）时要复位，否则菜单再也打不开（与 Sheet 同一个坑）
-      onDisappear: () => {
-        this.menuShown = false;
-      }
-    })
-  }
-
   @Builder
   reasoningItem(item: TrajectoryItem) {
     Column({ space: Sp.XS }) {
@@ -1076,7 +952,117 @@ export struct ConversationPane {
     })
   }
 
-  /** 工具调用卡片（D3 §3.3） */
+
+  /**
+   * 一条消息（正文 + 行级交互）——**整行归 `MessageRow`**（P2-4）。
+   *
+   * 【为什么抽出去】这一段此前自己带着五份状态（悬停、菜单开关与归属、反馈面板归属与回执）
+   * 加两个 `@Builder`（行内操作条、上下文菜单），与"过程流的分组与顺序"这件事混在一起；
+   * 于是任何一处改动都要通读 1400 行。抽出去之后本组件只剩"哪一条放在哪一段"。
+   *
+   * 【留在父组件的两件事】① 「展开全部 / 收起全部」是**跨行**操作 ⇒ 展开集合的唯一真值在这里；
+   * ② 菜单里给不给"重发 / 撤回评价"要读中枢的反馈记录 ⇒ 由这里算好动作清单传进去
+   * （`messageActionsOf`）。这也是"判定与呈现分开"的既有规矩。
+   */
+  @Builder
+  messageItem(item: TrajectoryItem) {
+    MessageRow({
+      item: item,
+      a11yText: this.speakableText(item),
+      menuHint: contextMenuHintLabel(this.inputModality()),
+      hasPointer: this.hasPointer,
+      hasKeyboard: this.hasKeyboard,
+      feedbackOpen: this.fbFor === item.id,
+      feedbackNotice: this.fbNote2,
+      storedRating: this.myRating(item.id),
+      storedCategory: this.storedCategoryOf(item.id),
+      storedNote: this.storedNoteOf(item.id),
+      actions: this.messageActionsOf(item),
+      onAction: (it: TrajectoryItem, id: string) => {
+        this.onMessageAction(it, id);
+      },
+      onOpenFeedback: (it: TrajectoryItem, rating: string) => {
+        this.openFeedback(it, rating);
+      },
+      onSubmitFeedback: (it: TrajectoryItem, rating: string, category: string, note: string) => {
+        this.submitFeedback(it, rating, category, note);
+      },
+      onCloseFeedback: () => {
+        this.fbFor = '';
+        this.fbNote2 = '';
+      }
+    })
+  }
+
+  /** 打开反馈面板：带上该条当前的类别/说明，便于"改主意"而不是从零填 */
+  private openFeedback(item: TrajectoryItem, rating: string): void {
+    this.fbFor = item.id;
+    this.fbRating = rating;
+    this.fbNote2 = '';
+  }
+
+  /**
+   * 该条**已存**的反馈类别 / 说明（反馈面板的初值）。
+   *
+   * 【为什么只取两段文字而不是整行】`FeedbackRow` 还带 `version` 等并发令牌字段，
+   * 拼一个"假装没有版本"的行等于凭空造一个语义不完整的对象；面板只要这两段。
+   */
+  private storedCategoryOf(messageId: string): string {
+    const row: FeedbackRow | undefined = SessionHub.shared().feedbackOf(messageId);
+    return row === undefined ? '' : row.category;
+  }
+
+  private storedNoteOf(messageId: string): string {
+    const row: FeedbackRow | undefined = SessionHub.shared().feedbackOf(messageId);
+    return row === undefined ? '' : row.note;
+  }
+
+  private submitFeedback(item: TrajectoryItem, rating: string, category: string, note: string): void {
+    SessionHub.shared().putFeedback(item.id, rating, note, category)
+      .then((n: ActionNotice) => {
+        this.fbNote2 = this.feedbackNoticeText(n);
+        if (n.code === 'feedback.saved') {
+          this.fbFor = '';
+        }
+      });
+  }
+
+  /** 该条消息**宿主记录的**评价（不是"我以为点了什么"） */
+  private myRating(messageId: string): string {
+    const row: FeedbackRow | undefined = SessionHub.shared().feedbackOf(messageId);
+    return row === undefined ? '' : row.rating;
+  }
+
+  /**
+   * 反馈回执 → 一句话。
+   *
+   * 【为什么不走 Index 的 noticeText】那是全局回执表，键来自各功能；反馈这几条要贴着面板显示，
+   * 且**失败原因必须原样透出**（`friendlyFailure` 已把宿主错误码翻成人话）。
+   */
+  private feedbackNoticeText(n: ActionNotice): string {
+    if (n.code === 'feedback.saved' || n.code === 'feedback.withdrawn') {
+      return '';
+    }
+    if (n.code === 'feedback.failed') {
+      return '评价未保存：' + n.params.reason;
+    }
+    if (n.code === 'feedback.no-version') {
+      return '无法撤回：没读到该评价的版本（不猜版本号去删）。';
+    }
+    if (n.code === 'offline') {
+      return '未连接：评价需要连上 Host 才能保存。';
+    }
+    if (n.code === 'feedback.needs-session') {
+      return '这条消息还不属于任何会话，暂时存不了评价。';
+    }
+    return '';
+  }
+  /** 打开上下文菜单（长按/右键都走这里；手势集合来自输入策略） */
+  /** 输入模态快照（策略模型的输入；本文件只做映射，不做判断） */
+  private inputModality(): InputModality {
+    return { hasKeyboard: this.hasKeyboard, hasPointer: this.hasPointer };
+  }
+
   /**
    * 一条消息的**动作清单**（操作条与上下文菜单**共用这一份**）。
    *
@@ -1131,172 +1117,6 @@ export struct ConversationPane {
     }
   }
 
-  /** 打开上下文菜单（长按/右键都走这里；手势集合来自输入策略） */
-  /** 输入模态快照（策略模型的输入；本文件只做映射，不做判断） */
-  private inputModality(): InputModality {
-    return { hasKeyboard: this.hasKeyboard, hasPointer: this.hasPointer };
-  }
-
-  /** 该消息是否处于悬停态（只有指针设备才可能有） */
-  private isHovered(item: TrajectoryItem): boolean {
-    return hoverEnabled(this.inputModality()) && this.hoveredId === item.id;
-  }
-
-  /** 是否支持右键唤起菜单（手势集合来自策略模型，不在视图里散落判断） */
-  private rightClickMenuEnabled(): boolean {
-    return contextMenuGestures(this.inputModality()).indexOf(MenuGesture.RIGHT_CLICK) >= 0;
-  }
-
-  private openMessageMenu(item: TrajectoryItem): void {
-    this.menuForId = item.id;
-    this.menuShown = true;
-  }
-
-  private menuItem(): TrajectoryItem | undefined {
-    for (let i = 0; i < this.items.length; i++) {
-      if (this.items[i].id === this.menuForId) {
-        return this.items[i];
-      }
-    }
-    return undefined;
-  }
-
-  /** 上下文菜单内容：与行内操作条同一份动作清单 */
-  @Builder
-  messageMenu() {
-    Column({ space: Sp.XS }) {
-      ForEach(this.messageActionsOf2(), (a: NativeAction) => {
-        Text(a.active === true ? `✓ ${a.label}` : a.label)
-          .fontSize(HarmonyType.CAPTION.size)
-          .fontColor(a.active === true ? HarmonyColor.BRAND : HarmonyColor.TEXT_PRIMARY)
-          .width('100%')
-          .padding(HarmonySpacing.CONTROL_INNER)
-          .borderRadius(HarmonyRadius.CONTROL)
-          .onClick(() => {
-            const it: TrajectoryItem | undefined = this.menuItem();
-            this.menuShown = false;
-            if (it !== undefined) {
-              this.onMessageAction(it, a.id);
-            }
-          })
-      }, (a: NativeAction) => a.id)
-    }
-    .width(200)
-    .padding(HarmonySpacing.CONTROL_INNER)
-  }
-
-  /** 菜单用当前归属消息的动作清单（找不到就空——菜单不显示空气泡） */
-  private messageActionsOf2(): NativeAction[] {
-    const it: TrajectoryItem | undefined = this.menuItem();
-    return it === undefined ? [] : this.messageActionsOf(it);
-  }
-
-  /**
-   * 消息操作条（计划 §10：Copy / Retry / Edit / Like / Dislike / More 统一在一处）。
-   *
-   * 【本仓已接的三类】复制（剪贴板）、好评/差评（`messageFeedback/put`，含类别与说明）、
-   * 撤回（`messageFeedback/delete`，用读到的 `version` 做 CAS）。
-   * **Retry / Edit 尚未接**：它们需要"重跑某一轮/改完再发"的协议面，本仓没有对应端点——
-   * 与其放两个点了没反应的按钮（本项目明令禁止的假入口），不如让缺口显式留在台账里。
-   */
-  @Builder
-  messageActions(item: TrajectoryItem) {
-    Column({ space: Sp.XS }) {
-      NativeActionBar({
-        actions: this.messageActionsOf(item),
-        onAction: (id: string) => {
-          this.onMessageAction(item, id);
-        }
-      })
-
-      .width('100%')
-
-      if (this.fbFor === item.id) {
-        // 表单态归组件（每敲一个字不再重绘整个会话列表）；初值来自"打开那一刻"的已存反馈
-        MessageFeedback({
-          itemId: item.id,
-          initialCategory: this.storedCategoryOf(item.id),
-          initialNote: this.storedNoteOf(item.id),
-          notice: this.fbNote2,
-          onSubmit: (category: string, note: string) => {
-            this.submitFeedback(item, category, note);
-          },
-          onCancel: () => {
-            this.fbFor = '';
-            this.fbNote2 = '';
-          }
-        })
-      }
-    }
-    .width('100%')
-  }
-
-  /** 打开反馈面板：带上该条当前的类别/说明，便于"改主意"而不是从零填 */
-  private openFeedback(item: TrajectoryItem, rating: string): void {
-    this.fbFor = item.id;
-    this.fbRating = rating;
-    this.fbNote2 = '';
-  }
-
-  /**
-   * 该条**已存**的反馈类别 / 说明（反馈面板的初值）。
-   *
-   * 【为什么只取两段文字而不是整行】`FeedbackRow` 还带 `version` 等并发令牌字段，
-   * 拼一个"假装没有版本"的行等于凭空造一个语义不完整的对象；面板只要这两段。
-   */
-  private storedCategoryOf(messageId: string): string {
-    const row: FeedbackRow | undefined = SessionHub.shared().feedbackOf(messageId);
-    return row === undefined ? '' : row.category;
-  }
-
-  private storedNoteOf(messageId: string): string {
-    const row: FeedbackRow | undefined = SessionHub.shared().feedbackOf(messageId);
-    return row === undefined ? '' : row.note;
-  }
-
-  private submitFeedback(item: TrajectoryItem, category: string, note: string): void {
-    SessionHub.shared().putFeedback(item.id, this.fbRating, note, category)
-      .then((n: ActionNotice) => {
-        this.fbNote2 = this.feedbackNoticeText(n);
-        if (n.code === 'feedback.saved') {
-          this.fbFor = '';
-        }
-      });
-  }
-
-  /** 该条消息**宿主记录的**评价（不是"我以为点了什么"） */
-  private myRating(messageId: string): string {
-    const row: FeedbackRow | undefined = SessionHub.shared().feedbackOf(messageId);
-    return row === undefined ? '' : row.rating;
-  }
-
-  /**
-   * 反馈回执 → 一句话。
-   *
-   * 【为什么不走 Index 的 noticeText】那是全局回执表，键来自各功能；反馈这几条要贴着面板显示，
-   * 且**失败原因必须原样透出**（`friendlyFailure` 已把宿主错误码翻成人话）。
-   */
-  private feedbackNoticeText(n: ActionNotice): string {
-    if (n.code === 'feedback.saved') {
-      return '';
-    }
-    if (n.code === 'feedback.withdrawn') {
-      return '';
-    }
-    if (n.code === 'feedback.failed') {
-      return '评价未保存：' + n.params.reason;
-    }
-    if (n.code === 'feedback.no-version') {
-      return '无法撤回：没读到该评价的版本（不猜版本号去删）。';
-    }
-    if (n.code === 'offline') {
-      return '未连接：评价需要连上 Host 才能保存。';
-    }
-    if (n.code === 'feedback.needs-session') {
-      return '先打开一个会话。';
-    }
-    return n.code;
-  }
 
 
   /**

@@ -527,6 +527,7 @@ node tools/check-arkts-entry.mjs --self-test  # 判定器自检（8 个样例，
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| v1.7 | 2026-09-15 | **P2-4 消息行抽成 `MessageRow`（E348）**：会话正文组件里"一行的事"（悬停 / 长按与右键同一个菜单 / 行内动作条 / 反馈表单 / 输入策略三判定）整块搬出（221 行），`ConversationPane` 1414 → **1234 行**；顺带删掉视图层与模型 `formatClock` 重复的 `clockOf`。记录该类脚本化搬迁的**第四次事故与处置**（结束锚用了块内也出现的字符串 ⇒ 多删 4 个成员，按花括号配平从备份取回） |
 | v1.6 | 2026-09-15 | **P4-6 设置域收口 + 回执按域归属（E347）**：核心段拆成 `SettingsCore`（78 行）；写入回执带归属域（`settingsWriteDomain`），并修掉「7 个工作区/会话函数把回执写进设置通道 ⇒ 用户看不到」这个真缺陷；域判定搬进零依赖的 `model/SettingsDomains.ets` ⇒ fixture 514 → **533 条**。`SettingsPane` **500 行**（1890 → 500） |
 | v1.5 | 2026-09-15 | **P4-5 设置域收口**：技能段 / 预设段拆成 `SettingsSkills`（95 行）/ `SettingsPresets`（271 行），`SettingsPane` 758 → **497 行**（P4-1…P4-5 合计 1890 → 497）；同时清掉 **16 个零消费者成员**（搬迁后宿主那段唯一的读者、已住进域组件的临时态、以及 `settingsStates` 这条从 `HubSnapshot` 到 `SettingsPane.states` 的**死链**）。据此校准 §3.1 基线（feature-wiring 111 文件） |
 | v1.4 | 2026-09-15 | **真机崩溃修复（E343）**：Mate 70 Pro+ 冷启后点一下界面即 `RangeError: Stack overflow!` 被杀进程——根因是 `MainShell.mainContent` 的兜底分支 `else { this.mainContent(this.compact) }`（自递归）。修复=兜底改为渲染 `TabContentView({ f: this.f.tabFacade })`（主区剩下的工作区/核心/设置三类面板本来归它）；新增门禁 `tools/check-builder-recursion.mjs`（剥注释扫 `this.<自己>(`，5 条注入式自检 + **对修前提交归真命中**）；`check-feature-wiring` 16 → **17 个功能**（新增「主区兜底」）。据此校准 §3.1 基线（arch-check 75 文件 / feature-wiring 109 文件 & 17 功能） |
