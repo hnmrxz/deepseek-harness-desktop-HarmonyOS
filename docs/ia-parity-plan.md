@@ -277,7 +277,7 @@ Composer 的官方字段：Model / Reasoning effort / Permission / Plan / @ Refe
 | 输入模态事实 | 🟢（设备枚举 + 事件证据 + 形态猜测三级链） |
 | **Prompt 泄漏（P0-1）** | 🟢 **本轮关闭**：`internal` 结构字段 + `conversationAudienceOf` 单一判据 + 搜索按视图作用域。此前两条路径都通（直接显示 / 被搜到并计数） |
 | Conversation 数据模型（回合） | 🟢（`groupTurns` / `Follow` / `chatVisibleItems`） |
-| Markdown | 🔴 **未做**（当前是 `Text(item.body)`） |
+| Markdown | 🟢 **P2-1 已落地**（顺序说明：P0/P1 把框架与侧栏做完之后，Markdown 才轮到——"框架错则 Markdown 白做"这条理由已经消解）。模型 `appstate/model/Markdown`（切块 + 行内标记，**流式未闭合围栏不算错误**、未配对标记原样保留），视图 `entry/view/MarkdownRenderer.ets`；三处正文已接入，无障碍文案改为**去标记**文本 |
 | Sidebar 信息架构 / AppFrame / Panel Registry / Settings 域 | 🔴 **本阶段要做的** |
 
 ## 5. 纪律（沿用既有约定）

@@ -173,8 +173,13 @@ hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 返回键**第一优先级**收抽屉（`BackAction.CLOSE_DRAWER`）、从抽屉里选入口或会话都自动收起
 （`navigateToMain` / `enterSession`）——顺带接上两条此前"有通道没消费点"的模型状态。
 底部标签栏**暂时保留**（过渡，见 `docs/50` E306）。
-下一步（P1-6）：会话搜索、"分组"显式交互、RAIL 上的 NewSession
-（⚠️ 侧栏与抽屉的观感/交互须真机确认，见 `docs/device-validation.md` D11 / **D12**）。
+**P2（Main / 会话）已开工**：会话正文的 **Markdown** 已落地（P2-1）——
+解析是纯模型 `appstate/model/Markdown`（**31 条 fixture 断言**：围栏含未闭合、未配对标记原样保留），
+渲染是 `entry/view/MarkdownRenderer.ets`（`Text > Span` 行内富文本），
+正文/思考/过程三处已从 `Text(item.body)` 原文照显换成渲染；链接走真实系统能力 `openLink`
+（`platform/system/OpenLink.ets`，只放行 http/https），无障碍文案改为去标记文本。
+下一步：`ConversationShell` 拆分（Header / Content / ProcessGroup / Answer）+ Message Action + Tool Card
+（⚠️ 观感与交互须真机确认：侧栏/抽屉见 D11·D12，**正文渲染与链接见 D13**）。
 
 理由：功能不少、页面还是不像官方，根因是**信息架构没落地**——框架错则间距、颜色、Markdown 全白做。
 故 Markdown 与视觉精修**排在框架之后**，而不是先做。

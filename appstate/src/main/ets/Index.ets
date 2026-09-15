@@ -164,6 +164,7 @@ export { Border, Breakpoint, Dur, Fs, Lh, Radius, SemanticColor, Sp, Sz } from '
 
 // ── 工具呈现（P2 §11：按工具类别区分呈现；纯函数，可本机直接测） ──
 export { presentTool, toolA11y, toolDefaultExpanded, ToolKind, toolKindLabel, toolKindOf, toolSummaryOf, toolToneOf } from './model/ToolPresentation';
+export { parseMarkdown, parseInline, plainTextOf, MdBlock, MdBlockKind, MdSpan } from './model/Markdown';
 export type { ToolPresentation } from './model/ToolPresentation';
 
 // ── 改动对照（P2 §11：编辑类工具出"改了什么"；纯函数，可本机直接测） ──

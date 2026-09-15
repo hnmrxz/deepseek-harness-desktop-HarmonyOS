@@ -23,6 +23,7 @@ export type { KeepAliveFacts } from './notify/KeepAlive';
 
 // ── 系统能力 ──
 export { clearClipboard, copyText, readText } from './system/Clipboard';
+export { isOpenableUrl, openExternalUrl } from './system/OpenLink';
 export { shareText } from './system/ShareBoard';
 export type { ShareText } from './system/ShareBoard';
 export { SecretLoadState, SecretStore } from './system/SecretStore';

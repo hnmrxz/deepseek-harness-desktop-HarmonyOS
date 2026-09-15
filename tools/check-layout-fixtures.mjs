@@ -44,6 +44,7 @@ const PURE_FILES = [
   'appstate/src/main/ets/model/Trajectory.ets',
   'appstate/src/main/ets/model/Turns.ets',
   'appstate/src/main/ets/model/Search.ets',
+  'appstate/src/main/ets/model/Markdown.ets',
   'appstate/src/main/ets/model/PanelRegistry.ets',
   'appstate/src/main/ets/model/NavigationState.ets',
   'appstate/src/main/ets/model/Follow.ets',
@@ -192,6 +193,7 @@ const SE = require2('./Search.js');
 const PR = require2('./PanelRegistry.js');
 const ST = require2('./ShellTracks.js');
 const NS = require2('./NavigationState.js');
+const MD = require2('./Markdown.js');
 const t = makeAsserter(selfTest);
 
 console.log('# 布局 fixture 门禁（四形态 + 断点边界 + 让步链）\n');
@@ -1379,6 +1381,74 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
     '2/6');
 
   console.log('  ok    注册表（注册/排序/可用性/沉底/校验）+ 导航状态（页面与面板分离）+ 迁移桥含往返 + 四形态轨道');
+}
+
+
+// ── P2：Markdown 切块与行内标记（会话正文的呈现）──
+{
+  const { parseMarkdown, parseInline, plainTextOf, MdBlockKind } = MD;
+
+  // ① 标题：只认"# 后有空格的"，且 7 个 # 不是标题
+  const h = parseMarkdown('# 一级\n\n### 三级\n\n####### 七个不算\n\n#没空格也不算');
+  t.eq('标题：识别 1 级', h[0].kind === MdBlockKind.HEADING && h[0].level, 1);
+  t.eq('标题：识别 3 级', h[1].level, 3);
+  t.eq('标题：7 个 # 落到段落', h[2].kind, MdBlockKind.PARAGRAPH);
+  t.eq('标题：`#没空格` 落到段落（不误吃正文）', h[3].kind, MdBlockKind.PARAGRAPH);
+
+  // ② 围栏代码：语言标注 + 闭合
+  const c = parseMarkdown('前言\n\n```ts\nconst a = 1;\n```\n\n后语');
+  t.eq('围栏：切成 3 块', c.length, 3);
+  t.eq('围栏：类型是代码块', c[1].kind, MdBlockKind.CODE);
+  t.eq('围栏：语言标注', c[1].lang, 'ts');
+  t.eq('围栏：闭合', c[1].closed, true);
+  t.eq('围栏：内容原样（不做行内解析）', c[1].text, 'const a = 1;');
+
+  // ③ **流式未闭合的围栏**：剩余全部当代码块，且 closed=false（这是本模型最要紧的一条）
+  const un = parseMarkdown('看代码：\n```js\nlet x = 1;\nlet y = 2;');
+  t.eq('未闭合围栏：两块', un.length, 2);
+  t.eq('未闭合围栏：剩余全在代码块里（没被吞成正文）', un[1].text, 'let x = 1;\nlet y = 2;');
+  t.eq('未闭合围栏：如实标 closed=false', un[1].closed, false);
+
+  // ④ 列表：无序 / 有序 / marker
+  const l = parseMarkdown('- 甲\n* 乙\n+ 丙\n1. 一\n2) 二');
+  t.eq('列表：五项', l.length, 5);
+  t.eq('列表：无序标记', l[0].marker + l[1].marker + l[2].marker, '···');
+  t.eq('列表：有序标记（保留原序号）', l[3].marker + l[4].marker, '1.2)');
+  t.eq('列表：有序标记 ordered=true', l[3].ordered, true);
+
+  // ⑤ 引用（连续行合并）、分隔线
+  const q = parseMarkdown('> 第一行\n> 第二行\n\n---');
+  t.eq('引用：连续行合并成一块', q[0].kind === MdBlockKind.QUOTE && q[0].text, '第一行\n第二行');
+  t.eq('分隔线：识别', q[1].kind, MdBlockKind.RULE);
+
+  // ⑥ 段落：连续非空行合并、空行分段
+  const pg = parseMarkdown('甲\n乙\n\n丙');
+  t.eq('段落：连续行合并（保留换行）', pg[0].text, '甲\n乙');
+  t.eq('段落：空行分段', pg[1].text, '丙');
+
+  // ⑦ 行内：粗/斜/代码/删除线/链接
+  const sp = parseInline('普通 **粗** *斜* `码` ~~删~~ [官网](https://x.y)');
+  const kinds = sp.map((x) => `${x.text}${x.bold ? 'B' : ''}${x.italic ? 'I' : ''}${x.code ? 'C' : ''}${x.strike ? 'S' : ''}${x.href.length > 0 ? 'L' : ''}`).join('|');
+  // 片段之间的空格必须**留在片段里**（丢了空格渲染出来就会粘在一起）——故期望值含那 4 个空格片段
+  t.eq('行内：五种标记各就各位（含标记之间的空格片段）', kinds, '普通 |粗B| |斜I| |码C| |删S| |官网L');
+  t.eq('行内：链接目标保真', sp[sp.length - 1].href, 'https://x.y');
+
+  // ⑧ 未配对的标记**原样保留**（宁可少强调一次，也不吃字符）
+  t.eq('行内：单个 * 原样', plainTextOf(parseMarkdown('a * b')), 'a * b');
+  t.eq('行内：未闭合的 ** 原样', plainTextOf(parseMarkdown('**没闭合')), '**没闭合');
+  t.eq('行内：未闭合的反引号原样', plainTextOf(parseMarkdown('`) 半截')), '`) 半截');
+  t.eq('行内：`a * b * c` 不当斜体（内层有空格就退回原文）', plainTextOf(parseMarkdown('a * b * c')), 'a * b * c');
+
+  // ⑨ 转义
+  t.eq('行内：\\* 是字面星号', plainTextOf(parseMarkdown('\\*不是斜体\\*')), '*不是斜体*');
+
+  // ⑩ 边界：空串 / CRLF / 相邻片段合并（不逐字符生成 Span）
+  t.eq('空串：零块', parseMarkdown('').length, 0);
+  t.eq('CRLF：与 LF 等价', parseMarkdown('# 甲\r\n\r\n乙').length, 2);
+  t.eq('行内：相邻纯文本合并为一个片段', parseInline('甲乙丙').length, 1);
+  t.eq('纯文本去标记：用于无障碍/降级', plainTextOf(parseMarkdown('**粗**与`码`')), '粗与码');
+
+  console.log('  ok    24 条断言：标题 / 围栏（含未闭合） / 列表 / 引用 / 分隔线 / 段落 / 行内五标记 / 未配对原样 / 转义 / 边界');
 }
 
 t.done();

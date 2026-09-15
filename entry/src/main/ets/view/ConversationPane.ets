@@ -14,7 +14,6 @@ import {
   formatClock,
   formatDuration,
   Fs,
-  Lh,
   matchCounterText,
   matchTrajectoryIndices,
   ModelOption,
@@ -30,7 +29,6 @@ import {
   stepMatch,
   Sz,
   ToolState,
-  toolStateIsProblem,
   toolStateLabel,
   TrajectoryItem,
   TrajectoryKind,
@@ -72,7 +70,9 @@ import {
   timelineTotalLabel,
   TimelineKind,
   ToolKind,
-  toolSummaryOf
+  toolSummaryOf,
+  parseMarkdown,
+  plainTextOf
 } from 'appstate';
 /** 类型单独 import type（本仓约定：值与类型分开写） */
 import type {
@@ -82,6 +82,7 @@ import type {
 import type { NativeAction } from './NativePrimitives';
 import { NativeActionBar, NativeCard, NativeChip } from './NativePrimitives';
 import { Composer } from './Composer';
+import { MarkdownRenderer } from './MarkdownRenderer';
 import { PendingPane } from './PendingPane';
 
 @Component
@@ -1047,12 +1048,7 @@ export struct ConversationPane {
           .width('100%')
 
           if (this.isExpanded(`${item.id}:r`)) {
-            Text(item.reasoning)
-              .fontSize(Fs.SECONDARY)
-              .fontColor($r('sys.color.font_secondary'))
-              .width('100%')
-              .textAlign(TextAlign.Start)
-              .copyOption(CopyOptions.LocalDevice)
+            MarkdownRenderer({ text: item.reasoning, muted: true })
           }
         }
         .width('100%')
@@ -1065,12 +1061,12 @@ export struct ConversationPane {
         })
       }
 
-      Text(item.body + (item.streaming ? ' ▌' : ''))
-        .fontSize(Fs.BODY)
-        .lineHeight(Fs.BODY * Lh.BODY)
-        .width('100%')
-        .textAlign(TextAlign.Start)
-        .copyOption(CopyOptions.LocalDevice)
+      /*
+       * 正文走 Markdown 渲染（P2）：此前是 `Text(item.body)` **原文照显** ——
+       * 于是 `**加粗**`、列表、围栏都以标记的形式出现在屏幕上。
+       * 流式光标仍跟着文本末尾（放进解析输入里，光标落在句尾而不是另起一行）。
+       */
+      MarkdownRenderer({ text: item.streaming ? item.body + ' ▌' : item.body })
         .accessibilityText(this.speakableText(item))
 
     }
@@ -1128,11 +1124,7 @@ export struct ConversationPane {
       .width('100%')
 
       if (this.isExpanded(item.id)) {
-        Text(item.body)
-          .fontSize(Fs.SECONDARY)
-          .fontColor($r('sys.color.font_secondary'))
-          .width('100%')
-          .textAlign(TextAlign.Start)
+        MarkdownRenderer({ text: item.body, muted: true })
       }
     }
     .width('100%')
@@ -1711,7 +1703,9 @@ export struct ConversationPane {
 
   private speakableText(item: TrajectoryItem): string {
     const who: string = item.speaker === Speaker.USER ? '我说' : '助手回复';
-    const head: string = item.body.length > 60 ? `${item.body.substring(0, 60)}…` : item.body;
-    return `${who}：${head}（共 ${item.body.length} 字）`;
+    // 读数用**去标记**的纯文本：否则屏幕阅读器会把 `**`、反引号、链接目标一起念出来
+    const plain: string = plainTextOf(parseMarkdown(item.body));
+    const head: string = plain.length > 60 ? `${plain.substring(0, 60)}…` : plain;
+    return `${who}：${head}（共 ${plain.length} 字）`;
   }
 }
