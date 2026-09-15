@@ -20,6 +20,7 @@
 
 import { display, router, window } from '@kit.ArkUI';
 import { fileIo as fs } from '@kit.CoreFileKit';
+
 import {
   checkVersion,
   emptyProbeTable,
@@ -63,15 +64,13 @@ import {
   HarmonySpacing,
   HarmonyType,
   LayoutMode,
-  navTabs,
-  selectTab as decideTabSelection,
   showsConversation,
+  selectTab as decideTabSelection,
   StackPage,
   ModelOption,
   ModelSelection,
   NavTab,
   navTabLabel,
-  navTabSymbol,
   PendingItem,
   PendingAttachment,
   PluginItem,
@@ -88,7 +87,6 @@ import {
   parseStructInput,
   parseNotifyRoute,
   Sp,
-  aboutInfo,
   buildCoreView,
   classifyPlugin,
   CoreFact,
@@ -98,15 +96,8 @@ import {
   emptyCoreView,
   emptyDiagReport,
   DiagMode,
-  diagHintOf,
   diagModeOf,
-  diagTitleOf,
-  filterDiagEntries,
   fact,
-  sessionEmptyCopy,
-projectGeneralGroups,
-formatClock,
-relativeTime,
   unknownFact,
   mergeSettingsGroups,
   normalizePathKey,
@@ -126,7 +117,6 @@ relativeTime,
   clampDetailDesired,
   decideLayoutWithDetail,
   DetailPresentation,
-  detailPresentationOf,
   detailRoomOf,
   detailWidthOf,
   dragDetailWidth,
@@ -134,9 +124,6 @@ relativeTime,
   createPanelRegistry,
   initialNavigationState,
   openSettings,
-  MAIN_CONNECT,
-  MAIN_CONVERSATION,
-  MAIN_DIAGNOSTICS,
   legacyTabOfMainPanel,
   mainPanelOfLegacyTab,
   activeMainPanelOf,
@@ -144,8 +131,6 @@ relativeTime,
   guessFromKeyboardForm,
   mainPanels,
   PanelRegistry,
-  shellTracksOf,
-  TrackPresentation,
   modalityFromSources,
   modalityOf,
   modalityTrace,
@@ -179,13 +164,15 @@ import type {
   SettingsWriteResult
 } from 'appstate';
 import { emitter } from '@kit.BasicServicesKit';
-import { extractToken, parseJson } from 'connection';
+import { parseJson } from 'connection';
 import { EVENT_HOST_CONNECTED, EVENT_KEY_HOST_TOKEN, EVENT_KEY_HOST_URL } from 'platform';
 import { ConnectPane } from '../view/ConnectPane';
 import { ConversationPane } from '../view/ConversationPane';
 import { CommandList } from '../view/CommandList';
 import { GoalBar } from '../view/GoalBar';
 import { MainShell } from '../view/shell/MainShell';
+import { AppShell } from '../view/shell/AppShell';
+import type { AppShellFacade } from '../view/shell/AppShell';
 import type { MainShellFacade } from '../view/shell/MainShell';
 import { TabContentView } from '../view/TabContentView';
 import type { TabContentFacade } from '../view/TabContentView';
@@ -205,11 +192,11 @@ import { SettingsPane } from '../view/SettingsPane';
 import { WorkspacePane } from '../view/WorkspacePane';
 import { hitOfKeyEvent } from '../view/ShortcutKeys';
 import type { ShortcutHit } from '../view/ShortcutKeys';
-import { harmonySheetOptions, NativeButton, NativeSectionTitle } from '../view/NativePrimitives';
+import { harmonySheetOptions, NativeButton } from '../view/NativePrimitives';
 // 端侧核心运行层（D6）：核心版本仓库与激活事务。运行时载体尚未接线，
 // 因此这里现在只用它的"仓库/状态"部分，不声称任何"已启动"。
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { ActivationAction, ActivationDecision, BundledInstallResult, DshHost, HostPluginReport, HostStartResult, HostStatus, OpResult, RuntimeProbe, hostStateIsTransient } from 'hostruntime';
+import { BundledInstallResult, DshHost, HostPluginReport, HostStartResult, HostStatus, OpResult, RuntimeProbe, hostStateIsTransient } from 'hostruntime';
 
 /**
  * 把紧凑 JSON 美化以便人读写；失败时原样返回。
@@ -1914,7 +1901,7 @@ struct Index {
    * 这里只做**派生**：谁的状态在，就显示谁。顺序即优先级（同时满足时按此取第一个）。
    */
   private sheetKind(): string {
-    // 详情仅在**整页**档位（单栏）走半模态；双栏改用侧边浅层面板（见 buildDouble）
+    // 详情仅在**整页**档位（单栏）走半模态；双栏改用侧边浅层面板（见 AppShell.buildDouble）
     if (this.detailOverlayOpen && this.detailPresentationNow() === DetailPresentation.OVERLAY) {
       return 'detail';
     }
@@ -2003,21 +1990,57 @@ struct Index {
     })
   }
 
+  /** AppFrame 轨道所需能力的门面（**每次渲染重建**：值型快照、写型 setter、方法型闭包） */
+  private buildShellFacade(): AppShellFacade {
+    const facade: AppShellFacade = {
+    activePanel: () => this.activePanel(),
+    appName: APP_NAME,    // 品牌名是宿主给的事实（同 brand 入参）
+    beginDetailDrag: () => this.beginDetailDrag(),
+    closeDetail: () => this.closeDetail(),
+    currentTab: () => this.currentTab(),
+    detailOpen: this.detailOpen,
+    detailOverlayOpen: this.detailOverlayOpen,
+    setDetailOverlayOpen: (value: boolean) => {
+      this.detailOverlayOpen = value;
+    },
+    detailPresentationNow: () => this.detailPresentationNow(),
+    detailSections: this.detailSections,
+    detailWidthVp: () => this.detailWidthVp(),
+    endDetailDrag: () => this.endDetailDrag(),
+    gripHitWidth: () => this.gripHitWidth(),
+    mainShell: this.buildMainFacade(),
+    mode: this.mode,
+    navWidthVp: () => this.navWidthVp(),
+    openDiagnostics: () => this.openDiagnostics(),
+    pendingBadge: this.pendingBadge,
+    selectTab: (tab: NavTab) => this.selectTab(tab),
+    selectedSessionTitle: this.selectedSessionTitle,
+    showsConversation: () => this.showsConversation(),
+    sidePanelWidthVp: () => this.sidePanelWidthVp(),
+    stackPage: this.stackPage,
+    setStackPage: (value: StackPage) => {
+      this.stackPage = value;
+    },
+    updateDetailDrag: (deltaXVp: number) => this.updateDetailDrag(deltaXVp),
+    };
+    return facade;
+  }
+
+  /**
+   * 页面根 = **浮层门户**（AppFrame 最外层）；三形态轨道布局不在这里 —— 归 `AppShell`。
+   *
+   * 【为什么 `bindSheet` 挂在这个根节点上】它是**组件属性**、同一节点只能绑一个 ⇒ 全应用只有一个
+   * 宿主：单一分派（`sheetKind()`）在结构上保证不可能同时开出两个浮层，单一复位（`closeSheet()`）
+   * 保证原生关闭路径（下拉 / 遮罩 / 关闭按钮）之后状态不留残（`isShow` 是**单向**的，不复位就再也打不开）。
+   *
+   * 【为什么从单栏根节点提上来】原先它挂在 `buildSingle` 的根 `Column` 上 ⇒ **双栏 / 三栏下
+   * 模型选择、凭据、目录、整值编辑这些浮层根本打不开**（不是没做，是够不着 —— 宿主不在树的那个位置）。
+   * 门户挂在页面根就与形态无关了，这正是官方 Web「portal 挂在 `App` 根、不属于任何 pane」的语义。
+   */
   build() {
-    // 用 `Stack` 承载「主内容 + 选项浮层」：枚举选择的浮层必须能盖在任意一栏之上，
-    // 所以放在三形态**之外**，而不是在每个 build* 里各写一遍（写三遍必然走样）。
+    // 轨道布局归 AppFrame：`AppShell` 拥有「窗口宽度 → 几条轨道」这件事（见 docs/ia-parity-plan.md）。
     Stack() {
-      if (this.mode === LayoutMode.SINGLE) {
-        this.buildSingle()
-      } else if (this.mode === LayoutMode.DOUBLE) {
-        this.buildDouble()
-      } else {
-        this.buildTriple()
-      }
-      // 端侧运行时不再由界面元素启动：Node 由 CMake 构建的 `libdshhost` 里
-      // 直接 `dlopen(libnode.so.127)` + `node::Start` 拉起（D6 §4.1 / E30/E31），
-      // 不需要 XComponent，也不需要 Electron 的 nativeContext。
-      // 阶段一那个 1×1 的 RuntimeHost 已随 web_engine 依赖一起移除。
+      AppShell({ f: this.buildShellFacade() })
     }
     .width('100%')
     .height('100%')
@@ -2089,6 +2112,10 @@ struct Index {
       const hit: ShortcutHit = hitOfKeyEvent(event.keyCode, shift, alt);
       this.dispatchKeyHit(hit);
     })
+    .bindSheet(this.sheetKind().length > 0, this.sheetContent(),
+      harmonySheetOptions(() => {
+        this.closeSheet();
+      }, this.sheetHeight()))
   }
 
   /**
@@ -3080,219 +3107,7 @@ struct Index {
     this.credentialNote = result.message;
   }
 
-  // ───────────────────── 单栏（手机） ─────────────────────
-
-  @Builder
-  buildSingle() {
-    Column() {
-      this.header()
-      Divider().color($r('sys.color.comp_divider'))
-      Column() {
-        this.mainContent(true)
-      }
-      .layoutWeight(1)
-      .width('100%')
-      if (this.stackPage === StackPage.MAIN) {
-        this.bottomTabs()
-      }
-    }
-    .width('100%')
-    .height('100%')
-    /*
-     * **浮层宿主**（P1.5）：全应用只在这里挂一次 `bindSheet`。
-     *
-     * 【为什么要一个宿主而不是每类浮层各挂一个】`bindSheet` 是**组件属性**，同一节点只能绑一个，
-     * 于是"多类浮层"就必须找多个节点——那样既难保证只有一个是打开的，
-     * 也把"当前该显示什么"散在各处。宿主把这两件事同时解决：
-     *   · 单一绑定 ⇒ 结构上不可能同时开出两个浮层；
-     *   · 单一分派（`sheetKind()`）+ 单一关闭（`closeSheet()`）⇒ 复位逻辑只写一次。
-     * `isShow` 是**单向**的：原生关闭（下拉/遮罩/关闭按钮）不会改调用方状态，
-     * 所以消失回调必须复位，否则 show 永远停在 true、再也打不开（看起来像"点了没反应"）。
-     */
-    .bindSheet(this.sheetKind().length > 0, this.sheetContent(),
-      harmonySheetOptions(() => {
-        this.closeSheet();
-      }, this.sheetHeight()))
-  }
-
-  private headerTitle(): string {
-    if (this.stackPage === StackPage.CONVERSATION) {
-      return this.selectedSessionTitle.length > 0 ? this.selectedSessionTitle : '会话';
-    }
-    if (this.activePanel() === MAIN_DIAGNOSTICS) {
-      return '连接诊断';
-    }
-    if (this.stackPage === StackPage.CONNECT) {
-      // 新架构下"连接一台远程 Host"是**可选能力**（D7 §3 第 1 项），
-      // 因此标题不再叫"添加 Host"——那会让用户以为这是必经步骤。
-      return '远程 Host（可选）';
-    }
-    return navTabLabel(this.currentTab());
-  }
-
-  @Builder
-  header() {
-    // 主区页头归 MainHeaderShell 所有（P0：中间轨道的 chrome）；这里只把**导航与几何事实**
-    // 换算成"两个入口要不要出现"（组件不该知道 stackPage/mode 这类事实）。
-    MainHeaderShell({
-      title: this.headerTitle(),
-      showBack: this.stackPage !== StackPage.MAIN,
-      showDetailEntry: this.stackPage === StackPage.CONVERSATION && this.mode !== LayoutMode.TRIPLE,
-      onBack: () => {
-        this.stackPage = StackPage.MAIN;
-      },
-      onOpenDetail: () => {
-        this.detailOverlayOpen = true;
-      }
-    })
-  }
-
-  @Builder
-    bottomTabs() {
-    // 侧栏内容归 SidebarShell 所有（P0：AppFrame 第一条轨道）；这里只给这条轨道的 surface。
-    Column() {
-      SidebarShell({
-        brand: APP_NAME,
-        tab: this.currentTab(),
-        pendingBadge: this.pendingBadge,
-        navWidthVp: this.navWidthVp(),
-        presentation: TrackPresentation.OVERLAY,
-        onSelectTab: (tab: NavTab) => {
-          this.selectTab(tab);
-        },
-        onOpenDiagnostics: () => {
-          this.openDiagnostics();
-        }
-      })
-    }
-    .width('100%')
-    .backgroundColor($r('sys.color.background_secondary'))
-  }
-
-  @Builder
-  buildDouble() {
-    Stack({ alignContent: Alignment.TopEnd }) {
-      Row() {
-        this.navRail()
-        Divider().vertical(true).color($r('sys.color.comp_divider'))
-        Column() {
-          this.header()
-          Divider().color($r('sys.color.comp_divider'))
-          Column() {
-            this.mainContent(true)
-          }
-          .layoutWeight(1)
-          .width('100%')
-        }
-        .layoutWeight(1)
-        .height('100%')
-      }
-      .width('100%')
-      .height('100%')
-
-      /**
-       * 详情的**侧边浅层面板**（P3 §12）。
-       *
-       * 【为什么不是半模态 Sheet】600–839vp 放不下"列表 + 真右栏"，但足够宽到让详情与列表
-       * **同时可见**；用 Sheet 会把列表整个盖住，"边看列表边看详情"这件事就没了。
-       *
-       * 【为什么没有遮罩】本仓的规矩是"遮罩由原生 Sheet 提供、不手写颜色"（手写 rgba 会绕过
-       * 设计令牌与深色模式）。故这里用一层**透明**点击层承担"点面板外关闭"，
-       * 靠遮罩表达层级这件事留给真正需要模态的场合。
-       */
-      if (this.detailOverlayOpen && this.showsConversation()
-        && this.detailPresentationNow() === DetailPresentation.SIDE_PANEL) {
-        Column()
-          .width('100%')
-          .height('100%')
-          .onClick(() => {
-            this.detailOverlayOpen = false;
-          })
-        this.detailColumn(this.sidePanelWidthVp())
-      }
-    }
-    .width('100%')
-    .height('100%')
-  }
-
   /** 侧栏该用哪种呈现（几何层判定；**栏目不随形态变**，见 docs/ia-parity-plan.md） */
-  private sidebarPresentation(): TrackPresentation {
-    return shellTracksOf(this.mode).sidebar;
-  }
-
-  @Builder
-    navRail() {
-    // 侧栏内容归 SidebarShell 所有（P0：AppFrame 第一条轨道）；这里只给这条轨道的 surface。
-    Column() {
-      SidebarShell({
-        brand: APP_NAME,
-        tab: this.currentTab(),
-        pendingBadge: this.pendingBadge,
-        navWidthVp: this.navWidthVp(),
-        presentation: TrackPresentation.RAIL,
-        onSelectTab: (tab: NavTab) => {
-          this.selectTab(tab);
-        },
-        onOpenDiagnostics: () => {
-          this.openDiagnostics();
-        }
-      })
-    }
-    .width(this.navWidthVp())
-    .height('100%')
-    .backgroundColor($r('sys.color.background_secondary'))
-  }
-
-  @Builder
-  buildTriple() {
-    Row() {
-      this.navPanel()
-      Divider().vertical(true).color($r('sys.color.comp_divider'))
-      Column() {
-        this.header()
-        Divider().color($r('sys.color.comp_divider'))
-        Column() {
-          this.mainContent(false)
-        }
-        .layoutWeight(1)
-        .width('100%')
-      }
-      .layoutWeight(1)
-      .height('100%')
-      if (this.detailOpen && this.showsConversation()) {
-        // 拖拽把手替代原来那条纯分隔线：它既是分隔（视觉上仍是一条细线），
-        // 又是"调整栏宽"的唯一入口（此前模型里那条 desired 路径没有 UI 去产生宽度）。
-        this.detailResizer()
-        this.detailColumn(this.detailWidthVp())
-      }
-    }
-    .width('100%')
-    .height('100%')
-  }
-
-  @Builder
-  navPanel() {
-    // 侧栏内容归 SidebarShell 所有（P0：AppFrame 第一条轨道）；这里只给**这条轨道的 surface**
-    // —— 宽度与底色属于"轨道怎么摆"，内容属于 shell。
-    Column() {
-      SidebarShell({
-        brand: APP_NAME,
-        tab: this.currentTab(),
-        pendingBadge: this.pendingBadge,
-        navWidthVp: this.navWidthVp(),
-        presentation: this.sidebarPresentation(),
-        onSelectTab: (tab: NavTab) => {
-          this.selectTab(tab);
-        },
-        onOpenDiagnostics: () => {
-          this.openDiagnostics();
-        }
-      })
-    }
-    .width(Sz.NAV_PANEL)
-    .height('100%')
-    .backgroundColor($r('sys.color.background_secondary'))
-  }
 
   /**
    * 栏间拖拽把手（P3 §12：官方 AppFrame 有 drag handles）。
@@ -3301,50 +3116,8 @@ struct Index {
    * （触控 44vp / 指针 24vp，`responseRegion` 只扩大命中不改布局）——细线点不中是
    * 移动端最常见的"看起来能用、实际点不到"。
    */
-  @Builder
-  detailResizer() {
-    // 轨间把手归 TrackResizer 所有（它不属于任何一条轨道）；宿主只把**输入模态决定的目标尺寸**
-    // 与三个拖动回调交出去——拖动策略（起点归一化 / 可用空间夹取 / 左拖变宽）在纯模型里。
-    TrackResizer({
-      hitWidthVp: this.gripHitWidth(),
-      onGripStart: () => {
-        this.beginDetailDrag();
-      },
-      onGripUpdate: (deltaXVp: number) => {
-        this.updateDetailDrag(deltaXVp);
-      },
-      onGripEnd: () => {
-        this.endDetailDrag();
-      }
-    })
-  }
-
-  @Builder
-  detailColumn(widthVp: number) {
-    // 右栏面板本体归 RightbarShell 所有（P0：第三条轨道）；这里只给"这条轨道怎么出现"。
-    RightbarShell({
-      presentation: DetailPresentation.COLUMN,
-      widthVp: widthVp,
-      sections: this.detailSections,
-      onClose: () => {
-        this.closeDetail();
-      },
-      onLineTap: (section: string, text: string) => {
-        // E130：详情行看起来可点，就得真的做一件事——复制该行
-        if (text.length > 0) {
-          copyText(text);
-        }
-      }
-    })
-  }
 
   // ───────────────────── 主内容路由 ─────────────────────
-
-  @Builder
-  mainContent(compact: boolean) {
-    // 主区内容归 MainShell 所有（P0：主区搬迁第二束）；宿主只给门面（每次渲染重建）。
-    MainShell({ f: this.buildMainFacade(), compact: compact })
-  }
 
   /** 标签页内容所需能力的门面（**每次渲染重建**：值型快照、写型 setter、方法型闭包） */
   private buildMainFacade(): MainShellFacade {
@@ -3467,7 +3240,6 @@ struct Index {
     };
     return facade;
   }
-
 
   /**
    * 答复审批。

@@ -153,11 +153,16 @@ hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 （呈现归组件、副作用归宿主）；
 `@Provide/@Consume` 机制已在侧栏上真实验证（侧栏按面板注册表过滤入口）；
 **主区内容已搬出**：`view/TabContentView.ets`（459 行）+ `view/shell/MainShell.ets`（409 行），
-`Index` 5040 → **4518 行**，且 **`Index` 不再负责页面级 Pane 选择**（P0 验收达成）；
+且 **`Index` 不再负责页面级 Pane 选择**（P0 验收达成）；
+**AppFrame 三形态轨道已搬出**（`view/shell/AppShell.ets`：单栏/双栏/三栏的轨道拼装 + 页头 + 三种侧栏 surface + 右栏 surface + 把手，
+25 个门面成员）⇒ **`Index.ets` 5040 → 4290 行**，页面根只剩「浮层门户 + 全局输入证据 + 快捷键」；
+顺带修掉一个真实缺陷：浮层门户原先挂在单栏布局的根节点上 ⇒ **双栏/三栏下模型选择、凭据、目录、整值编辑浮层够不着**，
+现在门户挂在页面根、与形态无关（官方 Web 的 portal 语义）；
 **页面选择已收成唯一真值**（`NavigationState.selectedMainPanel`，`NavTab` 退化为迁移期别名），
 "此刻显示哪个面板"的组合逻辑也已收进纯模型（`activeMainPanelOf`）；
-`AppShell` / `MainShell` 与"`Index` 不再负责页面级 Pane 选择"仍待完成
-（机制已验 ⇒ 这一步现在可负担；⚠️ 运行时行为须真机确认，见 `docs/device-validation.md` D9）。
+**P0 到此完成**，下一阶段 **P1（Sidebar 重建）**：`WorkspaceBrowser` 合并 `WorkspacePane` + `SessionListPane`、
+Settings 固定底部、侧栏条目由 `PanelRegistry` 驱动
+（⚠️ `@Provide/@Consume` 运行时行为须真机确认，见 `docs/device-validation.md` D9）。
 
 理由：功能不少、页面还是不像官方，根因是**信息架构没落地**——框架错则间距、颜色、Markdown 全白做。
 故 Markdown 与视觉精修**排在框架之后**，而不是先做。
