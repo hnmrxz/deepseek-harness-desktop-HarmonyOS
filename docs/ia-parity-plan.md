@@ -65,7 +65,8 @@ AppFrame
 | `NavigationState` 成为视图唯一真值 | ✅ **已落地**：`Index` 的 `@State tab: NavTab` 已删除，页面选择改由 `nav.selectedMainPanel` 决定；`NavTab` 退化为**迁移期别名**（经 `legacyTabOfMainPanel` / `mainPanelOfLegacyTab` 双向桥，往返有断言）。切页签同样**经注册表校验**（不可用的面板切不过去） |
 | 主区"此刻显示哪个面板" | ✅ **已收进纯模型**（`activeMainPanelOf`：下钻页 > 会话页（须有会话）> 选中的面板），视图只按一个值分派 |
 | `view/shell/MainHeaderShell.ets` | ✅ 已落地：主轨道的**页头**归它所有（返回 / 标题 / 详情入口），只认三个 props + 两个回调——导航与几何事实留在宿主 |
-| 命令面板拆解 | 🟡 进行中：`GoalBar`（零 props）✅、`SessionModelPicker`（3 props + 1 回调）✅、**命令列表待拆**（官方 `ui-commands`） |
+| 命令面板拆解 | ✅ 已完成：`GoalBar`（零 props）→ `SessionModelPicker`（3 props + 1 回调）→ `CommandList`（2 props + 1 回调）。呈现归组件、判定与副作用归宿主 |
+| 面板组件清单 | `view/GoalBar.ets`、`view/SessionModelPicker.ets`、`view/CommandList.ets`、`view/shell/{SidebarShell,MainHeaderShell,RightbarShell,TrackResizer}.ets` |
 | `view/shell/TrackResizer.ets` | ✅ 已落地：**轨间把手**（不属于任何一条轨道）；命中区域按输入模态放宽、拖动策略仍在纯模型里。⇒ AppFrame 的 chrome 四位各有其主 |
 | `AppShell` / `MainShell` | ❌ **下一步，且是 P0 唯一剩下的大块**：主区**内容**（六个 Pane）搬迁，只能走显式 props（E118/D9 约束）|
 

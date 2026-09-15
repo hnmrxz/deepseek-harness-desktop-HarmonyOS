@@ -182,6 +182,7 @@ import { extractToken, parseJson } from 'connection';
 import { EVENT_HOST_CONNECTED, EVENT_KEY_HOST_TOKEN, EVENT_KEY_HOST_URL } from 'platform';
 import { ConnectPane } from '../view/ConnectPane';
 import { ConversationPane } from '../view/ConversationPane';
+import { CommandList } from '../view/CommandList';
 import { GoalBar } from '../view/GoalBar';
 import { SessionModelPicker } from '../view/SessionModelPicker';
 import { MainHeaderShell } from '../view/shell/MainHeaderShell';
@@ -3376,40 +3377,19 @@ struct Index {
               });
           }
         })
-        if (this.commands.length === 0) {
-          Text(this.selectedSessionId.length === 0
-            ? '命令取决于具体会话：请先在工作区里选中一个会话。'
-            : '宿主没有报告该会话可用的命令（或尚未读取）。')
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_tertiary'))
-            .width('100%')
-        } else {
-          ForEach(this.commands, (c: CommandCandidate) => {
-            Column({ space: 2 }) {
-              Text(c.name)
-                .fontSize(Fs.SECONDARY)
-                .width('100%')
-              if (c.detail.length > 0 || c.args.length > 0) {
-                Text(c.detail.length > 0 ? c.detail : c.args)
-                  .fontSize(Fs.CAPTION)
-                  .fontColor($r('sys.color.font_tertiary'))
-                  .width('100%')
-              }
-            }
-            .width('100%')
-            .padding(Sp.M)
-            .borderRadius(Radius.S)
-            .backgroundColor($r('sys.color.background_secondary'))
-            .onClick(() => {
-              this.paletteOpen = false;
-              SessionHub.shared().executeCommand(c.name).then((n: ActionNotice) => {
-                this.settingWriteNote = this.noticeText(n);
-              }).catch((e: Object) => {
-                this.settingWriteNote = '命令执行失败：' + (e as Error).message;
-              });
-            })
-          }, (c: CommandCandidate) => c.name)
-        }
+        // 命令列表归 CommandList 所有（官方 ui-commands）；执行副作用留在宿主。
+        CommandList({
+          sessionId: this.selectedSessionId,
+          commands: this.commands,
+          onRun: (c: CommandCandidate) => {
+            this.paletteOpen = false;
+            SessionHub.shared().executeCommand(c.name).then((n: ActionNotice) => {
+              this.settingWriteNote = this.noticeText(n);
+            }).catch((e: Object) => {
+              this.settingWriteNote = '命令执行失败：' + (e as Error).message;
+            });
+          }
+        })
       }
       .width('100%')
       .padding(Sp.M)
