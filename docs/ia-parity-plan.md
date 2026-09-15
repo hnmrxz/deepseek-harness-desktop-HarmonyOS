@@ -80,6 +80,24 @@ AppFrame
 2. **`@Provide/@Consume`**（本轮已在侧栏验证编译通过；**运行时待真机确认**，见 D9）：
    可以显著缩小 props 面——但按 D9 的闸门，**D9 通过前不用于主区**。
 
+**主区内容搬迁的可行方案（已勘明，下一轮按此机械执行）**
+
+`mainContent()` 345 行、依赖宿主约 100 个 `@State`。逐 `this.x` → `props.x` 重写既慢又易错，
+故采用**门面（facade）**方案：
+
+1. 定义 `MainShellFacade`（`view/shell/` 内的接口）：成员名与宿主字段/方法**同名**
+   （`stackPage`、`selectedSessionId`、`hubConnected`、`showsConversation()`…）。
+2. `Index` 提供 `private buildShellFacade(): MainShellFacade`——**每次渲染重建**
+   （值型成员是快照、方法型成员是 `() => this.xxx()` 闭包）。⚠️ 必须每次重建：
+   门面若被缓存，"中枢变了但界面不更新"就回来了。
+3. 把整段内容**原样搬进** `MainShell`，只做一次机械替换：块内 `this.` → `this.f.`。
+4. `Index` 侧变成 `MainShell({ f: this.buildShellFacade() })`。
+
+**为什么可行**：它不碰 E118 那条禁令（没有 builder 注入），也不用等 D9（不依赖 `@Provide`），
+只是把"父组件读自己的状态"换成"子组件读传来的门面"。
+**风险与纪律**：一次只搬一个面板分支（诊断 → 连接 → 会话 → 其余），每搬一块跑全门禁；
+`mainContent()` 的**分派骨架留在最后**搬，否则中间态会出现两处分派。
+
 **因此下一步的次序是**：先做 `AppShell` 的**不含内容注入**部分（根容器、overlay/sheet 宿主、
 返回处理、快捷键与输入证据采集挂在同一处），再按上面两条路之一逐步把主区搬出去。
 每搬一块跑一次全门禁。

@@ -182,6 +182,7 @@ import { extractToken, parseJson } from 'connection';
 import { EVENT_HOST_CONNECTED, EVENT_KEY_HOST_TOKEN, EVENT_KEY_HOST_URL } from 'platform';
 import { ConnectPane } from '../view/ConnectPane';
 import { ConversationPane } from '../view/ConversationPane';
+import { GoalBar } from '../view/GoalBar';
 import { MainHeaderShell } from '../view/shell/MainHeaderShell';
 import { RightbarShell } from '../view/shell/RightbarShell';
 import { SidebarShell } from '../view/shell/SidebarShell';
@@ -3348,34 +3349,8 @@ struct Index {
             })
         }
         .width('100%')
-        /*
-         * E243：**长期目标**（官方 `ui-goal` 的目标栏）。
-         *
-         * 直接读中枢快照（与"可添加提供方"同一先例：打开面板时会重新渲染，届时读到最新值）——
-         * 少穿两层状态，且不会出现"状态与中枢不一致"。
-         * 三种情况分得很清，**不把"没读到"说成"没有目标"**：
-         *   · 有目标 ⇒ 显示目标文本；
-         *   · 中枢说没有（`goalNote` = 该会话当前没有长期目标）⇒ 如实显示；
-         *   · 形状未识别/失败 ⇒ 显示中枢给的原因（含真实顶层键）。
-         */
-        Row({ space: Sp.S }) {
-          Text('长期目标')
-            .fontSize(Fs.CAPTION)
-            .layoutWeight(1)
-          Text(SessionHub.shared().snapshot().goalText.length > 0
-            ? SessionHub.shared().snapshot().goalText
-            : (SessionHub.shared().snapshot().goalNote.length > 0
-              ? SessionHub.shared().snapshot().goalNote
-              : '未读取'))
-            .fontSize(Fs.CAPTION)
-            .fontColor(SessionHub.shared().snapshot().goalText.length > 0
-              ? $r('sys.color.font_secondary')
-              : $r('sys.color.font_tertiary'))
-            .layoutWeight(2)
-            .maxLines(3)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-        }
-        .width('100%')
+        // 长期目标栏归 GoalBar 所有（官方 ui-goal 的目标栏形态）；它自足读中枢快照，无需 props。
+        GoalBar()
         /*
          * E195（§13 第 3 项）：**本会话的模型**。
          *
