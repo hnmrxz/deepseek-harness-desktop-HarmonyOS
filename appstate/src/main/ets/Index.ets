@@ -102,6 +102,8 @@ export {
 } from './model/Settings';
 export { sessionContextLine, workspaceNameOf } from './model/SessionContext';
 export { sheetNoteText, sheetNoteVisible } from './model/Sheets';
+export { placeholderOf, structSettingEditorHints, textSettingEditorHints } from './model/SettingEditors';
+export type { EditorHints } from './model/SettingEditors';
 export type {
   AboutInfo,
   ConnectionBanner,

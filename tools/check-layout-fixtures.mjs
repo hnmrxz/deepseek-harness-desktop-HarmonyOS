@@ -51,6 +51,8 @@ const PURE_FILES = [
   'appstate/src/main/ets/model/SessionContext.ets',
   // 浮层回执归属（P2-8，E353）：零依赖
   'appstate/src/main/ets/model/Sheets.ets',
+  // 设置编辑浮层的输入提示（P2-10）：零依赖
+  'appstate/src/main/ets/model/SettingEditors.ets',
   'appstate/src/main/ets/model/PanelRegistry.ets',
   'appstate/src/main/ets/model/NavigationState.ets',
   'appstate/src/main/ets/model/Follow.ets',
@@ -203,6 +205,7 @@ const MD = require2('./Markdown.js');
 const SD = require2('./SettingsDomains.js');
 const SC = require2('./SessionContext.js');
 const SH = require2('./Sheets.js');
+const SE2 = require2('./SettingEditors.js');
 const t = makeAsserter(selfTest);
 
 console.log('# 布局 fixture 门禁（四形态 + 断点边界 + 让步链）\n');
@@ -1601,6 +1604,40 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
     t.eq('三个归属取值', [SHEET_NOTE_CREDENTIAL, SHEET_NOTE_TEXT, SHEET_NOTE_STRUCT].join(','),
       'credential,text,struct');
     t.eq('未认领是空串', SHEET_NOTE_NONE, '');
+  }
+
+  // ── P2-10：设置编辑浮层的输入提示（把服务端约束在输入前讲清楚）──
+  {
+    const { textSettingEditorHints, structSettingEditorHints, placeholderOf } = SE2;
+
+    // 数字项：范围 + 步长
+    const num = textSettingEditorHints(true, true, 1, true, 4096, 1, '', false, '1024');
+    t.eq('数字项：类型 + 范围', num.hint, '请输入数字；范围 1 – 4096');
+    t.eq('数字项：占位给当前值', num.placeholder, '当前：1024');
+    t.eq('数字项：步长 >1 才说',
+      textSettingEditorHints(true, false, 0, false, 0, 256, '', false, '').hint,
+      '请输入数字；须为 256 的整数倍');
+    // 只给一侧界：另一侧说"不限"（不编 ∞）
+    t.eq('数字项：只有上界',
+      textSettingEditorHints(true, false, 0, true, 17, 0, '', false, '').hint,
+      '请输入数字；范围 不限 – 17');
+    t.eq('数字项：上下界都没有就不提范围',
+      textSettingEditorHints(true, false, 0, false, 0, 0, '', false, '').hint, '请输入数字');
+
+    // 文本项：正则 + 必填
+    t.eq('文本项：正则',
+      textSettingEditorHints(false, false, 0, false, 0, 0, '^[a-z]+$', false, '').hint,
+      '请输入文本；须匹配 ^[a-z]+$');
+    t.eq('文本项：必填追加在最后',
+      textSettingEditorHints(false, false, 0, false, 0, 0, '', true, '').hint, '请输入文本；必填');
+    t.eq('文本项：什么都没有也至少说"请输入文本"',
+      textSettingEditorHints(false, false, 0, false, 0, 0, '', false, '').hint, '请输入文本');
+
+    // 占位：空值说"未设置"（不显示空白）
+    t.eq('占位：有值', placeholderOf('256000'), '当前：256000');
+    t.eq('占位：无值', placeholderOf(''), '当前未设置');
+    t.eq('结构项的占位与文本项同源', structSettingEditorHints('').placeholder, '当前未设置');
+    t.eq('结构项没有约束说明（JSON 由 Host 校验）', structSettingEditorHints('x').hint, '');
   }
 }
 

@@ -166,6 +166,8 @@ import { parseJson } from 'connection';
 import { EVENT_HOST_CONNECTED, EVENT_KEY_HOST_TOKEN, EVENT_KEY_HOST_URL } from 'platform';
 import { ConnectPane } from '../view/ConnectPane';
 import { FolderPicker, FolderPickerController } from '../view/FolderPicker';
+import { SettingStructSheet } from '../view/SettingStructSheet';
+import { SettingTextSheet } from '../view/SettingTextSheet';
 import { MainShell } from '../view/shell/MainShell';
 import { AppShell } from '../view/shell/AppShell';
 import type { AppShellFacade } from '../view/shell/AppShell';
@@ -2015,9 +2017,48 @@ struct Index {
         }
       })
     } else if (this.sheetKind() === 'text') {
-      this.textSettingSheetContent()
+      SettingTextSheet({
+        item: this.textSettingItem,
+        label: this.textSettingLabel,
+        draft: this.textSettingDraft,
+        note: this.credentialNote,
+        noteOwned: sheetNoteVisible(this.sheetNoteOwner, 'text'),
+        busy: this.textBusy,
+        onDraftChange: (v: string) => {
+          this.textSettingDraft = v;
+        },
+        onSubmit: () => {
+          this.submitTextSetting();
+        },
+        onClose: () => {
+          this.closeTextSettingSheet();
+        }
+      })
     } else if (this.sheetKind() === 'struct') {
-      this.structSettingSheetContent()
+      SettingStructSheet({
+        item: this.structSettingItem,
+        label: this.structSettingLabel,
+        settingKey: this.structSettingKey,
+        draft: this.structSettingDraft,
+        note: this.credentialNote,
+        noteOwned: sheetNoteVisible(this.sheetNoteOwner, 'struct'),
+        busy: this.structBusy,
+        onDraftChange: (v: string) => {
+          this.structSettingDraft = v;
+        },
+        onRestore: () => {
+          this.resetStructDraft();
+        },
+        onSubmit: () => {
+          this.submitStructSetting();
+        },
+        onUnset: () => {
+          this.unsetStructSetting();
+        },
+        onClose: () => {
+          this.closeStructSettingSheet();
+        }
+      })
     }
   }
 
@@ -2699,111 +2740,6 @@ struct Index {
 
   // ───────────────────── 文本 / 数字设置编辑浮层 ─────────────────────
 
-  /**
-   * 文本与数字设置项的编辑浮层。
-   *
-   * 【为什么用文本输入而不是数字步进器】实测设置里的数字项跨度极大
-   * （`llm-deepseek.maxTokens` 的默认值是 256000，上界 9007199254740991），
-   * 步进器要点几万次；而数量级不同的项又需要不同的步进。文本输入 + 客户端校验
-   * （`parseSettingInput`：类型、min/max、step、pattern）更实用。
-   *
-   * 【为什么用 `InputType.Normal` 而不是 Password】这是配置项不是秘密；
-   * 而且用户需要看见自己输的数字有没有多一个 0——`maxTokens: 2560000` 与
-   * `256000` 的差别在这里是实打实的后果。
-   */
-  @Builder
-  textSettingSheetContent() {
-    Column() {
-      Column({ space: Sp.S }) {
-        Text(`编辑「${this.textSettingLabel}」`)
-          .fontSize(Fs.BODY)
-          .width('100%')
-        Text(this.textSettingHint())
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
-          .width('100%')
-        Text(`上游设置项 ${this.textSettingKey}`)
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
-          .width('100%')
-
-        TextInput({ placeholder: this.textSettingPlaceholder(), text: this.textSettingDraft })
-          .type(InputType.Normal)
-          .width('100%')
-          .onChange((v: string) => {
-            this.textSettingDraft = v;
-          })
-
-        Row({ space: Sp.S }) {
-          Button('取消')
-            .layoutWeight(1)
-            .backgroundColor($r('sys.color.background_secondary'))
-            .fontColor($r('sys.color.font_primary'))
-            .onClick(() => {
-              this.closeTextSettingSheet();
-            })
-          Button('写入 Host')
-            .layoutWeight(1)
-            // 【只按自己的输入判断】此前这里读的是 `credentialBusy`（凭据浮层的忙标志）——
-            // 两个浮层互相影响：凭据在写时文本浮层的按钮也会变灰（E353）。
-            .enabled(this.textSettingDraft.length > 0)
-            .onClick(() => {
-              this.submitTextSetting();
-            })
-        }
-        .width('100%')
-
-        if (sheetNoteVisible(this.sheetNoteOwner, 'text')) {
-          Text(sheetNoteText(this.sheetNoteOwner, 'text', this.credentialNote))
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_secondary'))
-            .width('100%')
-        }
-      }
-      .width('86%')
-      .padding(Sp.L)
-      .borderRadius(Radius.L)
-      .backgroundColor($r('sys.color.background_secondary'))
-    }
-    .width('100%')
-    .padding(HarmonySpacing.CONTAINER)
-  }
-
-  /** 编辑浮层里的约束说明（把服务端约束在**输入前**讲清楚） */
-  private textSettingHint(): string {
-    const item: SettingItem | undefined = this.textSettingItem;
-    if (item === undefined) {
-      return '';
-    }
-    const parts: string[] = [];
-    if (item.valueType === SettingValueType.NUMBER) {
-      parts.push('请输入数字');
-      if (item.hasMin || item.hasMax) {
-        parts.push(`范围 ${item.hasMin ? item.minValue : '不限'} – ${item.hasMax ? item.maxValue : '不限'}`);
-      }
-      if (item.stepValue > 1) {
-        parts.push(`须为 ${item.stepValue} 的整数倍`);
-      }
-    } else {
-      parts.push('请输入文本');
-      if (item.pattern.length > 0) {
-        parts.push(`须匹配 ${item.pattern}`);
-      }
-    }
-    if (item.required) {
-      parts.push('必填');
-    }
-    return parts.join('；');
-  }
-
-  private textSettingPlaceholder(): string {
-    const item: SettingItem | undefined = this.textSettingItem;
-    if (item === undefined) {
-      return '';
-    }
-    return item.textValue.length > 0 ? `当前：${item.textValue}` : '当前未设置';
-  }
-
   private closeTextSettingSheet(): void {
     this.textSettingKey = '';
     this.textSettingDraft = '';
@@ -2851,106 +2787,6 @@ struct Index {
   }
 
   // ───────────────────── 结构化值（数组 / 对象）整值编辑浮层 ─────────────────────
-
-  /**
-   * 结构化设置的**整值**编辑浮层。
-   *
-   * 设计取舍：
-   *   1. **多行 `TextArea`**：实测 `llm-deepseek.models` 的 JSON 约 820 字符、
-   *      `providers` 更大；单行输入框在这里不可用。
-   *   2. **打开时美化（缩进 2 空格）**，写回时用紧凑形式：
-   *      人读写需要缩进，而对 Host 来说空白无意义——紧凑形式也能让「值是否变化」
-   *      的比较不受无关空白干扰。
-   *   3. **给出「恢复为当前值」按钮**：整值编辑最容易出的事故是
-   *      改坏了一个大 JSON 又退不回去。有了它，用户永远能回到进入编辑器时的状态。
-   *   4. 明确写出「整值替换」：用户必须知道写回是**替换整个字段**，
-   *      不是合并——否则会以为没提到的部分会被保留。
-   */
-  @Builder
-  structSettingSheetContent() {
-    Column() {
-      Column({ space: Sp.S }) {
-        Text(`编辑「${this.structSettingLabel}」`)
-          .fontSize(Fs.BODY)
-          .width('100%')
-        Text('写回是**逐键合并**：这里没提到的键会保留 Host 上已有的值，不会被删除。')
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
-          .width('100%')
-        Text('本客户端暂不提供「删除某个键」的入口（那需要 unset 操作；实测顶层与嵌套路径都可用）。')
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
-          .width('100%')
-        Text(`上游设置项 ${this.structSettingKey}`)
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
-          .width('100%')
-
-        TextArea({ placeholder: 'JSON', text: this.structSettingDraft })
-          .width('100%')
-          .height(320)
-          .onChange((v: string) => {
-            this.structSettingDraft = v;
-          })
-
-        Row({ space: Sp.S }) {
-          Button('恢复为当前值')
-            .layoutWeight(1)
-            .backgroundColor($r('sys.color.background_secondary'))
-            .fontColor($r('sys.color.font_primary'))
-            .onClick(() => {
-              this.resetStructDraft();
-            })
-          Button('取消')
-            .layoutWeight(1)
-            .backgroundColor($r('sys.color.background_secondary'))
-            .fontColor($r('sys.color.font_primary'))
-            .onClick(() => {
-              this.closeStructSettingSheet();
-            })
-        }
-        .width('100%')
-
-        Button('写入 Host')
-          .width('100%')
-          // 【只按自己的输入判断】此前读的是凭据浮层的忙标志（E353）
-          .enabled(this.structSettingDraft.length > 0 && !this.structBusy)
-          .onClick(() => {
-            this.submitStructSetting();
-          })
-
-        // 「恢复默认」= `unset`：移除该项在 Host 用户层的取值，值回落到 schema 默认。
-        // 【文案必须说成「恢复默认」而不是「清空」】实测 `unset` 的语义是回落默认；
-        // 而「把值设为 null」是另一回事（`null` 在若干 schema 里是合法取值）。
-        // 两者混为一谈会让用户以为自己清空了、实际只是回到默认（或反过来）。
-        // 只有**已被用户覆盖**的项才显示这个入口——对继承默认的项执行 unset 是无操作，
-        // 给它一个按钮等于让用户白点一次。
-        if (this.structSettingItem !== undefined && this.structSettingItem.userSet) {
-          Button('恢复默认（移除这里的设置）')
-            .width('100%')
-            .enabled(!this.structBusy)
-            .backgroundColor($r('sys.color.background_secondary'))
-            .fontColor($r('sys.color.warning'))
-            .onClick(() => {
-              this.unsetStructSetting();
-            })
-        }
-
-        if (sheetNoteVisible(this.sheetNoteOwner, 'struct')) {
-          Text(sheetNoteText(this.sheetNoteOwner, 'struct', this.credentialNote))
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_secondary'))
-            .width('100%')
-        }
-      }
-      .width('100%')
-      .padding(Sp.L)
-      .borderRadius(Radius.L)
-      .backgroundColor($r('sys.color.background_secondary'))
-    }
-    .width('100%')
-    .padding(HarmonySpacing.CONTAINER)
-  }
 
   /** 把草稿恢复为进入编辑器时的值（整值编辑的安全网） */
   private resetStructDraft(): void {
