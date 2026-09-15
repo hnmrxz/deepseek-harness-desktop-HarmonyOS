@@ -91,7 +91,7 @@ const FEATURES = [
    * 编译不报、界面不报，只有肉眼看才发现的缺口。故把它钉成三段接线：
    * 模型判定（orderedJobs/jobListVisible）+ 中枢投影 + 会话头的传参。
    */
-  { name: '后台任务条', patterns: [['orderedJobs', 2], ['jobListVisible', 2], ['jobs: this.f.jobs', 1]] },
+  { name: '后台任务条', patterns: [['orderedJobs', 2], ['jobListVisible', 2], ['jobs: this.f.jobs', 1], ['liveJobCount', 2]] },
   /*
    * 主区兜底（E343）。它同样是"接线断了不会有任何症状"的那一类，**后果更重**：
    * `MainShell` 只分派诊断/连接/会话三块，剩下的工作区/设置/核心由 `TabContentView` 渲染。

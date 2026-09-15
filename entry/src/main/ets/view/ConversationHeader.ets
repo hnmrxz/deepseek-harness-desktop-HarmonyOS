@@ -28,7 +28,7 @@
 import {
   Fs, JobDot, Radius, SemanticColor, Sp, Sz,
   jobCountLabel, jobDotState, jobDurationText, jobDurationTitle, jobElapsedMs,
-  jobListA11y, jobListVisible, jobRowStatusText, matchCounterText, orderedJobs,
+  jobListA11y, jobListVisible, jobRowStatusText, liveJobCount, matchCounterText, orderedJobs,
   relativeTime, sessionContextLine
 } from 'appstate';
 import type { SessionJob, SessionStatsInput, TrajectoryItem } from 'appstate';
@@ -45,6 +45,8 @@ export struct ConversationHeader {
   @Prop jobs: SessionJob[] = [];
   /** 任务条的重绘刻度（live 任务每秒走字；父组件的定时器在推进它） */
   @Prop jobsTick: number = 0;
+  /** 任务清单是否展开（官方是"触发器 + 下拉清单"；默认收起，不占会话头的版面） */
+  @State jobsOpen: boolean = false;
   /**
    * 时间总览要的统计（数字，不是拼好的字符串）。
    *
@@ -262,57 +264,82 @@ export struct ConversationHeader {
   }
 
   /**
-   * 后台任务条（P2-2：官方会话头的 `conversation.header.jobs`）。
+   * 后台任务（P2-2；P7-3 按官方结构改成**触发器 + 展开清单**）。
    *
-   * 【为什么把整段判定都放在模型里】"有没有任务要显示"（`jobListVisible`）、
-   * 排序（`orderedJobs`）、状态文案（`jobRowStatusText`）、耗时（`jobElapsedMs` /
-   * `jobDurationText` / `jobDurationTitle`）、无障碍整段（`jobListA11y`）——全在 `Jobs` 模型里
-   * （40 条断言）；视图只做"点 + 字 + 颜色"。
+   * 【官方长什么样（读 `@deepseek-ai/dsh-client-ui-jobs` 的源码）】会话头只放一个**按钮**：
+   * `StateDot`（**只在有 live 任务时**）+ 计数文案（`{count} 个后台任务运行中` / `{count} 个后台任务`）
+   * + 折叠指示；`aria-label` 是 `后台任务`。点开才是一张清单，每行 = 状态点 + `job.kind`
+   * + `job.label` + `job.detail ?? 状态文案` + 耗时（`已运行 {d}` / `耗时 {d}` 是 tooltip 文案）。
+   * 状态文案逐条对齐官方字典：运行中 / 正在停止 / 已完成 / 已取消 / 已失败。
+   *
+   * 【为什么改成这样】我们此前是"**常开**的换行任务条 + 一句『展开收起全部任务在轨迹』"：
+   * 任务一多就把会话头撑高，而那句提示还把用户指向另一个页面 —— 官方根本没有这个指引。
+   * 判定仍全部在 `Jobs` 模型里（`orderedJobs` / `jobRowStatusText` / `jobElapsedMs` /
+   * `jobDurationText` / `jobDurationTitle` / `jobListA11y` / `liveJobCount`），视图只做点+字+色。
    */
   @Builder
   jobsStrip() {
     Column({ space: Sp.XS }) {
       Row({ space: Sp.S }) {
+        // 「有 live 任务」才给状态点（官方 `liveCount > 0` 的条件渲染）
+        if (liveJobCount(this.jobs) > 0) {
+          SymbolGlyph($r('sys.symbol.circle'))
+            .fontSize(Fs.CAPTION_XS)
+            .fontColor([this.jobDotColor('running')])
+        }
         Text(jobCountLabel(this.jobs))
           .fontSize(Fs.CAPTION)
           .fontColor($r('sys.color.font_tertiary'))
           .layoutWeight(1)
-        Text('展开收起全部任务在「轨迹」')
-          .fontSize(Fs.CAPTION_XS)
-          .fontColor($r('sys.color.font_tertiary'))
+        SymbolGlyph(this.jobsOpen ? $r('sys.symbol.chevron_up') : $r('sys.symbol.chevron_down'))
+          .fontSize(Fs.CAPTION)
+          .fontColor([$r('sys.color.font_tertiary')])
       }
       .width('100%')
+      .height(Sz.TOUCH_MIN)   // 44vp 命中区（E214 的教训：只挂 onClick 的文字按不准）
+      .borderRadius(Radius.S)
+      .accessibilityText(jobListA11y(this.jobs))
+      .onClick(() => {
+        this.jobsOpen = !this.jobsOpen;
+      })
 
-      Flex({ wrap: FlexWrap.Wrap }) {
+      if (this.jobsOpen) {
         ForEach(orderedJobs(this.jobs), (job: SessionJob) => {
-          Row({ space: Sp.XS }) {
+          Row({ space: Sp.S }) {
             SymbolGlyph($r('sys.symbol.circle'))
               .fontSize(Fs.CAPTION_XS)
               .fontColor([this.jobDotColor(job.status)])
+            // 官方清单里 kind 与 label 是**两列**：kind 说"哪一类任务"，label 说"哪一个"
+            Text(job.kind)
+              .fontSize(Fs.CAPTION_XS)
+              .fontColor($r('sys.color.font_tertiary'))
+              .maxLines(1)
             Text(job.label.length > 0 ? job.label : job.kind)
               .fontSize(Fs.CAPTION)
               .fontColor($r('sys.color.font_secondary'))
+              .layoutWeight(1)
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
-            Text(jobRowStatusText(job))
+            Text(job.detail !== undefined && job.detail.length > 0
+              ? job.detail
+              : jobRowStatusText(job))
               .fontSize(Fs.CAPTION_XS)
               .fontColor($r('sys.color.font_tertiary'))
+              .maxLines(1)
             Text(jobDurationText(jobElapsedMs(job, Date.now())))
               .fontSize(Fs.CAPTION_XS)
               .fontColor($r('sys.color.font_tertiary'))
           }
+          .width('100%')
           .padding({ left: Sp.S, right: Sp.S, top: Sp.XS, bottom: Sp.XS })
-          .margin({ right: Sp.XS, bottom: Sp.XS })
           .borderRadius(Radius.S)
           .backgroundColor($r('sys.color.background_secondary'))
           .accessibilityText(jobDurationTitle(job, Date.now()))
           // key 带上"每秒刻度"：live 任务的耗时才会走字（读 `jobsTick` 也让刻度成为本组件的真实依赖）
         }, (job: SessionJob) => `${job.id}:${this.jobsTick}`)
       }
-      .width('100%')
     }
     .width('100%')
     .padding({ left: Sp.M, right: Sp.M, top: Sp.XS })
-    .accessibilityText(jobListA11y(this.jobs))
   }
 }
