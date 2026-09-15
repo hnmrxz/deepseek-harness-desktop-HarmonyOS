@@ -26,6 +26,7 @@
  */
 
 import { SessionJob } from './Jobs';
+import type { ImageAttachmentRefValue } from './ImageAttachment';
 
 import {
   argsFor,
@@ -34,6 +35,7 @@ import {
   SESSION_SELECT_MODEL_ENDPOINT,
   FILE_REFERENCES_LIST_ENDPOINT,
   FILE_UPLOAD_ENDPOINT,
+  SESSION_ATTACHMENT_ENDPOINT,
   SESSION_CANCEL_ENDPOINT,
   SESSION_CREATE_ENDPOINT,
   SESSION_FOLLOW_ENDPOINT,
@@ -1696,6 +1698,97 @@ export interface FileAttachmentRefValue {
   name: string;
   /** 精确字节数 */
   bytes: number;
+}
+
+/** 图片附件的形状定义在零依赖的 `ImageAttachment.ets` 里（轨迹模型也要用它，见那里的说明） */
+export type { ImageAttachmentRefValue } from './ImageAttachment';
+
+/** 投影一个图片引用（字段缺失时给**可判定的**默认值，而不是 undefined）。 */
+export function projectImageAttachmentRef(value: Object | undefined): ImageAttachmentRefValue | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const attachmentId: string = getString(value, 'attachmentId') ?? '';
+  if (attachmentId.length === 0) {
+    // 没有 id 就永远读不出字节：静默返回半成品只会让 UI 显示一个加载不完的占位
+    return undefined;
+  }
+  return {
+    attachmentId: attachmentId,
+    mediaType: getString(value, 'mediaType') ?? '',
+    bytes: getNumber(value, 'bytes') ?? 0,
+    width: getNumber(value, 'width') ?? 0,
+    height: getNumber(value, 'height') ?? 0,
+    name: getString(value, 'name') ?? ''
+  };
+}
+
+/**
+ * 从一个 `content` 块里取出图片引用（官方 `contentParts` 的 `type==='image'` 分支）。
+ *
+ * 上游形状：`{type:'image', attachment:{…ImageAttachmentRef}}`。
+ * 官方**只认 `attachment`**（不给 `preview` 那种本地 URL 分支——那是我们自己的乐观回显才有的），
+ * 因此这里也照做：认不出的块返回 undefined，由调用方决定占位文案。
+ */
+export function projectImageBlock(block: Object | undefined): ImageAttachmentRefValue | undefined {
+  if (block === undefined) {
+    return undefined;
+  }
+  if ((getString(block, 'type') ?? '') !== 'image') {
+    return undefined;
+  }
+  return projectImageAttachmentRef(getRecord(block, 'attachment'));
+}
+
+/** `session/attachment` 的回复值（上游 `SessionAttachmentValue`）。 */
+export interface SessionAttachmentValue {
+  /** 由存储字节验证过的媒体类型 */
+  mediaType: string;
+  /** **规范 base64**（不含 `data:` 前缀） */
+  data: string;
+}
+
+/**
+ * 构造 `session/attachment` 的 args 载荷。
+ *
+ * 线上参数名实测来自生成表：`params: ['request']`，业务体是 `{sessionId, attachmentId}`
+ * （见 `dshcompat/Endpoints.ets` 里该端点的条目；官方客户端同样只发这两个字段）。
+ */
+export function sessionAttachmentPayload(sessionId: string, attachmentId: string): Object | undefined {
+  const body: Record<string, Object> = { 'sessionId': sessionId, 'attachmentId': attachmentId };
+  return payloadFor(SESSION_ATTACHMENT_ENDPOINT, body as Object);
+}
+
+/**
+ * 投影一条图片字节回复。
+ *
+ * 收窄策略：`data` 为空串即视为失败（返回 undefined）——空字节画不出图，
+ * 让它变成「一张 0×0 的图」比让它变成一次可解释的失败更糟。
+ */
+export function projectSessionAttachment(value: Object | undefined): SessionAttachmentValue | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const data: string = getString(value, 'data') ?? '';
+  if (data.length === 0) {
+    return undefined;
+  }
+  const attachment: Object | undefined = getRecord(value, 'attachment');
+  const mediaType: string = attachment !== undefined ? (getString(attachment, 'mediaType') ?? '') : '';
+  return { mediaType: mediaType, data: data };
+}
+
+/**
+ * 回执 → 可直接喂给 ArkUI `Image()` 的 `data:` URL。
+ *
+ * 媒体类型缺失时**不**瞎猜 `image/png`（猜错的表现是一张永远裂开的图 + 一句无用的日志），
+ * 而是给空串，由调用方按「加载失败」处理。
+ */
+export function imageDataUrl(mediaType: string, base64: string): string {
+  if (mediaType.length === 0 || base64.length === 0) {
+    return '';
+  }
+  return `data:${mediaType};base64,${base64}`;
 }
 
 /** 上传成功后的回执（上游 `FileUploadValue`）。 */

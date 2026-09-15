@@ -7,6 +7,8 @@
  * 与 D3 §3.2 / §3.3 的界面规格一一对应。
  */
 
+import { ImageAttachmentRefValue } from './ImageAttachment';
+
 /** 角色 */
 export enum Speaker {
   USER = 'user',
@@ -105,6 +107,16 @@ export interface TrajectoryItem {
   internal: boolean;
   /** 是否默认展开（如失败的工具、错误） */
   expanded: boolean;
+  /**
+   * 本条消息携带的**图片**（P0-3；官方 `conversation.message.images` 槽位）。
+   *
+   * 【为什么必须有】事件里的图片块只给不透明引用（`attachment.attachmentId`），
+   * 字节要另走 `session/attachment` 才拿得到。此前投影把图片块降级成正文里的字面
+   * `[image]`——真机上用户看到的就是这五个字符，而不是一张图。
+   *
+   * 顺序即**内容里的出现顺序**（官方按块顺序分组渲染），这里不做任何排序或去重。
+   */
+  images: ImageAttachmentRefValue[];
 }
 
 /** 构造一个带默认值的条目（ArkTS 要求显式初始化所有字段） */
@@ -131,7 +143,8 @@ export function makeItem(id: string, kind: TrajectoryKind, at: number): Trajecto
     percent: -1,
     streaming: false,
     expanded: false,
-    internal: false
+    internal: false,
+    images: []
   };
 }
 

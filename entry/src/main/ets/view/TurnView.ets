@@ -86,6 +86,13 @@ export class TurnViewController {
 export struct TurnView {
   /** 要渲染的回合 */
   @Prop turn: Turn;
+  /**
+   * 会话 id（图片读取要用它做**会话作用域**授权）。
+   *
+   * 由父组件传进来而不是让子组件去问中枢"当前选中哪个会话"：
+   * 一条消息属于**它出处的那个会话**，与"此刻选中的是哪个"是两件事。
+   */
+  @Prop sessionId: string = '';
   /** 展开集合的唯一真值（见文件头第 1 条边界） */
   @Prop expanded: string[] = [];
   /** 展开集合变化（真值在父组件 ⇒ 由它落状态） */
@@ -304,6 +311,7 @@ export struct TurnView {
   messageItem(item: TrajectoryItem) {
     MessageRow({
       item: item,
+      sessionId: this.sessionId,
       a11yText: this.speakableText(item),
       hasPointer: this.hasPointer,
       hasKeyboard: this.hasKeyboard,

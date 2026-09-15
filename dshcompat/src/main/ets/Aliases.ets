@@ -69,6 +69,16 @@ export const SESSION_CREATE_ENDPOINT: string = 'session/create';
 export const SESSION_PROMPT_ENDPOINT: string = 'session/prompt';
 /** 取消当前轮次 */
 export const SESSION_CANCEL_ENDPOINT: string = 'session/cancel';
+/**
+ * 读取一条会话授权过的**图片**字节（一元）。
+ *
+ * 【为什么是必要的】会话事件里的图片块只给**不透明引用**（`attachment.attachmentId`），
+ * 既不给 URL 也不给字节。官方 web 同样靠这条端点把引用换成可显示的 URL
+ * （`ISession.readAttachment` → `remote.session.attachment`，见
+ * `dsh-api-session-controller/lib/types/client/sessions/session.js`）。
+ * 没有它，历史里出现的图片**只能显示成一个占位**——我们此前正文里就是字面 `[image]`。
+ */
+export const SESSION_ATTACHMENT_ENDPOINT: string = 'session/attachment';
 /** 会话改名 */
 export const SESSION_RENAME_ENDPOINT: string = 'session/rename';
 /** 会话分叉（从某个事件序号起复制出一个新会话） */

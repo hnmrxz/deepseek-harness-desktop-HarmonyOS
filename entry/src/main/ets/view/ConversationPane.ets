@@ -423,6 +423,7 @@ export struct ConversationPane {
     if (item.kind === TrajectoryKind.MESSAGE) {
       MessageRow({
         item: item,
+        sessionId: this.sessionId,
         a11yText: this.flatA11y(item),
         hasPointer: this.hasPointer,
         hasKeyboard: this.hasKeyboard,
@@ -842,6 +843,7 @@ export struct ConversationPane {
               // 一个回合的渲染归 TurnView（P2-6 第二刀）；"全部展开/收起全部"经控制器接出去。
               TurnView({
                 turn: turn,
+                sessionId: this.sessionId,
                 expanded: this.expanded,
                 onExpandedChange: (next: string[]) => {
                   this.expanded = next;

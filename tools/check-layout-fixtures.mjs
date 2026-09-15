@@ -61,6 +61,9 @@ const PURE_FILES = [
   'appstate/src/main/ets/model/Permissions.ets',
   // 应用内隐私与权限说明（P7-11）：零依赖
   'appstate/src/main/ets/model/PrivacyDisclosure.ets',
+  // 消息图片的几何判定（P0-3）：零依赖，与官方 ui-attachment 的 singleFit 逐条对齐
+  'appstate/src/main/ets/model/ImageAttachment.ets',
+  'appstate/src/main/ets/model/MessageImage.ets',
   // 浮层回执归属（P2-8，E353）：零依赖
   'appstate/src/main/ets/model/Sheets.ets',
   // 设置编辑浮层的输入提示（P2-10）：零依赖
@@ -230,6 +233,7 @@ const PF = require2('./PendingFocus.js');
 const TDT = require2('./TrajectoryDetail.js');
 const PM = require2('./Permissions.js');
 const PD = require2('./PrivacyDisclosure.js');
+const MI = require2('./MessageImage.js');
 const t = makeAsserter(selfTest);
 
 console.log('# 布局 fixture 门禁（四形态 + 断点边界 + 让步链）\n');
@@ -2118,6 +2122,89 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
       && privacySummaryLine().includes(PRIVACY_STATEMENT_DATE), true);
     t.eq('摘要行点明"不收集个人信息"', privacySummaryLine().includes('不收集个人信息'), true);
     t.eq('摘要行报出权限条数', privacySummaryLine().includes('权限 2 项'), true);
+  }
+  // ── P0-3：消息图片的几何（官方 dsh-client-ui-attachment 的 singleFit / 64px tile 规则）──
+  {
+    const { galleryVariantOf, singleImageFit, visibleImageCount, hiddenImageCount,
+      SINGLE_IMAGE_BOX, TILE_IMAGE_SIDE, IMAGE_GALLERY_GAP, IMAGE_MIN_HIT,
+      IMAGE_RATIO_MIN, IMAGE_RATIO_MAX, IMAGE_GALLERY_MAX } = MI;
+
+    /*
+     * 【这些期望值是怎么来的】逐行手算官方 `singleFit`
+     * （`dsh-client-ui-attachment/lib/client.js` 的 636–668 行），**不**在本文件里再抄一份实现
+     * ——那会变成"自证循环"（同一段逻辑写两遍，第一遍错了第二遍照抄也错）。
+     * 官方算法：
+     *   natural = w/h；ratio = min(4, max(.25, natural))；
+     *   ratio>=1 → box(240, 240/ratio) 否则 box(240*ratio, 240)；
+     *   scale = min(1, **w/box.w**, **h/box.h**)；尺寸 = max(1, round(box * scale))。
+     * 关键在 scale 的方向：它是"图 ÷ 框"，封顶 1 ⇒ **框只会被缩到图的自然尺寸，绝不放大图**。
+     */
+    const same = (w, h, ew, eh, ea) => {
+      const f = singleImageFit(w, h);
+      return `${f.width}×${f.height}@${f.anchor}` === `${ew}×${eh}@${ea}`;
+    };
+
+    // ① 正方形 1000×1000：box 240×240，scale = min(1, 4.17, 4.17) = 1 ⇒ 就画 240×240
+    t.eq('正方形大图：画满 240×240（不被"缩小到自然尺寸"那一步误伤）', same(1000, 1000, 240, 240, 'center'), true);
+    // ② 天然比例正好 4:1（4000×1000）：box 240×60，scale = 1 ⇒ 240×60
+    t.eq('4:1 的图：240×60 的框画满', same(4000, 1000, 240, 60, 'center'), true);
+    // ③ 超过 4:1（5000×1000）：比例夹到 4 ⇒ 框仍是 240×60，scale = 1，锚点靠左
+    t.eq('超宽图：比例夹到 4（不会变成一条线），锚点靠左',
+      same(5000, 1000, 240, 60, 'start'), true);
+    // ④ 很高的图（100×1000）：比例夹到 0.25 ⇒ box 60×240，scale = 1，锚点靠上
+    t.eq('很高的图：60×240，锚点靠上（官方"信息通常从顶部开始"）',
+      same(100, 1000, 60, 240, 'top'), true);
+    // ⑤ 小图 100×50：box 240×120，scale = min(1, 0.4167, 0.4167) = 0.4167 ⇒ **原样 100×50**（绝不放大小图）
+    t.eq('小图不放大：100×50 就按 100×50 画', same(100, 50, 100, 50, 'center'), true);
+    // ⑥ 小方图 50×50：box 240×240，scale = 50/240 ⇒ 原样 50×50
+    t.eq('小方图不放大：50×50', same(50, 50, 50, 50, 'center'), true);
+    // ⑦ 3:1 的大图（300×100，整体小于框）：box 240×80，scale = min(1, 1.25, 1.25) = 1 ⇒ 240×80
+    t.eq('比框小但比例正常的图：240×80', same(300, 100, 240, 80, 'center'), true);
+    // ⑧ 尺寸未知（官方 `dimensions === undefined` 的兜底分支）：240×240 居中
+    t.eq('尺寸未知 ⇒ 官方兜底 240×240 居中', same(0, 0, 240, 240, 'center'), true);
+    t.eq('尺寸为负（坏值）也走兜底，不产生负宽高', same(-3, -8, 240, 240, 'center'), true);
+    // ⑨ 极端细高（1×100000）：box 60×240，scale = 1/60 ⇒ 60/60 = 1，240/60 = 4 ⇒ 1×4（不是 0）
+    t.eq('极端细高的图不会退化成 0×0', same(1, 100000, 1, 4, 'top'), true);
+
+    // ⑧ 一张 / 多张的判定（官方 `images.length === 1 ? 'single' : 'tile'`）
+    t.eq('一张图 → 大图', galleryVariantOf(1), 'single');
+    t.eq('两张图 → 方图', galleryVariantOf(2), 'tile');
+    t.eq('三张图 → 方图', galleryVariantOf(3), 'tile');
+    t.eq('空组不冒充"一张图"（调用方本就不该渲染空画廊）', galleryVariantOf(0), 'tile');
+
+    // ⑨ 官方 CSS 里的几何常量
+    t.eq('单图框最大边 = 240（官方 singleFit 的 240）', SINGLE_IMAGE_BOX, 240);
+    t.eq('方图边长 = 64（官方 CSS width:64px;height:64px）', TILE_IMAGE_SIDE, 64);
+    t.eq('画廊间距 = 10（官方 CSS gap:10px）', IMAGE_GALLERY_GAP, 10);
+    t.eq('命中区下限 = 44（官方 CSS min-width/min-height:44px）', IMAGE_MIN_HIT, 44);
+    t.eq('比例夹取下界 = 0.25', IMAGE_RATIO_MIN, 0.25);
+    t.eq('比例夹取上界 = 4', IMAGE_RATIO_MAX, 4);
+
+    // ⑩ 展示上限（官方无上限；我们的上限必须**如实报数**，不能静默丢）
+    t.eq('上限之内全显示', visibleImageCount(IMAGE_GALLERY_MAX), IMAGE_GALLERY_MAX);
+    t.eq('超出上限只画上限那么多', visibleImageCount(IMAGE_GALLERY_MAX + 5), IMAGE_GALLERY_MAX);
+    t.eq('超出的张数如实报出', hiddenImageCount(IMAGE_GALLERY_MAX + 5), 5);
+    t.eq('没超出就不提"还有几张"', hiddenImageCount(IMAGE_GALLERY_MAX), 0);
+
+    /*
+     * ⑪ 与**官方制品**对照（非必需：官方客户端不在本机时跳过）。
+     *
+     * 【为什么值得写】上面 ①–⑩ 的值是我从官方源码手算的；一旦官方改了数字，
+     * 手算的期望值不会自己变。这一步直接读官方文件里的字面量，把"我们抄的数"与
+     * "官方写的数"对上——它才是真正的**外部依据**。官方未安装时不判失败（环境受阻 ≠ 代码错）。
+     */
+    const official = '/opt/dsh/node_modules/@deepseek-ai/dsh-client-ui-attachment/lib/client.js';
+    if (existsSync(official)) {
+      const src = readFileSync(official, 'utf8');
+      t.eq('官方制品里确有 64px 方图规则', src.includes('width:64px;height:64px'), true);
+      t.eq('官方制品里确有 gap:10px 与 min 44px',
+        src.includes('gap:10px') && src.includes('min-width:44px'), true);
+      t.eq('官方制品里确有 singleFit 的 240 与 0.25/4 夹取',
+        src.includes('width: 240') && src.includes('Math.max(.25') && src.includes('Math.min(4'), true);
+      console.log('   ↳ 已与官方制品逐字对照（dsh-client-ui-attachment/lib/client.js）');
+    } else {
+      console.log('   ↳ 官方客户端未安装在本机，跳过制品对照（数值依据为源码手算）');
+    }
   }
 }
 

@@ -98,6 +98,21 @@ export type { DetailRow } from './model/TrajectoryDetail';
 // 应用内隐私与权限说明（P7-11；与 module.json5 由 tools/check-compliance.mjs 对账）
 export { DATA_PRACTICES, PERMISSION_DISCLOSURES, PRIVACY_STATEMENT_DATE, PRIVACY_STATEMENT_VERSION, privacySummaryLine } from './model/PrivacyDisclosure';
 export type { PermissionDisclosure, PrivacyPoint } from './model/PrivacyDisclosure';
+// 消息图片的几何判定（P0-3，对齐官方 ui-attachment 的 singleFit / 64px tile 规则）
+export {
+  galleryVariantOf,
+  hiddenImageCount,
+  IMAGE_GALLERY_GAP,
+  IMAGE_GALLERY_MAX,
+  IMAGE_MIN_HIT,
+  IMAGE_RATIO_MAX,
+  IMAGE_RATIO_MIN,
+  SINGLE_IMAGE_BOX,
+  singleImageFit,
+  TILE_IMAGE_SIDE,
+  visibleImageCount
+} from './model/MessageImage';
+export type { SingleImageFit } from './model/MessageImage';
 
 // 权限预设的呈现与切换规则（P7-6，对齐官方 permission-presets）
 export { PERMISSION_UNAVAILABLE, PERMISSION_UNSET, permissionChipLabel, permissionChoices, permissionCommand, permissionSwitchable, permissionUnavailableHint } from './model/Permissions';
@@ -562,6 +577,7 @@ export type {
   FileUploadRequest,
   FileUploadValue,
   HostProjectionInput,
+  ImageAttachmentRefValue,
   OutcomeRejected,
   OutcomeResult,
   ProjectionHints,

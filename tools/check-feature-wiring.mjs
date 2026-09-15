@@ -132,7 +132,16 @@ const FEATURES = [
    * 钉三段：意图投影 + 收窄判定 + 视图面板。
    */
   { name: '计划待审', patterns: [['intentKind', 2], ['planReviewOf', 2], ['计划待审', 1]] },
-  { name: '侧栏收起', patterns: [['sidebarPresentationOf', 2], ['onToggleSidebarExpanded', 2], ['showExpandToggle', 2]] }
+  { name: '侧栏收起', patterns: [['sidebarPresentationOf', 2], ['onToggleSidebarExpanded', 2], ['showExpandToggle', 2]] },
+  /*
+   * 消息图片（P0-3）。官方 `dsh-client-ui-attachment` 往三个槽位注册呈现
+   * （`conversation.input.attachments` / `conversation.message.images` / `conversation.trajectory.images`），
+   * 后两个槽位的数据是**会话事件里的图片块**——只给不透明引用（`attachment.attachmentId`），
+   * 字节另走 `session/attachment`（官方 `ISession.readAttachment` 同一条路）。
+   * 我们此前把图片块降级成正文里的字面 `[image]`（真机上用户看到的就是这五个字符）。
+   * 钉三段接线：块→引用（投影）+ 引用→URL（中枢读字节并缓存）+ URL→画面（视图）。
+   */
+  { name: '消息图片', patterns: [['projectImageBlock', 2], ['imageUrlOf', 2], ['MessageImages', 2]] }
 ];
 
 /**

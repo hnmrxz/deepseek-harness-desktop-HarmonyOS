@@ -62,6 +62,7 @@ import {
   CREDENTIALS_SET_ENDPOINT,
   CREDENTIALS_UNSET_ENDPOINT,
   CREDENTIAL_REJECTED,
+  SESSION_ATTACHMENT_ENDPOINT,
   MODEL_CATALOG_ENDPOINT,
   PLUGIN_INVENTORY_ENDPOINT,
   PROJECTION_TITLE,
@@ -172,6 +173,10 @@ import {
   projectCommands,
   projectFileReferences,
   projectFileUpload,
+  projectImageBlock,
+  projectSessionAttachment,
+  sessionAttachmentPayload,
+  imageDataUrl,
   projectQueuedItems,
   projectSessionPrompt,
   projectSessionReferences,
@@ -209,12 +214,14 @@ import type {
   CommandCandidate,
   ControlFrame,
   FileUploadValue,
+  ImageAttachmentRefValue,
   PromptContentPart,
   QueuedItem,
   QueueActionBody,
   ReferenceCandidate,
   SessionPageValue,
   SessionQueuedItem,
+  SessionAttachmentValue,
   WorkspaceBytesWire
 } from '../model/Wire';
 import type { FileNode, FilePreview } from '../model/Workspace';
@@ -456,6 +463,14 @@ const SETTINGS_REFRESH_THROTTLE_MS: number = 1200;
  */
 const PAGE_FALLBACK_INTERVAL_MS: number = 3000;
 const PAGE_MAX_MESSAGES: number = 200;
+/**
+ * 历史图片缓存条数上限。
+ *
+ * 一张 200 KB 的 PNG 变成 base64 约 270 KB **常驻内存**；翻一段长会话很容易攒到几十张。
+ * 24 张 ≈ 6 MB 量级，够"当前这一屏来回滚动不重读"，又不至于把手机端内存吃掉。
+ * 超限时整体丢弃（重读一次比维护 LRU 简单，而重读的代价只是一次一元 RPC）。
+ */
+const MAX_CACHED_IMAGES: number = 24;
 
 export class SessionHub {
   private static instance: SessionHub | undefined;
@@ -844,6 +859,9 @@ export class SessionHub {
     this.eventsReady = false;
     this.controlReady = false;
     this.unaryReady = false;
+    // 图片 URL 是**会话授权**换来的：连接断了，这份授权也就没了，
+    // 留着缓存等于让视图继续画"已经没有授权"的字节。
+    this.clearImageCache();
     this.record('connection stopped');
     this.notify();
   }
@@ -3780,6 +3798,132 @@ export class SessionHub {
     this.notify();
   }
 
+  // ───────────────────────── 历史图片字节（session/attachment） ─────────────────────────
+
+  /**
+   * 已读到的图片 `data:` URL；键 = `会话 id + ':' + 附件 id`。
+   *
+   * 【为什么值存 `data:` URL 而不是字节】ArkUI 的 `Image()` 直接吃 `data:` URL，
+   * 存字节还得再编码一次；而且这一步之后**没有任何消费者需要原始字节**
+   * （另存/分享是平台侧能力，见 `docs/parity-matrix.md` 的 `deliverables` 行）。
+   *
+   * 【为什么键里必须带会话 id】附件 id 是内容寻址的（同样的字节 ⇒ 同样的 id），
+   * 但**读取授权是会话作用域**的：同一张图在两个会话里是两次独立读取。
+   * 只按附件 id 缓存会把"某个会话读过"当成"所有会话都能读"。
+   */
+  private imageUrls: Map<string, string> = new Map();
+  /** 正在读取的键（去重：同一条消息重复渲染不会打出多个请求） */
+  private imagePending: Map<string, boolean> = new Map();
+  /** 读取失败的键 → 给用户看的一句话（空 = 没失败） */
+  private imageErrors: Map<string, string> = new Map();
+
+  /** 图片缓存的键（会话作用域的授权 + 内容寻址的 id，两者都要） */
+  private imageKey(sessionId: string, attachmentId: string): string {
+    return `${sessionId}:${attachmentId}`;
+  }
+
+  /**
+   * 一张历史图片的**可显示 URL**（空串 = 还没读到 / 读失败，两种情况都已在跑或已定论）。
+   *
+   * 这个方法是**唯一的入口**：视图只问"现在能不能画"，读字节这件事由这里发起，
+   * 读完 `notify()` 让视图重画。视图因此不需要任何异步状态机。
+   */
+  imageUrlOf(sessionId: string, attachmentId: string): string {
+    if (sessionId.length === 0 || attachmentId.length === 0) {
+      return '';
+    }
+    const key: string = this.imageKey(sessionId, attachmentId);
+    const ready: string | undefined = this.imageUrls.get(key);
+    if (ready !== undefined) {
+      return ready;
+    }
+    this.kickImageRead(sessionId, attachmentId, key);
+    return '';
+  }
+
+  /** 读失败的原因（'' = 没失败；视图据此显示可点击重试的说明） */
+  imageErrorOf(sessionId: string, attachmentId: string): string {
+    const reason: string | undefined = this.imageErrors.get(this.imageKey(sessionId, attachmentId));
+    return reason === undefined ? '' : reason;
+  }
+
+  /** 重试：先清掉"失败"这个结论，再重新发起一次读取 */
+  retryImage(sessionId: string, attachmentId: string): void {
+    const key: string = this.imageKey(sessionId, attachmentId);
+    this.imageErrors.delete(key);
+    this.kickImageRead(sessionId, attachmentId, key);
+    this.notify();
+  }
+
+  /** 发起一次读取（若已有在跑或已成功则什么都不做） */
+  private kickImageRead(sessionId: string, attachmentId: string, key: string): void {
+    if (this.imageUrls.has(key) || this.imagePending.has(key) || this.imageErrors.has(key)) {
+      return;
+    }
+    if (!this.unaryReady) {
+      // 离线时不排队：排队会让"连上之后突然自己开始下载一堆图"，
+      // 而用户此刻看到的只是"离线"——恢复连接后重画会自然重新发起。
+      return;
+    }
+    this.imagePending.set(key, true);
+    this.readImage(sessionId, attachmentId, key).catch((e: Object) => {
+      this.imagePending.delete(key);
+      this.imageErrors.set(key, '读取图片失败：' + (e as Error).message);
+      this.notify();
+    });
+  }
+
+  /**
+   * 真正读一条图片字节。
+   *
+   * 端点取 `session/attachment`（`{sessionId, attachmentId}` → `{attachment:{mediaType,…}, data}`），
+   * 与官方 `ISession.readAttachment` 完全同一条路：**图片块只给不透明引用，
+   * 字节必须另取**。这里不做任何"猜路径"的兜底——猜出来的路径读不到图，
+   * 只会把一次可解释的失败变成一次静默的空图。
+   */
+  private async readImage(sessionId: string, attachmentId: string, key: string): Promise<void> {
+    const payload: Object | undefined = sessionAttachmentPayload(sessionId, attachmentId);
+    if (payload === undefined) {
+      this.imagePending.delete(key);
+      this.imageErrors.set(key, '该 Host 不提供图片读取端点（兼容面上表里没有它）。');
+      this.notify();
+      return;
+    }
+    const result: RpcResult = await this.conn.call(SESSION_ATTACHMENT_ENDPOINT, payload);
+    this.imagePending.delete(key);
+    if (!result.ok) {
+      const failure = result.error;
+      const code: string = failure === undefined ? 'unknown' : failure.code;
+      const message: string = failure === undefined ? '' : failure.message;
+      this.record(`session/attachment fail ${code}`);
+      this.imageErrors.set(key, friendlyFailure(code, message));
+      this.notify();
+      return;
+    }
+    const value: SessionAttachmentValue | undefined = projectSessionAttachment(result.value);
+    const url: string = value === undefined ? '' : imageDataUrl(value.mediaType, value.data);
+    if (url.length === 0) {
+      this.record('session/attachment ok 但无可显示字节');
+      this.imageErrors.set(key, 'Host 返回了图片引用，但没有可显示的字节或媒体类型。');
+      this.notify();
+      return;
+    }
+    // 缓存有界：一条会话里翻很久会攒下几十张 base64 大图（每张都在内存里），
+    // 超过上限就整体丢弃重读——**丢的是可再取回的缓存，不是用户数据**。
+    if (this.imageUrls.size >= MAX_CACHED_IMAGES) {
+      this.imageUrls.clear();
+    }
+    this.imageUrls.set(key, url);
+    this.notify();
+  }
+
+  /** 丢弃全部图片缓存（断开连接时调用：授权已经失效，缓存不该继续被当成可信） */
+  clearImageCache(): void {
+    this.imageUrls.clear();
+    this.imagePending.clear();
+    this.imageErrors.clear();
+  }
+
   // ───────────────────────── 排队项（已提交但未进入轮次） ─────────────────────────
 
   /**
@@ -4576,6 +4720,7 @@ export function projectWireRecord(record: Object): TrajectoryItem | undefined {
     const split: BlockText = splitBlocks(text.value);
     item.reasoning = split.reasoning;
     item.body = split.body;
+    item.images = split.images;
   }
   const model: ResolvedSlot = resolveSlot(data, shape, ContentSlot.MODEL);
   if (model.found) {
@@ -4771,6 +4916,8 @@ function resolveSlot(data: Object | undefined, shape: SessionEventShape,
 interface BlockText {
   reasoning: string;
   body: string;
+  /** 图片块里的引用（P0-3）：按内容顺序，字节另走 `session/attachment` */
+  images: ImageAttachmentRefValue[];
 }
 
 /**
@@ -4793,14 +4940,15 @@ function isReasoningBlock(type: string): boolean {
  */
 function splitBlocks(value: Object | undefined): BlockText {
   if (typeof value === 'string') {
-    return { reasoning: '', body: value as string };
+    return { reasoning: '', body: value as string, images: [] };
   }
   if (!Array.isArray(value)) {
-    return { reasoning: '', body: asText(value) };
+    return { reasoning: '', body: asText(value), images: [] };
   }
   const blocks: Object[] = value as Object[];
   const reasoning: string[] = [];
   const body: string[] = [];
+  const images: ImageAttachmentRefValue[] = [];
   for (let i = 0; i < blocks.length; i++) {
     const block: Object = blocks[i];
     const blockType: string = getString(block, 'type') ?? '';
@@ -4813,6 +4961,19 @@ function splitBlocks(value: Object | undefined): BlockText {
     }
     // 工具调用块由 `toolItemsOfRecord` 单独出条目（工具卡），正文里不再留 `[tool-call]` 占位
     if (isToolCallBlock(blockType)) {
+      continue;
+    }
+    /*
+     * P0-3：图片块**不再降级成正文里的 `[image]` 字面**。
+     *
+     * 官方把图片块收集成引用列表交给 `conversation.message.images` 槽位渲染
+     * （`contentParts()` 的 `type === 'image' && block.attachment !== undefined` 分支）。
+     * 这里同样只认 `attachment`：收窄失败的图片块仍然走下面的占位分支——
+     * 「有引用但读不出字节」与「连引用都没有」是两件事，占位只对后者负责。
+     */
+    const image: ImageAttachmentRefValue | undefined = projectImageBlock(block);
+    if (image !== undefined) {
+      images.push(image);
       continue;
     }
     // 工具结果块：正文在内层 content 里（实测）
@@ -4834,7 +4995,7 @@ function splitBlocks(value: Object | undefined): BlockText {
       body.push(`[${blockType}]`);
     }
   }
-  return { reasoning: reasoning.join('\n'), body: body.join('\n') };
+  return { reasoning: reasoning.join('\n'), body: body.join('\n'), images: images };
 }
 
 /**
@@ -5128,6 +5289,17 @@ function friendlyFailure(code: string, message: string): string {
   }
   if (code === GATEWAY_ARGUMENTS_INVALID || code === GATEWAY_INPUT_INVALID) {
     return `调用参数与 Host 的契约不符（${message}）。这是客户端兼容面的问题，请提交诊断报告以便修正上表。`;
+  }
+  /*
+   * 图片读取被拒（P0-3）。**这个 code 是实测出来的，不是猜的**：
+   * `tools/check-core-loop.mjs` 的 M2e 步拿一个不存在的附件 id 打真 Host，
+   * 回的就是 `session/attachment-invalid`（本机 Host 上该端点**确实实现着**）。
+   * 它对应的是"这条会话里没有这个附件"——最常见的原因是会话作用域不匹配
+   * （附件 id 是内容寻址的，但读取授权绑在会话上）。
+   */
+  if (code === 'session/attachment-invalid') {
+    return 'Host 说这条会话里没有这个图片附件——通常是从别的会话带过来的引用，'
+      + '或 Host 侧已经清理了它。' + (message.length > 0 ? `（${message}）` : '');
   }
   return `${code} ${message}`;
 }

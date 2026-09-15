@@ -42,12 +42,22 @@ import type { NativeAction } from './NativePrimitives';
 import { NativeActionBar } from './NativePrimitives';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { MessageFeedback } from './MessageFeedback';
+import { MessageImages } from './MessageImages';
 
-/** 一条消息的卡片（表头 + 正文 + 动作条 + 上下文菜单 + 反馈表单） */
+/** 一条消息的卡片（表头 + 图片 + 正文 + 动作条 + 上下文菜单 + 反馈表单） */
 @Component
 export struct MessageRow {
   /** 这一行的数据 */
   @Prop item: TrajectoryItem;
+  /**
+   * 会话 id。
+   *
+   * 【为什么行组件需要它】图片字节要按**会话作用域授权**去读（`session/attachment`），
+   * 而会话 id 不在条目里（条目是投影结果，不携带上下文）。传进来而不是让视图去问中枢
+   * "当前选中哪个会话"：一条消息属于**它出处的那个会话**，与会话切换无关——
+   * 从大厅切到他处再切回来时，"当前选中"可能已经变了，而这条消息没变。
+   */
+  @Prop sessionId: string = '';
   /** 无障碍文案（父组件按"去标记纯文本"生成） */
   @Prop a11yText: string = '';
   /** 两个输入模态事实（策略模型的输入） */
@@ -123,6 +133,15 @@ export struct MessageRow {
         }
       }
       .width('100%')
+
+      // ── 图片（P0-3）：官方把图片画在气泡**之前**（用户靠右、助手靠左）──
+      if (this.item.images.length > 0) {
+        MessageImages({
+          sessionId: this.sessionId,
+          images: this.item.images,
+          alignEnd: this.item.speaker === Speaker.USER
+        })
+      }
 
       // ── 正文（Markdown；流式光标跟在句尾）──
       MarkdownRenderer({ text: this.item.streaming ? this.item.body + ' ▌' : this.item.body })

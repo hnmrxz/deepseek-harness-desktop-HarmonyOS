@@ -417,6 +417,36 @@ async function main() {
     `turns=${snap.statsTurns} steps=${snap.statsSteps} llm=${snap.statsLlmMs}ms 工具=${snap.statsToolMs}ms`
     + ` tokens: in=${snap.tokensUncachedInput} out=${snap.tokensOutput}`);
 
+  /*
+   * M2e：图片字节读取端点（P0-3）。
+   *
+   * 【为什么值得单独探一次】消息图片块只给不透明引用，字节必须走 `session/attachment`
+   * （官方 `ISession.readAttachment` 同一条路）。这条端点在兼容面上表里**一直有**，
+   * 但从未被调用过 —— 本仓反复踩过的坑就是"端点在表里 ≠ Host 真的实现它"。
+   * 这里用一个**不可能存在**的附件 id 去打一次，看真 Host 怎么回：
+   *   · 回 `gateway/*unknown*` ⇒ 端点没实现 ⇒ 界面必须走"这台 Host 不提供"的降级文案；
+   *   · 回业务错误（如 attachment 不存在）⇒ 端点实现着，用户看到的是"读不到这张图"。
+   * 两种情况都不算失败：**这一步要的是事实，不是通过**。
+   */
+  const attachmentArgs = compat.argsFor(compat.SESSION_ATTACHMENT_ENDPOINT, {
+    sessionId: hubSessionId ?? sessionId ?? 'no-such-session',
+    attachmentId: 'hdsh-selfcheck-no-such-attachment',
+  });
+  const attachmentReply = attachmentArgs === undefined
+    ? undefined
+    : await conn.call(compat.SESSION_ATTACHMENT_ENDPOINT, attachmentArgs);
+  const attachmentCode = attachmentReply === undefined || attachmentReply.ok
+    ? (attachmentReply === undefined ? '(兼容面缺参数契约)' : 'ok（不该发生：假 id 竟然读到了字节）')
+    : String(attachmentReply.error?.code ?? '?');
+  const endpointKnown = attachmentReply === undefined
+    ? false
+    : !/unknown|unsupported/i.test(attachmentCode) && attachmentReply.ok !== true;
+  step('M2 图片读取端点（session/attachment，用假 id 探真实行为）', true,
+    `code=${attachmentCode}`
+    + (endpointKnown
+      ? ' ⇒ 端点**已实现**（假 id 回业务错误，正是预期形态）'
+      : ' ⇒ 端点**未实现/未知**（界面走"该 Host 不提供图片读取端点"的降级文案）'));
+
   const unknown = snap.unknownEventTypes ?? [];
   step('M2 事件类型全部认识（unknownEventTypes 为空）', unknown.length === 0,
     unknown.length === 0 ? '（本机无模型，事件只到"已受理"层级）' : `未识别：${unknown.join(', ')}`);
