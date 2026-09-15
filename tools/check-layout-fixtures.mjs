@@ -59,6 +59,8 @@ const PURE_FILES = [
   'appstate/src/main/ets/model/TrajectoryDetail.ets',
   // 权限预设的呈现与切换规则（P7-6）：零依赖
   'appstate/src/main/ets/model/Permissions.ets',
+  // 应用内隐私与权限说明（P7-11）：零依赖
+  'appstate/src/main/ets/model/PrivacyDisclosure.ets',
   // 浮层回执归属（P2-8，E353）：零依赖
   'appstate/src/main/ets/model/Sheets.ets',
   // 设置编辑浮层的输入提示（P2-10）：零依赖
@@ -227,6 +229,7 @@ const SS = require2('./SessionSearch.js');
 const PF = require2('./PendingFocus.js');
 const TDT = require2('./TrajectoryDetail.js');
 const PM = require2('./Permissions.js');
+const PD = require2('./PrivacyDisclosure.js');
 const t = makeAsserter(selfTest);
 
 console.log('# 布局 fixture 门禁（四形态 + 断点边界 + 让步链）\n');
@@ -2092,6 +2095,29 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
     const hint = permissionUnavailableHint();
     t.eq('原因里点名了投影与命令两个事实',
       hint.includes('权限投影为空') && hint.includes('/permission'), true);
+  }
+  // ── P7-11：应用内隐私与权限说明（与 module.json5 由 tools/check-compliance.mjs 对账）──
+  {
+    const { PERMISSION_DISCLOSURES, DATA_PRACTICES, privacySummaryLine,
+      PRIVACY_STATEMENT_VERSION, PRIVACY_STATEMENT_DATE } = PD;
+
+    t.eq('申请的权限是两项（与 module.json5 对账，多一项就会红）', PERMISSION_DISCLOSURES.length, 2);
+    t.eq('权限名是完整的上游名',
+      PERMISSION_DISCLOSURES.map((p) => p.name).join(','),
+      'ohos.permission.INTERNET,ohos.permission.KEEP_BACKGROUND_RUNNING');
+    t.eq('每条权限都有用途说明（不允许出现"没有为什么"的权限）',
+      PERMISSION_DISCLOSURES.every((p) => p.purpose.length > 0), true);
+
+    t.eq('数据做法至少覆盖六条', DATA_PRACTICES.length >= 6, true);
+    t.eq('不含"不收集个人信息"这种空话式条目缺位（必须有这一条）',
+      DATA_PRACTICES.some((p) => p.title.includes('不收集个人信息')), true);
+    t.eq('每条数据做法都给出可核实的做法（不是口号）',
+      DATA_PRACTICES.every((p) => p.detail.length >= 10), true);
+
+    t.eq('摘要行带版本与日期', privacySummaryLine().includes(PRIVACY_STATEMENT_VERSION)
+      && privacySummaryLine().includes(PRIVACY_STATEMENT_DATE), true);
+    t.eq('摘要行点明"不收集个人信息"', privacySummaryLine().includes('不收集个人信息'), true);
+    t.eq('摘要行报出权限条数', privacySummaryLine().includes('权限 2 项'), true);
   }
 }
 

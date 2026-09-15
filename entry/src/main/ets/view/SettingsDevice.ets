@@ -12,14 +12,17 @@
  * 数据（`about` / `hosts`）由宿主给；**成对与撤销是副作用**（要拿平台能力与中枢），
  * 由回调交回宿主。
  */
-import { Fs, HostRecord, Radius, Sp } from 'appstate';
-import type { AboutInfo } from 'appstate';
+import { DATA_PRACTICES, Fs, HostRecord, PERMISSION_DISCLOSURES, Radius, Sp, Sz, privacySummaryLine } from 'appstate';
+import type { AboutInfo, PermissionDisclosure, PrivacyPoint } from 'appstate';
 
 @Component
 export struct SettingsDevice {
 
   /** 关于本机（只读事实） */
   @Prop about: AboutInfo;
+
+  /** 隐私与权限说明是否展开（只影响这一页显示 ⇒ 组件内状态） */
+  @State privacyOpen: boolean = false;
   /** 已记住的 Host */
   @Prop hosts: HostRecord[] = [];
 
@@ -107,8 +110,94 @@ export struct SettingsDevice {
           .padding(Sp.M)
           .borderRadius(Radius.M)
           .backgroundColor($r('sys.color.background_secondary'))
+
+          /*
+           * 隐私与权限说明（P7-11）。AppGallery 审核会看"应用里能不能看到隐私说明"；
+           * 内容不是宣传语，而是**能核实的做法**（无遥测 / 数据只在沙箱 / 只连回环 Host
+           * 或你自填的远端 / 不读设备标识 / 剪贴板只写不读 / 导出剔除敏感项）。
+           *
+           * 这一页与 `module.json5` 的权限清单由 `tools/check-compliance.mjs` 逐项对账 ——
+           * 单边改动（只改包里、或只改这一页）会让门禁红。
+           */
+          this.privacyRow()
     }
     .width('100%')
+  }
+
+  /** 隐私与权限说明（折叠块：默认收起，点开见数据做法与权限逐条） */
+  @Builder
+  privacyRow() {
+    Column({ space: Sp.XS }) {
+      Row({ space: Sp.S }) {
+        // 图标用本仓已在用的 doc_text：隐私说明本身就是一份说明文档
+        SymbolGlyph($r('sys.symbol.doc_text')).fontSize(16)   // token-exempt: 行内图标尺寸
+          .fontColor([$r('sys.color.font_secondary')])
+        Column({ space: 2 }) {
+          Text('隐私与权限说明')
+            .fontSize(Fs.BODY)
+            .width('100%')
+          Text(privacySummaryLine())
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.font_tertiary'))
+            .width('100%')
+            .maxLines(2)
+        }
+        .layoutWeight(1)
+        Text(this.privacyOpen ? '收起' : '展开')
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.brand'))
+      }
+      .width('100%')
+      .height(Sz.TOUCH_MIN)   // 44vp 命中区（E214 的教训：只挂 onClick 的文字按不准）
+      .onClick(() => {
+        this.privacyOpen = !this.privacyOpen;
+      })
+
+      if (this.privacyOpen) {
+        ForEach(DATA_PRACTICES, (p: PrivacyPoint) => {
+          Column({ space: 2 }) {
+            Text(p.title)
+              .fontSize(Fs.SECONDARY)
+              .width('100%')
+            Text(p.detail)
+              .fontSize(Fs.CAPTION)
+              .fontColor($r('sys.color.font_tertiary'))
+              .width('100%')
+          }
+          .width('100%')
+        }, (p: PrivacyPoint) => p.title)
+
+        Text(`申请的权限（共 ${PERMISSION_DISCLOSURES.length} 项）`)
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.font_tertiary'))
+          .width('100%')
+          .padding({ top: Sp.S })
+        ForEach(PERMISSION_DISCLOSURES, (d: PermissionDisclosure) => {
+          Column({ space: 2 }) {
+            Text(d.name)
+              .fontSize(Fs.CAPTION)
+              .width('100%')
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+            Text(d.purpose)
+              .fontSize(Fs.CAPTION)
+              .fontColor($r('sys.color.font_tertiary'))
+              .width('100%')
+          }
+          .width('100%')
+        }, (d: PermissionDisclosure) => d.name)
+
+        Text('完整隐私政策以应用市场提交的文本为准；本页是它的摘要，两者一致性由 tools/check-compliance.mjs 对账。')
+          .fontSize(Fs.CAPTION_XS)
+          .fontColor($r('sys.color.font_tertiary'))
+          .width('100%')
+          .padding({ top: Sp.S })
+      }
+    }
+    .width('100%')
+    .padding(Sp.M)
+    .borderRadius(Radius.M)
+    .backgroundColor($r('sys.color.background_secondary'))
   }
 
   @Builder

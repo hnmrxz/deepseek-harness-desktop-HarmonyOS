@@ -328,6 +328,7 @@ devecocli build（全量）                                                     
 | `hdsh-hosttrust` 记住 Host 与凭据 | 无 | `platform/system/HostStore` + `SecretStore` | `view/ConnectPane.ets` | 认证面 | DONE | DONE | DONE | DONE | DONE |
 | `hdsh-multiwindow` 多窗口共享单一连接 | 无（一个标签页一个连接） | `SessionHub` 单例 + `platform/runtime/RuntimeSingleton` | 窗口账本（`registerWindow`） | 1 条 mux + 1 条 `$events` | DONE | DONE | DONE | DONE | PARTIAL |
 | `hdsh-share` 系统分享 | 无 | `platform/system/ShareBoard.ets` | 消息/文件操作 | 无 | DONE | DONE | DONE | DONE | DONE |
+| `hdsh-privacy-disclosure` 应用内隐私与权限说明 | 无（Web 不做应用商店合规） | `model/PrivacyDisclosure.ets`（数据做法 6 条 + 权限 2 项 + 版本日期；**单一真值**） | `SettingsDevice.privacyRow`（设置 → 设备 → 隐私与权限说明，折叠块） | `module.json5` 的 `requestPermissions`（由 `tools/check-compliance.mjs` **逐项对账**） | DONE | DONE | DONE | DONE | DONE |
 | `hdsh-clipboard` 剪贴板 | 无 | `platform/system/Clipboard.ets`：**写**（`copyText` / `clearClipboard`）已接；**读**（`readText`）已实现但**未接线**，且需 `ohos.permission.READ_PASTEBOARD`（未声明） | 消息复制（多处 `copyText`） | 无 | DONE | DONE | DONE | DONE | PARTIAL |
 | `hdsh-window` 窗口记忆 | 无 | `platform/window/WindowMemory.ets` | 由 `EntryAbility` 驱动 | 无 | DONE | DONE | DONE | DONE | DONE |
 | `hdsh-shortcuts` 快捷键 | 无（Web 用浏览器快捷键） | `ui/Shortcuts.ets`（13 个规格，含不可绑定项标记） | `view/ShortcutKeys.ets` + `Index` 分派 | 无 | BOUNDARY | DONE | DONE | DONE | PARTIAL |
@@ -339,7 +340,7 @@ devecocli build（全量）                                                     
 
 | 状态 | 行数 |
 |---|---|
-| `DONE` | 13 |
+| `DONE` | 14 |
 | `PARTIAL` | 32 |
 | `BOUNDARY` | 3 |
 | `TODO` | 2 |
@@ -529,6 +530,7 @@ node tools/check-arkts-entry.mjs --self-test  # 判定器自检（8 个样例，
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| v1.38 | 2026-09-15 | **P7-11 应用内隐私与权限说明 + 上架合规对账门禁**：AppGallery 材料分两半（控制台里填的 / 应用里能看到的），而两半之间最容易出的问题是**漂移**（文档说两项权限，包里悄悄多一项）。新增 `model/PrivacyDisclosure.ets`（数据做法 6 条 + 权限 2 项 + 版本日期，**单一真值**）+ 设置→设备里的折叠块（与 `module.json5` 逐项对账）+ **第 10 道门禁** `tools/check-compliance.mjs`：① 权限清单双向对账（多一项/少一项都红）② 12 项**刻意不申请**的权限一旦出现即红（读剪贴板/位置/相机/麦克风/通讯录/媒体/Wi-Fi/跨设备…）③ 设置页必须真的渲染这两段（否则"应用里能看到"是空话）。门禁**注入式归真验证**：临时塞入 `READ_PASTEBOARD` ⇒ 红；还原 ⇒ 绿 |
 | v1.37 | 2026-09-15 | **P7-10 计划待审面板**：官方 `dsh-client-ui-user-questions` 的 `planReviewOf` 把带 `intent.kind=plan-review` 的**单题**请求换成计划面板（`计划待审` + 正文 + `确认执行`/`拒绝`/`去聊天里说`），**六条收窄规则**（单题 / 有 detail / 非多选 / 选项 ≤2 / approve 标签必须存在 / 其余至多一项当拒绝）—— 官方理由："意图只改变布局，绝不改变可达的答案"。**我们此前连 `intent` 都没投影** ⇒ 计划请求只能以通用题组出现。现在：投影 `intentKind`/`intentApprove` + 纯函数 `planReviewOf` + 面板（确认执行/拒绝=按**标签原文**作答；去聊天里说=上一轮的 `ASK_CANCELLED` 帧）。fixture 708 → **719 条**；接线门禁 22 → **23 项** |
 | v1.36 | 2026-09-15 | **P7-9 放弃整组提问（取证到位后落地）**：上一轮记的"`nav.cancel` 线上语义未取证"，这轮把三层证据读齐 —— `questionError()` 造 `UserQuestionError`/`ASK_CANCELLED` → `pending.cancel()` 抛出 → 网关把"监听器抛错"编码成 `{kind:"rejected", error:{name,message,code}}`。我们发**同一帧**（`Wire.questionCancelledError`），并补上官方文案的「放弃整组问题」按钮；失败时**不移走卡片**（移走会让用户以为已取消）。接线门禁 21 → **22 项**。**提问这条线至此没有"未取证"的缺口**（只剩计划复核与卡片的收起/展开） |
 | v1.35 | 2026-09-15 | **P7-7 提问的两条官方规则取证并落地**：① **推荐标记编码在标签后缀里**（官方 `parseRecommendedLabel` 正则，半角/全角括号、大小写不敏感）：显示剥掉后缀 + 「推荐」徽标，**提交仍送原标签**；② **答案编码三条规则**（官方 `submitDrafts`）：单选 + 自定义 ⇒ `selected: []` + `custom`，多选 ⇒ 并存，跳过 ⇒ 空选择不带 custom —— 我们此前"一律都送"是错的。两条都进纯模型（`parseOptionLabel` / `encodeQuestionAnswers`）+ fixture；`nav.cancel` 的**取证结论**（官方让提问以 `ASK_CANCELLED` 失败，不是 delegate）已写进矩阵，但**不实现**（发哪种 `$events/result` 帧未取证）。fixture 696 → **708 条** |
