@@ -57,6 +57,8 @@ const PURE_FILES = [
   'appstate/src/main/ets/model/PendingFocus.ets',
   // 轨迹事件详情（P7-4）：零依赖（只 import 同为零依赖的 Trajectory / Present）
   'appstate/src/main/ets/model/TrajectoryDetail.ets',
+  // 权限预设的呈现与切换规则（P7-6）：零依赖
+  'appstate/src/main/ets/model/Permissions.ets',
   // 浮层回执归属（P2-8，E353）：零依赖
   'appstate/src/main/ets/model/Sheets.ets',
   // 设置编辑浮层的输入提示（P2-10）：零依赖
@@ -224,6 +226,7 @@ const PRT = require2('./PluginRowsText.js');
 const SS = require2('./SessionSearch.js');
 const PF = require2('./PendingFocus.js');
 const TDT = require2('./TrajectoryDetail.js');
+const PM = require2('./Permissions.js');
 const t = makeAsserter(selfTest);
 
 console.log('# 布局 fixture 门禁（四形态 + 断点边界 + 让步链）\n');
@@ -1995,6 +1998,35 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
     t.eq('未处理的题不进答案清单', answerableDrafts(list).length, 2);
     t.eq('跳过的题进清单（selected 为空）', answerableDrafts(list)[1].selected.length, 0);
     t.eq('草稿本身不被修改（纯函数）', list.length, 3);
+  }
+  // ── P7-6：权限预设的呈现与切换规则（官方 permission-presets）──
+  {
+    const { permissionChipLabel, permissionSwitchable, permissionCommand,
+      permissionChoices, permissionUnavailableHint, PERMISSION_UNAVAILABLE } = PM;
+
+    // ① 这台 Host 有没有能力（官方 `available` 判据的同义物）
+    t.eq('投影里没有选项 ⇒ 不可切换', permissionSwitchable([]), false);
+    t.eq('投影里有选项 ⇒ 可切换', permissionSwitchable(['default', 'full']), true);
+
+    // ② chip 文案：没能力给**官方原词**「不可用」，有能力给当前值
+    t.eq('没能力 ⇒ 官方那句「不可用」', permissionChipLabel('', []), PERMISSION_UNAVAILABLE);
+    t.eq('「不可用」与官方字典逐字一致', PERMISSION_UNAVAILABLE, '不可用');
+    t.eq('有能力 + 有当前值 ⇒ 显示当前值', permissionChipLabel('full', ['default', 'full']), 'full');
+    t.eq('有能力但没选 ⇒ 说"未设置"，不拿第一个选项冒充当前值',
+      permissionChipLabel('', ['default', 'full']), '未设置');
+
+    // ③ 切换走的是**命令通道**（官方原文形式 `/permission <presetId>`）
+    t.eq('命令形式与官方一致', permissionCommand('full'), '/permission full');
+
+    // ④ 选项 → 单选列表（label 用选项原文：上游按 id 匹配，界面给人看的也是同一个词）
+    const choices = permissionChoices(['default', 'full']);
+    t.eq('选项条数', choices.length, 2);
+    t.eq('value/label 都是选项原文', `${choices[1].value}/${choices[1].label}`, 'full/full');
+
+    // ⑤ 不可用时必须**说清原因**（不是"还没加载"，是"这台 Host 没有"）
+    const hint = permissionUnavailableHint();
+    t.eq('原因里点名了投影与命令两个事实',
+      hint.includes('权限投影为空') && hint.includes('/permission'), true);
   }
 }
 

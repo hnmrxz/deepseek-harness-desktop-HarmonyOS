@@ -106,6 +106,7 @@ import {
 import type { SessionEventShape, SlotBinding } from 'dshcompat';
 import { projectSessionList } from '../model/SessionList';
 import { localOnlySearchNote, mergeSessionSearch } from '../model/SessionSearch';
+import { permissionCommand, permissionSwitchable } from '../model/Permissions';
 import type { SessionSearchHit, SessionSearchLocal, SessionSearchRequest, SessionSearchRow } from '../model/SessionSearch';
 import {
   notifyInputForPending,
@@ -3053,6 +3054,29 @@ export class SessionHub {
    * 宿主返回的那条 `gateway/arguments-invalid` 就是唯一能告诉我们正确形状的东西——
    * 客户端不猜着"修正"。
    */
+  /**
+   * **切换当前会话的权限预设**（P7-6；官方 `dsh-client-ui-permission-presets`）。
+   *
+   * 【为什么不是新端点】官方切权限走的是命令：`live.command('/permission ' + option.id)`；
+   * 本仓同样复用 `executeCommand`。所以这里只多一层"没有就如实说"的前置判断：
+   * 权限投影为空（`permissionsOptions` 一条都没有）时**直接不发请求**，回一句本地回执 ——
+   * 免得用户点了以后收到宿主那句 `unknown command`，把"这台 Host 没这个能力"
+   * 误读成"我们发错了请求"。
+   */
+  async selectSessionPermission(presetId: string): Promise<ActionNotice> {
+    if (presetId.length === 0) {
+      return noticeWith('permission.no-preset', 'action', 'session.permission');
+    }
+    if (!permissionSwitchable(this.permissionsOptions)) {
+      return notice('permission.unavailable');
+    }
+    const outcome: ActionNotice = await this.executeCommand(permissionCommand(presetId));
+    if (outcome.code === 'command.executed') {
+      this.record(`permission switch → ${presetId}`);
+    }
+    return outcome;
+  }
+
   async executeCommand(name: string): Promise<ActionNotice> {
     if (!this.unaryReady) {
       return noticeWith('offline', 'action', 'commands.execute');

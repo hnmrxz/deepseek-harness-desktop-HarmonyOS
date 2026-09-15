@@ -83,6 +83,10 @@ export struct ConversationPane {
   @Prop planActive: boolean = false;
   @Prop planPending: boolean = false;
   @Prop permissionLabel: string = '';
+  @Prop permissionSwitchableNow: boolean = false;
+  @Prop permissionHint: string = '';
+  onPickPermission: () => void = () => {
+  };
 
   onTogglePlan: () => void = () => {
   };
@@ -975,6 +979,9 @@ export struct ConversationPane {
         planActive: this.planActive,
         planPending: this.planPending,
         permissionLabel: this.permissionLabel,
+        permissionSwitchableNow: this.permissionSwitchableNow,
+        permissionHint: this.permissionHint,
+        onPickPermission: this.onPickPermission,
         onPickModel: this.onPickModel,
         onTogglePlan: this.onTogglePlan,
         onReferenceQuery: this.onReferenceQuery,

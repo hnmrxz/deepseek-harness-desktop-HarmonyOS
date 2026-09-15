@@ -366,6 +366,43 @@ async function main() {
     + (grew ? '' : '（**本机没有配模型 ⇒ 不会有回答回流**，属预期；有模型的机器上这里应看到轨迹增长）')
     + (snap.lastError.length > 0 ? ` lastError=${snap.lastError}` : ''));
 
+  /*
+   * M2d：权限切换的前置事实（P7-6）。
+   *
+   * 【为什么先探后做】官方切当前会话权限走的**不是专用端点**，而是 `/permission <presetId>`
+   * 这条**命令**（`dsh-client-ui-permission-presets` 的 `live.command('/permission ' + option.id)`）；
+   * 而"新会话默认权限"是**设置项**（`settings.general.item` 里 id=permission 的那一行，
+   * 由设置 schema 驱动）。所以要先问真 Host 三件事：投影里有没有权限取值、命令表里有没有
+   * `/permission`、设置里有没有声明对应的命名空间 —— 这三条决定了界面上能不能给按钮。
+   */
+  await hub.refreshCommands();
+  const cmdSnap = hub.snapshot();
+  const cmdNames = [];
+  for (let i = 0; i < cmdSnap.commands.length; i++) {
+    cmdNames.push(cmdSnap.commands[i].name);
+  }
+  const hasPermissionCommand = cmdNames.indexOf('/permission') >= 0;
+  step('M2 权限：投影取值 + 命令可用性', true,
+    `current=${connSnap.permissionsCurrent.length > 0 ? connSnap.permissionsCurrent : '(空)'}`
+    + ` options=${connSnap.permissionsOptions.length}`
+    + ` · /permission 命令=${hasPermissionCommand ? '在' : '不在'}（命令表 ${cmdNames.length} 条）`);
+
+  await hub.refreshSettings();
+  const setSnap = hub.snapshot();
+  const permNs = [];
+  for (let i = 0; i < setSnap.settings.length; i++) {
+    const g = setSnap.settings[i];
+    for (let j = 0; j < g.items.length; j++) {
+      if (g.items[j].key.indexOf('permission') >= 0) {
+        permNs.push(g.items[j].key);
+      }
+    }
+  }
+  step('M2 权限：设置里有没有"新会话默认权限"项', true,
+    permNs.length === 0
+      ? `没有（设置命名空间 ${setSnap.settings.length} 组；官方那一项由 Host 的 schema 声明，端侧不造假入口）`
+      : `有：${permNs.join(', ')}`);
+
   /* M2c：会话搜索（官方 sidebar 的 search）—— 真 Host 上**要么给内容命中，要么明确说不支持** */
   await hub.searchSessions('ping');
   const searchSnap = hub.snapshot();

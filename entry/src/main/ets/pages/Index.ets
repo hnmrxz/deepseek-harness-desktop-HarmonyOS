@@ -67,6 +67,10 @@ import {
   LayoutMode,
   showsConversation,
   deliverablesOf,
+  permissionChipLabel,
+  permissionChoices,
+  permissionSwitchable,
+  permissionUnavailableHint,
   itemsOfKind,
   DrawerState,
   enterSession,
@@ -160,7 +164,7 @@ import {
  * 原因：`HubSnapshot` / `HubSubscriber` 在 appstate 里是 `export type` 导出的类型，
  * 与值导入分开写更贴近 ArkTS 的类型/值导入区分。
  */
-import type { AttachOutcome, PendingAnswerDraft, PluginInventoryTotals, CredentialWriteResult, HubSnapshot, HubSubscriber, InputModality, LayoutDecision, LayoutInput, ModalityEvidence, NavState, NavigationState, OverlayState, PluginRow, SessionJob, SessionSearchRow, SessionStatsInput, SettingChoice, SettingInputResult, SettingItem, SettingsKeyParts, SettingsWriteResult, TabSelection } from 'appstate';
+import type { AttachOutcome, PendingAnswerDraft, PermissionChoice, PluginInventoryTotals, CredentialWriteResult, HubSnapshot, HubSubscriber, InputModality, LayoutDecision, LayoutInput, ModalityEvidence, NavState, NavigationState, OverlayState, PluginRow, SessionJob, SessionSearchRow, SessionStatsInput, SettingChoice, SettingInputResult, SettingItem, SettingsKeyParts, SettingsWriteResult, TabSelection } from 'appstate';
 import { emitter } from '@kit.BasicServicesKit';
 import { parseJson } from 'connection';
 import { EVENT_HOST_CONNECTED, EVENT_KEY_HOST_TOKEN, EVENT_KEY_HOST_URL } from 'platform';
@@ -190,6 +194,9 @@ import { harmonySheetOptions, NativeButton } from '../view/NativePrimitives';
 // 因此这里现在只用它的"仓库/状态"部分，不声称任何"已启动"。
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BundledInstallResult, DshHost, HostStartResult, HostStatus, OpResult, RuntimeProbe, hostStateIsTransient } from 'hostruntime';
+
+/** 权限浮层的哨兵键名（与设置项的 key 空间不重叠；必须在所有 import 之后，ArkTS 不允许 import 前置语句） */
+const PERMISSION_CHOICE_KEY: string = 'hdsh.permission';
 
 /**
  * 把紧凑 JSON 美化以便人读写；失败时原样返回。
@@ -2460,6 +2467,18 @@ struct Index {
   private applyChoice(value: string): void {
     const key: string = this.choosingKey;
     this.choosing = undefined;
+    /*
+     * 权限预设：这张浮层被两件事共用（写设置项 / 切当前会话权限），用**哨兵键名**分流。
+     * 切权限走命令通道，回执按既有 `noticeText` 显示。
+     */
+    if (key === PERMISSION_CHOICE_KEY) {
+      SessionHub.shared().selectSessionPermission(value).then((n: ActionNotice) => {
+        this.attachNotice = this.noticeText(n);
+      }).catch(() => {
+        this.attachNotice = '切换权限失败：请查看诊断页。';
+      });
+      return;
+    }
     // 本机偏好走端侧持久化 + 立即生效；Host 项走 `settings/mutate`。
     // 分流判据是"这一项在不在 Host 分组里"——与本机偏好分组的存在无关，
     // 因为 Host 分组在未连接时本来就是空的。
@@ -2868,6 +2887,11 @@ struct Index {
     panelRegistry: this.panelRegistry,
     pending: this.pending,
     permissionCurrent: this.permissionCurrent,
+    // 权限 chip（P7-6）：显示文案/可否切换都按模型算好，视图只读结论
+    permissionLabel: permissionChipLabel(this.permissionCurrent, this.permissionOptions),
+    permissionSwitchableNow: permissionSwitchable(this.permissionOptions),
+    permissionHint: permissionUnavailableHint(),
+    onPickPermission: () => this.openPermissionPicker(),
     pickAndAttach: () => this.pickAndAttach(),
     planActive: this.planActive,
     planPending: this.planPending,
@@ -2948,6 +2972,23 @@ struct Index {
    * Host 等的是**一个**答复值 `{answers:[{id,selected,custom?}…]}`（`dshcompat`/`docs/11`），
    * 逐题各发一次会让"第一次就结掉、后面的答案没处去" ⇒ 界面攒齐草稿，这里一次交上去。
    */
+  private openPermissionPicker(): void {
+    this.choosingLabel = '权限';
+    this.choosingKey = PERMISSION_CHOICE_KEY;
+    this.choosingCurrent = this.permissionCurrent;
+    /*
+     * `ChoiceSheet` 吃的是 `SettingChoice`；权限列表来自 `Permissions.permissionChoices`
+     * （自带同形状的类型，避免把 Settings 拉进零依赖层）⇒ 在这里**显式**转一次。
+     * ArkTS 禁结构化类型，所以这一步本来就必须逐字段写，不是多余的样板。
+     */
+    const picked: PermissionChoice[] = permissionChoices(this.permissionOptions);
+    const out: SettingChoice[] = [];
+    for (let i = 0; i < picked.length; i++) {
+      out.push({ value: picked[i].value, label: picked[i].label });
+    }
+    this.choosing = out;
+  }
+
   private answerPending(item: PendingItem, drafts: PendingAnswerDraft[]): void {
     if (!this.hubConnected) {
       return;
@@ -3607,6 +3648,16 @@ struct Index {
     }
     if (n.code === 'command.no-name') {
       return '未选择要执行的命令。';
+    }
+    /*
+     * 权限预设（P7-6）。两条回执都要**说清是"这台 Host 没有"**，而不是"操作失败"：
+     * 官方在同一情形下显示的就是「不可用」（`unavailable`），并且它连入口都不给。
+     */
+    if (n.code === 'permission.unavailable') {
+      return '这台 Host 未提供权限预设（权限投影为空、命令表里也没有 /permission），当前只能查看、无法切换。';
+    }
+    if (n.code === 'permission.no-preset') {
+      return '没有可选的权限预设。';
     }
     if (n.code === 'model.selected') {
       return `本会话已改用「${n.params.model}」。`;

@@ -93,7 +93,18 @@ export struct Composer {
    * `permission-presets` 行），所以这里**如实只显示当前生效值**——不做一个点了没反应的假入口。
    * 空串表示中枢还没读到，此时不显示该 chip（而不是显示一个"未知"）。
    */
+  /**
+   * 权限 chip 的**显示文案**（宿主用 `permissionChipLabel` 算好：有值给值，
+   * 没能力给官方那句「不可用」）——视图不自己判，只读结论。
+   */
   @Prop permissionLabel: string = '';
+  /** 这台 Host 能不能切权限（宿主用 `permissionSwitchable(permissionsOptions)` 算） */
+  @Prop permissionSwitchableNow: boolean = false;
+  /** 不能切时的原因（写进无障碍文案） */
+  @Prop permissionHint: string = '';
+  /** 点权限 chip（宿主开单选浮层 → `/permission <id>`） */
+  onPickPermission: () => void = () => {
+  };
 
   /** 文本变化 */
   onDraftChange: (text: string) => void = () => {
@@ -380,15 +391,33 @@ export struct Composer {
         }
       })
 
-      // ── 权限模式：**只读状态**，不是按钮 ──
-      // 用 disabled 的原语表达，是因为它既不该看起来可点、也不该被当成"暂时不可用的动作"。
-      // 真正的切换端点尚未接线（矩阵 permission-presets 行为 PARTIAL），所以不做假入口。
+      /*
+       * ── 权限模式：**能切就切，不能切就说"不可用"**（P7-6，对齐官方 permission-presets）──
+       *
+       * 官方把 `/permission` 装饰成 `popupSelect`：选中后执行 `/permission <presetId>`；
+       * 而这台 Host 没有这个能力时，它显示的是官方字典里的 `unavailable`（「不可用」），
+       * 连入口都不给。我们此前一律 `disabled: true` 挂着「权限：X（只读…）」——
+       * 有能力的 Host 上白白少一个功能，没能力的 Host 上又看不出为什么点不了。
+       *
+       * 现在按 `permissionSwitchable(permissionsOptions)` 分两种呈现：
+       *   · 有能力 ⇒ 可点的 chip，点了开单选浮层（复用既有 `ChoiceSheet`），选中后走
+       *     `/permission <id>` 命令通道；
+       *   · 没能力 ⇒ 仍然不可点，但文案是官方那句「不可用」，无障碍里写清"这台 Host 没有"。
+       */
       if (this.permissionLabel.length > 0) {
         NativeChip({
           label: `权限：${this.permissionLabel}`,
-          disabled: true,
+          active: false,
+          disabled: !this.permissionSwitchableNow,
           maxWidth: 160,
-          a11y: `当前权限模式：${this.permissionLabel}（只读，暂不支持在此切换）`
+          a11y: this.permissionSwitchableNow
+            ? `当前权限模式：${this.permissionLabel}，点击切换`
+            : `权限：${this.permissionLabel}。${this.permissionHint}`,
+          onTap: () => {
+            if (this.permissionSwitchableNow) {
+              this.onPickPermission();
+            }
+          }
         })
       }
 

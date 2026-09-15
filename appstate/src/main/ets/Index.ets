@@ -95,6 +95,9 @@ export { sessionContextLine, workspaceNameOf } from './model/SessionContext';
 // 轨迹条目的事件详情（P7-4，对齐官方 details.* 的字段对）
 export { TRAJECTORY_DETAIL_TITLE, itemKindLabel, trajectoryDetailRows } from './model/TrajectoryDetail';
 export type { DetailRow } from './model/TrajectoryDetail';
+// 权限预设的呈现与切换规则（P7-6，对齐官方 permission-presets）
+export { PERMISSION_UNAVAILABLE, PERMISSION_UNSET, permissionChipLabel, permissionChoices, permissionCommand, permissionSwitchable, permissionUnavailableHint } from './model/Permissions';
+export type { PermissionChoice } from './model/Permissions';
 // 提问组（P7-5）：整组题目 + 逐题草稿 + 官方提交拦阻文案
 export { answerableDrafts, draftAnswered, questionIndexStep, questionNavLabel, submitBlockedText } from './model/Trajectory';
 export type { PendingAnswerDraft, PendingQuestion } from './model/Trajectory';

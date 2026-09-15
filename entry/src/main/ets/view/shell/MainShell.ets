@@ -87,6 +87,14 @@ export interface MainShellFacade {
   panelRegistry: PanelRegistry;
   pending: PendingItem[];
   permissionCurrent: string;
+  /** 权限 chip 的显示文案（宿主用 `permissionChipLabel` 算好） */
+  permissionLabel: string;
+  /** 这台 Host 能不能切权限 */
+  permissionSwitchableNow: boolean;
+  /** 不能切时的原因（无障碍文案） */
+  permissionHint: string;
+  /** 点权限 chip（宿主开单选浮层 → `/permission <id>`） */
+  onPickPermission: () => void;
   pickAndAttach: () => Promise<void>;
   planActive: boolean;
   planPending: boolean;
@@ -332,7 +340,10 @@ export struct MainShell {
         notice: this.f.attachNotice,
         planActive: this.f.planActive,
         planPending: this.f.planPending,
-        permissionLabel: this.f.permissionCurrent,
+        permissionLabel: this.f.permissionLabel,
+        permissionSwitchableNow: this.f.permissionSwitchableNow,
+        permissionHint: this.f.permissionHint,
+        onPickPermission: this.f.onPickPermission,
         onDraftChange: (text: string) => {
           this.f.setDraft(text);
         },
