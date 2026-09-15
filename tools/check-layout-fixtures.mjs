@@ -1252,11 +1252,12 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   const right = reg.descriptors(PanelLocation.RIGHTBAR).map((d) => d.id);
   // P3-1：右栏当前**唯一有内容**的面板是"详情"（sections 清单）；官方那六个候选登记着但不可用
   // P3-2/P3-3：预览与文件面板接上了（呈现分别与工作区页签的预览/文件树共用同一份组件）
-  t.eq('右栏可用面板：详情 + 文件 + 预览', right.join(','), 'right.detail,right.files,right.preview');
+  t.eq('右栏可用面板：详情 + 文件 + 交付物 + 预览', right.join(','),
+    'right.detail,right.files,right.deliverables,right.preview');
   t.eq('官方候选仍登记在清单里（内容视图未做的按 E110 不进选择集）',
     rightbarPanels().length, 7);
-  t.eq('可用面板恰好 3 个（未接内容的四个候选不可用）',
-    rightbarPanels().filter((d) => d.available()).length, 3);
+  t.eq('可用面板恰好 4 个（未接内容的三个候选不可用）',
+    rightbarPanels().filter((d) => d.available()).length, 4);
   t.eq('默认右栏面板 = 详情（firstAvailable）', defaultRightPanel(reg), 'right.detail');
   t.eq('初值也指向详情（宿主不调 defaultRightPanel 时也不会落到空面板）',
     initialNavigationState().selectedRightPanel, 'right.detail');
@@ -1386,10 +1387,10 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   t.eq('三栏：右栏并排成栏', triple.rightbar, 'column');
   t.eq('浮层形态下侧栏不占布局宽度', sidebarOccupiesLayout('single'), false);
   t.eq('rail 形态下侧栏占布局宽度', sidebarOccupiesLayout('double'), true);
-  // 侧栏 2（工作区 / 设置；核心席位按 E110 不可用）、右栏 3（详情 / 文件 / 预览）—— 可用清单与形态无关，只与注册表有关
+  // 侧栏 2（工作区 / 设置；核心席位按 E110 不可用）、右栏 4（详情 / 文件 / 交付物 / 预览）—— 可用清单与形态无关，只与注册表有关
   t.eq('**三种形态的面板清单一致**（信息架构不随设备变）',
     JSON.stringify(reg.descriptors(PanelLocation.SIDEBAR).length) + '/' + JSON.stringify(reg.descriptors(PanelLocation.RIGHTBAR).length),
-    '2/3');
+    '2/4');
 
   console.log('  ok    注册表（注册/排序/可用性/沉底/校验）+ 导航状态（页面与面板分离）+ 迁移桥含往返 + 四形态轨道');
 }
@@ -1460,6 +1461,24 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   t.eq('纯文本去标记：用于无障碍/降级', plainTextOf(parseMarkdown('**粗**与`码`')), '粗与码');
 
   console.log('  ok    24 条断言：标题 / 围栏（含未闭合） / 列表 / 引用 / 分隔线 / 段落 / 行内五标记 / 未配对原样 / 转义 / 边界');
+
+  // ── P3-4：按种类筛选（右栏「交付物」等面板的判据）──
+  {
+    const { itemsOfKind, deliverablesOf, makeItem, TrajectoryKind } = TJ;
+    const a = makeItem('a', TrajectoryKind.DELIVERABLE, 1000);
+    const b = makeItem('b', TrajectoryKind.TOOL, 2000);
+    const c = makeItem('c', TrajectoryKind.DELIVERABLE, 3000);
+    const list = [a, b, c];
+    t.eq('按种类筛：只留交付物且保序', deliverablesOf(list).map((x) => x.id).join(','), 'a,c');
+    t.eq('按种类筛：筛选不改原数组', list.length, 3);
+    // 同 id 会被流式 merge 多次：筛完应当只剩一条（"有几件事"而不是"更新了几次"）
+    const dupA = makeItem('a', TrajectoryKind.DELIVERABLE, 4000);
+    dupA.fileName = 'later';
+    t.eq('同 id 只留最后一条（流式 merge 去重）',
+      deliverablesOf([a, b, dupA]).map((x) => x.fileName).join(','), 'later');
+    t.eq('没有该种类 ⇒ 空数组（面板据此显示空态，而不是显示空气泡）',
+      itemsOfKind([b], TrajectoryKind.SUBAGENT).length, 0);
+  }
 }
 
 t.done();

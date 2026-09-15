@@ -271,7 +271,8 @@ Composer 的官方字段：Model / Reasoning effort / Permission / Plan / @ Refe
 | 初值与回落一起收口 | ✅ `initialNavigationState().selectedRightPanel` 与 `defaultRightPanel()` 的兜底都指到「详情」——否则宿主不调 `defaultRightPanel` 时右栏会落到一个不可用的 id 上（**面板分派之后**这等于空栏） |
 | 「预览」面板 + 面板切换器（P3-2） | ✅ **已落地**：预览呈现从 `WorkspacePane` 的第三列抽成 **`view/FilePreviewPane.ets`**（含空态 / 头部「投喂」/ 代码等宽正文 / 过大与二进制两档空态）——右栏的「预览」面板与工作区页签**共用同一份**（抄一份必然走样）。注册表里 `right.preview` 从此 `available: true`。右栏新增**切换器**（`NativeChip` 行，**只在可用面板 ≥2 时出现**：只有一个面板时它是噪声）|
 | 「文件」面板（P3-3） | ✅ **已落地**：文件树（展开 / 选中 / 交付物标记）从 `WorkspacePane` 抽成 **`view/FileTreePane.ets`**（133 行，带 `FileTreeFacade` 门面），右栏「文件」面板与工作区页签**共用同一份**；`right.files` 从此 `available: true`。空态文案仍由宿主按三种事实分档给（"没选工作区 / 目录下没会话 / 列目录失败"）。`WorkspacePane` **464 → 274 行**（预览 + 文件树两轮搬出）|
-| 下一步（P3-4…） | ① 「轨迹」「工具」「子代理」「交付物」四个候选的内容视图（素材在 `ConversationPane` 的对应 builder 里，需各自搬成面板组件）② 侧边面板滑入动画、面板自身拖拽调宽（P0 遗留）③ 单栏 Sheet 里要不要也放切换器（目前 Sheet 只显示当前面板，待真机看需要）|
+| 「交付物」面板（P3-4） | ✅ **已落地**：交付物卡（图标 / 文件名 / 大小 / 动作行）从 `ConversationPane` 抽成 **`view/DeliverableCard.ets`**（86 行），右栏「交付物」面板与会话过程流里那张卡**共用同一份**；`right.deliverables` 从此可用。筛选是**纯模型**（新增 `itemsOfKind` / `deliverablesOf`：保序 + **同 id 只留最后一条**——过程流里同一条会被流式 merge 多次，「有几件事」不能等于「更新了几次」；4 条断言）|
+| 下一步（P3-5…） | ① 剩余三个候选：**子代理**（`subagentItem` 很小，顺手搬）、**工具**（`toolItem` + 改动对照，素材最多）、**轨迹**（与主区「轨迹视图」是同一份列表，要先想清楚两者的差别）② 侧边面板滑入动画、面板自身拖拽调宽（P0 遗留）③ 单栏 Sheet 里要不要也放切换器（待真机看）|
 
 ### P4 Settings 域
 `SettingsShell`（General / Models / Plugins / Plugin Inventory / …）。**不再往 `SettingsPane.ets` 里堆内容。**

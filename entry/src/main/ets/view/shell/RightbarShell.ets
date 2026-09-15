@@ -26,10 +26,11 @@
  * 而不是继续吃一份 sections）。
  */
 
-import { DetailPresentation, DetailSection, Fs, HarmonyIconSize, HarmonySpacing, PANEL_RIGHT_DETAIL, PANEL_RIGHT_FILES, PANEL_RIGHT_PREVIEW, Sp, Sz } from 'appstate';
-import type { FileNode, FilePreview, PanelDescriptor } from 'appstate';
+import { DetailPresentation, DetailSection, Fs, HarmonyIconSize, HarmonySpacing, PANEL_RIGHT_DELIVERABLES, PANEL_RIGHT_DETAIL, PANEL_RIGHT_FILES, PANEL_RIGHT_PREVIEW, Sp, Sz } from 'appstate';
+import type { FileNode, FilePreview, PanelDescriptor, TrajectoryItem } from 'appstate';
 import { DetailPane } from '../DetailPane';
 import { FilePreviewPane } from '../FilePreviewPane';
+import { DeliverableCard } from '../DeliverableCard';
 import { FileTreePane } from '../FileTreePane';
 import type { FileTreeFacade } from '../FileTreePane';
 import { NativeChip } from '../NativePrimitives';
@@ -65,6 +66,8 @@ export struct RightbarShell {
   @Prop preview?: FilePreview;
   /** 「文件」面板的内容与回调（树 / 选中项 / 空态文案 / 两个回调，打包成一个门面） */
   @Prop files: FileTreeFacade;
+  /** 「交付物」面板的内容（宿主已按种类筛好；空数组 = 空态） */
+  @Prop deliverables: TrajectoryItem[] = [];
 
   /** 切换右栏面板（宿主经注册表校验后落到 `selectedRightPanel`） */
   onSelectPanel: (panelId: string) => void = () => {
@@ -77,6 +80,44 @@ export struct RightbarShell {
   };
   onLineTap: (section: string, text: string) => void = () => {
   };
+
+  /**
+   * 交付物面板的内容：一张张 `DeliverableCard`（与会话过程流共用同一份卡）。
+   *
+   * 【空态为什么必然存在】"本次会话还没有交付物"是常态而非异常（不可能靠 `available` 关掉面板：
+   * 注册表在启动时建一次，而交付物是随会话变化的）。所以这里给一句如实的空态，
+   * 而不是"面板可点、点进去空空如也"。
+   */
+  @Builder
+  deliverablesBody() {
+    if (this.deliverables.length === 0) {
+      Column({ space: Sp.S }) {
+        Text('本次会话还没有交付物')
+          .fontSize(Fs.SECONDARY)
+          .fontColor($r('sys.color.font_secondary'))
+        Text('助手产出文件时，会在这里列出')
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.font_tertiary'))
+          .textAlign(TextAlign.Center)
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .justifyContent(FlexAlign.Center)
+      .padding(Sp.M)
+    } else {
+      List({ space: Sp.S }) {
+        ForEach(this.deliverables, (item: TrajectoryItem) => {
+          ListItem() {
+            DeliverableCard({ item: item })
+          }
+        }, (item: TrajectoryItem) => item.id)
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .padding(Sp.S)
+      .scrollBar(BarState.Auto)
+    }
+  }
 
   /** 并排（真右栏）与侧边浅层面板共用一套带标题行的形态 */
   @Builder
@@ -125,6 +166,8 @@ export struct RightbarShell {
             this.onLineTap(section, text);
           }
         })
+      } else if (this.panelId === PANEL_RIGHT_DELIVERABLES) {
+        this.deliverablesBody()
       } else if (this.panelId === PANEL_RIGHT_FILES) {
         // 与工作区页签的文件树**同一份**呈现（FileTreePane）
         FileTreePane({ f: this.files })
@@ -155,6 +198,8 @@ export struct RightbarShell {
             this.onLineTap(section, text);
           }
         })
+      } else if (this.panelId === PANEL_RIGHT_DELIVERABLES) {
+        this.deliverablesBody()
       } else if (this.panelId === PANEL_RIGHT_FILES) {
         // 与工作区页签的文件树**同一份**呈现（FileTreePane）
         FileTreePane({ f: this.files })

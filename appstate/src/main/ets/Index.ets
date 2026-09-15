@@ -20,7 +20,9 @@ export {
   TrajectoryKind,
   indexOfItem,
   makeItem,
-  mergeTrajectoryItem
+  mergeTrajectoryItem,
+  itemsOfKind,
+  deliverablesOf
 } from './model/Trajectory';
 export type {
   PendingChoice,

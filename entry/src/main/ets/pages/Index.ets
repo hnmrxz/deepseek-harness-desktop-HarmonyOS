@@ -65,6 +65,7 @@ import {
   HarmonyType,
   LayoutMode,
   showsConversation,
+  deliverablesOf,
   DrawerState,
   enterSession,
   selectRightPanel,
@@ -1982,6 +1983,7 @@ struct Index {
       panels: this.panelRegistry.descriptors(PanelLocation.RIGHTBAR),
       preview: this.preview,
       files: this.buildRightFilesFacade(),
+      deliverables: deliverablesOf(this.trajectoryItems),
       onSelectPanel: (panelId: string) => {
         this.selectRightPanelById(panelId);
       },
@@ -2014,6 +2016,8 @@ struct Index {
     onSelectRightPanel: (panelId: string) => this.selectRightPanelById(panelId),
     onAttachWorkspaceFile: (node: FileNode) => this.attachWorkspaceFileToComposer(node),
     rightFiles: this.buildRightFilesFacade(),
+    // 交付物面板只要『已筛好的那一类条目』——筛选是纯模型（deliverablesOf，有断言），视图不做 for
+    rightDeliverables: deliverablesOf(this.trajectoryItems),
     mobileDrawerOpen: this.nav.mobileDrawer === DrawerState.OPEN,
     onOpenDrawer: () => this.setDrawerOpen(true),
     onCloseDrawer: () => this.setDrawerOpen(false),

@@ -184,6 +184,41 @@ export function indexOfItem(items: TrajectoryItem[], id: string): number {
   return -1;
 }
 
+/**
+ * 按种类筛出条目（P3-4：右栏面板要的就是"本次会话的某一类条目"）。
+ *
+ * 【为什么放在模型里】右栏的「交付物」「工具」「子代理」三个面板做的都是同一件事：
+ * **把过程流按种类筛一遍**。筛法（保序、按 id 去重、跳过程序性条目）是可以被断言的东西，
+ * 而"视图里写一个 for 循环"既测不到、又会在三个面板里各写一遍（写三遍必然走样）。
+ *
+ * @param items 过程流（通常是当前会话的 `trajectoryItems`）
+ * @param kind 想要的种类
+ */
+export function itemsOfKind(items: TrajectoryItem[], kind: TrajectoryKind): TrajectoryItem[] {
+  const out: TrajectoryItem[] = [];
+  const seen: string[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const item: TrajectoryItem = items[i];
+    if (item.kind !== kind) {
+      continue;
+    }
+    // 同 id 只留最后一条：过程流里同一条会被反复 merge（流式更新），去重后才是"有几件事"
+    const at: number = seen.indexOf(item.id);
+    if (at >= 0) {
+      out[at] = item;
+      continue;
+    }
+    seen.push(item.id);
+    out.push(item);
+  }
+  return out;
+}
+
+/** 本次会话的交付物（右栏「交付物」面板用；保序） */
+export function deliverablesOf(items: TrajectoryItem[]): TrajectoryItem[] {
+  return itemsOfKind(items, TrajectoryKind.DELIVERABLE);
+}
+
 /** 审批风险等级（D3 §3.4：危险动作视觉权重反转） */
 export enum RiskLevel {
   NORMAL = 'normal',
