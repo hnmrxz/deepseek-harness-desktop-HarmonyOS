@@ -113,6 +113,35 @@ AppFrame
 | **被写的值** | **必须 `setX(v: T): void`**，并把搬走代码里的 `this.f.x = v` 改写成 `this.f.setX(v)` |
 | 被调用的组件/其它 builder | 它们**已经是组件**（如 `hubBanner` → `HubBanner`）⇒ 直接渲染组件，不走门面 |
 
+**生成脚本已留档**：`dist/scratch/mig.py`（已含两次实操修掉的全部坑：括号配平、装饰器同搬、导入差集、
+深度扫赋值、setter 生成、委托保参、`build()`、子组件与纯函数导入）。**下一轮直接改它**，不要重写。
+（放在 `dist/` 下——它已被 gitignore，属工具而非产物；`/tmp` 会被别的进程干扰。）
+
+**⚠️ 第二次实操的收敛结果（2026-09-15）：只剩 4 个"UI 组件语法"错误**
+
+按修正后的顺序（写点分析 → setter → 生成）**真的把第一束搬完了**，编译从 100+ 错误收敛到 **4 个**，
+且它们同型：
+
+```
+'HubBanner({ … })'    does not meet UI component syntax   ← 在 @Builder workspaceHub 里
+'PendingPane({ … })'  does not meet UI component syntax   ← 在 @Builder workspaceHub 里
+'WorkspacePane({ … })' does not meet UI component syntax  ← 在 @Builder tabContent 里
+'SettingsPane({ … })' does not meet UI component syntax   ← 在 @Builder tabContent 里
+```
+
+也就是说：**"在被搬进组件的 `@Builder` 里实例化别的 `@Component`"这条写法没通过 ArkUI 检查**。
+已排除的猜想：导入路径（已从 `'../X'` 改成 `'./X'`，错误不变）、缺 `build()`（已加）、
+`@Prop` 门面类型（编译器没有就此报错）。
+
+**下一轮先从这 4 个错误入手**，候选排查方向（按可能性排序）：
+1. `@Builder` **带参数**时（`tabContent(compact: boolean)` / `workspaceHub(compact: boolean)`）
+   其内部是否允许实例化自定义组件 —— 试着把这些子组件挪到一个**无参 `@Builder`** 或直接放进 `build()`；
+2. 自定义组件调用是否必须**独占一行**或以 `})` 结束语句（当前是 `})` 后无分号，样式与 Index 一致）；
+3. 把 `HubBanner`/`PendingPane`/`WorkspacePane`/`SettingsPane` 从"组件"改成**通过门面渲染**的形态
+   （即它们也走 `@Builder`？—— 但那条路已被 E118 否掉）⇒ 更可能是 1。
+
+**本轮同样回退**（保住绿灯）。但两次实操把可变因素收敛到"一处 ArkUI 约束"，不是"整条路线不成立"。
+
 **下一轮的执行顺序**（已按本轮踩到的坑修正）：
 1. 用脚本先做**写点分析**（列出 `this.X = …` 的目标），据此把成员分成"读 / 写 / 方法"三类；
 2. 生成门面时：写成员生成 `setX`，搬走的代码里把赋值改写成 setter 调用；
