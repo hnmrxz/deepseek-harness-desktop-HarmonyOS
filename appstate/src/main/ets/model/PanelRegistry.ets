@@ -204,9 +204,10 @@ export const PANEL_RIGHT_DETAIL: string = 'right.detail';
  * 它们排在官方四段**之后**，并在 `owner` 上标成 `'hdsh'`：谁是官方对齐项、谁是端侧补充，
  * 一眼可分（不给它们编一个"官方分区名"）。
  *
- * 【为什么把"插件清单"拆成独立分区】它此前是插件段里的一个子页签（`config` / `list`）。
- * 官方把它作为**独立分区**（`settings-plugin-inventory`，只读的 Cordis Loader 清单）——
- * 只读清单与"可配置的插件卡"是两件事，拆开后各自的入口、排序与可用性都能被注册表统一管。
+ * 【为什么"插件清单"又并回插件分区（E214，用户实测）】此前按官方拆成两个分区，
+ * 但端侧只有**一份** `PluginItem[]` 投影 ⇒ 两个分区渲染的是同一批行（只差一个过滤框与一个徽标），
+ * 用户看到的是"同一张表印两遍"。官方能拆是因为它有**两个数据源**（配置卡片 vs Cordis Loader 清单）；
+ * 我们复现不了那个区分，就**不该假装**有两个分区。过滤框与徽标合并进「插件」。
  */
 export function settingsSections(): PanelDescriptor[] {
   return [
@@ -216,8 +217,6 @@ export function settingsSections(): PanelDescriptor[] {
       label: '模型', order: 20, available: () => true },
     { id: 'settings.plugins', location: PanelLocation.SETTINGS, owner: 'settings',
       label: '插件', order: 30, available: () => true },
-    { id: 'settings.plugin-inventory', location: PanelLocation.SETTINGS, owner: 'settings',
-      label: '插件清单', order: 40, available: () => true },
     { id: 'settings.core', location: PanelLocation.SETTINGS, owner: 'hdsh',
       label: '核心', order: 50, available: () => true },
     { id: 'settings.presets', location: PanelLocation.SETTINGS, owner: 'hdsh',

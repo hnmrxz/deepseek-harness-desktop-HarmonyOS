@@ -30,7 +30,6 @@ import {
 } from 'appstate';
 import type { CoreViewState, PanelDescriptor } from 'appstate';
 import { SettingRow } from './SettingRow';
-import { SettingsInventory } from './SettingsInventory';
 import { SettingsGeneral } from './SettingsGeneral';
 import { SettingsDevice } from './SettingsDevice';
 import { SettingsModels } from './SettingsModels';
@@ -259,11 +258,6 @@ export struct SettingsPane {
             })
           } else if (this.section === 'settings.plugins') {
             this.pluginsTab()
-          } else if (this.section === 'settings.plugin-inventory') {
-            // 只读清单独立成分区（官方 `settings-plugin-inventory`）：它是"这家宿主装了什么"，
-            // 与"哪些插件可以配置"是两件事（此前是插件段里的一个子页签）
-            // 只读清单归 SettingsInventory（官方 settings-plugin-inventory）
-            SettingsInventory({ plugins: this.plugins })
           } else {
             // 设备段归 SettingsDevice（P4-4 拆出的域组件）
             SettingsDevice({

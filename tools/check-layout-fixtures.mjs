@@ -1392,13 +1392,19 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
     sidebarPanelOfMainPanel(mainPanelOfSidebarPanel(PANEL_SIDEBAR_SETTINGS)), PANEL_SIDEBAR_SETTINGS);
   t.eq('沉底门槛是个明确的数（视图不写 900 这种字面量）', SIDEBAR_PINNED_ORDER >= 100, true);
 
-  // ── P4-1：设置域分区（官方四段在前、本仓特有四项在后）──
+  /*
+   * ── P4-1：设置域分区（官方对齐项在前、本仓特有四项在后）──
+   * 【E214 更正】官方是四段（通用 / 模型 / 插件 / 插件清单），但端侧只有**一份**插件投影
+   * ⇒ 两个分区渲染同一批行（用户实测："插件和插件清单功能重复"）。已并成一个「插件」分区，
+   * 故这里是**三段 + 四项 = 7**。矩阵 `settings-plugin-inventory` 行据此改判并登记。
+   */
   const sections = reg.descriptors(PanelLocation.SETTINGS).map((d) => d.id);
-  t.eq('官方四段排在最前（通用 / 模型 / 插件 / 插件清单）', sections.slice(0, 4).join(','),
-    'settings.general,settings.models,settings.plugins,settings.plugin-inventory');
-  t.eq('本仓特有四项排在后面（核心 / 预设 / 技能 / 设备）', sections.slice(4).join(','),
+  t.eq('官方对齐项排在最前（通用 / 模型 / 插件）', sections.slice(0, 3).join(','),
+    'settings.general,settings.models,settings.plugins');
+  t.eq('本仓特有四项排在后面（核心 / 预设 / 技能 / 设备）', sections.slice(3).join(','),
     'settings.core,settings.presets,settings.skills,settings.device');
-  t.eq('分区总量 8（官方 4 + 本仓 4）', settingsSections().length, 8);
+  t.eq('分区总量 7（对齐项 3 + 本仓 4；官方那段"插件清单"已并入插件，见 E214）',
+    settingsSections().length, 7);
   t.eq('owner 能区分"官方对齐项"与"端侧补充"',
     settingsSections().filter((d) => d.owner === 'hdsh').map((d) => d.id).join(','),
     'settings.core,settings.presets,settings.skills,settings.device');
@@ -1407,9 +1413,15 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
     'settings.skills');
   t.eq('**不可用的分区切不过去**（注册表校验对设置域同样生效）',
     reg.canSelect(PanelLocation.SETTINGS, 'settings.nope'), false);
-  // 「插件清单」曾经是插件段里的子页签，现在必须是**独立分区**（官方 settings-plugin-inventory）
-  t.eq('插件清单是独立分区（不再是子页签）',
-    sections.indexOf('settings.plugin-inventory') >= 0 && sections.indexOf('settings.plugins') >= 0, true);
+  /*
+   * 「插件清单」的历史：子页签 → 独立分区（P4-1，对齐官方）→ **并回「插件」（E214）**。
+   * 三次都不是反复横跳：前两次是为了对齐官方，第三次是**端侧只有一份投影**这个事实的结论
+   * （两个分区渲染同一批行，用户实测报"功能重复"）。这条断言钉住"只有插件一个分区、
+   * 清单关键字不再作为分区 id 存在"，防止有人再按官方表把它拆回去。
+   */
+  t.eq('插件只有一个分区（清单已并入，E214）',
+    sections.indexOf('settings.plugins') >= 0 && sections.indexOf('settings.plugin-inventory') < 0, true);
+  t.eq('清单关键字仍可作为关键字存在，但不再是分区', sections.indexOf('settings.plugin-inventory'), -1);
 
   // ── 四形态：信息架构不变，只变呈现 ──
   const single = shellTracksOf('single');

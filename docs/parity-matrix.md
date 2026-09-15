@@ -308,7 +308,7 @@ devecocli build（全量）                                                     
 | `settings-general` 通用段 | 通用段 + 外壳触发/头部内容 + 设置词典 + 版本化欢迎通知 | 设置词典按官方译名覆盖（含 `locale.preference`） | `SettingsPane` 通用页 | `settings/*` | DONE | DONE | DONE | DONE | PARTIAL |
 | `settings-models` 模型设置 | 模型设置 + 凭据联接 + 共享 onboarding 弹窗 | `SessionHub.setCredential` / `unsetCredential` / `refreshCredentials` | `SettingsPane` 模型页 + 凭据浮层 | `credentials/*` | DONE | DONE | DONE | DONE | DONE |
 | `settings-plugins` 插件设置 | 插件段：功能自有页签 + 可配置宿主插件卡 | 用户行叠加（E91：种子 + 用户行，重启生效） | `SettingsPane` 插件页（启停 + 恢复默认） | profile 文件 + 插件清单 | DONE | DONE | DONE | DONE | DONE |
-| `settings-plugin-inventory` 插件清单页签 | 只读 Cordis Loader 清单页签 | `model/Core.ets`（`classifyPlugin`）+ `tools/scan-core-plugins.mjs` | `SettingsPane` 插件清单 | 核心树扫描 | DONE | DONE | DONE | DONE | DONE |
+| `settings-plugin-inventory` 插件清单页签 | 只读 Cordis Loader 清单页签 | **已并入「插件」分区（E214）**：官方分两个分区靠的是**两个数据源**（可配置插件卡 vs Cordis Loader 清单），端侧只有**一份** `PluginItem[]` 投影 ⇒ 两个分区渲染同一批行，用户实测原话「插件和插件清单功能重复」 | `SettingsPlugins`（过滤框 + 可安装性徽标 + 两段说明） | 核心树扫描 + `classifyPlugin` | DONE | DONE | DONE | DONE | PARTIAL |
 
 ### 4.5 主题与本地化
 
@@ -339,8 +339,8 @@ devecocli build（全量）                                                     
 
 | 状态 | 行数 |
 |---|---|
-| `DONE` | 14 |
-| `PARTIAL` | 31 |
+| `DONE` | 13 |
+| `PARTIAL` | 32 |
 | `BOUNDARY` | 3 |
 | `TODO` | 2 |
 | **合计** | **50** |
@@ -401,6 +401,7 @@ devecocli build（全量）                                                     
 | `workspace` / `directory-picker-browse` | 真实文件树受 `workspaceFileScopeId` 阻塞（D4 已登记的未决来源） | 先确认该 id 的来源（协议事实）再接线 |
 | `directory-picker-native` | 手机不支持系统文件夹选择器（`DocumentSelectMode` 仅 2in1） | 能力边界：手机走 `pickDocument` 回退路径；**不删功能、不假装可用** |
 | `settings-general` | ① **P4-1：设置分区已进注册表**（`PanelLocation.SETTINGS` + `settingsSections()`；官方四段在前、本仓特有四项标 `owner: 'hdsh'` 在后）；分区状态回归 `NavigationState.settingsSection`（视图里的 `@State tab` 已删除）② 版本化欢迎通知未确认 | P2 剩余：欢迎通知；P4-2：设置页按域拆组件 |
+| `settings-plugin-inventory` | **分区已并入「插件」（E214，按用户实测）**：官方两个分区靠两个数据源，端侧只有一份 `PluginItem[]` ⇒ 同一批行印两遍。合并后这一能力面在**我们的**形态里由「插件」一页承担（过滤 + 可安装性徽标 + 只读说明）；若将来端侧能拿到 Cordis Loader 的独立清单（与可配置插件卡不同源），再把分区拆回去。**下一步**：真机复核 D22 第 4/5 条（只有一个插件分区、过滤实时生效） |
 | `theme` | ⓪ **沉浸光感（API 26 空间化材质）暂不可用**：决策为 `targetSdkVersion` 保持 `6.1.1(24)`（2026-09-14），代价是材质只能用系统阴影表达；升级路径与「升级后只用在常驻外壳、不要全页滥用」的功耗提醒写在 `HarmonyMaterial` 注释里。① 无 `--dsw-*` 等价的**可声明令牌层**——现在是「token 常量 + 棘轮门禁」，不是可被主题切换的声明式变量；无 visual swatch ② **存量裸值 58 处**已被棘轮冻结，其中**图标字号 46 处**（12/14/16/18/20/22/28/32/36/40 共十档）、**圆角 5/9**、**颜色字面量 14 处**（`Color.Gray/Red/Green` 集中在 `Poc1.ets`，另有 `badge` 的 `Color.White`）需要一次设计收敛——**收敛会改变视觉，必须真机验收**，故不塞进机械替换 | P1 已做：token 补齐（`Border.HAIRLINE` / `Radius.XS` / `Fs.CAPTION_XS`）+ **机械替换 36 处**（数值不变 ⇒ 视觉无变化）+ 棘轮门禁。P2：图标档位与圆角的视觉收敛（真机）+ 声明式令牌层 |
 | `client-locale` | 语言目录可扩展性未确认（官方支持扩展目录） | P2 |
 | `hdsh-diag` | 诊断页 `home=` 仍显示桩值 `D:/work`（D4 待收口第 2 项） | 核实 `runDiagnostics()` 与 `getHostHome()` 空值路径 |
@@ -528,6 +529,7 @@ node tools/check-arkts-entry.mjs --self-test  # 判定器自检（8 个样例，
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| v1.30 | 2026-09-15 | **E214 用户实测三报：设置页三处真缺陷**。① **「配置」全部点不动**：`SettingsModels` 的候选提供方那一行点「配置」把 `expandedProvider` 设成 `g.title`，而展开判定比的是**提供方 id**，且候选**不在** `providerGroups()` 循环里 ⇒ 点了什么都不会发生；改为按 id 展开，展开体与提供方卡片**共用同一个** `providerEditor`。② **模型列表重复**：底部「各提供方的模型（点选设为新会话默认）」与提供方展开里的模型目录是同一份 `g.models`、同样语义 ⇒ 删掉底部那份（E213「先搬后拆」的"拆"），语义提示搬进 `providerEditor`。③ **「插件」与「插件清单」功能重复**：端侧只有一份投影 ⇒ 合并为一个「插件」分区（过滤框 + 可安装性徽标 + 两段说明），撤掉 `settings.plugin-inventory`（矩阵该行改判 PARTIAL 并登记）。另修一类**真机"点不动"的物理原因**：只挂 `.onClick` 的 `Text` 命中区只有那几行字，新增 `actionLabel` 统一 44vp（`Sz.TOUCH_MIN`）｜
 | v1.29 | 2026-09-15 | **P5-7 剪贴板与平台层的零消费者收口（E370）**：`hdsh-clipboard` 登记册上写着"**不允许挂着不动**"，本轮逐个拍板 —— 删掉 `readText`（应用没有主动读剪贴板的需求：用户粘贴走**系统文本域自己的**菜单；程序化读要么声明 `READ_PASTEBOARD` 与"不申请特殊权限"冲突，要么用安全控件 `PasteButton` —— 它不能自由改样式、被截断就不授权，工具行在 360vp 手机上已经很挤）与 `clearClipboard`（注释写着"含凭据的复制后清理"，但全仓没有复制凭据的入口，复核三处 `copyText` 均不含凭据）。同时把**只写不读**的窗口台账接上：`runtimeFacts()` 接进诊断报告（窗口数 / 标签 / 运行时长 / runtimeId）—— D1 §7.7.5b 要的"窗口数 >1 且只有一条连接"这条证据此前在应用里取不出来。死代码门禁规则⑤扫描面 **appstate → appstate + platform**（两层都是自研机制；`connection`/`dshcompat`/`Wire.ets` 是上游协议词汇表，不扫）| 
 | v1.28 | 2026-09-15 | **P5-6 插件启停的文本层搬出来并补上测试（E369）**：`serializeUserRows` / `parseUserRows` 是「启停能不能活过重启」的唯一契约（入口脚本把该文件**原样**拼进 `cordis.patch.yml`），却**一行测试都没有** —— `check-plugin-toggle.mjs` 自己手写那段 YAML，走的是入口脚本那一侧。测不了的原因是 `PluginRows.ets` 依赖三个 `@kit.*`。⇒ 文本层搬进**零依赖**的 `core/PluginRowsText.ets`，`PluginRows.ets` 只留文件 I/O 并原样再导出（对外面不变）。fixture **601 → 621 条**：输出形状 / **往返不变式**（`parse(serialize(rows))` 逐条相同且 `ignored === 0`）/ 容错计数 / `disabled` fail-closed 取值 / 文件名与入口脚本一致。顺手改掉 `hostruntime/Index.ets` 头部"核心切换/回滚尚未实现"的过期描述。另**登记未动**：`appstate` 之外的零消费者导出实测 **40 个** |
 | v1.27 | 2026-09-15 | **P5-5 零消费者导出清理（E368）**：把"有没有消费者"的量法换到**导出符号**上（全仓出现 ≤2 次 = 只有声明 + barrel）。一次清掉 **25 个**：`speakable` / `sessionSubtitle` / `toolStateIsProblem` / `LARGE_OUTPUT_BYTES` / `ConnectionBanner` / 6 个 `SETTINGS_*` 常量（设置分区 id 的真值在 `PanelRegistry` 的字面量里）/ `emptyPanelList` / `PanelList` / `InAppNotice` / `modifierLabel` / `MODIFIER_LABEL` / `breakpointThresholds` / `shortcutBindingLabel` / `HarmonyMaterial` / `harmonyTokenFor` / `sessionListPayload` / `projectSettingsGroups`。三个"有意保留"写 `dead-exempt:`：`shortcutsForDesktop`（帮助浮层未做）/ `keyEventSpecs`（按键判定走 KeyCode）/ `WEB_TOKEN_MAP`（文档化数据）。**量法的三个坑**（都实测过）：语料必须含 `tools/`（否则误报 19 处）、`model/Wire.ets` 整文件排除（协议词汇表）、必须剥注释（几个符号的"引用"只在注释散文里）。死代码门禁 4 → **5 条判定**，规则⑤对当前树归真命中 5 处后清零；新增审计 `tools/audit-zero-consumer-exports.mjs`；顺带删掉 `ToolCard.diffOf` 里永远走不到的那三行 |

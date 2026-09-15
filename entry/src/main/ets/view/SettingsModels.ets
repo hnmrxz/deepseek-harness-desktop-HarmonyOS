@@ -248,76 +248,130 @@ export struct SettingsModels {
            * 留着它只会让"默认"与"本会话"两件事在同一页上混着，看不出在哪改哪一个。
            */
 
-          Column({ space: Sp.XS }) {
-            /*
-             * E212（修复 E209 引入的回退）：**模型行必须可见**。
-             *
-             * E209 把本区块数据源置空、打算"以后再搬进提供方展开"，结果模型目录在界面上整段消失
-             * ——这是比"位置不理想"严重得多的缺陷。故**先恢复渲染**（数据源回到 `providerGroups()`），
-             * 标题改成能说清语义的「各提供方的模型（点选设为新会话默认）」；
-             * 搬进提供方展开（官方形态）作为后续改进，**先搬后拆、不再先拆后搬**。
-             */
-            Text('各提供方的模型（点选设为新会话默认）')
+          /*
+           * 【E214：这里原本还有一份「各提供方的模型（点选设为新会话默认）」】
+           * 用户实测后明确了：**它和提供方展开里的模型目录是同一份东西**（同一 `g.models`、
+           * 同样的「当前」标记与点选语义），一页上出现两遍 ⇒ 删掉这一份，
+           * models 只在**提供方展开**里出现（E213 先是"搬"，本轮完成"拆"）。
+           * 语义提示（点选 = 设新会话默认、推理强度按模型选）跟着搬进 `providerEditor`。
+           */
+    }
+    .width('100%')
+  }
+
+  /**
+   * 行内动作的可点区域。
+   *
+   * 【为什么不能只给 `Text` 挂 `.onClick`】真机上"点了没反应"十有八九是**点不中**：
+   * 只挂 onClick 的 `Text` 命中区就是那几行字（约 28×14vp），远小于本仓自己的
+   * `Sz.TOUCH_MIN`（44vp）纪律。这里统一包一层：44vp 高 + 左右内边距 + 居中，
+   * 并按可用状态决定是否响应（不可用时**照常显示原因**，不是把入口藏掉）。
+   */
+  @Builder
+  actionLabel(label: string, enabled: boolean, a11y: string, onTap: () => void) {
+    Row() {
+      Text(label)
+        .fontSize(Fs.CAPTION)
+        .fontColor(enabled ? $r('sys.color.brand') : $r('sys.color.font_tertiary'))
+    }
+    .height(Sz.TOUCH_MIN)
+    .padding({ left: Sp.S, right: Sp.S })
+    .alignItems(VerticalAlign.Center)
+    .borderRadius(Radius.S)
+    .accessibilityText(a11y)
+    .onClick(() => {
+      if (enabled) {
+        onTap();
+      }
+    })
+  }
+
+  /**
+   * 提供方的编辑区：**可编辑设置字段 + 该提供方的模型目录**。
+   *
+   * 【为什么抽成一份】"已配置的提供方卡片"与"可添加的提供方"都要展开同一份内容。
+   * 两处各写一遍必然走样（本仓的老账），而且**候选那条路此前根本没有落点**：
+   * 它的「配置」只把 `expandedProvider` 设成 `g.title`，而展开判定比的是**提供方 id**，
+   * 且候选不在 `providerGroups()` 的循环里 ⇒ 点了什么都不会发生（用户报的"全部点不动"）。
+   */
+  @Builder
+  providerEditor(group: SettingGroup | undefined, models: ModelOption[]) {
+    if (group === undefined) {
+      Text('宿主没有为这个提供方暴露可编辑的设置分区——端侧只显示它确实报告的东西，不造一个空编辑器。')
+        .fontSize(Fs.CAPTION)
+        .fontColor($r('sys.color.font_tertiary'))
+        .width('100%')
+    } else {
+      ForEach(group.items, (item: SettingItem) => {
+        SettingRow({
+          item: item,
+          onToggleSetting: (key: string, value: boolean) => {
+            this.onToggleSetting(key, value);
+          },
+          onPickChoice: (key: string, current: string) => {
+            this.onPickChoice(key, current);
+          },
+          onEditText: (it: SettingItem) => {
+            this.onEditText(it);
+          },
+          onEditStruct: (it: SettingItem) => {
+            this.onEditStruct(it);
+          },
+          onResetSetting: (key: string) => {
+            this.onResetSetting(key);
+          }
+        })
+      }, (item: SettingItem) => item.key)
+    }
+    if (models.length > 0) {
+      Text(`模型目录 · ${models.length}`)
+        .fontSize(Fs.CAPTION)
+        .fontColor($r('sys.color.font_tertiary'))
+        .width('100%')
+      ForEach(models, (m: ModelOption) => {
+        Column({ space: 2 }) {
+          Row({ space: Sp.S }) {
+            Text(m.modelName.length > 0 ? m.modelName : m.modelId)
+              .fontSize(Fs.SECONDARY)
+              .layoutWeight(1)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+            if (m.provider === this.selection.provider && m.modelId === this.selection.modelId) {
+              Text('当前')
+                .fontSize(Fs.CAPTION)
+                .fontColor($r('sys.color.brand'))
+            }
+            if (m.efforts.length > 0) {
+              Text(`${m.efforts.length} 档推理`)
+                .fontSize(Fs.CAPTION)
+                .fontColor($r('sys.color.font_tertiary'))
+            }
+          }
+          .width('100%')
+          if (m.description.length > 0) {
+            Text(m.description)
               .fontSize(Fs.CAPTION)
               .fontColor($r('sys.color.font_tertiary'))
               .width('100%')
-            ForEach(this.providerGroups(), (g: ModelProviderGroup) => {
-              Column({ space: Sp.XS }) {
-                Row({ space: Sp.S }) {
-                  Text(g.providerName.length > 0 ? g.providerName : g.provider)
-                    .fontSize(Fs.SECONDARY)
-                    .fontWeight(FontWeight.Medium)
-                    .layoutWeight(1)
-                  Text(`${g.models.length} 个模型`)
-                    .fontSize(Fs.CAPTION)
-                    .fontColor($r('sys.color.font_tertiary'))
-                }
-                .width('100%')
-
-                ForEach(g.models, (m: ModelOption) => {
-                  Column({ space: 2 }) {
-                    Row({ space: Sp.S }) {
-                      Text(m.modelName.length > 0 ? m.modelName : m.modelId)
-                        .fontSize(Fs.SECONDARY)
-                        .layoutWeight(1)
-                      if (m.provider === this.selection.provider && m.modelId === this.selection.modelId) {
-                        Text('当前')
-                          .fontSize(Fs.CAPTION)
-                          .fontColor($r('sys.color.brand'))
-                      }
-                      if (m.efforts.length > 0) {
-                        Text(`${m.efforts.length} 档推理`)
-                          .fontSize(Fs.CAPTION)
-                          .fontColor($r('sys.color.font_tertiary'))
-                      }
-                    }
-                    .width('100%')
-                    if (m.description.length > 0) {
-                      Text(m.description)
-                        .fontSize(Fs.CAPTION)
-                        .fontColor($r('sys.color.font_tertiary'))
-                        .width('100%')
-                        .maxLines(3)
-                        .textOverflow({ overflow: TextOverflow.Ellipsis })
-                    }
-                  }
-                  .width('100%')
-                  .padding(Sp.M)
-                  .borderRadius(Radius.M)
-                  .backgroundColor($r('sys.color.background_secondary'))
-                  // 点一行模型 = 把它设为**默认模型**（写 agent-default-model；官方的设置页也是这个语义：
-                  // "当前会话用哪个"在输入区切换，"默认用哪个"在这里定）
-                  .onClick(() => {
-                    this.onSelectModel(m.provider, m.modelId, this.effortFor(m));
-                  })
-                }, (m: ModelOption) => `${m.provider}/${m.modelId}`)
-              }
-              .width('100%')
-            }, (g: ModelProviderGroup) => g.provider)
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
           }
-          .width('100%')
+        }
+        .width('100%')
+        .padding(Sp.S)
+        .borderRadius(Radius.S)
+        .backgroundColor($r('sys.color.background_primary'))
+        // 点一行模型 = 设为**新会话默认**（写 agent-default-model）。与官方设置页同语义：
+        // "当前会话用哪个"在输入区切换，"默认用哪个"在这里定。
+        .onClick(() => {
+          this.onSelectModel(m.provider, m.modelId, this.effortFor(m));
+        })
+      }, (m: ModelOption) => `${m.provider}/${m.modelId}`)
+      Text('点选 = 设为**新会话默认**（写 `agent-default-model`）；推理强度属于**模型的能力**，在该默认设置项的整值编辑里按模型选择。')
+        .fontSize(Fs.CAPTION)
+        .fontColor($r('sys.color.font_tertiary'))
+        .width('100%')
     }
-    .width('100%')
   }
 
   @Builder
@@ -350,27 +404,33 @@ export struct SettingsModels {
           this.candidateQuery = value;
         })
       ForEach(this.filteredCandidates(), (id: string) => {
-        Row({ space: Sp.S }) {
-          SymbolGlyph($r('sys.symbol.plus_circle')).fontSize(16)   // token-exempt: 行内图标尺寸
-            .fontColor([$r('sys.color.brand')])
-          Text(id)
-            .fontSize(Fs.SECONDARY)
-            .layoutWeight(1)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-          Text(this.providerSettingGroup(id) === undefined ? '设置分区未声明' : '配置')
-            .fontSize(Fs.CAPTION)
-            .fontColor(this.providerSettingGroup(id) === undefined
-              ? $r('sys.color.font_tertiary')
-              : $r('sys.color.brand'))
-            .onClick(() => {
-              const g: SettingGroup | undefined = this.providerSettingGroup(id);
-              if (g === undefined) {
-                return;
-              }
-              // 展开该提供方的「自定义设置」分区（官方：一次只展开一张卡，字段由宿主声明）
-              this.expandedProvider = g.title;
-            })
+        Column({ space: Sp.XS }) {
+          Row({ space: Sp.S }) {
+            SymbolGlyph($r('sys.symbol.plus_circle')).fontSize(16)   // token-exempt: 行内图标尺寸
+              .fontColor([$r('sys.color.brand')])
+            Text(id)
+              .fontSize(Fs.SECONDARY)
+              .layoutWeight(1)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+            /*
+             * 【这里曾经是个死键（用户报「全部点不动」）】原先点它把 `expandedProvider`
+             * 设成 `g.title`，而展开判定比的是**提供方 id**；更要紧的是候选**不在**
+             * `providerGroups()` 的循环里 ⇒ 就算键对了也没有落点。现在：键用 id，
+             * 展开内容用与提供方卡片**同一份** `providerEditor`。
+             */
+            this.actionLabel(
+              this.expandedProvider === id ? '收起' : (this.providerSettingGroup(id) === undefined ? '查看' : '配置'),
+              true,
+              `展开或收起 ${id} 的设置`,
+              () => {
+                this.expandedProvider = this.expandedProvider === id ? '' : id;
+              })
+          }
+          .width('100%')
+          if (this.expandedProvider === id) {
+            this.providerEditor(this.providerSettingGroup(id), this.modelsOfProvider(id))
+          }
         }
         .width('100%')
         .padding(Sp.M)
@@ -397,10 +457,9 @@ export struct SettingsModels {
               .textOverflow({ overflow: TextOverflow.Ellipsis })
           }
           .layoutWeight(1)
-          Text('配置密钥')
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.brand'))
-            .onClick(() => {
+          this.actionLabel('配置密钥', true,
+            `配置 ${g.providerName.length > 0 ? g.providerName : g.provider} 的密钥`,
+            () => {
               this.onAuthorizeCredential(this.providerKeyRefOf(g.provider));
             })
         }
@@ -421,86 +480,7 @@ export struct SettingsModels {
         })
 
         if (this.expandedProvider === g.provider) {
-          if (this.providerSettingGroup(g.provider) === undefined) {
-            Text('宿主没有为这个提供方暴露可编辑的设置分区——端侧只显示它确实报告的东西，不造一个空编辑器。')
-              .fontSize(Fs.CAPTION)
-              .fontColor($r('sys.color.font_tertiary'))
-              .width('100%')
-          } else {
-            ForEach((this.providerSettingGroup(g.provider) as SettingGroup).items, (item: SettingItem) => {
-              SettingRow({
-              item: item,
-              onToggleSetting: (key: string, value: boolean) => {
-                this.onToggleSetting(key, value);
-              },
-              onPickChoice: (key: string, current: string) => {
-                this.onPickChoice(key, current);
-              },
-              onEditText: (it: SettingItem) => {
-                this.onEditText(it);
-              },
-              onEditStruct: (it: SettingItem) => {
-                this.onEditStruct(it);
-              },
-              onResetSetting: (key: string) => {
-                this.onResetSetting(key);
-              }
-            })
-            }, (item: SettingItem) => item.key)
-          }
-          /*
-           * E213（先搬后拆的第一步："搬"）：**该提供方的模型目录进到展开区里**。
-           *
-           * 官方 `dsh-client-ui-settings-models` 的形态就是"一行一个提供方，展开才是它的模型与设置"。
-           * 本轮先在展开区**新增**这份渲染（原区块暂不动，等这里验证无误再收）——
-           * 这是 E212 换来的纪律：**先搬后拆，不先拆后搬**。
-           * 语义：模型名 + 「当前」标记 + 档位数量 + 描述；**点选 = 设为新会话默认**。
-           */
-          Text(`模型目录 · ${g.models.length}`)
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_tertiary'))
-            .width('100%')
-          ForEach(g.models, (m: ModelOption) => {
-            Column({ space: 2 }) {
-              Row({ space: Sp.S }) {
-                Text(m.modelName.length > 0 ? m.modelName : m.modelId)
-                  .fontSize(Fs.SECONDARY)
-                  .layoutWeight(1)
-                  .maxLines(1)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
-                if (m.provider === this.selection.provider && m.modelId === this.selection.modelId) {
-                  Text('当前')
-                    .fontSize(Fs.CAPTION)
-                    .fontColor($r('sys.color.brand'))
-                }
-                if (m.efforts.length > 0) {
-                  Text(`${m.efforts.length} 档推理`)
-                    .fontSize(Fs.CAPTION)
-                    .fontColor($r('sys.color.font_tertiary'))
-                }
-              }
-              .width('100%')
-              if (m.description.length > 0) {
-                Text(m.description)
-                  .fontSize(Fs.CAPTION)
-                  .fontColor($r('sys.color.font_tertiary'))
-                  .width('100%')
-                  .maxLines(2)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
-              }
-            }
-            .width('100%')
-            .padding(Sp.S)
-            .borderRadius(Radius.S)
-            .backgroundColor($r('sys.color.background_primary'))
-            .onClick(() => {
-              this.onSelectModel(m.provider, m.modelId, this.effortFor(m));
-            })
-          }, (m: ModelOption) => `${m.provider}/${m.modelId}`)
-          Text('推理等级属于**模型的能力**，官方也不在提供方级编辑（会被部分模型拒绝）；请在下面「新会话默认」里按模型选择。')
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_tertiary'))
-            .width('100%')
+          this.providerEditor(this.providerSettingGroup(g.provider), g.models)
         }
       }
       .width('100%')
@@ -508,6 +488,17 @@ export struct SettingsModels {
       .borderRadius(Radius.M)
       .backgroundColor($r('sys.color.background_secondary'))
     }, (g: ModelProviderGroup) => g.provider)
+  }
+
+  /** 某个提供方的模型（候选行展开时用；找不到就是空数组） */
+  private modelsOfProvider(provider: string): ModelOption[] {
+    const groups: ModelProviderGroup[] = this.providerGroups();
+    for (let i = 0; i < groups.length; i++) {
+      if (groups[i].provider === provider) {
+        return groups[i].models;
+      }
+    }
+    return [];
   }
 
   private providerGroups(): ModelProviderGroup[] {

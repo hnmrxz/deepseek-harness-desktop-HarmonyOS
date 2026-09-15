@@ -95,9 +95,6 @@ export function settingsSectionLabelRes(sectionId: string): Resource {
   if (sectionId === 'settings.plugins') {
     return $r('app.string.settings_plugins');
   }
-  if (sectionId === 'settings.plugin-inventory') {
-    return $r('app.string.settings_inventory');
-  }
   if (sectionId === 'settings.core') {
     return $r('app.string.settings_core');
   }
