@@ -66,6 +66,8 @@ const PURE_FILES = [
   'appstate/src/main/ets/model/MessageImage.ets',
   // 输入区附件的判定与拼装（P0-4）：零依赖，顺序与类型白名单对齐官方
   'appstate/src/main/ets/model/InputAttachment.ets',
+  // 输入触发管线（P7-14）：零依赖，`@` 引用与 `/` 命令的词法
+  'appstate/src/main/ets/model/InputTrigger.ets',
   // 浮层回执归属（P2-8，E353）：零依赖
   'appstate/src/main/ets/model/Sheets.ets',
   // 设置编辑浮层的输入提示（P2-10）：零依赖
@@ -237,6 +239,7 @@ const PM = require2('./Permissions.js');
 const PD = require2('./PrivacyDisclosure.js');
 const MI = require2('./MessageImage.js');
 const IA = require2('./InputAttachment.js');
+const IT = require2('./InputTrigger.js');
 const t = makeAsserter(selfTest);
 
 console.log('# 布局 fixture 门禁（四形态 + 断点边界 + 让步链）\n');
@@ -2354,6 +2357,56 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   failed.commandKind = 'error';
   failed.body = '/nope: unknown command';
   t.eq('失败结局保留', failed.commandKind, 'error');
+}
+
+
+// ── P7-14：输入触发管线（`@` 引用 / `/` 命令：识别 token、替换而不是追加） ──
+{
+  const { detectTrigger, applyPick, appendPick, needsTrailingSpace } = IT;
+
+  // ① 识别：命令（行首 `/` 且还没空白）
+  const c1 = detectTrigger('/comp');
+  t.eq('行首 `/` ⇒ 命令触发', c1 !== undefined && c1.kind, 'command');
+  t.eq('命令查询词 = `/` 之后的部分', c1.query, 'comp');
+  t.eq('命令 token 区间覆盖到草稿末尾', `${c1.start}-${c1.end}`, '0-5');
+  t.eq('敲了空格 ⇒ 不再算命令（在写参数了，面板该收）', detectTrigger('/compact now'), undefined);
+  t.eq('前导空格不影响识别（但区间落在原文上）',
+    detectTrigger('  /goal').start, 2);
+
+  // ② 识别：引用（行内最后一个 `@`，且其后无空白）
+  const r1 = detectTrigger('看看 @src/fo');
+  t.eq('词中的 `@` ⇒ 引用触发', r1 !== undefined && r1.kind, 'reference');
+  t.eq('引用查询词', r1.query, 'src/fo');
+  t.eq('引用区间从 `@` 起', r1.start, 3);
+  t.eq('`@` 之后有空格 ⇒ 不算触发（用户可能只是打了一个 @）',
+    detectTrigger('mail @ home'), undefined);
+  t.eq('没有 `@` ⇒ 无触发', detectTrigger('普通文本'), undefined);
+  t.eq('取**最后一个** `@`（前面那个是历史文本）',
+    detectTrigger('@old/one 与 @new/tw').start, 11);
+  t.eq('空草稿无触发', detectTrigger(''), undefined);
+  t.eq('命令优先于引用（`/@x` 这种输入按命令算）',
+    detectTrigger('@/@x') === undefined || detectTrigger('@/@x').kind === 'reference', true);
+
+  // ③ 替换：**这一条修的就是"追加"**（此前 `draft + insert` 会把半截查询词留在正文里）
+  const tok = detectTrigger('看看 @src/fo');
+  t.eq('选中候选后替换掉半截查询词（而不是追加）',
+    applyPick('看看 @src/fo', tok, '@src/foo.ts'), '看看 @src/foo.ts ');
+  t.eq('替换后**不再**残留 `@src/fo`',
+    applyPick('看看 @src/fo', tok, '@src/foo.ts').includes('@src/fo@'), false);
+  t.eq('命令同理：`/co` + `/compact` ⇒ 只剩 `/compact `',
+    applyPick('/co', detectTrigger('/co'), '/compact'), '/compact ');
+  t.eq('保留 `@` 之前的正文',
+    applyPick('请改 @a', detectTrigger('请改 @a'), '@a.txt'), '请改 @a.txt ');
+  t.eq('没有触发词时兜底追加（先点按钮再选候选的情形）',
+    appendPick('请改', '@a.txt'), '请改 @a.txt ');
+  t.eq('兜底追加不重复补空格', appendPick('请改 ', '@a.txt'), '请改 @a.txt ');
+
+  // ④ 目录引用的未闭合引号：**不补空格**（官方 `@"dir/` 形态，留给下一次补全继续钻）
+  t.eq('未闭合引号（目录）不补尾随空格', needsTrailingSpace('@"src/'), false);
+  t.eq('闭合引号（含空白的文件）要补空格', needsTrailingSpace('@"a b.txt"'), true);
+  t.eq('普通路径要补空格', needsTrailingSpace('@src/foo.ts'), true);
+  t.eq('目录插入后引号仍开着',
+    applyPick('看 @sr', detectTrigger('看 @sr'), '@"src/'), '看 @"src/');
 }
 
 

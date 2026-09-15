@@ -22,6 +22,7 @@ import {
   Sp,
   Sz
 } from 'appstate';
+import { appendPick, applyPick, detectTrigger, TriggerToken } from 'appstate';
 import { NativeButton, NativeChip } from './NativePrimitives';
 
 /**
@@ -537,7 +538,8 @@ export struct Composer {
               .padding(Sp.S)
               .borderRadius(Radius.S)
               .onClick(() => {
-                this.onDraftChange(`${this.draft}${c.insert} `);
+                // 替换触发词区间（不是追加）；目录引用的未闭合引号不补空格，见 InputTrigger 的说明
+                this.onDraftChange(this.draftAfterPick(c.insert));
                 this.panel = '';
               })
             }
@@ -565,7 +567,8 @@ export struct Composer {
               .padding(Sp.S)
               .borderRadius(Radius.S)
               .onClick(() => {
-                this.onDraftChange(`${c.name} `);
+                // 命令同理：替换掉正在输入的 `/co`，而不是把它留在前面
+                this.onDraftChange(this.draftAfterPick(c.name));
                 this.panel = '';
               })
             }
@@ -605,22 +608,24 @@ export struct Composer {
     })
   }
 
-  /** 依据输入内容自动切换弹层（输入 @ 开引用，输入 / 开头开命令） */
+  /**
+   * 依据输入内容自动切换弹层（输入 @ 开引用，输入 / 开头开命令）。
+   *
+   * 【P7-14：词法搬进了 `appstate/model/InputTrigger`】判据原先写在这里（三处内联判断），
+   * 既测不到、又在"选中候选"那一侧需要**同一套**判据（否则插入位置与面板口径不一致）。
+   * 现在识别与替换都由那个纯模型给结论，视图只负责开合面板与转发查询词。
+   */
   private updateOverlay(value: string): void {
-    const trimmed: string = value.trimStart();
-    const lastAt: number = trimmed.lastIndexOf('@');
-    const atTail: boolean = lastAt >= 0 && trimmed.indexOf(' ') < lastAt && trimmed.indexOf('\n') < lastAt;
-    if (trimmed.startsWith('/') && trimmed.indexOf(' ') < 0 && trimmed.indexOf('\n') < 0) {
+    const token: TriggerToken | undefined = detectTrigger(value);
+    if (token !== undefined && token.kind === 'command') {
       this.panel = 'cmd';
-      this.filter = trimmed.substring(1);
+      this.filter = token.query;
       return;
     }
-    if (atTail) {
+    if (token !== undefined && token.kind === 'reference') {
       this.panel = 'ref';
-      const tail: string = trimmed.substring(lastAt + 1);
-      const next: string = tail.indexOf(' ') < 0 && tail.indexOf('\n') < 0 ? tail : '';
-      const changed: boolean = next !== this.filter;
-      this.filter = next;
+      const changed: boolean = token.query !== this.filter;
+      this.filter = token.query;
       // 只有查询词真的变了才去问 Host：每次按键都发一次会在长查询上打出成串 RPC，
       // 而 Host 的候选端点本身就是**按 query 过滤**的（服务端筛选），本地不再二次筛。
       if (changed) {
@@ -629,6 +634,19 @@ export struct Composer {
       return;
     }
     this.filter = '';
+  }
+
+  /**
+   * 选中一个候选 → 得到新的草稿。
+   *
+   * 【为什么必须替换而不是追加】P7-14 修的就是这个：`draft + insert` 会把用户已经敲出的
+   * 半截查询词留在正文里（`@src/fo` + `@src/foo.ts` ⇒ `@src/fo@src/foo.ts `），
+   * 而它长得像一条引用、会被 Host 当成引用去解析。官方的输入触发管线是**替换当前 token**
+   * （`slash/input-consume-token` 带 `{kind:'span', span}`）。
+   */
+  private draftAfterPick(insert: string): string {
+    const token: TriggerToken | undefined = detectTrigger(this.draft);
+    return token === undefined ? appendPick(this.draft, insert) : applyPick(this.draft, token, insert);
   }
 
   /**

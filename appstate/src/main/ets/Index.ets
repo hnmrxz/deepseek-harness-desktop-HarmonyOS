@@ -126,6 +126,9 @@ export {
   SUPPORTED_IMAGE_TYPES
 } from './model/InputAttachment';
 export type { AttachmentDraftInput, AttachmentPartPlan } from './model/InputAttachment';
+// 输入触发管线（P7-14：`@` 引用与 `/` 命令的词法——识别 token、替换而不是追加）
+export { appendPick, applyPick, detectTrigger, needsTrailingSpace, TriggerKind } from './model/InputTrigger';
+export type { TriggerToken } from './model/InputTrigger';
 
 // 权限预设的呈现与切换规则（P7-6，对齐官方 permission-presets）
 export { PERMISSION_UNAVAILABLE, PERMISSION_UNSET, permissionChipLabel, permissionChoices, permissionCommand, permissionSwitchable, permissionUnavailableHint } from './model/Permissions';

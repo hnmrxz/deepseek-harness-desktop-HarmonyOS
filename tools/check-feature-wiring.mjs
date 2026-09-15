@@ -162,7 +162,14 @@ const FEATURES = [
    * 回执只看 `result.ok`（"没解析出来/处理器报错"也显示「已执行」= 假成功）。
    * 钉三段：回执投影（Wire）+ 执行处读结局（中枢）+ 命令卡（视图）。
    */
-  { name: '斜杠命令', patterns: [['projectCommandOutcome', 2], ['commandKind', 3], ['CommandRow', 2]] }
+  { name: '斜杠命令', patterns: [['projectCommandOutcome', 2], ['commandKind', 3], ['CommandRow', 2]] },
+  /*
+   * 输入触发管线（P7-14）。官方的 `dsh-client-ui-input-trigger` 是"检出 `@`/`/` → 候选菜单 →
+   * 把选中项**替换当前 token**"（`slash/input-consume-token` 带 `{kind:'span', span}`）；
+   * 我们此前是"往草稿末尾追加" ⇒ 半截查询词留在正文里（`@src/fo@src/foo.ts`），
+   * 而它长得像一条引用、会被 Host 当引用去解析。钉两端：纯模型（识别 + 替换）与视图调用点。
+   */
+  { name: '输入触发', patterns: [['detectTrigger', 2], ['applyPick', 2], ['draftAfterPick', 2]] }
 ];
 
 /**
