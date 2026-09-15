@@ -8,7 +8,7 @@
  * 所有动作通过回调上报宿主，便于接入真实连接时只改宿主。
  */
 
-import { Border, CommandCandidate, FeedbackRow, FollowSignal, Fs, HarmonyColor, HarmonyType, JobDot, ModelOption, ModelSelection, PendingAttachment, PendingItem, QueuedItem, Radius, ReferenceCandidate, SemanticColor, SessionHub, Sp, Speaker, Sz, TrajectoryItem, TrajectoryKind, cellIdForListIndex, chatRowOfItemIndex, chatVisibleItems, contextMenuGestures, contextMenuHintLabel, defaultExpanded, followTimerShouldRun, formatDuration, groupTurns, hasProcessGroup, jobCountLabel, jobDotState, jobDurationText, jobDurationTitle, jobElapsedMs, jobListA11y, jobListVisible, jobRowStatusText, jobTickerNeeded, listIndexForCell, matchConversationIndices, matchCounterText, matchTrajectoryIndices, nextFollowing, orderedJobs, parseMarkdown, plainTextOf, presentTool, processSummary, shouldJumpOnNewItems, stepMatch, toolStateLabel } from 'appstate';
+import { Border, CommandCandidate, FeedbackRow, FollowSignal, Fs, HarmonyColor, HarmonyType, ModelOption, ModelSelection, PendingAttachment, PendingItem, QueuedItem, Radius, ReferenceCandidate, SessionHub, Sp, Speaker, TrajectoryItem, TrajectoryKind, cellIdForListIndex, chatRowOfItemIndex, chatVisibleItems, contextMenuGestures, contextMenuHintLabel, defaultExpanded, followTimerShouldRun, formatDuration, groupTurns, hasProcessGroup, jobTickerNeeded, listIndexForCell, matchConversationIndices, matchTrajectoryIndices, nextFollowing, parseMarkdown, plainTextOf, presentTool, processSummary, shouldJumpOnNewItems, stepMatch, toolStateLabel } from 'appstate';
 /** 类型单独 import type（本仓约定：值与类型分开写） */
 import type { ActionNotice, InputModality, SessionJob, SessionStatsInput, Turn } from 'appstate';
 import type { NativeAction } from './NativePrimitives';
@@ -20,7 +20,7 @@ import { MessageRow } from './MessageRow';
 import { DeliverableCard } from './DeliverableCard';
 import { SubagentCard } from './SubagentCard';
 import { ToolCard } from './ToolCard';
-import { TimelineOverview } from './TimelineOverview';
+import { ConversationHeader } from './ConversationHeader';
 import { PendingPane } from './PendingPane';
 
 @Component
@@ -482,129 +482,9 @@ export struct ConversationPane {
     return chatVisibleItems(groupTurns(this.items, this.running));
   }
 
-  /** 状态点 → 语义色（模型给语义 `JobDot`，颜色是视图的事） */
-  private jobDotColor(status: string): Resource {
-    const dot: JobDot = jobDotState(status);
-    if (dot === JobDot.ONGOING) {
-      return SemanticColor.BRAND;
-    }
-    if (dot === JobDot.WARNING) {
-      return SemanticColor.WARNING;
-    }
-    if (dot === JobDot.DONE) {
-      return SemanticColor.CONFIRM;
-    }
-    return SemanticColor.ALERT;
-  }
 
-  /**
-   * 会话头的后台任务条（官方 `conversation.header.jobs`）。
-   *
-   * 【几条口径都取自模型】是否显示（`jobListVisible`）、顺序（`orderedJobs`）、
-   * 计数文案（`jobCountLabel`）、每行状态文案与时长（`jobRowStatusText` / `jobDurationText`
-   * + `jobDurationTitle`）、无障碍整段（`jobListA11y`）。视图只做"点 + 字 + 颜色"。
-   */
-  @Builder
-  jobsStrip() {
-    Column({ space: Sp.XS }) {
-      Row({ space: Sp.S }) {
-        Text(jobCountLabel(this.jobs))
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
-          .layoutWeight(1)
-        Text('展开收起全部任务在「轨迹」')
-          .fontSize(Fs.CAPTION_XS)
-          .fontColor($r('sys.color.font_tertiary'))
-      }
-      .width('100%')
 
-      Flex({ wrap: FlexWrap.Wrap }) {
-        ForEach(orderedJobs(this.jobs), (job: SessionJob) => {
-          Row({ space: Sp.XS }) {
-            SymbolGlyph($r('sys.symbol.circle'))
-              .fontSize(Fs.CAPTION_XS)
-              .fontColor([this.jobDotColor(job.status)])
-            Text(job.label.length > 0 ? job.label : job.kind)
-              .fontSize(Fs.CAPTION)
-              .fontColor($r('sys.color.font_secondary'))
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-            Text(jobRowStatusText(job))
-              .fontSize(Fs.CAPTION_XS)
-              .fontColor($r('sys.color.font_tertiary'))
-            Text(jobDurationText(jobElapsedMs(job, Date.now())))
-              .fontSize(Fs.CAPTION_XS)
-              .fontColor($r('sys.color.font_tertiary'))
-          }
-          .padding({ left: Sp.S, right: Sp.S, top: Sp.XS, bottom: Sp.XS })
-          .margin({ right: Sp.XS, bottom: Sp.XS })
-          .borderRadius(Radius.S)
-          .backgroundColor($r('sys.color.background_secondary'))
-          .accessibilityText(jobDurationTitle(job, Date.now()))
-          // key 带上"每秒刻度"：live 任务的耗时才会走字（读 `jobsTick` 也让刻度成为本组件的真实依赖）
-        }, (job: SessionJob) => `${job.id}:${this.jobsTick}`)
-      }
-      .width('100%')
-    }
-    .width('100%')
-    .padding({ left: Sp.M, right: Sp.M, top: Sp.XS })
-    .accessibilityText(jobListA11y(this.jobs))
-  }
 
-  @Builder
-  viewChip(value: string, label: ResourceStr) {
-    Text(label)
-      .fontSize(Fs.SECONDARY)
-      .fontColor(this.view === value ? Color.White : $r('sys.color.font_secondary'))
-      .padding({ left: Sp.M, right: Sp.M, top: Sp.XS, bottom: Sp.XS })
-      .borderRadius(Radius.L)
-      .backgroundColor(this.view === value
-        ? $r('sys.color.brand')
-        : $r('sys.color.background_secondary'))
-      .onClick(() => {
-        this.view = value;
-      })
-  }
-
-  @Builder
-  searchBar() {
-    Row({ space: Sp.S }) {
-      TextInput({ text: this.searchQuery, placeholder: '在本次会话中搜索…' })
-        .layoutWeight(1)
-        .constraintSize({ minHeight: Sz.TOUCH_MIN - 8 })
-        .onChange((value: string) => {
-          this.onQueryChange(value);
-        })
-        .accessibilityText('会话内搜索输入框')
-      Text(matchCounterText(this.matchPos, this.hits().length))
-        .fontSize(Fs.CAPTION)
-        .fontColor($r('sys.color.font_tertiary'))
-      Text('↑')
-        .fontSize(Fs.SECONDARY)
-        .fontColor($r('sys.color.brand'))
-        .padding(Sp.XS)
-        .onClick(() => {
-          this.step(-1);
-        })
-      Text('↓')
-        .fontSize(Fs.SECONDARY)
-        .fontColor($r('sys.color.brand'))
-        .padding(Sp.XS)
-        .onClick(() => {
-          this.step(1);
-        })
-      Text('×')
-        .fontSize(Fs.SECONDARY)
-        .fontColor($r('sys.color.font_secondary'))
-        .padding(Sp.XS)
-        .onClick(() => {
-          this.onCloseSearch();
-        })
-    }
-    .width('100%')
-    .padding({ left: Sp.M, right: Sp.M, top: Sp.S, bottom: Sp.S })
-    .backgroundColor($r('sys.color.background_secondary'))
-  }
 
   /**
    * 轨迹的**时间总览**（P2 §11：交互式时间总览）。
@@ -622,69 +502,48 @@ export struct ConversationPane {
 
   build() {
     Column() {
-      /*
-       * 对话 / 轨迹 两个视图（E108，与官方 web 一致）。
-       *
-       * 【为什么分开】同一条会话流里有两种读者需求：
-       *   - **对话**：只看问答（人说的话 + 模型的回答，思考折叠在回答上方）——日常使用；
-       *   - **轨迹**：看全过程（工具调用、子代理、目标/任务、交付物、错误）——排查与复盘。
-       * 官方 web 也是这两个视图；混在一起会让"想安静读答案"的人被工具卡刷屏，
-       * 而"想查某次工具参数"的人又要在气泡之间翻找。
-       */
-      Row({ space: Sp.S }) {
-        this.viewChip('chat', $r('app.string.view_chat'))
-        this.viewChip('trajectory', $r('app.string.view_trajectory'))
-        Blank()
-        if (this.view === 'trajectory') {
-        // E197：官方的"展开/收起所有"（`toolbar.expandTurns`/`collapseTurns`、`expandCalls`/`collapseCalls`）
-        Text('展开全部')
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.brand'))
-          .onClick(() => {
-            this.expandAllItems();
-          })
-        Text('收起全部')
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.brand'))
-          .onClick(() => {
-            this.collapseAllItems();
-          })
-          Text(`${this.items.length} 条事件`)
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_tertiary'))
+      // 会话头归 ConversationHeader（P2-5 抽出的 chrome）：视图切换 / 任务条 / 时间总览 / 搜索。
+      // 它只做"显示 + 转发"——搜索的命中判定与任务条的定时器仍在本组件（跨行的状态留在父组件）。
+      ConversationHeader({
+        view: this.view,
+        items: this.items,
+        jobs: this.jobs,
+        jobsTick: this.jobsTick,
+        stats: this.stats,
+        focusedCellId: this.focusedCellId,
+        dragging: this.timelineDragging,
+        searchOpen: this.searchOpen,
+        searchQuery: this.searchQuery,
+        matchPos: this.matchPos,
+        hitCount: this.hits().length,
+        onPickView: (value: string) => {
+          this.view = value;
+        },
+        onExpandAll: () => {
+          this.expandAllItems();
+        },
+        onCollapseAll: () => {
+          this.collapseAllItems();
+        },
+        onQueryChange: (value: string) => {
+          this.onQueryChange(value);
+        },
+        onStep: (delta: number) => {
+          this.step(delta);
+        },
+        onCloseSearch: () => {
+          this.onCloseSearch();
+        },
+        onFocusCell: (cellId: string) => {
+          this.focusedCellId = cellId;
+        },
+        onCommitTimeline: () => {
+          this.scrollToFocusedCell();
+        },
+        onDragChange: (dragging: boolean) => {
+          this.timelineDragging = dragging;
         }
-      }
-      .width('100%')
-      .padding({ left: Sp.M, right: Sp.M, top: Sp.S })
-
-      // 后台任务条（官方在会话头）：有任务才出现，位置在视图切换行下方
-      if (jobListVisible(this.jobs)) {
-        this.jobsStrip()
-      }
-
-      // 轨迹视图的时间总览（P2 §11 的 TrajectoryPresenter）
-      if (this.view === 'trajectory') {
-        // 时间总览归 TimelineOverview（右栏「轨迹」面板用**同一份**）
-        TimelineOverview({
-          items: this.items,
-          stats: this.stats,
-          focusedCellId: this.focusedCellId,
-          dragging: this.timelineDragging,
-          onFocusCell: (cellId: string) => {
-            this.focusedCellId = cellId;
-          },
-          onCommit: () => {
-            this.scrollToFocusedCell();
-          },
-          onDragChange: (dragging: boolean) => {
-            this.timelineDragging = dragging;
-          }
-        })
-      }
-
-      if (this.searchOpen) {
-        this.searchBar()
-      }
+      })
 
       List({ space: Sp.M, scroller: this.scroller }) {
         if (this.view === 'trajectory') {

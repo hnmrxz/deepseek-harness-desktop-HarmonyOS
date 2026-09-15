@@ -194,6 +194,12 @@ hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 （`hubBanner` / `coreTabContent` / `tabContent`——内容都已在 AppShell 与两束组件里，只剩宿主这份壳；
 `@Entry` 组件不会渲染它们）与**全仓 22 个零使用 import**（`Index` 12 个、`MainShell` 9 个、其余 6 文件各 1 个）。
 `Index.ets` 4460 → **4384 行**，全仓零使用 import 归零。
+**P2-5 已落地（会话正文第二刀）**：把会话头那四块**不在列表里的** chrome 抽成
+`view/ConversationHeader.ets`（284 行）—— 视图切换 + 轨迹工具栏（展开全部 / 收起全部 / 事件计数）、
+后台任务条（官方 `conversation.header.jobs`，live 任务每秒走字）、时间总览、会话内搜索条。
+**分工口径**：跨行状态（搜索的命中判定、任务条定时器）留在父组件，块内状态留在子组件；
+`stats` 改成**必需 prop** —— 不造"全 0 的默认统计"，那会让"没接到数据"看起来像"这场会话什么也没花"。
+`ConversationPane` 1234 → **1093 行**（P2-4/P2-5 两刀合计 1414 → 1093）。
 **P2-4 已落地（会话正文第一刀）**：把"**一条消息**"整块抽成 `view/MessageRow.ets`（221 行）——
 它带走了此前散在正文组件里的**五份行级状态**（悬停、上下文菜单开关与归属、反馈面板归属与回执）、
 两个 `@Builder`（行内操作条、上下文菜单）与三条输入策略判定包装（悬停 / 右键 / 手势提示）。
