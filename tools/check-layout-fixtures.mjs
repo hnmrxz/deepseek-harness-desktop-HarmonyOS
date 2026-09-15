@@ -344,10 +344,17 @@ console.log('\n## 导航：返回键的优先级阶梯（迁移前写在 Index.o
   const { decideBack, BackAction, StackPage, selectTab, normalizeTab, showsConversation, navTabs } = NC;
   // 【坑】`NavTab.SESSIONS` 是 `'workspaces'` 的**别名**（E108：会话并入工作区），
   // 所以"在会话页签"与"在工作区页签"是同一个状态；默认值必须写 'workspaces'。
-  const nav = (o) => Object.assign({ tab: 'workspaces', stackPage: StackPage.MAIN, wsDrill: 0, hasSession: true, detailOpen: false }, o);
+  const nav = (o) => Object.assign({ tab: 'workspaces', stackPage: StackPage.MAIN, wsDrill: 0, hasSession: true, detailOpen: false, drawerOpen: false }, o);
   const ov = (o) => Object.assign({ credentialOpen: false, settingDraftOpen: false, searchOpen: false, choosingOpen: false, detailOverlayOpen: false, previewOpen: false }, o);
 
   // 优先级：浮层之间也有先后（凭据 → 设置草稿 → 搜索 → 选择）
+  // P1-5：手机抽屉是盖在整页上的导航面 ⇒ 比所有浮层都靠上
+  t.eq('抽屉打开时，返回先收抽屉（哪怕有浮层）',
+    decideBack(nav({ drawerOpen: true }), ov({ credentialOpen: true, searchOpen: true })), BackAction.CLOSE_DRAWER);
+  t.eq('抽屉打开且有二级页 ⇒ 仍先收抽屉',
+    decideBack(nav({ drawerOpen: true, stackPage: StackPage.DIAGNOSTICS }), ov({})), BackAction.CLOSE_DRAWER);
+  t.eq('抽屉关着 ⇒ 回到原来的阶梯（关凭据浮层）',
+    decideBack(nav({ drawerOpen: false }), ov({ credentialOpen: true })), BackAction.CLOSE_CREDENTIAL);
   t.eq('全开时先关凭据浮层', decideBack(nav({}), ov({ credentialOpen: true, settingDraftOpen: true, searchOpen: true, choosingOpen: true, previewOpen: true })), BackAction.CLOSE_CREDENTIAL);
   t.eq('无凭据时关设置草稿', decideBack(nav({}), ov({ settingDraftOpen: true, searchOpen: true })), BackAction.CLOSE_SETTING_DRAFT);
   t.eq('再关搜索', decideBack(nav({}), ov({ searchOpen: true, choosingOpen: true })), BackAction.CLOSE_SEARCH);
@@ -1287,6 +1294,14 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
 
   nav = setDrawer(nav, DrawerState.OPEN);
   t.eq('抽屉打开', nav.mobileDrawer, DrawerState.OPEN);
+  t.eq('从抽屉里选主区面板 ⇒ 抽屉收起（临时导航面）',
+    navigateToMain(setDrawer(initialNavigationState(), DrawerState.OPEN), MAIN_SETTINGS, reg).mobileDrawer,
+    DrawerState.CLOSED);
+  t.eq('不可用的面板切不过去，也不该顺手把抽屉收掉（状态原样返回）',
+    (() => {
+      const st = setDrawer(initialNavigationState(), DrawerState.OPEN);
+      return navigateToMain(st, 'main.nope', reg) === st && st.mobileDrawer === DrawerState.OPEN;
+    })(), true);
 
   // enterSession：一处同步所有相关字段
   const entered = enterSession(nav, 'session-1', reg);

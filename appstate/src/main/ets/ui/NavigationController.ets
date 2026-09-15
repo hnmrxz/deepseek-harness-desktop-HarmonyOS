@@ -43,6 +43,14 @@ export interface NavState {
   hasSession: boolean;
   /** 详情栏/详情抽屉是否打开 */
   detailOpen: boolean;
+  /**
+   * 手机侧栏抽屉是否打开（单栏形态；它是**盖在页面上的导航面**，故返回键第一优先级要关它）。
+   *
+   * 【为什么放在 `NavState` 而不是 `OverlayState`】`OverlayState` 那一组是"编辑态/模态"
+   * （凭据、草稿、搜索、选择器、详情浮层），它们的共性是"有一个待提交的编辑"；
+   * 抽屉只是导航面的另一种呈现，不持有编辑态。
+   */
+  drawerOpen: boolean;
 }
 
 /** 会"盖在页面上"的浮层与编辑态（返回键第一优先级要关掉它们） */
@@ -73,6 +81,8 @@ export enum BackAction {
   CLOSE_SETTING_DRAFT = 'close-setting-draft',
   CLOSE_SEARCH = 'close-search',
   CLOSE_CHOICE = 'close-choice',
+  /** 收起手机侧栏抽屉（第一优先级：它是盖在整页上的导航面） */
+  CLOSE_DRAWER = 'close-drawer',
   CLOSE_DETAIL_OVERLAY = 'close-detail-overlay',
   STACK_TO_MAIN = 'stack-to-main',
   CLOSE_DETAIL = 'close-detail',
@@ -89,6 +99,12 @@ export enum BackAction {
  * 只有真的在根层（首页签、无浮层、无下钻）才把返回交还系统。
  */
 export function decideBack(nav: NavState, overlay: OverlayState): BackAction {
+  // ⓪ 手机侧栏抽屉：它是"盖在整页之上"的导航面，比任何浮层都靠上——**先关它**。
+  // 【为什么必须是第一优先级】抽屉打开时页面被它盖住（手机上占 2/3 宽），
+  // 这时按返回的意图一定是"收起抽屉"；若落到后面的分支，用户会看到"返回把下面那层也退了"。
+  if (nav.drawerOpen) {
+    return BackAction.CLOSE_DRAWER;
+  }
   // ① 浮层/编辑态最先关
   if (overlay.credentialOpen) {
     return BackAction.CLOSE_CREDENTIAL;

@@ -31,14 +31,34 @@ export struct MainHeaderShell {
   @Prop showBack: boolean = false;
   /** 是否显示详情入口（会话页 + 非三栏） */
   @Prop showDetailEntry: boolean = false;
+  /**
+   * 是否给"打开导航抽屉"的入口（仅单栏档位的根页）。
+   *
+   * 【为什么由宿主判定】"这条轨道上有没有可折叠的侧栏"是几何事实（`LayoutMode`），
+   * 组件不该知道；组件只负责画一个按钮。
+   */
+  @Prop showNav: boolean = false;
 
   onBack: () => void = () => {
   };
   onOpenDetail: () => void = () => {
   };
+  onOpenNav: () => void = () => {
+  };
 
   build() {
     Row({ space: Sp.S }) {
+      if (this.showNav) {
+        Button() {
+          // 用"列表"符号表达"另一条轨道在这里"——手机侧栏抽屉（官方同位置也是这个语义）
+          SymbolGlyph($r('sys.symbol.list_bullet')).fontSize(HarmonyIconSize.NAV)
+        }
+        .buttonStyle(ButtonStyleMode.TEXTUAL)
+        .accessibilityText('打开导航（工作区与会话列表）')
+        .onClick(() => {
+          this.onOpenNav();
+        })
+      }
       if (this.showBack) {
         Button() {
           SymbolGlyph($r('sys.symbol.chevron_left')).fontSize(HarmonyIconSize.NAV)

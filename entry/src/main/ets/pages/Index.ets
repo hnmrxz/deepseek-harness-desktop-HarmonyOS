@@ -65,6 +65,9 @@ import {
   HarmonyType,
   LayoutMode,
   showsConversation,
+  DrawerState,
+  enterSession,
+  setDrawer,
   shellTracksOf,
   mainPanelOfSidebarPanel,
   sidebarPanelOfMainPanel,
@@ -1083,6 +1086,10 @@ struct Index {
         this.preview = undefined;
         hilog.info(DOMAIN, TAG, 'HDSH-BACK 关闭文件预览');
         return true;
+      case BackAction.CLOSE_DRAWER:
+        this.setDrawerOpen(false);
+        hilog.info(DOMAIN, TAG, 'HDSH-BACK 收起手机导航抽屉');
+        return true;
       case BackAction.TAB_TO_SESSIONS:
         this.selectTab(NavTab.SESSIONS);
         hilog.info(DOMAIN, TAG, 'HDSH-BACK 回首页签（会话）');
@@ -1102,7 +1109,9 @@ struct Index {
       stackPage: this.stackPage,
       wsDrill: this.wsDrill,
       hasSession: this.selectedSessionId.length > 0,
-      detailOpen: this.detailOpen
+      detailOpen: this.detailOpen,
+      // 手机抽屉：真值在 NavigationState.mobileDrawer（视图不另立一份状态）
+      drawerOpen: this.nav.mobileDrawer === DrawerState.OPEN
     };
   }
 
@@ -1663,6 +1672,10 @@ struct Index {
   }
 
   private openSession(id: string): void {
+    // "进会话要同步哪些字段"在模型里只有一处（`enterSession`）：当前会话、主区回会话面板、
+    // **收起手机抽屉**、右栏在不可用时回落到可用面板。此前这几个字段散在这里手写，
+    // 抽屉那条就没人管（手机上从抽屉里点会话 ⇒ 抽屉还挡在前面）。
+    this.nav = enterSession(this.nav, id, this.panelRegistry);
     this.selectedSessionId = id;
     this.selectedSessionTitle = this.titleOf(id);
     // 先清空再由中枢的 `session/follow` 推真实轨迹。
@@ -1991,6 +2004,9 @@ struct Index {
     onSelectSidebarPanel: (panelId: string) => this.selectSidebarPanel(panelId),
     onNewSession: () => this.newSession(),
     panelLabel: this.selectedPanelLabel(),
+    mobileDrawerOpen: this.nav.mobileDrawer === DrawerState.OPEN,
+    onOpenDrawer: () => this.setDrawerOpen(true),
+    onCloseDrawer: () => this.setDrawerOpen(false),
     beginDetailDrag: () => this.beginDetailDrag(),
     closeDetail: () => this.closeDetail(),
     detailOpen: this.detailOpen,
@@ -4102,6 +4118,11 @@ struct Index {
    * 写在视图里就会有两份，而"两份确认态"必然走样。视图只问"按下去了"。
    */
   /** 侧栏席位被按下：翻译成"切到哪个主区面板"，再走既有的页签切换（归一化/清栈等决策不重写） */
+  /** 开合手机侧栏抽屉（模型 `setDrawer`；它是唯一真值，视图不自持一份） */
+  private setDrawerOpen(open: boolean): void {
+    this.nav = setDrawer(this.nav, open ? DrawerState.OPEN : DrawerState.CLOSED);
+  }
+
   private selectSidebarPanel(panelId: string): void {
     // 席位 id → 主区面板 id → 旧页签取值：双跳是迁移期的形状（控制器仍说 NavTab），
     // 好处是"归一化 / 清栈 / 是否清会话选择"这些决策一条都不用重新实现。

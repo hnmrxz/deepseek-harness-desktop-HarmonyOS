@@ -169,8 +169,12 @@ hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 ④ 侧栏入口改由**面板注册表**驱动（P1-4）：入口的存在/顺序归 `sidebarEntries` / `sidebarPinnedEntries`
 （"沉底"是清单属性）、图标与文案归按面板 id 的编译期映射、高亮归宿主 —— `SidebarShell` 里**再无 `NavTab`**，
 一级导航不再是"三个页签"；`NewSession` 成为品牌行下方的一级入口，Settings 沉底，核心席位按 E110 标为不可用。
-下一步（P1-5）：单栏手机抽屉、会话搜索、RAIL 上的 NewSession
-（⚠️ 侧栏内观感与交互须真机确认，见 `docs/device-validation.md` D11）。
+⑤ 单栏（手机）侧栏改成**抽屉**（P1-5）：页头根页给导航入口、抽屉叠在整页之上（点外部收起）、
+返回键**第一优先级**收抽屉（`BackAction.CLOSE_DRAWER`）、从抽屉里选入口或会话都自动收起
+（`navigateToMain` / `enterSession`）——顺带接上两条此前"有通道没消费点"的模型状态。
+底部标签栏**暂时保留**（过渡，见 `docs/50` E306）。
+下一步（P1-6）：会话搜索、"分组"显式交互、RAIL 上的 NewSession
+（⚠️ 侧栏与抽屉的观感/交互须真机确认，见 `docs/device-validation.md` D11 / **D12**）。
 
 理由：功能不少、页面还是不像官方，根因是**信息架构没落地**——框架错则间距、颜色、Markdown 全白做。
 故 Markdown 与视觉精修**排在框架之后**，而不是先做。

@@ -46,6 +46,12 @@ export interface AppShellFacade {
   onSelectSidebarPanel: (panelId: string) => void;
   /** 新建会话（侧栏一级入口；与 Ctrl+N 走同一条路） */
   onNewSession: () => void;
+  /** 手机侧栏抽屉是否打开（单栏档位；模型 `NavigationState.mobileDrawer` 是唯一真值） */
+  mobileDrawerOpen: boolean;
+  /** 打开手机侧栏抽屉（页头的导航入口） */
+  onOpenDrawer: () => void;
+  /** 收起手机侧栏抽屉（点抽屉外部 / 选了入口 / 返回键） */
+  onCloseDrawer: () => void;
   /** 当前面板的中文名（页头标题用；由注册表的 label 给） */
   panelLabel: string;
   beginDetailDrag: () => void;
@@ -80,17 +86,37 @@ export struct AppShell {
 
   @Builder
   buildSingle() {
-
-    Column() {
-      this.header()
-      Divider().color($r('sys.color.comp_divider'))
+    /*
+     * 单栏（手机）：侧栏在官方就是**盖在页面上的一层**（抽屉），不是底部标签栏 ——
+     * 所以这里用 `Stack` 把页面与抽屉叠起来。底部标签栏**暂时保留**（过渡呈现）：
+     * 抽屉是**新增**的导航面，本轮不夺走任何既有入口（取舍说明见 `docs/50` E306）。
+     */
+    Stack({ alignContent: Alignment.TopStart }) {
       Column() {
-        MainShell({ f: this.f.mainShell, compact: true })
+        this.header()
+        Divider().color($r('sys.color.comp_divider'))
+        Column() {
+          MainShell({ f: this.f.mainShell, compact: true })
+        }
+        .layoutWeight(1)
+        .width('100%')
+        if (this.f.stackPage === StackPage.MAIN) {
+          this.bottomTabs()
+        }
       }
-      .layoutWeight(1)
       .width('100%')
-      if (this.f.stackPage === StackPage.MAIN) {
-        this.bottomTabs()
+      .height('100%')
+
+      if (this.f.mobileDrawerOpen) {
+        // 透明点击层承担"点抽屉外收起"：本仓规矩是**遮罩由原生 Sheet 提供、不手写颜色**
+        // （手写 rgba 会绕过设计令牌与深色模式）——与 `buildDouble` 的侧边浅层面板同款处理。
+        Column()
+          .width('100%')
+          .height('100%')
+          .onClick(() => {
+            this.f.onCloseDrawer();
+          })
+        this.sidePanelSurface(TrackPresentation.PANEL, Sz.NAV_PANEL)
       }
     }
     .width('100%')
@@ -119,12 +145,17 @@ export struct AppShell {
     MainHeaderShell({
       title: this.headerTitle(),
       showBack: this.f.stackPage !== StackPage.MAIN,
+      // 手机才有抽屉；且只在**根页**给这个入口（有返回键时左侧只留一个按钮，不让用户猜）
+      showNav: this.f.mode === LayoutMode.SINGLE && this.f.stackPage === StackPage.MAIN,
       showDetailEntry: this.f.stackPage === StackPage.CONVERSATION && this.f.mode !== LayoutMode.TRIPLE,
       onBack: () => {
         this.f.setStackPage(StackPage.MAIN);
       },
       onOpenDetail: () => {
         this.f.setDetailOverlayOpen(true);
+      },
+      onOpenNav: () => {
+        this.f.onOpenDrawer();
       }
     })
   }
@@ -265,17 +296,27 @@ export struct AppShell {
 
   @Builder
   navPanel() {
-    // 侧栏内容归 SidebarShell 所有（P0：AppFrame 第一条轨道）；这里只给**这条轨道的 surface**
-    // —— 宽度与底色属于"轨道怎么摆"，内容属于 shell。
-    Column() {
+    // 侧栏内容归 SidebarShell 所有（P0：AppFrame 第一条轨道）；这里只给**这条轨道的 surface**。
+    this.sidePanelSurface(this.sidebarPresentation(), Sz.NAV_PANEL)
+  }
 
+  /**
+   * 侧栏这条轨道的 surface（宽度 + 底色 + 挂载点）。
+   *
+   * 【为什么抽出来】同一份 surface 出现在两处：桌面/平板的固定轨道（`navPanel`）与
+   * 手机的**抽屉**（`buildSingle`）。两处差别只有"呈现方式"与"宽度"，内容与回调完全一样——
+   * 写两遍必然走样。
+   */
+  @Builder
+  sidePanelSurface(presentation: TrackPresentation, widthVp: number) {
+    Column() {
       SidebarShell({
         brand: this.f.appName,
         browser: this.f.browser,
         selectedPanelId: this.f.selectedSidebarPanel,
         pendingBadge: this.f.pendingBadge,
         navWidthVp: this.f.navWidthVp(),
-        presentation: this.sidebarPresentation(),
+        presentation: presentation,
         onSelectPanel: (panelId: string) => {
           this.f.onSelectSidebarPanel(panelId);
         },
@@ -287,7 +328,7 @@ export struct AppShell {
         }
       })
     }
-    .width(Sz.NAV_PANEL)
+    .width(widthVp)
     .height('100%')
     .backgroundColor($r('sys.color.background_secondary'))
   }

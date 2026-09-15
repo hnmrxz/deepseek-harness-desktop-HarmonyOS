@@ -289,6 +289,9 @@ export function navigateToMain(state: NavigationState, panelId: string,
   }
   const next: NavigationState = copyOf(state);
   next.selectedMainPanel = panelId;
+  // 手机抽屉是**临时导航面**：从它里面选了任何一项，它就该收起（否则用户要再点一次遮罩，
+  // 而这层遮罩盖着的正是他刚选中的页面）。桌面/平板上抽屉本来就是关的 ⇒ 这一步是空操作。
+  next.mobileDrawer = DrawerState.CLOSED;
   return next;
 }
 
