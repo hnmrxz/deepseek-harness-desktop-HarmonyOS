@@ -38,7 +38,6 @@ import { SubagentCard } from '../SubagentCard';
 import { TimelineOverview } from '../TimelineOverview';
 import { ToolCard } from '../ToolCard';
 import { NativeChip } from '../NativePrimitives';
-import { NativeSectionTitle } from '../NativePrimitives';
 
 /**
  * 右侧内容的**门面**（P2-12）：真右栏与"详情浮层"两处挂载**共用这一份**。
@@ -324,6 +323,34 @@ export struct RightbarShell {
     }
   }
 
+  /**
+   * 面板切换器（P2-13）：**两种呈现共用一份**。
+   *
+   * 【为什么现在必须共用】此前它只画在 `framedBody`（真右栏 / 侧边浅层面板）里，
+   * 而**单栏的详情 Sheet** 那一份（`sheetBody`）没有它 ⇒ 手机用户打开详情后
+   * **无法切到文件 / 预览 / 工具 / 子代理 / 交付物 / 轨迹**：要么先关掉再想别的办法，
+   * 要么根本不知道还有别的面板。本仓已登记为 P3 缺口之一。
+   *
+   * 【为什么 ≥2 个可用面板才出现】只有一个面板时，一行只有一个选项的按钮组是噪声。
+   */
+  @Builder
+  panelSwitcher() {
+    if (this.f.panels.length > 1) {
+      Row({ space: Sp.XS }) {
+        ForEach(this.f.panels, (d: PanelDescriptor) => {
+          NativeChip({
+            label: d.label,
+            active: d.id === this.f.panelId,
+            a11y: `右栏面板：${d.label}`,
+            onTap: () => {
+              this.f.onSelectPanel(d.id);
+            }
+          })
+        }, (d: PanelDescriptor) => d.id)
+      }
+    }
+  }
+
   /** 并排（真右栏）与侧边浅层面板共用一套带标题行的形态 */
   @Builder
   framedBody() {
@@ -333,21 +360,7 @@ export struct RightbarShell {
           .fontSize(Fs.SECONDARY)
           .fontWeight(FontWeight.Medium)
           .layoutWeight(1)
-        // 切换器：≥2 个可用面板时才出现（只有一个面板时它是噪声）
-        if (this.f.panels.length > 1) {
-          Row({ space: Sp.XS }) {
-            ForEach(this.f.panels, (d: PanelDescriptor) => {
-              NativeChip({
-                label: d.label,
-                active: d.id === this.f.panelId,
-                a11y: `右栏面板：${d.label}`,
-                onTap: () => {
-                  this.f.onSelectPanel(d.id);
-                }
-              })
-            }, (d: PanelDescriptor) => d.id)
-          }
-        }
+        this.panelSwitcher()
         Button() {
           SymbolGlyph($r('sys.symbol.xmark')).fontSize(HarmonyIconSize.INLINE)
         }
@@ -401,7 +414,11 @@ export struct RightbarShell {
   @Builder
   sheetBody() {
     Column({ space: HarmonySpacing.CONTAINER }) {
-      NativeSectionTitle({ text: this.f.panelLabel, hint: '工具 / 子代理 / 交付物 / 目标 / 任务' })
+      // 单栏 Sheet：**切换器顶在内容之上**（它就是这一层的标题）。
+      // 此前这里是一行「面板名 + 固定提示『工具 / 子代理 / 交付物 / 目标 / 任务』」——
+      // 那句提示对文件/预览/详情三个面板是**错的措辞**（界面不撒谎），而且它也没告诉用户
+      // "还能切到别的面板"。切换器的当前项高亮同时承担了"我在看哪个面板"。
+      this.panelSwitcher()
       if (this.f.panelId === PANEL_RIGHT_DETAIL) {
         DetailPane({
           sections: this.sections,

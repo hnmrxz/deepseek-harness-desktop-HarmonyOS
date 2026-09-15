@@ -306,7 +306,8 @@ Composer 的官方字段：Model / Reasoning effort / Permission / Plan / @ Refe
 | 凭据 / 选项浮层（P2-11） | ✅ **已落地**：`view/CredentialSheet.ets`（127 行，保留 E95 显式 44vp 高、"明文只在一个请求里"、"成功才关面板"三条语义）与 `view/ChoiceSheet.ets`（99 行，单选即提交、原生 Sheet 即表面）。`sheetContent` 的六个分支现在各是一句组件调用。`Index.ets` 4133 → **4019 行**（合计 4480 → 4019）|
 | 右侧内容门面（P2-12 第一步） | ✅ **定义已落地**：`export interface RightbarFacade`（12 个两处共有成员）写在 `view/shell/RightbarShell.ets`。**动机**：该 shell 两个挂载点（真右栏 / 详情浮层）各自拼 16 个 props，迟早不同步。**接线未做**（要动 `AppShellFacade` 十来个成员与两处调用点）——留到下一轮，改动面一眼可数 |
 | 右侧内容门面接线（P2-12 第二步） | ✅ **已落地**：`RightbarShell` 改吃 `f: RightbarFacade`（12 props → 1，39 处用法改 `this.f.X`）；`AppShellFacade` 的 11 个 `right*` 成员全删；两处挂载点都调 `Index.buildRightbarFacade()`（浮层此前内联重算 ⇒ 新加面板很容易只给一处）。**行数 4019 → 4026（+7）**：收益是"两处只有一个真值"，不是变小 |
-| 下一步（P2-13…） | ① 右栏面板**滑入动画**与**拖拽调宽**、单栏 Sheet 里的切换器（P3 登记的三项）② `Index.ets`（4026 行）里剩的宿主处理器按域收口（会话 / 工作区 / 诊断各成一处）③ 会话头剩余三项需要协议面 ④ **真机复验 E343 / D18** ——无真机不得宣称设备验收完成 |
+| 单栏 Sheet 的切换器（P2-13） | ✅ **已落地**：切换器抽成共用 `@Builder panelSwitcher()`，`framedBody`（真右栏 / 侧边面板）与 `sheetBody`（单栏详情 Sheet）都调它 —— 此前单栏用户**根本切不到别的右栏面板**（P3 登记的第三个缺口，属功能不可达级别）。顺带把 Sheet 那行固定的「工具 / 子代理 / 交付物 / 目标 / 任务」提示换掉（它对文件/预览/详情是错措辞）|
+| 下一步（P2-14…） | ① `Index.ets`（4026 行）里剩的宿主处理器按域收口（会话 / 工作区 / 诊断各一处）② P3 剩余两项观感缺口：右栏**滑入动画**与**拖拽调宽** —— **都需要真机验收**，等设备通道打开再做 ③ 会话头剩余三项需要协议面 ④ **真机复验 E343 / D18** ——无真机不得宣称设备验收完成 |
 
 `SettingsShell`（General / Models / Plugins / Plugin Inventory / …）。**不再往 `SettingsPane.ets` 里堆内容。**
 
