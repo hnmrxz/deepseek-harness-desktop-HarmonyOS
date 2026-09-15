@@ -165,6 +165,7 @@ import { emitter } from '@kit.BasicServicesKit';
 import { parseJson } from 'connection';
 import { EVENT_HOST_CONNECTED, EVENT_KEY_HOST_TOKEN, EVENT_KEY_HOST_URL } from 'platform';
 import { ConnectPane } from '../view/ConnectPane';
+import { FolderPicker, FolderPickerController } from '../view/FolderPicker';
 import { MainShell } from '../view/shell/MainShell';
 import { AppShell } from '../view/shell/AppShell';
 import type { AppShellFacade } from '../view/shell/AppShell';
@@ -1950,7 +1951,7 @@ struct Index {
     if (this.credentialRef.length > 0) {
       return 'credential';
     }
-    if (this.folderOpen) {
+    if (this.folderPickerOpen) {
       return 'folder';
     }
     if (this.textSettingKey.length > 0) {
@@ -1980,7 +1981,8 @@ struct Index {
   private closeSheet(): void {
     this.detailOverlayOpen = false;
     this.choosing = undefined;
-    this.folderOpen = false;
+    this.folderPicker.close();
+    this.folderPickerOpen = false;
     this.credentialRef = '';
     this.credentialDraft = '';
     this.credentialNote = '';
@@ -2000,7 +2002,18 @@ struct Index {
     } else if (this.sheetKind() === 'credential') {
       this.credentialSheetContent()
     } else if (this.sheetKind() === 'folder') {
-      this.folderSheetContent()
+      FolderPicker({
+        sandboxRoot: this.filesDirOf(),
+        startDir: this.localWorkspaceDir,
+        controller: this.folderPicker,
+        onChoose: (path: string) => {
+          this.folderUsePath(path);
+        },
+        onClose: () => {
+          // 返回键要用"浮层是否开着"这一事实；关闭时把宿主自己那份标记也收掉
+          this.folderPickerOpen = false;
+        }
+      })
     } else if (this.sheetKind() === 'text') {
       this.textSettingSheetContent()
     } else if (this.sheetKind() === 'struct') {
@@ -2280,6 +2293,12 @@ struct Index {
    * 后者是有副作用的破坏性动作，绝不能被"我只是想关个弹窗"触发。
    */
   private escapePressed(): void {
+    if (this.folderPickerOpen) {
+      // 与返回键同一条复位：选择器的真值在组件内，故走控制器（E354）
+      this.folderPicker.close();
+      this.folderPickerOpen = false;
+      return;
+    }
     if (this.choosing !== undefined) {
       this.choosing = undefined;
       return;
@@ -2450,13 +2469,14 @@ struct Index {
   // ───────────────────── 选择文件夹（工作区，E100）─────────────────────
 
   /** 浏览浮层是否打开 */
-  @State folderOpen: boolean = false;
   /** 当前浏览目录（绝对路径） */
-  @State folderPath: string = '';
   /** 当前目录下的子目录名（已排序） */
-  @State folderDirs: string[] = [];
   /** 浏览提示/错误（空串不显示） */
-  @State folderNote: string = '';
+
+  /** 文件夹选择器的控制器（宿主持句柄、组件注册实现；与 TurnViewController 同源） */
+  private folderPicker: FolderPickerController = new FolderPickerController();
+  /** 选择器是否开着（宿主侧的镜像：返回键与 escape 要用；真值仍在组件内） */
+  @State folderPickerOpen: boolean = false;
 
   private filesDirOf(): string {
     try {
@@ -2492,10 +2512,12 @@ struct Index {
         return; // 用户主动取消：不打扰
       }
       // 失败（手机上的常态）：回退到沙箱浏览，并把原因写在浮层顶部
-      this.openSandboxFolderPicker(picked.reason);
+      this.folderPicker.open(picked.reason);
+      this.folderPickerOpen = true;
     }).catch((e: Object) => {
       const err = e as Error;
-      this.openSandboxFolderPicker(`文件夹选择器异常：${err.message}`);
+      this.folderPicker.open(`文件夹选择器异常：${err.message}`);
+      this.folderPickerOpen = true;
     });
   }
 
@@ -2519,211 +2541,6 @@ struct Index {
       this.attachNotice = `选择文件夹失败：${err.message}`;
       hilog.warn(DOMAIN, TAG, 'HDSH-WS 失败：%{public}s', err.message);
     });
-  }
-
-  private openSandboxFolderPicker(reason: string): void {
-    const root: string = this.localWorkspaceDir.length > 0
-      ? this.localWorkspaceDir
-      : `${this.filesDirOf()}/workspace`;
-    this.folderPath = root;
-    this.folderNote = reason;
-    this.folderOpen = true;
-    this.folderList();
-  }
-
-  private folderList(): void {
-    try {
-      if (!fs.accessSync(this.folderPath)) {
-        fs.mkdirSync(this.folderPath);
-      }
-      const names: string[] = fs.listFileSync(this.folderPath);
-      const dirs: string[] = [];
-      for (const name of names) {
-        try {
-          if (fs.statSync(`${this.folderPath}/${name}`).isDirectory()) {
-            dirs.push(name);
-          }
-        } catch (e) {
-          // 单个条目读不到不该让整页失败：跳过它
-        }
-      }
-      dirs.sort();
-      this.folderDirs = dirs;
-      this.folderNote = '';
-    } catch (e) {
-      const err = e as Error;
-      this.folderDirs = [];
-      this.folderNote = `读目录失败：${err.message}`;
-    }
-  }
-
-  private folderGoInto(name: string): void {
-    this.folderPath = `${this.folderPath}/${name}`;
-    this.folderList();
-  }
-
-  /** 上一级；到沙箱根（filesDir）就不再往上，避免走到不可读区域。 */
-  private folderGoUp(): void {
-    const root: string = this.filesDirOf();
-    if (root.length === 0) {
-      return;
-    }
-    if (this.folderPath === root || this.folderPath.length <= root.length) {
-      this.folderNote = '已经在沙箱根目录（不能走到沙箱外：没有公共存储权限）。';
-      return;
-    }
-    const cut: number = this.folderPath.lastIndexOf('/');
-    if (cut <= root.length) {
-      this.folderPath = root;
-    } else {
-      this.folderPath = this.folderPath.substring(0, cut);
-    }
-    this.folderList();
-  }
-
-  /** 新建子目录并进入（不弹输入框：端侧输入成本高，且名字只是为了区分）。 */
-  private folderCreate(): void {
-    const now: Date = new Date();
-    const name: string = `文件夹-${now.getHours()}${now.getMinutes()}${now.getSeconds()}`;
-    try {
-      fs.mkdirSync(`${this.folderPath}/${name}`);
-      this.folderGoInto(name);
-    } catch (e) {
-      const err = e as Error;
-      this.folderNote = `新建文件夹失败：${err.message}`;
-    }
-  }
-
-  /**
-   * 选定当前目录作为工作区：注册给 Host，并**立刻在这里开一个会话**。
-   *
-   * 【为什么要顺带建会话】界面的"工作区列表"是由**会话**派生出来的
-   * （`projectWorkspaces(sessions)`）。只注册不建会话的话，用户选完目录会看不到任何变化，
-   * 又变成一个"点了没反应"的入口。开一个会话，工作区与文件树才真正落在它上面。
-   */
-  private folderChoose(): void {
-    const chosen: string = this.folderPath;
-    const hub: SessionHub = SessionHub.shared();
-    hub.setDefaultWorkspace(chosen);
-    this.folderOpen = false;
-    this.attachNotice = `正在把 ${chosen} 设为工作区…`;
-    hilog.info(DOMAIN, TAG, 'HDSH-WS 选择工作区：%{public}s', chosen);
-    hub.ensureWorkspace(chosen).then((note: string) => {
-      this.attachNotice = note;
-      hilog.info(DOMAIN, TAG, 'HDSH-WS 注册结果：%{public}s', note);
-      return hub.createSession();
-    }).then((sid: string | undefined) => {
-      if (sid !== undefined) {
-        this.attachNotice = `已在这里开始工作：${chosen}`;
-        this.selectTab(NavTab.SESSIONS);
-      }
-    }).catch((e: Object) => {
-      const err = e as Error;
-      this.attachNotice = `选择文件夹失败：${err.message}`;
-      hilog.warn(DOMAIN, TAG, 'HDSH-WS 失败：%{public}s', err.message);
-    });
-  }
-
-  @Builder
-  folderSheetContent() {
-    Column() {
-      Column({ space: Sp.S }) {
-        Text('选择工作区文件夹')
-          .fontSize(Fs.BODY)
-          .width('100%')
-        Text('范围是应用的沙箱目录（未申请公共存储权限）：可以进入子目录、新建文件夹、挑一个作为工作区；选定后会在这里开一个新会话。')
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
-          .width('100%')
-        Text(this.folderPath)
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_secondary'))
-          .width('100%')
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-        Scroll() {
-          Column({ space: Sp.XS }) {
-            if (this.folderDirs.length === 0) {
-              Text('（这一层没有子目录）')
-                .fontSize(Fs.CAPTION)
-                .fontColor($r('sys.color.font_tertiary'))
-                .width('100%')
-            }
-            ForEach(this.folderDirs, (name: string) => {
-              Row({ space: Sp.S }) {
-                SymbolGlyph($r('sys.symbol.folder')).fontSize(16)
-                  .fontColor([$r('sys.color.brand')])
-                Text(name)
-                  .fontSize(Fs.SECONDARY)
-                  .layoutWeight(1)
-                  .maxLines(1)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
-                SymbolGlyph($r('sys.symbol.chevron_right')).fontSize(14)
-                  .fontColor([$r('sys.color.font_tertiary')])
-              }
-              .width('100%')
-              .padding(Sp.S)
-              .borderRadius(Radius.S)
-              .backgroundColor($r('sys.color.background_primary'))
-              .onClick(() => {
-                this.folderGoInto(name);
-              })
-            }, (name: string) => name)
-          }
-          .width('100%')
-        }
-        .height(220)
-        .width('100%')
-
-        if (this.folderNote.length > 0) {
-          Text(this.folderNote)
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.warning'))
-            .width('100%')
-        }
-
-        Row({ space: Sp.S }) {
-          Button('上一级')
-            .layoutWeight(1)
-            .backgroundColor($r('sys.color.background_primary'))
-            .fontColor($r('sys.color.font_primary'))
-            .onClick(() => {
-              this.folderGoUp();
-            })
-          Button('新建文件夹')
-            .layoutWeight(1)
-            .backgroundColor($r('sys.color.background_primary'))
-            .fontColor($r('sys.color.font_primary'))
-            .onClick(() => {
-              this.folderCreate();
-            })
-        }
-        .width('100%')
-
-        Row({ space: Sp.S }) {
-          Button('取消')
-            .layoutWeight(1)
-            .backgroundColor($r('sys.color.background_secondary'))
-            .fontColor($r('sys.color.font_primary'))
-            .onClick(() => {
-              this.folderOpen = false;
-            })
-          Button('就选这个文件夹')
-            .layoutWeight(1)
-            .onClick(() => {
-              this.folderChoose();
-            })
-        }
-        .width('100%')
-      }
-      .width('100%')
-      .padding(Sp.L)
-      .borderRadius(Radius.L)
-      .backgroundColor($r('sys.color.background_secondary'))
-    }
-    .width('100%')
-    .padding(HarmonySpacing.CONTAINER)
   }
 
   // ───────────────────── 凭据写入浮层 ─────────────────────

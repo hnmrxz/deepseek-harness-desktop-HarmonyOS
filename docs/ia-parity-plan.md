@@ -301,7 +301,8 @@ Composer 的官方字段：Model / Reasoning effort / Permission / Plan / @ Refe
 | 回合渲染抽组件（P2-6 第二刀） | ✅ **已落地**：`view/TurnView.ets`（492 行）+ `view/ReasoningRow.ets`（83 行，轨迹视图与过程分组**共用**）。展开集合留子组件、按钮在父组件 ⇒ **控制器对象**；轨迹视图的条目级分派用 `flatItem`（共享卡片、不共享分派）。`ConversationPane` 1087 → **984 行**（1414 → 984）。死代码门禁当轮抓出 2 处残留（`reasoningItem` 已被取代、`hitIds`/`fbRating` 无读者）|
 | 会话头上下文行（P2-7） | ✅ **已落地**：补官方 `conversation.header` 的 **Workspace context / Model / 最近活动** 三项（数据都已在手）；规则做成零依赖纯函数 `appstate/model/SessionContext.ets`（+14 条 fixture）。**没做的三项各有原因**：Agent preset 缺"当前会话的预设名"，Schedule / Open in App 缺协议面 —— 不猜、不摆假入口。`ConversationHeader` 284 → 318 行 |
 | 浮层结果出口按归属（P2-8） | ✅ **已落地**：查出三个浮层（凭据 / 文本设置 / 结构设置）共用 `credentialNote` 与 `credentialBusy` ⇒ **串浮层** + **跨浮层置忙**（与 E347 同一缺陷类）。修法：回执带 `sheetNoteOwner` 归属、每个浮层自己的 busy；判定在零依赖 `appstate/model/Sheets.ets`（+11 条 fixture → 558 条）。**拆那 960 行浮层的计划推到下一轮**——修完缺陷后它们是零风险搬家 |
-| 下一步（P2-9…） | ① 把六个 sheet builder（≈960 行）从 `Index.ets`（现 4480 行）拆成 `view/sheets/*`（三个浮层现已各自自足：自己认领回执、自己的 busy）② 右栏面板滑入动画与拖拽调宽、单栏 Sheet 切换器 ③ 会话头剩余三项需要协议面（Agent preset 当前值 / Schedule）④ **真机复验 E343 / D18** ——无真机不得宣称设备验收完成 |
+| `Index.ets` 第一刀（P2-9） | ✅ **已落地**：`view/FolderPicker.ets`（297 行）带走沙箱目录选择器的全部状态与动作（4 状态 + 6 方法 + 1 段 UI）；两个入口经**控制器对象**唤起，控制器带 `close()`（原生 Sheet 关闭不经过组件）。`Index.ets` 4480 → **4297 行** |
+| 下一步（P2-10…） | ① `Index.ets`（4297 行）继续拆剩下的浮层：详情 / 选择 / 凭据 / 文本设置 / 结构设置（共 ≈780 行；三个"设置类"浮层已在 E353 后各自自足）② 右栏面板滑入动画与拖拽调宽、单栏 Sheet 切换器 ③ 会话头剩余三项需要协议面 ④ **真机复验 E343 / D18** ——无真机不得宣称设备验收完成 |
 
 `SettingsShell`（General / Models / Plugins / Plugin Inventory / …）。**不再往 `SettingsPane.ets` 里堆内容。**
 
