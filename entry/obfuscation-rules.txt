@@ -1,20 +1,21 @@
-# Define project specific obfuscation rules here.
-# You can include the obfuscation configuration files in the current module's build-profile.json5.
-
-# Obfuscation options:
-# -disable-obfuscation: disable all obfuscations
-# -enable-property-obfuscation: obfuscate the property names
-# -enable-toplevel-obfuscation: obfuscate the names in the global scope
-# -compact: remove unnecessary blank spaces and all line feeds
-# -remove-log: remove all console.* statements
-# -print-namecache: print the name cache that contains the mapping from the old names to new names
-# -apply-namecache: reuse the given cache file
-
-# Keep options:
-# -keep-property-name: specifies property names that you want to keep
-# -keep-global-name: specifies names that you want to keep in the global scope
-
--enable-property-obfuscation
--enable-toplevel-obfuscation
--enable-filename-obfuscation
--enable-export-obfuscation
+# 发布（release）构建的混淆规则。
+#
+# ───────────────────── 本项目的决定：混淆保持关闭 ─────────────────────
+# `build-profile.json5` 里 release 段写的是 `enable: false`。理由（不是偷懒）：
+#   1. 协议层按**字符串字段名**读上游 JSON（`getString(value, 'sessionId')` 这类调用遍布
+#      `appstate` 与 `dshcompat`）。属性混淆会把字段名改掉，而这些读取**不会报错**——
+#      只会永远取不到值，症状是"会话列表空、设置项丢失"这类极难定位的问题。
+#   2. 大量对象要**交给内嵌的 Node 运行时**（客户端↔Host 的信封、投影、设置写入），
+#      跨语言边界的那一侧不认混淆后的名字。
+#   3. 顶层/导出/文件名混淆同样会打乱 ArkTS 的动态装配点（`@Builder` 分派、注册表按 id 查表）。
+#
+# ───────────────────── 若将来要开启，按这个顺序做 ─────────────────────
+#   ① 先只加 `-enable-toplevel-obfuscation`，跑一遍 `tools/check-core-loop.mjs`
+#      （本机对真 Host 的核心闭环，能发现"协议字段被改名"这类静默失效）；
+#   ② 要开属性混淆，必须同时用 `-keep-property-name` 列出**全部 wire 字段名**
+#      （来源：`dshcompat` 的字段别名表），并与上游升级一起维护；
+#   ③ 每次改完都用真机跑一遍 `docs/device-validation.md` 的 D 系列。
+#
+# 下面这行与 build-profile 的 `enable: false` 一致：文件存在是为了让 release 构建能过
+# 配置校验（此前 `platform` / `hostruntime` 缺这个文件，`buildMode=release` 直接失败）。
+-disable-obfuscation

@@ -25,16 +25,6 @@
         }
       },
       {
-        "name": "ohos.permission.GET_NETWORK_INFO",
-        "reason": "$string:perm_network_info_reason",
-        "usedScene": {
-          "abilities": [
-            "EntryAbility"
-          ],
-          "when": "always"
-        }
-      },
-      {
         "name": "ohos.permission.KEEP_BACKGROUND_RUNNING",
         "reason": "$string:perm_keep_background_reason",
         "usedScene": {
