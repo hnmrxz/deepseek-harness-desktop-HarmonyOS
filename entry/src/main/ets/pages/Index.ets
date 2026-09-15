@@ -183,6 +183,7 @@ import { EVENT_HOST_CONNECTED, EVENT_KEY_HOST_TOKEN, EVENT_KEY_HOST_URL } from '
 import { ConnectPane } from '../view/ConnectPane';
 import { ConversationPane } from '../view/ConversationPane';
 import { GoalBar } from '../view/GoalBar';
+import { SessionModelPicker } from '../view/SessionModelPicker';
 import { MainHeaderShell } from '../view/shell/MainHeaderShell';
 import { RightbarShell } from '../view/shell/RightbarShell';
 import { SidebarShell } from '../view/shell/SidebarShell';
@@ -3359,44 +3360,22 @@ struct Index {
          * ⇒ **可发现、不新增状态**。选中即调 `hub.selectSessionModel`（E194）；
          * 未选会话时如实说明（那条端点也要会话）。
          */
-        Text('本会话的模型')
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
-          .width('100%')
-        if (this.selectedSessionId.length === 0) {
-          Text('请先在工作区里选中一个会话，再切换模型。')
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_tertiary'))
-            .width('100%')
-        } else {
-          ForEach(this.models, (m: ModelOption) => {
-            Row({ space: Sp.S }) {
-              Text(m.modelId)
-                .fontSize(Fs.CAPTION)
-                .layoutWeight(1)
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-              Text(m.provider)
-                .fontSize(Fs.CAPTION)
-                .fontColor($r('sys.color.font_tertiary'))
-            }
-            .width('100%')
-            .padding(Sp.S)
-            .borderRadius(Radius.S)
-            .backgroundColor(this.selection.modelId === m.modelId
-              ? $r('sys.color.background_secondary')
-              : $r('sys.color.background_primary'))
-            .onClick(() => {
-              this.paletteOpen = false;
-              SessionHub.shared().selectSessionModel(m.provider, m.modelId, m.defaultEffort)
-                .then((n: ActionNotice) => {
-                  this.settingWriteNote = this.noticeText(n);
-                }).catch((e: Object) => {
-                  this.settingWriteNote = '切换会话模型失败：' + (e as Error).message;
-                });
-            })
-          }, (m: ModelOption) => m.provider + '/' + m.modelId)
-        }
+        // 本会话模型选择归 SessionModelPicker 所有（官方 ui-model-selection）；
+        // 组件只管呈现，选中后的副作用（关面板 / 调中枢 / 写提示）留在宿主。
+        SessionModelPicker({
+          sessionId: this.selectedSessionId,
+          models: this.models,
+          currentModelId: this.selection.modelId,
+          onPick: (m: ModelOption) => {
+            this.paletteOpen = false;
+            SessionHub.shared().selectSessionModel(m.provider, m.modelId, m.defaultEffort)
+              .then((n: ActionNotice) => {
+                this.settingWriteNote = this.noticeText(n);
+              }).catch((e: Object) => {
+                this.settingWriteNote = '切换会话模型失败：' + (e as Error).message;
+              });
+          }
+        })
         if (this.commands.length === 0) {
           Text(this.selectedSessionId.length === 0
             ? '命令取决于具体会话：请先在工作区里选中一个会话。'
