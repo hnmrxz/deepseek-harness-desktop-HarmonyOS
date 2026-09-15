@@ -28,16 +28,68 @@
 
 import { DetailPresentation, DetailSection, Fs, HarmonyIconSize, HarmonySpacing, PANEL_RIGHT_DELIVERABLES, PANEL_RIGHT_DETAIL, PANEL_RIGHT_FILES, PANEL_RIGHT_PREVIEW, PANEL_RIGHT_SUBAGENT, PANEL_RIGHT_TOOL, PANEL_RIGHT_TRAJECTORY, Sp, Sz, presentTool, toolStateLabel } from 'appstate';
 import type { FileNode, FilePreview, PanelDescriptor, SessionStatsInput, TrajectoryItem } from 'appstate';
+
 import { DetailPane } from '../DetailPane';
 import { FilePreviewPane } from '../FilePreviewPane';
 import { DeliverableCard } from '../DeliverableCard';
 import { FileTreePane } from '../FileTreePane';
+import type { FileTreeFacade } from '../FileTreePane';
 import { SubagentCard } from '../SubagentCard';
 import { TimelineOverview } from '../TimelineOverview';
 import { ToolCard } from '../ToolCard';
-import type { FileTreeFacade } from '../FileTreePane';
 import { NativeChip } from '../NativePrimitives';
 import { NativeSectionTitle } from '../NativePrimitives';
+
+/**
+ * 右侧内容的**门面**（P2-12）：真右栏与"详情浮层"两处挂载**共用这一份**。
+ *
+ * ## 为什么需要它（一个实测出来的漂移风险）
+ *
+ * `RightbarShell` 有**两个挂载点**：三栏的真右栏（`AppShell.detailColumn`）与
+ * 「详情」浮层（`Index.detailSheet`）。此前两处**各自**把 16 个 props 拼一遍：
+ *   · 真右栏那一份经 `Index` 的 AppShell 门面往上传（`rightPanelId` / `rightFiles` / …）；
+ *   · 浮层那一份在 `Index` 里**内联重算**（`deliverablesOf(this.trajectoryItems)` 等）。
+ *
+ * 两处只要有一处漏改（例如新加一个面板的数据忘了给浮层），就会出现
+ * **同一个面板在两种呈现下不一样**——而"两处各写一遍必然漂移"是本仓反复踩过的坑
+ * （`ToolCard` / `DeliverableCard` / `FileTreePane` / `ReasoningRow` 都是因为这条才抽出来的）。
+ *
+ * ## 为什么用门面而不是"把 16 个 props 传两遍"
+ *
+ * 16 个值里有 8 个是**投影**（`deliverablesOf` / `itemsOfKind` …）、2 个是**回包**
+ * （`onSelectPanel` / `onAttachFile`）。让每个挂载点自己拼，就等于让两处各自决定
+ * "怎么投影、往哪儿转发" —— 那正是漂移的来源。门面把这两个决定**收在一处**，
+ * 挂载点只提供**它自己那份**（`presentation` / `widthVp` / `sections` / `onClose`）。
+ */
+export interface RightbarFacade {
+  /** 当前面板 id（导航状态） */
+  panelId: string;
+  /** 当前面板名（注册表 label，宿主兜底） */
+  panelLabel: string;
+  /** 可用面板清单（注册表；切换器按它画） */
+  panels: PanelDescriptor[];
+  /** 预览中的文件（可能没有） */
+  preview?: FilePreview;
+  /** 文件树门面（与主区工作区页签同源） */
+  files: FileTreeFacade;
+  /** 已筛好的交付物条目（筛选是纯模型） */
+  deliverables: TrajectoryItem[];
+  /** 已筛好的子代理条目 */
+  subagents: TrajectoryItem[];
+  /** 已筛好的工具条目 */
+  tools: TrajectoryItem[];
+  /** 轨迹面板要的条目 */
+  trajectoryItems: TrajectoryItem[];
+  /** 时间总览要的统计 */
+  stats: SessionStatsInput;
+  /** 切面板（经注册表校验） */
+  onSelectPanel: (panelId: string) => void;
+  /** 把文件投喂到输入区 */
+  onAttachFile: (node: FileNode) => void;
+  /** 详情面板的行内复制 */
+  onLineTap: (section: string, text: string) => void;
+}
+
 
 @Component
 export struct RightbarShell {
