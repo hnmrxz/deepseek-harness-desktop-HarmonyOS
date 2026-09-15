@@ -194,6 +194,18 @@ hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 （`hubBanner` / `coreTabContent` / `tabContent`——内容都已在 AppShell 与两束组件里，只剩宿主这份壳；
 `@Entry` 组件不会渲染它们）与**全仓 22 个零使用 import**（`Index` 12 个、`MainShell` 9 个、其余 6 文件各 1 个）。
 `Index.ets` 4460 → **4384 行**，全仓零使用 import 归零。
+**P4-6 已落地**：① 最后一段内联内容拆成 `view/SettingsCore.ets`（78 行，包住 `CorePane` + 两块提示；
+它是 E118「`@BuilderParam` 注入在真机崩溃」的修复形态，不是多余转发层）。
+② **修掉一个真缺陷（E347）**：设置写入回执是一个全局字符串、只有**一个**读取点（设置页顶部那条回显），
+于是一方面切分区会把上一段的回执带过来（看起来像本页刚写出来的结果），另一方面——
+更糟——**7 个工作区/会话函数、19 处回执写在设置通道里**，用户在会话里点「归档」等操作
+**根本看不到任何回执**（"点了没反应"）。现在：设置回执带**归属域**（`settingsWriteDomain`，
+只在"域 == 当前分区"时显示），工作区/会话回执改走会话输入区那条通道（`attachNotice`）。
+域判定搬进**零依赖**的 `appstate/model/SettingsDomains.ets`（原文件再导出，所有导入点一字未改），
+于是它能被 fixture 直接执行 —— **+19 条断言**（五类命名空间 + 三类"不猜"边界 + key→域三条边界）。
+`SettingsPane` 497 → **500 行**（P4-1…P4-6 合计 **1890 → 500**），设置域九个组件：
+`SettingRow` / `SettingsGeneral` / `SettingsModels` / `SettingsPlugins` / `SettingsInventory` /
+`SettingsSkills` / `SettingsPresets` / `SettingsCore` / `SettingsDevice`。
 **P4-5 已落地**：设置页最后两段大内容拆成域组件 —— `view/SettingsSkills.ets`（95 行：技能清单 + 读取结论，
 只吃两个 prop、无写入动作）与 `view/SettingsPresets.ets`（271 行：官方这一页的两半——预设名单卡片
 （复制 / 查看 / 两步确认删除）与 `agent-*` 分区编辑器，含三个组件内临时态与「查看」的中枢直读）。

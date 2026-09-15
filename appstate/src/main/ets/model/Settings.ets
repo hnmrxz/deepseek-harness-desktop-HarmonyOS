@@ -8,6 +8,10 @@
  */
 
 import { getArray, getBoolean, getNumber, getRecord, getString, isRecord, parseJson } from 'connection';
+import { isGeneralNamespace } from './SettingsDomains';
+// 域判定与「通用命名空间」白名单搬去 `SettingsDomains.ets`（零依赖，可被 fixture 直接执行）；
+// 这里**再导出**，于是所有既有导入点（含 barrel）都不用改。
+export { GENERAL_NAMESPACES, DEFAULT_MODEL_NS, SETTINGS_DOMAIN_UNKNOWN, isGeneralNamespace, settingsDomainOfNs, settingsDomainOfKey } from './SettingsDomains';
 
 // ─────────────────────────── 设置 ───────────────────────────
 
@@ -181,24 +185,6 @@ export interface SettingGroup {
  * 【为什么不是"全部隐藏"】用户**显式改过**的项即使属于引擎命名空间也要留在界面上
  * （否则他改过的东西无处可见、也无处撤回）。所以投影规则是"白名单 ∪ 用户已覆盖"。
  */
-export const GENERAL_NAMESPACES: string[] = [
-  'ui-theme',
-  'locale',
-  'ui-conversation',
-  'ui-chat',
-  'ui-onboarding'
-];
-
-/** 该命名空间是否属于「通用」分区（用户面向的功能包设置） */
-export function isGeneralNamespace(ns: string): boolean {
-  for (let i = 0; i < GENERAL_NAMESPACES.length; i++) {
-    if (GENERAL_NAMESPACES[i] === ns) {
-      return true;
-    }
-  }
-  return false;
-}
-
 /**
  * 投影出「通用」分区应显示的分组（E114）。
  *

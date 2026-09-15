@@ -37,7 +37,7 @@ import { SettingsModels } from './SettingsModels';
 import { SettingsPlugins } from './SettingsPlugins';
 import { SettingsPresets } from './SettingsPresets';
 import { SettingsSkills } from './SettingsSkills';
-import { CorePane } from './CorePane';
+import { SettingsCore } from './SettingsCore';
 
 /** 设置面板（E108/E110/E114/E120） */
 @Component
@@ -60,6 +60,16 @@ export struct SettingsPane {
   };
   /** 最近一次设置写入的结果回显（由页面注入；空串表示不显示） */
   @Prop writeNote: string = '';
+  /**
+   * 这条回执**属于哪个分区**（E347：空串 = 判不出来 ⇒ 照常显示）。
+   *
+   * 【为什么必须带域】写入回执原本是一个全局字符串，而它唯一的读取点在这里。
+   * 于是"在通用改了外观、切到模型"会让那条回执还挂在模型页上方——看起来像模型页
+   * 刚写出来的结果（失败回执更糟：像是**这一页**的操作被拒了）。界面不该这样撒谎。
+   * 域由 key 的命名空间判定（`settingsDomainOfNs`，纯函数、有 fixture）；
+   * 判不出来时**宁可显示**——隐藏一条用户正需要的失败回执，比多显示一条更糟。
+   */
+  @Prop writeDomain: string = '';
   /** 各命名空间的写状态（仅用于诊断显示 revision） */
 
   onToggleSetting: (key: string, value: boolean) => void = () => {
@@ -123,7 +133,10 @@ export struct SettingsPane {
 
       // 写入结果回显：成功 / 冲突 / 被拒 / 本机偏好都走这里。
       // 不做乐观更新，所以这里是用户唯一能看到「Host 到底接受了没有」的地方。
-      if (this.writeNote.length > 0) {
+      //
+      // 【只在"这条回执属于当前分区"时显示】否则切分区会把上一段的回执带过来，
+      // 看起来像当前分区刚写出来的结果（域判不出来时空串 ⇒ 照常显示，见 writeDomain）。
+      if (this.writeNote.length > 0 && (this.writeDomain.length === 0 || this.writeDomain === this.section)) {
         Text(this.writeNote)
           .fontSize(Fs.CAPTION)
           .fontColor($r('sys.color.font_secondary'))
@@ -170,36 +183,26 @@ export struct SettingsPane {
                 this.onResetSetting(key);
               }
             })
-          } else if (this.section === 'settings.core') {
-            // 核心分区：与原来的一级「核心」页内容一致（版本切换/回滚、插件、运行时事实）
-            Column({ space: Sp.S }) {
-              if (this.coreNotice.length > 0) {
-                Text(this.coreNotice)
-                  .fontSize(Fs.CAPTION)
-                  .fontColor($r('sys.color.font_secondary'))
-                  .width('100%')
-                  .padding(Sp.S)
-                  .borderRadius(Radius.S)
-                  .backgroundColor($r('sys.color.background_secondary'))
+} else if (this.section === 'settings.core') {
+            // 核心段归 SettingsCore（P4-6 拆出的域组件）：它包住 `CorePane` 并承载两块提示。
+            // 不用 `@BuilderParam` 注入（E118：真机上点开这一分区会 JS 崩溃）——属性直传。
+            SettingsCore({
+              view: this.coreView,
+              notice: this.coreNotice,
+              pluginNotice: this.pluginNotice,
+              onAction: (id: string) => {
+                this.onCoreAction(id);
+              },
+              onSelectVersion: (version: string) => {
+                this.onCoreSelectVersion(version);
+              },
+              onTogglePlugin: (id: string, disabled: boolean) => {
+                this.onTogglePluginRow(id, disabled);
+              },
+              onResetPluginRows: () => {
+                this.onResetPluginRowsAction();
               }
-              CorePane({
-                view: this.coreView,
-                onAction: (id: string) => {
-                  this.onCoreAction(id);
-                },
-                onSelectVersion: (version: string) => {
-                  this.onCoreSelectVersion(version);
-                },
-                onTogglePlugin: (id: string, disabled: boolean) => {
-                  this.onTogglePluginRow(id, disabled);
-                },
-                onResetPluginRows: () => {
-                  this.onResetPluginRowsAction();
-                },
-                pluginNotice: this.pluginNotice
-              })
-            }
-            .width('100%')
+            })
           } else if (this.section === 'settings.general') {
             // 通用段归 SettingsGeneral（P4-4 拆出的域组件）
             SettingsGeneral({

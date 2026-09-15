@@ -111,6 +111,7 @@ export interface TabContentFacade {
   sessionsOf: (w: WorkspaceItem) => SessionListItem[];
   settingItemOf: (key: string) => SettingItem | undefined;
   settingWriteNote: string;
+  settingWriteDomain: string;
   setSettingWriteNote: (value: string) => void;
   settings: SettingGroup[];
   skillNote: string;
@@ -276,6 +277,7 @@ export struct TabContentView {
         selection: this.f.selection,
         about: aboutInfo(),
         writeNote: this.f.settingWriteNote,
+        writeDomain: this.f.settingWriteDomain,
         onToggleSetting: (key: string, value: boolean) => {
           if (this.f.settingItemOf(key) === undefined) {
             // 本地偏好：本客户端自己的开关，没有上游写路径。

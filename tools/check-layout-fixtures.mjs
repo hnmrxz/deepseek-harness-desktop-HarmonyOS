@@ -45,6 +45,8 @@ const PURE_FILES = [
   'appstate/src/main/ets/model/Turns.ets',
   'appstate/src/main/ets/model/Search.ets',
   'appstate/src/main/ets/model/Markdown.ets',
+  // 设置域判定（P4-6）：零依赖，故可以被本 fixture 直接执行
+  'appstate/src/main/ets/model/SettingsDomains.ets',
   'appstate/src/main/ets/model/PanelRegistry.ets',
   'appstate/src/main/ets/model/NavigationState.ets',
   'appstate/src/main/ets/model/Follow.ets',
@@ -194,6 +196,7 @@ const PR = require2('./PanelRegistry.js');
 const ST = require2('./ShellTracks.js');
 const NS = require2('./NavigationState.js');
 const MD = require2('./Markdown.js');
+const SD = require2('./SettingsDomains.js');
 const t = makeAsserter(selfTest);
 
 console.log('# 布局 fixture 门禁（四形态 + 断点边界 + 让步链）\n');
@@ -1501,6 +1504,44 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
       deliverablesOf([a, b, dupA]).map((x) => x.fileName).join(','), 'later');
     t.eq('没有该种类 ⇒ 空数组（面板据此显示空态，而不是显示空气泡）',
       itemsOfKind([b], TrajectoryKind.SUBAGENT).length, 0);
+  }
+
+  // ── P4-6：设置写入回执的归属域（界面不该把上一段的回执挂在当前段上）──
+  {
+    const { settingsDomainOfNs, settingsDomainOfKey, isGeneralNamespace,
+      SETTINGS_DOMAIN_UNKNOWN, DEFAULT_MODEL_NS, GENERAL_NAMESPACES } = SD;
+
+    // 通用分区：白名单整组
+    t.eq('通用：外观命名空间', settingsDomainOfNs('ui-theme'), 'settings.general');
+    t.eq('通用：语言', isGeneralNamespace('locale'), true);
+    t.eq('通用：不在白名单 ⇒ 假', isGeneralNamespace('llm-deepseek'), false);
+
+    // 模型分区：模型相关的四类命名空间
+    t.eq('模型：提供方命名空间', settingsDomainOfNs('llm-deepseek'), 'settings.models');
+    t.eq('模型：搜索命名空间', settingsDomainOfNs('web-search-brave'), 'settings.models');
+    t.eq('模型：新会话默认模型', settingsDomainOfNs(DEFAULT_MODEL_NS), 'settings.models');
+    t.eq('模型：子代理模型选择', settingsDomainOfNs('subagent-model-selection'), 'settings.models');
+
+    // 插件 / 预设 / 技能
+    t.eq('插件：ui-plugin-*', settingsDomainOfNs('ui-plugin-cordis'), 'settings.plugins');
+    t.eq('预设：agent-preset*', settingsDomainOfNs('agent-presets'), 'settings.presets');
+    t.eq('技能：skill*', settingsDomainOfNs('skills'), 'settings.skills');
+
+    // 不猜：未列出的命名空间必须返回"域未知"，而不是随便归一段
+    t.eq('未列出的命名空间 ⇒ 域未知', settingsDomainOfNs('agent-loop'), SETTINGS_DOMAIN_UNKNOWN);
+    t.eq('引擎参数 agent-presets 之外的不猜', settingsDomainOfNs('unknown-ns'), SETTINGS_DOMAIN_UNKNOWN);
+
+    // key → 域（按第一个点切命名空间）
+    t.eq('key：llm-deepseek.baseURL', settingsDomainOfKey('llm-deepseek.baseURL'), 'settings.models');
+    t.eq('key：ui-theme.fontSize', settingsDomainOfKey('ui-theme.fontSize'), 'settings.general');
+    t.eq('key：没有命名空间 ⇒ 域未知（本机偏好由调用方声明）',
+      settingsDomainOfKey('themeMode'), SETTINGS_DOMAIN_UNKNOWN);
+    t.eq('key：点在结尾 ⇒ 域未知', settingsDomainOfKey('ui-theme.'), SETTINGS_DOMAIN_UNKNOWN);
+    t.eq('key：点在最前 ⇒ 域未知', settingsDomainOfKey('.fontSize'), SETTINGS_DOMAIN_UNKNOWN);
+
+    // 白名单本身也要钉住：多一个/少一个都会让"通用"页的内容变样
+    t.eq('通用白名单五项', GENERAL_NAMESPACES.length, 5);
+    t.eq('通用白名单内容', GENERAL_NAMESPACES.join(','), 'ui-theme,locale,ui-conversation,ui-chat,ui-onboarding');
   }
 }
 

@@ -104,6 +104,8 @@ export interface MainShellFacade {
   sendDraft: () => void;
   sessionStats: SessionStatsInput;
   settingWriteNote: string;
+  /** 这条设置写入回执属于哪个分区（E347；空串 = 判不出来） */
+  settingWriteDomain: string;
   setSettingWriteNote: (value: string) => void;
   stackPage: StackPage;
   setStackPage: (value: StackPage) => void;

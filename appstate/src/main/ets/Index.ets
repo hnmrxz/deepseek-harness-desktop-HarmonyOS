@@ -93,7 +93,9 @@ export {
   SettingKind,
   SettingOrigin,
   SettingValueType,
+  DEFAULT_MODEL_NS,
   SettingsWriteOutcome,
+  settingsDomainOfNs,
   settingsMutateArgs,
   settingsUnsetArgs,
   splitSettingKey

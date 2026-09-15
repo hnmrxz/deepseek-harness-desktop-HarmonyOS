@@ -91,7 +91,10 @@ import {
   SettingKind,
   SettingOrigin,
   SettingValueType,
+  DEFAULT_MODEL_NS,
   SettingsWriteOutcome,
+  settingsDomainOfNs,
+  splitSettingKey,
   parseSettingInput,
   parseStructInput,
   parseNotifyRoute,
@@ -154,7 +157,7 @@ import {
  * 原因：`HubSnapshot` / `HubSubscriber` 在 appstate 里是 `export type` 导出的类型，
  * 与值导入分开写更贴近 ArkTS 的类型/值导入区分。
  */
-import type { AttachOutcome, CredentialWriteResult, HubSnapshot, HubSubscriber, InputModality, LayoutDecision, LayoutInput, ModalityEvidence, NavState, NavigationState, OverlayState, PluginRow, SessionJob, SessionStatsInput, SettingChoice, SettingInputResult, SettingItem, SettingsWriteResult, TabSelection } from 'appstate';
+import type { AttachOutcome, CredentialWriteResult, HubSnapshot, HubSubscriber, InputModality, LayoutDecision, LayoutInput, ModalityEvidence, NavState, NavigationState, OverlayState, PluginRow, SessionJob, SessionStatsInput, SettingChoice, SettingInputResult, SettingItem, SettingsKeyParts, SettingsWriteResult, TabSelection } from 'appstate';
 import { emitter } from '@kit.BasicServicesKit';
 import { parseJson } from 'connection';
 import { EVENT_HOST_CONNECTED, EVENT_KEY_HOST_TOKEN, EVENT_KEY_HOST_URL } from 'platform';
@@ -476,6 +479,13 @@ struct Index {
   /** 设置命名空间的写状态（含 revision）；用于诊断「界面值与 Host 版本是否一致」 */
   /** 设置写入的结果回显（成功/失败/冲突都如实显示，不做乐观更新） */
   @State settingWriteNote: string = '';
+  /**
+   * 这条回执**属于哪个设置分区**（E347：空串 = 判不出来）。
+   *
+   * 设置页只在"域 == 当前分区"时显示回执——否则在通用改了外观、切到模型页，
+   * 那条回执还挂在模型页上方，看起来像模型页刚写出来的结果。
+   */
+  @State settingsWriteDomain: string = '';
   /**
    * 正在选择的枚举设置项。
    *
@@ -985,12 +995,12 @@ struct Index {
     this.localSettings = this.localPreferenceGroup();
     this.settings = mergeSettingsGroups(this.hostSettings, this.localSettings);
     if (!saved || !applied) {
-      this.settingWriteNote = !saved
+      this.noteSettingWrite(LOCAL_THEME_KEY, !saved
         ? '主题已切换，但**没能保存**：下次启动会回到上次的值。'
-        : '主题已保存，但**本次应用未成功**（系统拒绝或当前窗口模式不支持）。';
+        : '主题已保存，但**本次应用未成功**（系统拒绝或当前窗口模式不支持）。');
       return;
     }
-    this.settingWriteNote = '主题模式已保存并在本次生效。';
+    this.noteSettingWrite(LOCAL_THEME_KEY, '主题模式已保存并在本次生效。');
   }
 
   /**
@@ -1826,9 +1836,11 @@ struct Index {
    */
   private togglePlan(): void {
     SessionHub.shared().executeCommand('/plan').then((n: ActionNotice) => {
-      this.settingWriteNote = this.noticeText(n);
+      // 计划模式的开关在会话输入区 ⇒ 回执也必须落在会话输入区上方那条通道里
+      // （设置回执只在设置页顶部显示，用户看不见）。
+      this.attachNotice = this.noticeText(n);
     }).catch((e: Object) => {
-      this.settingWriteNote = '切换计划模式失败：' + (e as Error).message;
+      this.attachNotice = '切换计划模式失败：' + (e as Error).message;
     });
   }
 
@@ -2318,18 +2330,42 @@ struct Index {
    *   所以这里一律等 Host 答复，并按结果给出**可执行**的一句话。
    */
   private async writeSetting(key: string, value: Object, label: string): Promise<void> {
-    this.settingWriteNote = `正在写入 ${key}…`;
+    this.noteSettingWrite(key, `正在写入 ${key}…`);
     const hub: SessionHub = SessionHub.shared();
     const result: SettingsWriteResult = await hub.writeSetting(key, value);
-    this.settingWriteNote = result.message;
+    this.noteSettingWrite(key, result.message);
     // 【不要在这里再套一层 applyHubSnapshot(hub.snapshot())】
     //   中枢在写成功/冲突/被拒时都已经 `notify()` 过，订阅回调会带着
     //   **已与本地偏好合并**的视图刷新界面。手动再套一次快照不但多余，
     //   还会在「快照比 notify 更旧」时把刚刷新的值盖回旧值——
     //   那正是「Host 说写入成功、界面却没变」的成因（实测踩到过）。
+    // 【为什么失败不再顺手写 hubError】那条横幅在会话页顶部，而"这次设置写入被拒"
+    //   对没在看设置页的人是一句无来由的横幅（E347）。回执已经挂在设置页里，
+    //   并且 `applyHubSnapshot` 收到断连/错误时会自己点亮横幅。
     if (result.outcome !== SettingsWriteOutcome.OK) {
-      this.hubError = result.message;
+      hilog.info(DOMAIN, TAG, 'HDSH-SET 写入 %{public}s 未成功：%{public}s', key, result.outcome);
     }
+  }
+
+  /**
+   * 记一条**带归属域**的设置写入回执（E347）。
+   *
+   * 【为什么要有这个包装】写入回执是一个全局字符串，而读取它的地方只有设置页顶部那条回显。
+   * 不记域就会出现"在通用改了外观、切到模型页，那条回执还挂在模型页上方"——
+   * 看起来像模型页刚写出来的结果（界面在撒谎）。域由 key 的命名空间判定
+   * （`settingsDomainOfNs`，纯函数、有 fixture），判不出来的**不隐藏**。
+   */
+  private noteSettingWrite(key: string, message: string): void {
+    // 本机偏好（`local.*`）是**设置项**，但它的 key 不在 Host 命名空间里
+    // ⇒ 命名空间判不出域，只能显式指到「通用」（它就长在那一段里）。
+    if (key === LOCAL_THEME_KEY) {
+      this.settingsWriteDomain = 'settings.general';
+      this.settingWriteNote = message;
+      return;
+    }
+    const parts: SettingsKeyParts | undefined = splitSettingKey(key);
+    this.settingsWriteDomain = parts === undefined ? '' : settingsDomainOfNs(parts.ns);
+    this.settingWriteNote = message;
   }
 
   private applyChoice(value: string): void {
@@ -2365,7 +2401,7 @@ struct Index {
       return;
     }
     // 防御：本机偏好表里出现了没有写入路径的项。如实说明，而不是静默丢弃这次点击。
-    this.settingWriteNote = `本机偏好「${key}」尚未实现写入路径（选项已选中，但没有生效）。`;
+    this.noteSettingWrite(key, `本机偏好「${key}」尚未实现写入路径（选项已选中，但没有生效）。`);
   }
 
   // ───────────────────── 选择文件夹（工作区，E100）─────────────────────
@@ -2424,20 +2460,20 @@ struct Index {
   private folderUsePath(path: string): void {
     const hub: SessionHub = SessionHub.shared();
     hub.setDefaultWorkspace(path);
-    this.settingWriteNote = `正在把 ${path} 设为工作区…`;
+    this.attachNotice = `正在把 ${path} 设为工作区…`;
     hilog.info(DOMAIN, TAG, 'HDSH-WS 选择工作区：%{public}s', path);
     hub.ensureWorkspace(path).then((note: string) => {
-      this.settingWriteNote = note;
+      this.attachNotice = note;
       hilog.info(DOMAIN, TAG, 'HDSH-WS 注册结果：%{public}s', note);
       return hub.createSession();
     }).then((sid: string | undefined) => {
       if (sid !== undefined) {
-        this.settingWriteNote = `已在这里开始工作：${path}`;
+        this.attachNotice = `已在这里开始工作：${path}`;
         this.selectTab(NavTab.SESSIONS);
       }
     }).catch((e: Object) => {
       const err = e as Error;
-      this.settingWriteNote = `选择文件夹失败：${err.message}`;
+      this.attachNotice = `选择文件夹失败：${err.message}`;
       hilog.warn(DOMAIN, TAG, 'HDSH-WS 失败：%{public}s', err.message);
     });
   }
@@ -2527,20 +2563,20 @@ struct Index {
     const hub: SessionHub = SessionHub.shared();
     hub.setDefaultWorkspace(chosen);
     this.folderOpen = false;
-    this.settingWriteNote = `正在把 ${chosen} 设为工作区…`;
+    this.attachNotice = `正在把 ${chosen} 设为工作区…`;
     hilog.info(DOMAIN, TAG, 'HDSH-WS 选择工作区：%{public}s', chosen);
     hub.ensureWorkspace(chosen).then((note: string) => {
-      this.settingWriteNote = note;
+      this.attachNotice = note;
       hilog.info(DOMAIN, TAG, 'HDSH-WS 注册结果：%{public}s', note);
       return hub.createSession();
     }).then((sid: string | undefined) => {
       if (sid !== undefined) {
-        this.settingWriteNote = `已在这里开始工作：${chosen}`;
+        this.attachNotice = `已在这里开始工作：${chosen}`;
         this.selectTab(NavTab.SESSIONS);
       }
     }).catch((e: Object) => {
       const err = e as Error;
-      this.settingWriteNote = `选择文件夹失败：${err.message}`;
+      this.attachNotice = `选择文件夹失败：${err.message}`;
       hilog.warn(DOMAIN, TAG, 'HDSH-WS 失败：%{public}s', err.message);
     });
   }
@@ -3238,6 +3274,7 @@ struct Index {
     sendDraft: () => this.sendDraft(),
     sessionStats: this.sessionStats,
     settingWriteNote: this.settingWriteNote,
+    settingWriteDomain: this.settingsWriteDomain,
     setSettingWriteNote: (value: string) => {
       this.settingWriteNote = value;
     },
@@ -3680,13 +3717,13 @@ struct Index {
    * "Host 到底接受了没有"的地方。
    */
   private resetSetting(key: string): void {
-    this.settingWriteNote = `正在重置 ${key}…`;
+    this.noteSettingWrite(key, `正在重置 ${key}…`);
     SessionHub.shared().unsetSetting(key).then((result: SettingsWriteResult) => {
-      this.settingWriteNote = result.message;
+      this.noteSettingWrite(key, result.message);
       hilog.info(DOMAIN, TAG, 'HDSH-SET 重置 %{public}s：%{public}s', key, result.outcome);
     }).catch((e: Object) => {
       const err = e as Error;
-      this.settingWriteNote = `重置失败：${err.message}`;
+      this.noteSettingWrite(key, `重置失败：${err.message}`);
     });
   }
 
@@ -3729,17 +3766,18 @@ struct Index {
     this.rememberedTokenState = 'none';
     this.shouldAutoConnect = false;
     SessionHub.shared().disconnect();
-    this.settingWriteNote = '已忘记这个 Host；下次启动会重新接入本机核心，也可以现在粘贴新的启动链接。';
+    this.attachNotice = '已忘记这个 Host；下次启动会重新接入本机核心，也可以现在粘贴新的启动链接。';
     hilog.info(DOMAIN, TAG, 'HDSH-CONN 已忘记 Host');
   }
 
-  private applyDefaultModel(provider: string, model: string, effort: string): void {    this.settingWriteNote = `正在写入默认模型 ${provider} / ${model}…`;
+  private applyDefaultModel(provider: string, model: string, effort: string): void {
+    this.noteSettingWrite(DEFAULT_MODEL_NS, `正在写入默认模型 ${provider} / ${model}…`);
     SessionHub.shared().setDefaultModel(provider, model, effort).then((note: string) => {
-      this.settingWriteNote = note;
+      this.noteSettingWrite(DEFAULT_MODEL_NS, note);
       hilog.info(DOMAIN, TAG, 'HDSH-MODEL 默认模型写入结果：%{public}s', note);
     }).catch((e: Object) => {
       const err = e as Error;
-      this.settingWriteNote = `写入默认模型失败：${err.message}`;
+      this.noteSettingWrite(DEFAULT_MODEL_NS, `写入默认模型失败：${err.message}`);
       hilog.warn(DOMAIN, TAG, 'HDSH-MODEL 默认模型写入异常：%{public}s', err.message);
     });
   }
@@ -3879,21 +3917,21 @@ struct Index {
   private createSessionIn(w: WorkspaceItem): void {
     const hub: SessionHub = SessionHub.shared();
     if (!this.hubConnected) {
-      this.settingWriteNote = '尚未连接 Host，无法新建会话。';
+      this.attachNotice = '尚未连接 Host，无法新建会话。';
       return;
     }
-    this.settingWriteNote = `正在把 ${w.path} 设为当前工作区…`;
+    this.attachNotice = `正在把 ${w.path} 设为当前工作区…`;
     hub.setDefaultWorkspace(w.path);
     hub.ensureWorkspace(w.path).then((note: string) => {
       hilog.info(DOMAIN, TAG, 'HDSH-WS 目标工作区：%{public}s', note);
       return hub.createSession();
     }).then((sid: string | undefined) => {
-      this.settingWriteNote = sid === undefined
+      this.attachNotice = sid === undefined
         ? '新建会话失败：见状态条上的原因。'
         : `已在 ${w.name.length > 0 ? w.name : w.path} 里新建会话。`;
     }).catch((e: Object) => {
       const err = e as Error;
-      this.settingWriteNote = `新建会话失败：${err.message}`;
+      this.attachNotice = `新建会话失败：${err.message}`;
     });
   }
 
@@ -3912,15 +3950,15 @@ struct Index {
   private deleteWorkspaceByPath(w: WorkspaceItem): void {
     const id: string = this.registryIdOf(w);
     if (id.length === 0) {
-      this.settingWriteNote = this.localized($r('app.string.note_no_workspace_id'));
+      this.attachNotice = this.localized($r('app.string.note_no_workspace_id'));
       return;
     }
     SessionHub.shared().deleteWorkspace(id).then((n: ActionNotice) => {
-      this.settingWriteNote = this.noticeText(n);
+      this.attachNotice = this.noticeText(n);
       hilog.info(DOMAIN, TAG, 'HDSH-WS 删除工作区：%{public}s', n.code);
     }).catch((e: Object) => {
       const err = e as Error;
-      this.settingWriteNote = `${this.localized($r('app.string.note_workspace_delete_failed'))}${err.message}`;
+      this.attachNotice = `${this.localized($r('app.string.note_workspace_delete_failed'))}${err.message}`;
     });
   }
 
@@ -4118,17 +4156,17 @@ struct Index {
     // E140：状态字符串经资源管理器取值；并附上名字——确认框必须指名道姓
     const note: string = this.localized($r('app.string.confirm_delete_workspace_note'));
     const label: string = w.name.length > 0 ? w.name : w.path;
-    this.settingWriteNote = note.length > 0
+    this.attachNotice = note.length > 0
       ? `${note}（${label}）`
       : `再按一次「确认删除」即移除该工作区的登记；磁盘上的目录与文件不会被删除。（${label}）`;
   }
 
   private archiveSessionById(id: string): void {
     SessionHub.shared().archiveSession(id).then((n: ActionNotice) => {
-      this.settingWriteNote = this.noticeText(n);
+      this.attachNotice = this.noticeText(n);
     }).catch((e: Object) => {
       const err = e as Error;
-      this.settingWriteNote = `${this.localized($r('app.string.note_archive_failed'))}${err.message}`;
+      this.attachNotice = `${this.localized($r('app.string.note_archive_failed'))}${err.message}`;
     });
   }
 
@@ -4279,6 +4317,7 @@ struct Index {
     sessionsOf: (w: WorkspaceItem) => this.sessionsOf(w),
     settingItemOf: (key: string) => this.settingItemOf(key),
     settingWriteNote: this.settingWriteNote,
+    settingWriteDomain: this.settingsWriteDomain,
     setSettingWriteNote: (value: string) => {
       this.settingWriteNote = value;
     },
