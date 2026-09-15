@@ -114,6 +114,28 @@ AppFrame
 | **被写的值** | **必须 `setX(v: T): void`**，并把搬走代码里的 `this.f.x = v` 改写成 `this.f.setX(v)` |
 | 被调用的组件/其它 builder | 它们**已经是组件**（如 `hubBanner` → `HubBanner`）⇒ 直接渲染组件，不走门面 |
 
+### 第二束（`mainContent`）的实操结果（2026-09-15，本轮）
+
+生成器改造成 `dist/scratch/mig2.py` 后**已能产出 MainShell**（397 行、77 个门面成员、33 处 setter 改写），
+`Index` 在临时状态下到 **4391 行**，但未通过编译——**只差最后一类接缝**：
+
+> **`Index` 的模块级辅助函数/常量进不了门面**（方法才行）。被搬走的代码用到它们（**裸引用**，不是 `this.X`）：
+> `storageBaseUrl`(2) / `composeHostUrl`(3) / `extractToken`(2) / `prettyJson`(3) / `reportConnectedHost`(3) / `TAG`(41)。
+> appstate 里**都没有**这些名字。
+
+**下一轮的最小修法**（二选一，推荐 A）：
+
+**A. 让生成器支持模块级名字**（改 `mig2.py` 即可，约 20 行）：
+1. 扫描 `Index` 的 `^function name(` 与 `^const NAME:`，得到"模块级名字 → 签名/类型"；
+2. 若搬走的代码引用了它们，就当作门面成员生成：函数 → `name: (a, b) => R` + 包装 `name: (a, b) => name(a, b)`；
+   常量 → `NAME: T` + 包装 `NAME: NAME`；
+3. **额外一道改写**：把搬走代码里的**裸标识符**（`TAG`、`composeHostUrl(`…）改写成 `this.f.X`
+   —— 现有的改名只处理了 `this.X`，这是它们漏掉的原因。
+
+**B. 先把这些纯辅助函数搬进 appstate**（它们的归属本来就该在模型层），再走原流程——更干净但改动面更大。
+
+**结论**：`mainContent` 这一束**不是路线问题，是"少处理了一类名字"**。两束合起来已证明生成器路子在 `tabContent` 束上完全跑通。
+
 **生成脚本已留档**：`dist/scratch/mig.py`（已含两次实操修掉的全部坑：括号配平、装饰器同搬、导入差集、
 深度扫赋值、setter 生成、委托保参、`build()`、子组件与纯函数导入）。**下一轮直接改它**，不要重写。
 （放在 `dist/` 下——它已被 gitignore，属工具而非产物；`/tmp` 会被别的进程干扰。）

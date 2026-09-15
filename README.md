@@ -153,7 +153,8 @@ hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 （呈现归组件、副作用归宿主）；
 `@Provide/@Consume` 机制已在侧栏上真实验证（侧栏按面板注册表过滤入口）；
 **主区内容已开始搬家**：第一束（标签页内容，459 行）已搬进 `view/TabContentView.ets`
-（门面 + setter，Index 5040 → 4665 行）；**页面选择已收成唯一真值**（`NavigationState.selectedMainPanel`，`NavTab` 退化为迁移期别名），
+（门面 + setter，Index 5040 → 4665 行）——主区第二束（`mainContent`）已推进到"只差模块级名字"这一步；
+**页面选择已收成唯一真值**（`NavigationState.selectedMainPanel`，`NavTab` 退化为迁移期别名），
 "此刻显示哪个面板"的组合逻辑也已收进纯模型（`activeMainPanelOf`）；
 `AppShell` / `MainShell` 与"`Index` 不再负责页面级 Pane 选择"仍待完成
 （机制已验 ⇒ 这一步现在可负担；⚠️ 运行时行为须真机确认，见 `docs/device-validation.md` D9）。
