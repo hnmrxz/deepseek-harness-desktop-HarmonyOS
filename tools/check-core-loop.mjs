@@ -35,7 +35,14 @@ import { spawn, execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 
 const ROOT = process.cwd();
-const CORE_DIR = join(ROOT, 'dist', 'core', 'work', 'dsh-core-0.1.5-rc.2');
+/*
+ * 核心树位置。默认是 `pack-core` 的标准产物；`HDSH_LOOP_CORE` 可以指向**另一棵**树
+ * （用于"这棵树的改动到底修好了什么"这类对照实验——例如 E384 的 sharp 真件验证，
+ * 那次必须在**实验树**里加 dev-box 平台别名，不能污染随包发出去的那棵）。
+ */
+const CORE_DIR = process.env.HDSH_LOOP_CORE !== undefined && process.env.HDSH_LOOP_CORE.length > 0
+  ? process.env.HDSH_LOOP_CORE
+  : join(ROOT, 'dist', 'core', 'work', 'dsh-core-0.1.5-rc.2');
 const ENTRY = join(ROOT, 'hostcore', 'app', 'main.js');
 const BUILD = join(ROOT, 'dist', 'scratch', 'core-loop');
 const HOME = join(ROOT, 'dist', 'localtest', 'core-loop-home');

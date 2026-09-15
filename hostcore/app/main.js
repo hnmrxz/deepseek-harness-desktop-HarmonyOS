@@ -516,22 +516,41 @@ function runtimeFacts() {
       let ok = loaded !== undefined;
       if (mod === 'sharp') {
         /*
-         * sharp 有两层，"require 成功"根本不能证明它可用：
-         *   ① 我们放的是**调度器**（E93）：它 require 成功只说明调度器在；
-         *   ② 真件 `sharp.impl` 的原生绑定是**惰性加载**的——实测在 Windows 上
-         *      `require('sharp.impl')` 同样成功，直到真正处理图片才会炸。
-         * 所以要探就探**原生绑定本身**：那一次 dlopen 才是"这台设备上能不能用"的事实。
-         * 路径正是 sharp 会去找的那个（我们的原生重定向会把它映射到 HAP libs 里）。
+         * sharp 这一件必须**走调度器**探（E384i），不能只 require 原生件本身。
+         *
+         * 【为什么改】上一版直接 `require('@ohos-ports/img-sharp-openharmony-arm64/lib/*.node')`，
+         * 绕过了调度器，也就绕过了真件在 require 时做的三件事：① 为 libvips 建 **soname 软链**
+         * （`.node` 的 NEEDED 要 `libvips-cpp.so.42`，而包里只有全版本文件名）；
+         * ② 建 **RPATH 兼容软链** `@ohos-ports/sharp-libvips-openharmony-arm64`；
+         * ③ 设 `LD_LIBRARY_PATH`。于是**设备上真件本来可用，这条探针也会报失败**
+         * ——而 D31 的第 0 步正是看这一行 ⇒ 会把人引向"图片能力不存在"的错误结论。
+         *
+         * 【探针的三条判据，都能同步拿到】
+         *   ① 调度器自己在真件加载失败时把原因挂在 `hdshSharpLoadError` 上；
+         *   ② 真件 require 成功时会带 `versions`（桩没有）；
+         *   ③ 真件的 require 本身会跑 `sharp.format()` —— libvips 装不全时**当场抛错**，
+         *      也就是"require 成功"这次真的能证明可用（这与旧注释的观察不冲突：
+         *      旧注释说的是**裸** require 原生件的那条路）。
          */
         try {
-          require(path.join(CORE_DIR, 'node_modules', '@ohos-ports',
-            'img-sharp-openharmony-arm64', 'lib', 'sharp-openharmony-arm64.node'));
-          ok = true;
-          note = '真件原生绑定可加载（libvips 全套随包，图片附件可用）';
+          const dispatcher = require(path.join(CORE_DIR, 'node_modules', 'sharp'));
+          const loadError = typeof dispatcher.hdshSharpLoadError === 'string'
+            ? dispatcher.hdshSharpLoadError : '';
+          const versions = dispatcher.versions;
+          if (loadError.length > 0) {
+            ok = false;
+            note = `真件加载失败，图片附件已降级：${loadError.slice(0, 200)}`;
+          } else if (versions === undefined || versions === null || typeof versions !== 'object') {
+            ok = false;
+            note = '调度器拿到的不是真件（没有 versions）——随包的 sharp.impl 可能是桩（E384）';
+          } else {
+            ok = true;
+            note = `真件可用（libvips ${versions.vips ?? '?'}，随包全套）`;
+          }
         } catch (e) {
           ok = false;
           const message = e && e.message ? String(e.message) : String(e);
-          note = `真件原生绑定加载失败，图片附件已降级：${message.slice(0, 160)}`;
+          note = `调度器加载失败，图片附件已降级：${message.slice(0, 200)}`;
         }
       }
       facts.natives.push({ name: label, ok: ok, note: note });
