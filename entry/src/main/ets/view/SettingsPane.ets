@@ -35,30 +35,11 @@ import type { CoreViewState, PanelDescriptor, SettingsNamespaceState } from 'app
 import { SessionHub } from 'appstate';
 import { SettingRow } from './SettingRow';
 import { SettingsInventory } from './SettingsInventory';
+import { SettingsGeneral } from './SettingsGeneral';
+import { SettingsDevice } from './SettingsDevice';
 import { SettingsModels } from './SettingsModels';
 import { SettingsPlugins } from './SettingsPlugins';
 import { CorePane } from './CorePane';
-
-/**
- * 模型目录按提供方分组后的一组（E96）。
- *
- * 【为什么要有这个类型】官方 Models 页以"提供方"为单位组织（密钥、端点、模型清单都挂它上面）；
- * 拉平成一个模型列表就看不出"这个模型要用哪把密钥"。
- */
-
-/** 访问模式的中文名（官方译名，取自 `dsh-client-ui-permission-presets` 的 README） */
-function permissionModeLabel(value: string): string {
-  if (value === 'read-only') {
-    return '仅可查看';
-  }
-  if (value === 'workspace-write') {
-    return '工作区内修改';
-  }
-  if (value === 'danger-full-access') {
-    return '完全权限';
-  }
-  return value;
-}
 
 /** 设置面板（E108/E110/E114/E120） */
 @Component
@@ -410,7 +391,30 @@ export struct SettingsPane {
             }
             .width('100%')
           } else if (this.section === 'settings.general') {
-            this.generalTab()
+            // 通用段归 SettingsGeneral（P4-4 拆出的域组件）
+            SettingsGeneral({
+              groups: this.groups,
+              permissionCurrent: this.permissionCurrent,
+              permissionOptions: this.permissionOptions,
+              onOpenDiagnostics: () => {
+                this.onOpenDiagnostics();
+              },
+              onToggleSetting: (key: string, value: boolean) => {
+                this.onToggleSetting(key, value);
+              },
+              onPickChoice: (key: string, current: string) => {
+                this.onPickChoice(key, current);
+              },
+              onEditText: (item: SettingItem) => {
+                this.onEditText(item);
+              },
+              onEditStruct: (item: SettingItem) => {
+                this.onEditStruct(item);
+              },
+              onResetSetting: (key: string) => {
+                this.onResetSetting(key);
+              }
+            })
           } else if (this.section === 'settings.models') {
             // 模型域归 SettingsModels（P4-3b 拆出的域组件）
             SettingsModels({
@@ -448,7 +452,17 @@ export struct SettingsPane {
             // 只读清单归 SettingsInventory（官方 settings-plugin-inventory）
             SettingsInventory({ plugins: this.plugins })
           } else {
-            this.deviceTab()
+            // 设备段归 SettingsDevice（P4-4 拆出的域组件）
+            SettingsDevice({
+              about: this.about,
+              hosts: this.hosts,
+              onPairHost: () => {
+                this.onPairHost();
+              },
+              onRevokeHost: (id: string) => {
+                this.onRevokeHost(id);
+              }
+            })
           }
         }
         .width('100%')
@@ -548,69 +562,6 @@ export struct SettingsPane {
   }
   // ───────────── 通用 ─────────────
 
-  @Builder
-  generalTab() {
-    /*
-     * 【权限模式：只读说明，不给假档位（E116）】
-     *
-     * 官方在这三个标签下提供可切换的预设（仅可查看 / 工作区内修改 / 完全权限），
-     * 但端侧**实测**：启用 `dsh-permission-presets` 会让整棵插件树启动失败——
-     * 它需要 `shell` 服务，而 shell 只能由 bash/pwsh 沙箱提供，两者在鸿蒙上没有对应物
-     * （无法创建进程，E15）。官方规则也写明"宿主没有权限组合时，选择器与设置行都不显示"。
-     *
-     * 于是这里既**不隐藏**（用户明确问过这三档，藏起来等于让他以为没有这个概念），
-     * 也**不给可点的假档位**：只读地说明当前生效的是什么、另外两档为什么不可选。
-     */
-    Column({ space: 2 }) {
-      Row({ space: Sp.XS }) {
-        Text('权限模式')
-          .fontSize(Fs.BODY)
-        Text(this.permissionCurrent.length > 0 ? '宿主报告' : '未报告')
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
-          .padding({ left: 6, right: 6, top: 1, bottom: 1 })
-          .borderRadius(Radius.S)
-          .backgroundColor($r('sys.color.background_primary'))
-      }
-      .width('100%')
-      // E124：显示**宿主真正报告的**当前模式（此前这里是我写死的字符串）
-      Text(this.permissionCurrent.length > 0
-        ? `${permissionModeLabel(this.permissionCurrent)}（${this.permissionCurrent}）`
-        : '宿主暂未报告当前访问模式')
-        .fontSize(Fs.SECONDARY)
-        .fontColor($r('sys.color.font_secondary'))
-        .width('100%')
-      if (this.permissionOptions.length > 0) {
-        Text(`宿主给出的可选集合：${this.permissionOptions.map((v: string) => permissionModeLabel(v)).join(' / ')}`)
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
-          .width('100%')
-      }
-      Text('端侧暂不可切换：把这几档捆绑成可切换预设的插件需要 shell 服务，而鸿蒙不允许应用创建进程（E15）。这里显示的是宿主当前生效的访问模式。')
-        .fontSize(Fs.CAPTION)
-        .fontColor($r('sys.color.font_tertiary'))
-        .width('100%')
-    }
-    .width('100%')
-    .padding(Sp.M)
-    .borderRadius(Radius.M)
-    .backgroundColor($r('sys.color.background_secondary'))
-
-    ForEach(this.groups, (group: SettingGroup) => {
-      Column({ space: Sp.XS }) {
-        Text(group.title)
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
-          .width('100%')
-        ForEach(group.items, (item: SettingItem) => {
-          this.settingRow(item)
-        }, (item: SettingItem) => item.key)
-      }
-      .width('100%')
-    }, (group: SettingGroup) => group.title)
-
-    this.diagnosticsEntry()
-  }
 
   /** 行的显示名：有官方中文措辞就用它，否则保持 Host 原文（E120） */
 
@@ -619,37 +570,6 @@ export struct SettingsPane {
   /** 选项值的显示：官方译名优先（浅色/深色/跟随系统、标准/紧凑），否则回落既有标签 */
 
 
-  @Builder
-  diagnosticsEntry() {
-    Row({ space: Sp.S }) {
-      SymbolGlyph($r('sys.symbol.bell')).fontSize(16)
-        .fontColor([$r('sys.color.brand')])
-      Column({ space: 2 }) {
-        // 原「连接诊断」与「POC 协议验证」合并（E96）：它们都在回答"这台设备上的核心通不通"，
-        // 一个给结论、一个给逐步证据；进同一个页面就能从结论下钻到证据。
-        Text('本地调试')
-          .fontSize(Fs.BODY)
-          .width('100%')
-        Text('连接诊断（五项判定）+ 协议往返验证（token → cookie → /api → WS 逐步证据）')
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
-          .width('100%')
-      }
-      .layoutWeight(1)
-      Text('进入')
-        .fontSize(Fs.CAPTION)
-        .fontColor($r('sys.color.brand'))
-    }
-    .width('100%')
-    .padding(Sp.M)
-    .borderRadius(Radius.M)
-    .backgroundColor($r('sys.color.background_secondary'))
-    .onClick(() => {
-      this.onOpenDiagnostics();
-
-
-    })
-  }
 
   // ───────────── 模型 ─────────────
 
@@ -836,97 +756,5 @@ export struct SettingsPane {
 
   // ───────────── 设备 ─────────────
 
-  @Builder
-  deviceTab() {
-    Row({ space: Sp.S }) {
-      Text('已配置 Host')
-        .fontSize(Fs.CAPTION)
-        .fontColor($r('sys.color.font_tertiary'))
-        .layoutWeight(1)
-      // 措辞刻意写全「远程」：端侧自足运行后，本机核心是默认路径，
-      // 连别人的 Host 是**可选能力**，不是"添加 Host 才能用"（D7 §3）
-      Text('远程 Host（可选）')
-        .fontSize(Fs.CAPTION)
-        .fontColor($r('sys.color.brand'))
-        .onClick(() => {
-          this.onPairHost();
-        })
-    }
-    .width('100%')
 
-    ForEach(this.hosts, (h: HostRecord) => {
-      Column({ space: Sp.XS }) {
-        Row({ space: Sp.S }) {
-          Circle({ width: 8, height: 8 })
-            .fill(h.authorized ? $r('sys.color.confirm') : $r('sys.color.warning'))
-          Text(h.name)
-            .fontSize(Fs.BODY)
-            .layoutWeight(1)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-          Text(h.authorized ? '已授权' : '未授权')
-            .fontSize(Fs.CAPTION)
-            .fontColor(h.authorized ? $r('sys.color.confirm') : $r('sys.color.warning'))
-        }
-        .width('100%')
-
-        Text(`${h.authority} · ${h.level}`)
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_secondary'))
-          .width('100%')
-        Text(`核心包版本 ${h.version.length > 0 ? h.version : '未知'}`)
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
-          .width('100%')
-
-        if (!h.isLoopback) {
-          Row({ space: Sp.L }) {
-            Text('忘记此 Host')
-              .fontSize(Fs.CAPTION)
-              .fontColor($r('sys.color.alert'))
-              .onClick(() => {
-                this.onRevokeHost(h.id);
-              })
-          }
-          .width('100%')
-        }
-      }
-      .width('100%')
-      .padding(Sp.M)
-      .borderRadius(Radius.M)
-      .backgroundColor($r('sys.color.background_secondary'))
-    }, (h: HostRecord) => h.id)
-
-    // 版本与兼容面信息（关于）
-    Column({ space: Sp.XS }) {
-      Text('关于')
-        .fontSize(Fs.CAPTION)
-        .fontColor($r('sys.color.font_tertiary'))
-        .width('100%')
-      this.aboutRow('客户端版本', this.about.appVersion)
-      this.aboutRow('受支持的上游版本', this.about.supportedUpstream)
-      this.aboutRow('兼容面上表', this.about.endpointStats)
-      this.aboutRow('兼容面采集时间', this.about.compatCapturedAt)
-    }
-    .width('100%')
-    .padding(Sp.M)
-    .borderRadius(Radius.M)
-    .backgroundColor($r('sys.color.background_secondary'))
-  }
-
-  @Builder
-  aboutRow(label: string, value: string) {
-    Row({ space: Sp.S }) {
-      Text(label)
-        .fontSize(Fs.CAPTION)
-        .fontColor($r('sys.color.font_secondary'))
-        .layoutWeight(1)
-      Text(value.length > 0 ? value : '—')
-        .fontSize(Fs.CAPTION)
-        .fontColor($r('sys.color.font_tertiary'))
-        .maxLines(1)
-        .constraintSize({ maxWidth: 200 })
-    }
-    .width('100%')
-  }
 }
