@@ -185,9 +185,10 @@ export {
 export type { PanelDescriptor, PanelList } from './model/PanelRegistry';
 export {
   activeMainPanelOf,
-  closeOverlay, copyOf, defaultRightPanel, defaultSidebarPanel, DrawerState, enterSession,
+  closeOverlay, copyOf, defaultRightPanel, DrawerState, enterSession,
   initialNavigationState, legacyTabOfMainPanel, mainPanelOfLegacyTab, mainPanels,
-  navigateToMain, openOverlay, sidebarPanelIdOfTab, openSettings, selectRightPanel, setDrawer, setSidebarExpanded,
+  defaultSidebarPanel, navigateToMain, openOverlay, openSettings, selectRightPanel, setDrawer,
+  setSidebarExpanded, sidebarPanelIdOfTab,
   MAIN_CONNECT, MAIN_CONVERSATION, MAIN_CORE, MAIN_DIAGNOSTICS, MAIN_SETTINGS, MAIN_WORKSPACES,
   Overlay as NavOverlay, SETTINGS_GENERAL, SETTINGS_INVENTORY, SETTINGS_MODELS, SETTINGS_PLUGINS,
 } from './model/NavigationState';

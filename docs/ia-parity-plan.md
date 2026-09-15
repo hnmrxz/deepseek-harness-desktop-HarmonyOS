@@ -84,6 +84,17 @@ AppFrame
 2. **`@Provide/@Consume`**（本轮已在侧栏验证编译通过；**运行时待真机确认**，见 D9）：
    可以显著缩小 props 面——但按 D9 的闸门，**D9 通过前不用于主区**。
 
+**主区内容搬迁：量化结论（2026-09-15，脚本实测）**
+
+| 项 | 数字 |
+|---|---|
+| 需搬的 builder | `mainContent` 276 行 + `tabContent` 182 + `workspaceHub` 158 + `workspaceGroup` 119 = **735 行** |
+| 门面成员 | **108 个**外部引用（值 + 方法），其中 4 个（`attachWorkspaceFileToComposer`/`pickAndAttach`/`runDiagnostics`/`writeSetting`）的声明形式不是单行，需单独处理 |
+| 阻碍脚本化的点 | 108 个方法包装需要精确签名（部分多行）；且**体内有 1 个 `@Builder` 调用**（`tabContent`）⇒ 那一段必须作为组件自己的 builder 一起搬 |
+
+⇒ **不靠一次性脚本**。执行顺序（每步跑全门禁）：① 先搬 `tabContent` + `workspaceHub` + `workspaceGroup`（459 行，它们互相调用、自成一束）② 再搬 `mainContent` 的四个分支 ③ 最后搬分派骨架。
+**门面按"搬一束、生成一束"增量长出来**，而不是一次生成 108 个成员——这样每步的编译修复面都可控。
+
 **主区内容搬迁的可行方案（已勘明，下一轮按此机械执行）**
 
 `mainContent()` 345 行、依赖宿主约 100 个 `@State`。逐 `this.x` → `props.x` 重写既慢又易错，

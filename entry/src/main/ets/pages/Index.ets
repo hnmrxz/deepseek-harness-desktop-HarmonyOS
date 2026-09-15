@@ -133,6 +133,7 @@ relativeTime,
   flattenSources,
   createPanelRegistry,
   initialNavigationState,
+  openSettings,
   MAIN_CONNECT,
   MAIN_CONVERSATION,
   MAIN_DIAGNOSTICS,
@@ -2109,7 +2110,8 @@ struct Index {
       return;
     }
     if (id === 'open-settings') {
-      this.selectTab(NavTab.SETTINGS);
+      // 走导航状态转移（`openSettings` 会同时校验面板可用性）；空分区 = 保持当前分区
+      this.nav = openSettings(this.nav, '', this.panelRegistry);
       return;
     }
     if (id === 'reconnect') {
@@ -3549,7 +3551,7 @@ struct Index {
           SessionHub.shared().removeAttachment(receiptId);
         },
         onPickModel: () => {
-          this.selectTab(NavTab.SETTINGS);
+          this.nav = openSettings(this.nav, '', this.panelRegistry);
         },
         onTogglePlan: () => {
           this.togglePlan();
