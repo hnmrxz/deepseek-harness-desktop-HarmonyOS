@@ -289,7 +289,8 @@ Composer 的官方字段：Model / Reasoning effort / Permission / Plan / @ Refe
 | 分区状态回归导航 | ✅ 视图里的 `@State tab` 已删除：唯一真值是 `NavigationState.settingsSection`，切换走 `openSettings(nav, section, registry)`（经注册表校验）——深链/返回/从别处进设置都看这一处 |
 | 顺带清理 | ✅ `pluginsTab` 的子页签（`subChip` + `@State pluginView`）随清单独立而删除；`modelSelectionLabel` 死导入清除 |
 | 按域拆组件（P4-2） | ✅ **已开工**：拆出 **`view/SettingsPlugins.ets`**（98 行，插件配置域）与 **`view/SettingsInventory.ets`**（93 行，只读清单域）——正好对应 P4-1 刚分开的两个分区。清单的关键词过滤是组件自己的 `@State`（只影响本页显示，不该让宿主重绘整页）。**顺带修掉**：插件段与组件各画了一行摘要（同一句话出现两次）——**"这段内容归谁"写清楚之后，重复自己就露出来了** |
-| 下一步（P4-3…） | ① 继续拆最大的一块：**模型域**（`modelTab` 206 行 + `providerCards` 172 行 + 凭据联接 ≈ 400 行）→ `SettingsModels`；其后是 `SettingsGeneral` / `SettingsCore` / `SettingsPresets` / `SettingsSkills` / `SettingsDevice` ② 设置项写入的统一事务与失败回执按域收口 ③ 手机抽屉里的设置入口与四形态观感（真机）|
+| 设置行拆组件（P4-3a） | ✅ **已落地**：`settingRow`（127 行）连同它那三个取值助手（`labelOf`/`hintOf`/`valueLabelOf`）与**四个模块级函数**（`choiceLabel` / `officialSettingLabel` / `officialSettingValue` / `officialSettingHint`——官方中文措辞表）搬成 **`view/SettingRow.ets`**（300 行）。通用段、预设段、以及模型域的提供方卡片都用它 ⇒ **下一步拆模型域时必须先有这一块**。宿主留一个薄包装 `@Builder settingRow(item)` 把 5 个回调转过去，调用点一字未改。`SettingsPane` 1694 → **1458 行** |
+| 下一步（P4-3b…） | ① **模型域**（`modelTab` 206 + `providerCards` 172 + 凭据联接 + 9 个助手 ≈ 500 行）→ `SettingsModels`：**它的依赖已在本轮清干净**（行渲染有 `SettingRow`、官方措辞表已随行搬走），实测只剩 8 个外部依赖（4 个数据 prop + 2 个回调 + 2 个本地展示态）② 其后是 `SettingsGeneral` / `SettingsCore` / `SettingsPresets` / `SettingsSkills` / `SettingsDevice` ③ 设置项写入的统一事务与失败回执按域收口 ④ 手机抽屉里的设置入口与四形态观感（真机）|
 
 `SettingsShell`（General / Models / Plugins / Plugin Inventory / …）。**不再往 `SettingsPane.ets` 里堆内容。**
 
