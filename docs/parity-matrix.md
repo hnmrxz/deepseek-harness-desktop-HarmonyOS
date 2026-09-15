@@ -528,6 +528,7 @@ node tools/check-arkts-entry.mjs --self-test  # 判定器自检（8 个样例，
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| v1.19 | 2026-09-15 | **P2-14 删掉"只有 fixture 在用"的浮层状态机（E360）**：`NavigationState.activeOverlay` / `Overlay` / `openOverlay` / `closeOverlay` 在 `entry` 侧 **0 引用**（真实浮层优先级由 `Index.overlayState()` 从六个布尔派生），而 fixture 里有 3 条断言**只测它自己**（自证循环）。已删除；fixture 570 → **567**（少的是自证断言，不是回归）。同清单里 `sidebarExpanded` 是下一个同类候选（**需先定产品语义**，登记未动）|
 | v1.18 | 2026-09-15 | **P2-13 单栏 Sheet 的右栏切换器（E359）**：切换器此前只画在 `framedBody`，单栏详情 Sheet（`sheetBody`）没有它 ⇒ **手机用户根本切不到别的右栏面板**（功能不可达级别）。抽成共用 `@Builder panelSwitcher()` 两处都调；顺手换掉那句对文件/预览/详情**措辞是错的**固定提示。P3 的另两个缺口（滑入动画 / 拖拽调宽）仍留待真机。`RightbarShell` 444 → 461 行 |
 | v1.17 | 2026-09-15 | **P2-12 第二步：门面接线（E358）**：`RightbarShell` 的 12 个内容 props 收成 `f: RightbarFacade`（组件内 39 处用法改 `this.f.X`）；`AppShellFacade` 的 11 个 `right*` 成员全删；两处挂载点都调`Index.buildRightbarFacade()`（浮层此前是内联重算）。`Index.ets` 4019 → 4026（**+7，收益在"只有一个真值"而不在行数**） |
 | v1.16 | 2026-09-15 | **P2-12 第一步：右侧内容门面定义（E357）** —— 拆 `detailSheet` 时发现真问题不是那 36 行，而是 `RightbarShell` 的**两个挂载点各自拼 16 个 props**（真右栏经 `AppShellFacade`、详情浮层在页面根内联重算）⇒ 迟早不同步。本轮只做 `export interface RightbarFacade`（12 个共有成员），**接线留到下一轮**。行数不变（4019）；记录 ArkTS `arkts-no-misplaced-imports` 与类型重复导入两个坑 |

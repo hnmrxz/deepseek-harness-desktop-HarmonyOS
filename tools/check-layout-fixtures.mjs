@@ -1236,10 +1236,10 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
     PANEL_SIDEBAR_SETTINGS, PANEL_SIDEBAR_WORKSPACES,
     PANEL_RIGHT_DETAIL, PANEL_RIGHT_FILES, PANEL_RIGHT_TRAJECTORY, settingsSections } = PR;
   const { initialNavigationState, mainPanels, mainPanelOfLegacyTab, legacyTabOfMainPanel,
-    navigateToMain, selectRightPanel, openSettings, openOverlay, closeOverlay, setDrawer, sidebarPanelIdOfTab,
+    navigateToMain, selectRightPanel, openSettings, setDrawer, sidebarPanelIdOfTab,
     activeMainPanelOf, mainPanelOfSidebarPanel, sidebarPanelOfMainPanel,
     enterSession, defaultRightPanel, copyOf,
-    Overlay, DrawerState, MAIN_CONVERSATION, MAIN_WORKSPACES, MAIN_SETTINGS, MAIN_CORE,
+    DrawerState, MAIN_CONVERSATION, MAIN_WORKSPACES, MAIN_SETTINGS, MAIN_CORE,
     SETTINGS_MODELS, SETTINGS_GENERAL } = NS;
 
   const { shellTracksOf, sidebarOccupiesLayout } = ST;
@@ -1293,7 +1293,6 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   let nav = initialNavigationState();
   t.eq('初始主区面板是会话', nav.selectedMainPanel, MAIN_CONVERSATION);
   t.eq('初始右栏面板来自注册表首项', nav.selectedRightPanel, defaultRightPanel(reg));
-  t.eq('初始没有浮层', nav.activeOverlay, Overlay.NONE);
   t.eq('初始抽屉是关的（手机侧栏不默认挡住主区）', nav.mobileDrawer, DrawerState.CLOSED);
 
   nav = navigateToMain(nav, MAIN_WORKSPACES, reg);
@@ -1317,10 +1316,6 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   nav = openSettings(nav, '', reg);
   t.eq('空分区 ⇒ 保持当前分区', nav.settingsSection, SETTINGS_MODELS);
 
-  nav = openOverlay(nav, Overlay.CHOICE);
-  t.eq('浮层打开', nav.activeOverlay, Overlay.CHOICE);
-  nav = closeOverlay(nav);
-  t.eq('浮层关闭', nav.activeOverlay, Overlay.NONE);
 
   nav = setDrawer(nav, DrawerState.OPEN);
   t.eq('抽屉打开', nav.mobileDrawer, DrawerState.OPEN);

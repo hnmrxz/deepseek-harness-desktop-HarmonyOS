@@ -59,19 +59,6 @@ export const SETTINGS_PRESETS: string = 'settings.presets';
 export const SETTINGS_SKILLS: string = 'settings.skills';
 export const SETTINGS_DEVICE: string = 'settings.device';
 
-/** 浮层 id（与既有六类浮层一一对应，另加命令面板与搜索） */
-export enum Overlay {
-  NONE = 'none',
-  DETAIL = 'detail',
-  CHOICE = 'choice',
-  FOLDER = 'folder',
-  CREDENTIAL = 'credential',
-  TEXT = 'text',
-  STRUCT = 'struct',
-  COMMAND_PALETTE = 'command-palette',
-  SEARCH = 'search',
-}
-
 /** 手机侧栏抽屉状态 */
 export enum DrawerState {
   CLOSED = 'closed',
@@ -90,7 +77,6 @@ export interface NavigationState {
   /** 设置域分区 id（见 `SETTINGS_*`） */
   settingsSection: string;
   mobileDrawer: DrawerState;
-  activeOverlay: Overlay;
   /** 右栏是否正在显示（几何层已由 `LayoutController` 决定可用性） */
   detailOpen: boolean;
 }
@@ -104,7 +90,6 @@ export function initialNavigationState(): NavigationState {
     selectedRightPanel: PANEL_RIGHT_DETAIL,
     settingsSection: SETTINGS_GENERAL,
     mobileDrawer: DrawerState.CLOSED,
-    activeOverlay: Overlay.NONE,
     detailOpen: false,
   };
 }
@@ -125,7 +110,6 @@ export function copyOf(state: NavigationState): NavigationState {
     selectedRightPanel: state.selectedRightPanel,
     settingsSection: state.settingsSection,
     mobileDrawer: state.mobileDrawer,
-    activeOverlay: state.activeOverlay,
     detailOpen: state.detailOpen
   };
 }
@@ -328,18 +312,6 @@ export function openSettings(state: NavigationState, section: string,
   }
   const next: NavigationState = copyOf(withMain);
   next.settingsSection = section;
-  return next;
-}
-
-export function openOverlay(state: NavigationState, overlay: Overlay): NavigationState {
-  const next: NavigationState = copyOf(state);
-  next.activeOverlay = overlay;
-  return next;
-}
-
-export function closeOverlay(state: NavigationState): NavigationState {
-  const next: NavigationState = copyOf(state);
-  next.activeOverlay = Overlay.NONE;
   return next;
 }
 
