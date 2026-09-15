@@ -45,8 +45,21 @@ export interface AppShellFacade {
    * 视图不该自己拼这条线索（会话/诊断/连接没有侧栏席位的那件事，只该写在模型里一处）。
    */
   selectedSidebarPanel: string;
-  /** 侧栏是否展开（P2-15：真值在 `NavigationState.sidebarExpanded`） */
+  /**
+   * 侧栏是否展开（P2-15）。
+   *
+   * 【为什么是布尔而不是三态】"没存过时用什么"已经由宿主按**形态**判完
+   * （`sidebarExpandedForMode`：双栏默认 rail、三栏默认 panel）——视图只读生效值。
+   */
   sidebarExpanded: boolean;
+  /**
+   * 侧栏**轨道**宽度（P5-2）：跟随实际呈现（panel 240 / rail 56 / 浮层 0）。
+   *
+   * 【为什么不能再用布局决策里的 nav 宽度】那是**形态默认**：三栏收起侧栏之后
+   * 决策仍是 240vp，于是"腾出宽度"只发生在呈现上、没发生在几何上。判定收在
+   * `sidebarTrackWidthOf`（纯函数，有 fixture），这里只读结论。
+   */
+  sidebarTrackWidthVp: () => number;
   /** 收起 / 展开侧栏 */
   onToggleSidebarExpanded: () => void;
   /** 选中某个侧栏席位（宿主翻译成"切到哪个主区面板"，并经注册表校验） */
@@ -81,7 +94,6 @@ export interface AppShellFacade {
   gripHitWidth: () => number;
   mainShell: MainShellFacade;
   mode: LayoutMode;
-  navWidthVp: () => number;
   openDiagnostics: () => void;
   pendingBadge: string;
   selectedSessionTitle: string;
@@ -185,7 +197,6 @@ export struct AppShell {
         browser: this.f.browser,
         selectedPanelId: this.f.selectedSidebarPanel,
         pendingBadge: this.f.pendingBadge,
-        navWidthVp: this.f.navWidthVp(),
         presentation: TrackPresentation.OVERLAY,
         onSelectPanel: (panelId: string) => {
           this.f.onSelectSidebarPanel(panelId);
@@ -273,7 +284,6 @@ export struct AppShell {
         browser: this.f.browser,
         selectedPanelId: this.f.selectedSidebarPanel,
         pendingBadge: this.f.pendingBadge,
-        navWidthVp: this.f.navWidthVp(),
         presentation: TrackPresentation.RAIL,
         onSelectPanel: (panelId: string) => {
           this.f.onSelectSidebarPanel(panelId);
@@ -290,7 +300,7 @@ export struct AppShell {
         }
       })
     }
-    .width(this.f.navWidthVp())
+    .width(this.f.sidebarTrackWidthVp())
     .height('100%')
     .backgroundColor($r('sys.color.background_secondary'))
   }
@@ -326,7 +336,7 @@ export struct AppShell {
   @Builder
   navPanel() {
     // 侧栏内容归 SidebarShell 所有（P0：AppFrame 第一条轨道）；这里只给**这条轨道的 surface**。
-    this.sidePanelSurface(this.sidebarPresentation(), Sz.NAV_PANEL)
+    this.sidePanelSurface(this.sidebarPresentation(), this.f.sidebarTrackWidthVp())
   }
 
   /**
@@ -344,7 +354,6 @@ export struct AppShell {
         browser: this.f.browser,
         selectedPanelId: this.f.selectedSidebarPanel,
         pendingBadge: this.f.pendingBadge,
-        navWidthVp: this.f.navWidthVp(),
         presentation: presentation,
         onSelectPanel: (panelId: string) => {
           this.f.onSelectSidebarPanel(panelId);

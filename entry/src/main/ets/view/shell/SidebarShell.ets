@@ -70,8 +70,6 @@ export struct SidebarShell {
   @Prop selectedPanelId: string = '';
   /** 待决徽标文案（空串 = 不显示） */
   @Prop pendingBadge: string = '';
-  /** 侧栏占位宽度（rail 与 panel 两种呈现都用它） */
-  @Prop navWidthVp: number = 0;
   /** 呈现方式（由 `ui/ShellTracks` 按形态算出；这里只映射几何） */
   @Prop presentation: TrackPresentation = TrackPresentation.PANEL;
   /**
@@ -105,7 +103,7 @@ export struct SidebarShell {
   };
   onOpenDiagnostics: () => void = () => {
   };
-  /** 收起 / 展开侧栏（P2-15：唯一控制点；真值在 `NavigationState.sidebarExpanded`） */
+  /** 收起 / 展开侧栏（P2-15：唯一控制点；生效值由宿主按"形态 + 偏好"派生，P5-2） */
   onToggleExpanded: () => void = () => {
   };
 
@@ -270,7 +268,7 @@ export struct SidebarShell {
             .fontSize(HarmonyIconSize.NAV_RAIL)
             .fontColor([$r('sys.color.font_secondary')])
         }
-        .width(this.navWidthVp)
+        .width(Sz.NAV_RAIL)
         .height(Sz.TOUCH_MIN)
         .justifyContent(FlexAlign.Center)
         .borderRadius(Radius.S)
@@ -293,7 +291,7 @@ export struct SidebarShell {
           .fontSize(HarmonyIconSize.NAV_RAIL)
           .fontColor([$r('sys.color.brand')])
       }
-      .width(this.navWidthVp)
+      .width(Sz.NAV_RAIL)
       .height(Sz.TOUCH_MIN)
       .justifyContent(FlexAlign.Center)
       .borderRadius(Radius.S)
@@ -313,7 +311,7 @@ export struct SidebarShell {
             }
           }
         }
-        .width(this.navWidthVp)
+        .width(Sz.NAV_RAIL)
         .height(Sz.TOUCH_MIN)
         .justifyContent(FlexAlign.Center)
         .borderRadius(Radius.S)
@@ -323,7 +321,7 @@ export struct SidebarShell {
         })
       }, (d: PanelDescriptor) => d.id)
     }
-    .width(this.navWidthVp)
+    .width(Sz.NAV_RAIL)
     .height('100%')
     .padding({ top: Sp.M })
     .alignItems(HorizontalAlign.Center)

@@ -13,6 +13,7 @@
  */
 
 import { LayoutMode } from './Breakpoints';
+import { Sz } from './Tokens';
 
 /** 某形态下各条轨道如何呈现 */
 export enum TrackPresentation {
@@ -58,10 +59,10 @@ export function shellTracksOf(mode: LayoutMode): ShellTracks {
 /**
  * 侧栏**实际**用哪种呈现：形态给默认，用户的"展开 / 收起"给偏好。
  *
- * ## 为什么需要它（`sidebarExpanded` 此前是一个没有控制点的字段）
+ * ## 为什么需要它（这个字段此前没有控制点）
  *
  * `NavigationState.sidebarExpanded` 早就存在（初始 `true`、`copyOf` 会拷、还有
- * `setSidebarExpand`），但**没有任何消费者**：侧栏呈现完全由形态决定
+ * `setSidebarExpanded`），但**没有任何消费者**：侧栏呈现完全由形态决定
  * （`shellTracksOf(mode)`）。于是官方 AppFrame 那个"收起侧栏腾出宽度"的动作在本仓**做不到** ——
  * 三栏窄窗口下想多看主区一点，没有任何办法（这是一个功能缺口，不是一个状态字段的冗余）。
  *
@@ -69,22 +70,10 @@ export function shellTracksOf(mode: LayoutMode): ShellTracks {
  *
  * 1. **单栏一律浮层**：手机竖屏下"展开的侧栏"会盖住主区，用户要的是抽屉 ⇒
  *    `expanded` 在单栏下**不生效**（不是忽略用户，而是那个档位本来就没有第二个选项）。
- * 2. **其余形态跟随偏好**：双栏默认 rail（600–839vp 放不下两条展开轨道），
- *    用户展开就是 PANEL；三栏默认 PANEL，收起就是 rail（腾出 ⌈200vp⌉ 给主区）。
- *    宽度不够时**不阻止**用户——`LayoutController` 的档位判定已经保证了"能到这个形态
- *    就有基本空间"，而"我要不要这 200vp"是用户的判断。
+ * 2. **其余形态跟随偏好**：双栏默认 rail，用户展开就是 PANEL；三栏默认 PANEL，
+ *    收起就是 rail（腾出 184vp 给主区）。宽度不够时**不阻止**用户——`LayoutController`
+ *    的档位判定已经保证了"能到这个形态就有基本空间"，而"我要不要这 184vp"是用户的判断。
  */
-/**
- * 侧栏展开状态的**取值规则**（P2-17）：偏好里没有记录时用默认。
- *
- * 【为什么这个三态判断要放在纯模型里】偏好层（`LocalPrefs`）只回答"有没有存过"，
- * 返回 `boolean | undefined`；"没存过时该展开"是**产品语义**。把它放在这里的好处是
- * 它可以被 fixture 直接钉住（`undefined ⇒ true`），而不必依赖真机上的 preferences。
- */
-export function sidebarExpandedOf(stored: boolean | undefined): boolean {
-  return stored === undefined ? true : stored;
-}
-
 export function sidebarPresentationOf(mode: LayoutMode, expanded: boolean): TrackPresentation {
   if (mode === LayoutMode.SINGLE) {
     return TrackPresentation.OVERLAY;
@@ -95,8 +84,43 @@ export function sidebarPresentationOf(mode: LayoutMode, expanded: boolean): Trac
   return TrackPresentation.RAIL;
 }
 
-/** 侧栏在该形态（与该展开状态）下是否占布局宽度（浮层形态不占） */
-export function sidebarOccupiesLayout(mode: LayoutMode, expanded: boolean): boolean {
-  const presentation: TrackPresentation = sidebarPresentationOf(mode, expanded);
-  return presentation === TrackPresentation.PANEL || presentation === TrackPresentation.RAIL;
+/**
+ * 侧栏展开状态的**取值规则**（P2-17；P5-2 修订为按形态给默认）。
+ *
+ * 【为什么不能是一个常数 `true`】`shellTracksOf` 说双栏的侧栏是 rail、三栏才是 panel ——
+ * "没存过"若一律读成展开，双栏首启就变成 240vp 的完整面板，与四形态 fixture 里登记的
+ * `nav: 'rail'` 直接矛盾（也把 600vp 窗口的主区挤到 360vp）。P2-17 当时只写了
+ * `undefined ⇒ true`，P5-2 让它跟随形态。
+ *
+ * 【为什么这个三态判断要放在纯模型里】偏好层（`LocalPrefs`）只回答"有没有存过"，
+ * 返回 `boolean | undefined`；"没存过时用什么"是**产品语义**。放在这里的好处是
+ * 它可以被 fixture 直接钉住，而不必依赖真机上的 preferences。
+ */
+export function sidebarExpandedForMode(mode: LayoutMode, stored: boolean | undefined): boolean {
+  if (stored !== undefined) {
+    return stored;
+  }
+  return mode !== LayoutMode.DOUBLE;
+}
+
+/**
+ * 侧栏这条轨道**实际**占的侧向宽度（P5-2）。
+ *
+ * 【为什么必须有它】P2-15 让侧栏能收起、但只改了"呈现"，几何仍按**形态默认**算
+ * （`LayoutDecision.navWidthVp`）：三栏收起之后轨道照样是 240vp，"腾出宽度"根本没发生；
+ * 双栏收起之后是 240vp 的轨道里放一条 56vp 的 rail（右边空出 184vp 的底色）。
+ * 判定收在这里，页面**只读结论**，不再自己按形态拼宽度。
+ *
+ * OVERLAY（单栏抽屉 / 底部标签）返回 0：那条轨道不占侧边宽度（底部标签占的是高度）。
+ */
+export function sidebarTrackWidthOf(mode: LayoutMode, stored: boolean | undefined): number {
+  const presentation: TrackPresentation =
+    sidebarPresentationOf(mode, sidebarExpandedForMode(mode, stored));
+  if (presentation === TrackPresentation.PANEL) {
+    return Sz.NAV_PANEL;
+  }
+  if (presentation === TrackPresentation.RAIL) {
+    return Sz.NAV_RAIL;
+  }
+  return 0;
 }

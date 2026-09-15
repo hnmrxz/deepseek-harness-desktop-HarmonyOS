@@ -91,8 +91,8 @@ import {
   SettingValueType,
   DEFAULT_MODEL_NS,
   SettingsWriteOutcome,
-  sidebarExpandedOf,
-  setSidebarExpanded,
+  sidebarExpandedForMode,
+  sidebarTrackWidthOf,
   settingsDomainOfNs,
   sheetNoteVisible,
   workspaceNameOf,
@@ -401,6 +401,17 @@ struct Index {
    * （`clampDetailDesired`），所以窗口变小时栏会自己收窄，而用户拖出来的意图不丢。
    */
   @State detailWidthDesired: number = Sz.DETAIL_PANEL;
+
+  /**
+   * 侧栏展开偏好（P5-2）：`undefined` = **没存过**（按形态默认）。
+   *
+   * 【为什么偏好不能放进 `NavigationState`】它描述的不是"导航到哪儿"，而是用户的
+   * 几何偏好；更要紧的是**它的默认值随形态变**（双栏默认 rail、三栏默认 panel）——
+   * 一个 `boolean` 字段存不下"没存过"，于是双栏首启会被读成"展开"，与
+   * `shellTracksOf(DOUBLE).sidebar = RAIL` 直接矛盾。故真值只有这一份原始值，
+   * 生效值每次渲染由 `sidebarExpandedForMode(mode, stored)` 派生。
+   */
+  @State sidebarStored: boolean | undefined = undefined;
 
   /** 一次拖拽开始时的宽度（PanGesture 的 offsetX 是**累计量**，必须用起点换算） */
   private dragStartWidth: number = Sz.DETAIL_PANEL;
@@ -1664,7 +1675,16 @@ struct Index {
     this.detailWidthDesired = detailWidthOf(stored);
   }
 
-  /** 导航侧栏宽度（唯一来源：布局决策） */
+  /**
+   * **布局决策里的**导航宽度（形态默认：三栏 240 / 双栏 56 / 单栏 0）。
+   *
+   * 【与 `sidebarTrackWidthVp` 的分工，不要合并】这个值是"按形态该留多少"，
+   * 让步链（`decideLayoutWithDetail`）内部用的就是它，拖拽夹取（`detailRoomOf`）
+   * 必须跟它一致，否则夹出来的宽度会被决策再收窄一次，拖动时跳变。
+   * 侧栏轨道实际画多宽是另一件事（用户可能收起了侧栏）——那一个叫
+   * `sidebarTrackWidthOf`。收起侧栏会让主区自然变宽（主区是 `layoutWeight(1)`），
+   * 详情栏的可用空间仍然按这条保守值算：偏保守只会让栏窄一点，不会重叠。
+   */
   private navWidthVp(): number {
     return this.layoutDecision().navWidthVp;
   }
@@ -2120,8 +2140,11 @@ struct Index {
     // 侧栏 PANEL 呈现里要挂工作区→会话树（P1）：与主区那份**同源**（同一个门面构建器）
     browser: this.buildBrowserFacade(),
     selectedSidebarPanel: sidebarPanelOfMainPanel(this.nav.selectedMainPanel),
-    // 侧栏展开 / 收起（P2-15）：真值在 NavigationState.sidebarExpanded，视图只读它
-    sidebarExpanded: this.nav.sidebarExpanded,
+    // 侧栏展开 / 收起（P2-15）：生效值由"形态默认 + 用户偏好"派生（P5-2），视图只读结论
+    sidebarExpanded: sidebarExpandedForMode(this.mode, this.sidebarStored),
+    // 侧栏**轨道**宽度（P5-2）：跟随实际呈现（panel 240 / rail 56 / 浮层 0），
+    // 而不是形态默认——否则"收起侧栏腾出宽度"只改了呈现、没改几何
+    sidebarTrackWidthVp: (): number => sidebarTrackWidthOf(this.mode, this.sidebarStored),
     onToggleSidebarExpanded: () => this.toggleSidebarExpanded(),
     onSelectSidebarPanel: (panelId: string) => this.selectSidebarPanel(panelId),
     onNewSession: () => this.newSession(),
@@ -2144,7 +2167,6 @@ struct Index {
     gripHitWidth: () => this.gripHitWidth(),
     mainShell: this.buildMainFacade(),
     mode: this.mode,
-    navWidthVp: () => this.navWidthVp(),
     openDiagnostics: () => this.openDiagnostics(),
     pendingBadge: this.pendingBadge,
     selectedSessionTitle: this.selectedSessionTitle,
@@ -3665,8 +3687,9 @@ struct Index {
    * 现在：形态给默认（双栏 rail / 三栏 panel），用户展开或收起给偏好。
    */
   private toggleSidebarExpanded(): void {
-    const next: boolean = !this.nav.sidebarExpanded;
-    this.nav = setSidebarExpanded(this.nav, next);
+    // 翻的是**当前生效值**（用户看到的那个），存的是显式偏好 ⇒ 三态收敛为两态
+    const next: boolean = !sidebarExpandedForMode(this.mode, this.sidebarStored);
+    this.sidebarStored = next;
     // 落盘：下次启动沿用它（与详情栏宽度同一套做法）。
     // 【失败不弹提示】与宽度记忆同类：下次启动回到默认展开，不值得打断用户；
     // 真要看落盘结果时去设置里的诊断。
@@ -3676,12 +3699,17 @@ struct Index {
     });
   }
 
-  /** 读回记住的侧栏展开状态（没有记录 ⇒ 默认展开；规则在 `sidebarExpandedOf`，有 fixture） */
+  /**
+   * 读回记住的侧栏展开偏好。
+   *
+   * 【原样存，不在这里解析】"没存过 ⇒ 展开"曾在这里被判成 `true`，于是双栏首启拿到的是
+   * "展开"（与形态默认矛盾）。现在这一层只搬运原始值（`boolean | undefined`），
+   * "没存过用什么"交给纯函数 `sidebarExpandedForMode`（有 fixture，且随形态变）。
+   */
   private async loadSidebarExpanded(): Promise<void> {
     const prefs: LocalPrefs = new LocalPrefs();
     await prefs.attach(getContext(this) as common.UIAbilityContext);
-    const stored: boolean | undefined = await prefs.loadSidebarExpanded();
-    this.nav = setSidebarExpanded(this.nav, sidebarExpandedOf(stored));
+    this.sidebarStored = await prefs.loadSidebarExpanded();
   }
 
   private setDrawerOpen(open: boolean): void {

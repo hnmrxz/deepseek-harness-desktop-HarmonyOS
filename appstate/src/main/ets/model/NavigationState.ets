@@ -19,9 +19,7 @@
  * | `selectedMainPanel` | 主区显示哪个面板（对话 / 工作区 / 核心 / 设置 / 诊断 / 连接） |
  * | `selectedRightPanel` | 右栏显示哪个面板（文件 / 轨迹 / 工具 / 子代理 / 交付物 / 预览） |
  * | `settingsSection` | 设置域内部的二级分区（General / Models / Plugins / Inventory） |
- * | `sidebarExpanded` | 侧栏展开还是收成 rail（几何，不改变信息架构） |
  * | `mobileDrawer` | 手机上侧栏是抽屉时的开合状态 |
- * | `activeOverlay` | 当前浮层（枚举选择 / 目录 / 凭据 / 文本 / 结构 / 命令面板 / 搜索） |
  *
  * 【为什么"页面"还要留着】迁移是分步的：本步**只把结构表达出来，不改行为**。
  * `mainPanels()` 里暂时保留了工作区/核心/设置等面板（它们现在确实显示在主区），
@@ -68,8 +66,6 @@ export enum DrawerState {
 export interface NavigationState {
   currentSessionId: string;
   currentWorkspaceId: string;
-  /** 侧栏展开（false = 收成 rail；这是**几何**，不改变信息架构） */
-  sidebarExpanded: boolean;
   /** 主区面板 id（见 `MAIN_*`） */
   selectedMainPanel: string;
   /** 右栏面板 id（见 `PANEL_RIGHT_*`） */
@@ -85,7 +81,6 @@ export function initialNavigationState(): NavigationState {
   return {
     currentSessionId: '',
     currentWorkspaceId: '',
-    sidebarExpanded: true,
     selectedMainPanel: MAIN_CONVERSATION,
     selectedRightPanel: PANEL_RIGHT_DETAIL,
     settingsSection: SETTINGS_GENERAL,
@@ -105,7 +100,6 @@ export function copyOf(state: NavigationState): NavigationState {
   return {
     currentSessionId: state.currentSessionId,
     currentWorkspaceId: state.currentWorkspaceId,
-    sidebarExpanded: state.sidebarExpanded,
     selectedMainPanel: state.selectedMainPanel,
     selectedRightPanel: state.selectedRightPanel,
     settingsSection: state.settingsSection,
@@ -318,12 +312,6 @@ export function openSettings(state: NavigationState, section: string,
 export function setDrawer(state: NavigationState, drawer: DrawerState): NavigationState {
   const next: NavigationState = copyOf(state);
   next.mobileDrawer = drawer;
-  return next;
-}
-
-export function setSidebarExpanded(state: NavigationState, expanded: boolean): NavigationState {
-  const next: NavigationState = copyOf(state);
-  next.sidebarExpanded = expanded;
   return next;
 }
 
