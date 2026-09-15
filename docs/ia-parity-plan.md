@@ -298,7 +298,8 @@ Composer 的官方字段：Model / Reasoning effort / Permission / Plan / @ Refe
 | 消息行整块抽成组件（P2-4） | ✅ **已落地**：`view/MessageRow.ets`（221 行）收走"一条消息"的**五份行级状态**（悬停 / 菜单开关与归属 / 反馈面板归属与回执）＋两个 `@Builder`（行内操作条、上下文菜单）＋三条输入策略判定包装。**边界如实划定**：跨行的展开态、要读中枢反馈记录的动作清单、以及反馈的持久化都**留在父组件**。顺带删掉一处重复实现（视图私有 `clockOf` 与模型 `formatClock` 逐字等价）。`ConversationPane` 1414 → **1234 行** |
 | 会话头四块 chrome 抽组件（P2-5） | ✅ **已落地**：`view/ConversationHeader.ets`（284 行）收走「视图切换 + 轨迹工具栏」「后台任务条」「时间总览」「会话内搜索条」四块**不在列表里的**东西。**分工口径**：跨行状态（搜索命中判定、任务条定时器）留父组件、块内状态留子组件；`stats` 改成必需 prop（不造"全 0 默认统计"——那会让"没接到数据"看起来像"这场会话什么也没花"）。`ConversationPane` 1234 → **1093 行** |
 | 死代码门禁（P2-6 第一刀） | ✅ **已落地**：第 9 道门禁 `tools/check-dead-code.mjs`（零使用 import / `@Builder` / 组件成员）。当轮即查出并删掉 3 处真死代码（`MessageFeedback.itemId` / `MessageRow.menuHint` / `SettingsPane.settingRow`），并连带清掉级联的 `ConversationPane.inputModality()`。含 9 条注入式自检 + 对修前版本归真命中 5 处 |
-| 下一步（P2-6 第二刀…） | ① 把「一个回合的渲染」（`TurnView`）整块搬出 `ConversationPane`（现 1087 行，其中 `turnBlock`/`processGroup`/条目分派/反馈辅助仍占约 360 行）② 官方会话头缺的字段：Session title / Agent preset / Goal / Schedule / Open in App / Workspace context ③ `Index.ets` 4419 行继续按域拆（门户与六类浮层）④ 右栏动画与拖拽调宽、单栏 Sheet 切换器 ⑤ **真机复验 E343 / D18** ——无真机不得宣称设备验收完成 |
+| 回合渲染抽组件（P2-6 第二刀） | ✅ **已落地**：`view/TurnView.ets`（492 行）+ `view/ReasoningRow.ets`（83 行，轨迹视图与过程分组**共用**）。展开集合留子组件、按钮在父组件 ⇒ **控制器对象**；轨迹视图的条目级分派用 `flatItem`（共享卡片、不共享分派）。`ConversationPane` 1087 → **984 行**（1414 → 984）。死代码门禁当轮抓出 2 处残留（`reasoningItem` 已被取代、`hitIds`/`fbRating` 无读者）|
+| 下一步（P2-7…） | ① 官方会话头缺的字段：Session title / Agent preset / Goal / Schedule / Open in App / Workspace context（现在会话头只有视图切换、任务条、时间总览、搜索）② `Index.ets` 4419 行按域继续拆（门户 + 六类浮层 + 宿主处理器）③ 右栏面板滑入动画与拖拽调宽、单栏 Sheet 切换器 ④ **真机复验 E343 / D18** ——无真机不得宣称设备验收完成 |
 
 `SettingsShell`（General / Models / Plugins / Plugin Inventory / …）。**不再往 `SettingsPane.ets` 里堆内容。**
 

@@ -20,7 +20,9 @@ import { MessageRow } from './MessageRow';
 import { DeliverableCard } from './DeliverableCard';
 import { SubagentCard } from './SubagentCard';
 import { ToolCard } from './ToolCard';
+import { ReasoningRow } from './ReasoningRow';
 import { ConversationHeader } from './ConversationHeader';
+import { TurnView, TurnViewController } from './TurnView';
 import { PendingPane } from './PendingPane';
 
 @Component
@@ -224,18 +226,6 @@ export struct ConversationPane {
    * 逐组区分反而不如"全部"直观——这是**形态差异**，不是能力缺失，所以如实做成两颗：
    * 需要更细的粒度时再按 `TrajectoryKind` 拆分即可（`expanded` 存的是条目 id）。
    */
-  private expandAllItems(): void {
-    const next: string[] = [];
-    for (let i = 0; i < this.items.length; i++) {
-      next.push(this.items[i].id);
-    }
-    this.expanded = next;
-  }
-
-  /** 收起全部（清空展开集合） */
-  private collapseAllItems(): void {
-    this.expanded = [];
-  }
   /**
    * 会话内搜索状态（D3 §5.1 的 `Ctrl/Cmd + F`）。
    *
@@ -361,6 +351,257 @@ export struct ConversationPane {
    * （P0-1 的绕过路径：泄漏不只是"显示"，"能被搜到、能被计数"同样算）。
    * 轨迹视图搜全部条目：内部事件在那里本来就该可查。
    */
+  /** 回合渲染的控制器（"全部展开 / 收起全部"由它接给会话头按钮） */
+  private turnController: TurnViewController = new TurnViewController();
+
+  /** 本次命中条目的 id 集合（判定在 `hits()`；命中高亮在列表项与回合里都用它） */
+  private hitIds(): string[] {
+    const list: number[] = this.hits();
+    const out: string[] = [];
+    for (let i = 0; i < list.length; i++) {
+      const it: TrajectoryItem | undefined = this.items[list[i]];
+      if (it !== undefined) {
+        out.push(it.id);
+      }
+    }
+    return out;
+  }
+
+  /** 该回合内是否有命中（列表项的命中色条据此显示） */
+  private turnHasHit(turn: Turn): boolean {
+    const ids: string[] = this.hitIds();
+    if (turn.user !== undefined && ids.indexOf(turn.user.id) >= 0) {
+      return true;
+    }
+    for (let i = 0; i < turn.answers.length; i++) {
+      if (ids.indexOf(turn.answers[i].id) >= 0) {
+        return true;
+      }
+    }
+    for (let i = 0; i < turn.process.length; i++) {
+      if (ids.indexOf(turn.process[i].id) >= 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * 轨迹视图的**扁平条目分派**（条目级台账）。
+   *
+   * 【为什么不复用 `TurnView` 里的 `trajectoryItem`】那个分派长在"一个回合"的语境里
+   * （它要用回合的展开集合、回合内的反馈归属）；而轨迹视图是**条目级**的：
+   * 一条思考、一次工具调用都直接列在时间线上，没有回合外壳。
+   * 两处共用的是**卡片本身**（`MessageRow` / `ReasoningRow` / `ToolCard` / `SubagentCard` /
+   * `DeliverableCard`）——那才是"同一份呈现"该共享的粒度；分派逻辑各写各的，
+   * 因为它俩的上下文不同（这与 P3 各面板和过程流共用卡片是同一条规矩）。
+   */
+  @Builder
+  flatItem(item: TrajectoryItem) {
+    if (item.kind === TrajectoryKind.MESSAGE) {
+      MessageRow({
+        item: item,
+        a11yText: this.flatA11y(item),
+        hasPointer: this.hasPointer,
+        hasKeyboard: this.hasKeyboard,
+        feedbackOpen: this.fbFor === item.id,
+        feedbackNotice: this.fbNote2,
+        storedRating: this.storedRatingOf(item.id),
+        storedCategory: this.storedCategoryOf(item.id),
+        storedNote: this.storedNoteOf(item.id),
+        actions: this.flatActionsOf(item),
+        onAction: (it: TrajectoryItem, id: string) => {
+          this.onFlatAction(it, id);
+        },
+        onOpenFeedback: (it: TrajectoryItem, rating: string) => {
+          this.openFlatFeedback(it, rating);
+        },
+        onSubmitFeedback: (it: TrajectoryItem, rating: string, category: string, note: string) => {
+          this.submitFlatFeedback(it, rating, category, note);
+        },
+        onCloseFeedback: () => {
+          this.fbFor = '';
+          this.fbNote2 = '';
+        }
+      })
+    } else if (item.kind === TrajectoryKind.REASONING) {
+      // 思考块归 ReasoningRow（与回合的过程分组共用同一份）
+      ReasoningRow({
+        item: item,
+        expanded: this.isExpanded(item.id),
+        onToggle: () => {
+          this.toggle(item.id);
+        }
+      })
+    } else if (item.kind === TrajectoryKind.TOOL) {
+      ToolCard({
+        item: item,
+        expanded: this.isExpanded(item.id)
+          || presentTool(item, toolStateLabel(item.toolState)).defaultExpanded,
+        onToggle: () => {
+          this.toggle(item.id);
+        }
+      })
+    } else if (item.kind === TrajectoryKind.SUBAGENT) {
+      SubagentCard({ item: item })
+    } else if (item.kind === TrajectoryKind.DELIVERABLE) {
+      DeliverableCard({ item: item })
+    } else if (item.kind === TrajectoryKind.GOAL || item.kind === TrajectoryKind.JOB) {
+      this.flatGoal(item)
+    } else if (item.kind === TrajectoryKind.ERROR) {
+      this.flatError(item)
+    }
+  }
+
+  /** 目标 / 任务卡（轨迹视图；对话视图那份在 `TurnView` 里） */
+  @Builder
+  flatGoal(item: TrajectoryItem) {
+    NativeCard({
+      iconSymbol: item.kind === TrajectoryKind.GOAL
+        ? $r('sys.symbol.checkmark_circle')
+        : $r('sys.symbol.list_bullet'),
+      title: item.title,
+      badge: item.kind === TrajectoryKind.GOAL ? '目标' : '任务',
+      tone: 'brand',
+      summary: item.progress,
+      progress: item.percent,
+      a11y: `${item.kind === TrajectoryKind.GOAL ? '目标' : '任务'} ${item.title}`
+    })
+  }
+
+  /** 错误块（轨迹视图；对话视图那份在 `TurnView` 里） */
+  @Builder
+  flatError(item: TrajectoryItem) {
+    Row({ space: Sp.S }) {
+      Divider().vertical(true).color($r('sys.color.alert')).height('100%')
+      Text(`出错了：${item.body}`)
+        .fontSize(Fs.CAPTION)
+        .fontColor($r('sys.color.alert'))
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .padding(Sp.S)
+    .borderRadius(Radius.S)
+    .backgroundColor($r('sys.color.background_secondary'))
+    .accessibilityText(`错误：${item.body}`)
+  }
+
+  /** 某条目是否已展开（轨迹视图的展开集合也在这里：轨迹是条目级台账，没有回合外壳） */
+  private isExpanded(id: string): boolean {
+    return this.expanded.indexOf(id) >= 0;
+  }
+
+  private toggle(id: string): void {
+    const out: string[] = [];
+    let found: boolean = false;
+    for (let i = 0; i < this.expanded.length; i++) {
+      if (this.expanded[i] === id) {
+        found = true;
+      } else {
+        out.push(this.expanded[i]);
+      }
+    }
+    if (!found) {
+      out.push(id);
+    }
+    this.expanded = out;
+  }
+
+  /** 轨迹视图的无障碍读数（与 `TurnView` 里那句同形） */
+  private flatA11y(item: TrajectoryItem): string {
+    const who: string = item.speaker === Speaker.USER ? '我说' : '助手回复';
+    const plain: string = plainTextOf(parseMarkdown(item.body));
+    const head: string = plain.length > 60 ? `${plain.substring(0, 60)}…` : plain;
+    return `${who}：${head}（共 ${plain.length} 字）`;
+  }
+
+  /** 该条消息宿主记录的评价（决定菜单里要不要给"撤回评价"） */
+  private storedRatingOf(messageId: string): string {
+    const row: FeedbackRow | undefined = SessionHub.shared().feedbackOf(messageId);
+    return row === undefined ? '' : row.rating;
+  }
+
+  private storedCategoryOf(messageId: string): string {
+    const row: FeedbackRow | undefined = SessionHub.shared().feedbackOf(messageId);
+    return row === undefined ? '' : row.category;
+  }
+
+  private storedNoteOf(messageId: string): string {
+    const row: FeedbackRow | undefined = SessionHub.shared().feedbackOf(messageId);
+    return row === undefined ? '' : row.note;
+  }
+
+  /** 条目动作清单（与 `TurnView` 同一份规则：复制 / 评价 / 引用 / 重发 / 撤回） */
+  private flatActionsOf(item: TrajectoryItem): NativeAction[] {
+    const out: NativeAction[] = [];
+    out.push({ id: 'copy', label: '复制', a11y: '复制这条消息的正文' });
+    out.push({
+      id: 'like', label: '有帮助',
+      active: this.storedRatingOf(item.id) === 'positive', a11y: '评价为有帮助'
+    });
+    out.push({
+      id: 'dislike', label: '没帮助',
+      active: this.storedRatingOf(item.id) === 'negative', a11y: '评价为没帮助'
+    });
+    out.push({ id: 'quote', label: '引用', a11y: '把这条消息引用到输入框' });
+    if (item.speaker === Speaker.USER) {
+      // 只有用户消息能"重发"（助手消息重发需要"重跑那一轮"的端点，本仓没有 ⇒ 不给假入口）
+      out.push({ id: 'resend', label: '重发', a11y: '重新发送这条消息' });
+    }
+    if (this.storedRatingOf(item.id).length > 0) {
+      out.push({ id: 'withdraw', label: '撤回评价', a11y: '撤回这条消息的反馈' });
+    }
+    return out;
+  }
+
+  private onFlatAction(item: TrajectoryItem, id: string): void {
+    if (id === 'copy') {
+      this.onCopyMessage(item.body);
+    } else if (id === 'like' || id === 'dislike') {
+      this.openFlatFeedback(item, id === 'like' ? 'positive' : 'negative');
+    } else if (id === 'quote') {
+      this.onQuoteMessage(item);
+    } else if (id === 'resend') {
+      this.onResendMessage(item);
+    } else if (id === 'withdraw') {
+      SessionHub.shared().clearFeedback(item.id).then((n: ActionNotice) => {
+        this.fbNote2 = this.feedbackNoticeTextOf(n);
+      });
+    }
+  }
+
+  private openFlatFeedback(item: TrajectoryItem, rating: string): void {
+    this.fbFor = item.id;
+    this.fbRating = rating;
+    this.fbNote2 = '';
+  }
+
+  private submitFlatFeedback(item: TrajectoryItem, rating: string, category: string, note: string): void {
+    SessionHub.shared().putFeedback(item.id, rating, note, category).then((n: ActionNotice) => {
+      this.fbNote2 = this.feedbackNoticeTextOf(n);
+      if (n.code === 'feedback.saved') {
+        this.fbFor = '';
+      }
+    });
+  }
+
+  /** 反馈回执 → 一句话（与 `TurnView` 同表；两处都贴着各自的面板显示） */
+  private feedbackNoticeTextOf(n: ActionNotice): string {
+    if (n.code === 'feedback.saved' || n.code === 'feedback.withdrawn') {
+      return '';
+    }
+    if (n.code === 'feedback.failed') {
+      return '评价未保存：' + n.params.reason;
+    }
+    if (n.code === 'feedback.no-version') {
+      return '无法撤回：没读到该评价的版本（不猜版本号去删）。';
+    }
+    if (n.code === 'offline') {
+      return '未连接：评价需要连上 Host 才能保存。';
+    }
+    return '';
+  }
+
   private hits(): number[] {
     return this.view === 'chat'
       ? matchConversationIndices(this.items, this.searchQuery)
@@ -520,10 +761,10 @@ export struct ConversationPane {
           this.view = value;
         },
         onExpandAll: () => {
-          this.expandAllItems();
+          this.turnController.expandAll();
         },
         onCollapseAll: () => {
-          this.collapseAllItems();
+          this.turnController.collapseAll();
         },
         onQueryChange: (value: string) => {
           this.onQueryChange(value);
@@ -550,7 +791,7 @@ export struct ConversationPane {
           // 轨迹视图 = 全量台账：条目级扁平列表（工具、子代理、目标/任务、交付物都在这里可查）
           ForEach(this.visibleItems(), (item: TrajectoryItem) => {
             ListItem() {
-              this.trajectoryItem(item)
+              this.flatItem(item)
             }
             // 命中项加一条左侧色条：**不改变正文**（正文里做高亮要拆 span，
             // 而拆 span 会让 Markdown/代码块的渲染路径多一条分支，风险大于收益）。
@@ -570,9 +811,45 @@ export struct ConversationPane {
           // 对话视图 = 按**回合**渲染（§8）：用户消息 + 过程分组（折叠）+ 回答
           ForEach(this.chatTurns(), (turn: Turn) => {
             ListItem() {
-              this.turnBlock(turn)
+              // 一个回合的渲染归 TurnView（P2-6 第二刀）；"全部展开/收起全部"经控制器接出去。
+              TurnView({
+                turn: turn,
+                expanded: this.expanded,
+                onExpandedChange: (next: string[]) => {
+                  this.expanded = next;
+                },
+                controller: this.turnController,
+                hasPointer: this.hasPointer,
+                hasKeyboard: this.hasKeyboard,
+                fbFor: this.fbFor,
+                fbNote: this.fbNote2,
+                onCopyMessage: (text: string) => {
+                  this.onCopyMessage(text);
+                },
+                onQuoteMessage: (it: TrajectoryItem) => {
+                  this.onQuoteMessage(it);
+                },
+                onResendMessage: (it: TrajectoryItem) => {
+                  this.onResendMessage(it);
+                },
+                onOpenFeedback: (itemId: string, rating: string) => {
+                  this.fbFor = itemId;
+                  this.fbRating = rating;
+                  this.fbNote2 = '';
+                },
+                onFeedbackNote: (note: string) => {
+                  this.fbNote2 = note;
+                },
+                onCloseFeedback: () => {
+                  this.fbFor = '';
+                  this.fbNote2 = '';
+                },
+                onOpenDetail: () => {
+                  this.onOpenDetail();
+                }
+              })
             }
-            .border({ width: { left: this.turnIsHit(turn) ? 3 : 0 },
+            .border({ width: { left: this.turnHasHit(turn) ? 3 : 0 },
               color: $r('sys.color.brand') })
           }, (turn: Turn) => turn.id)
         }
@@ -666,311 +943,6 @@ export struct ConversationPane {
 
   // ───────────────────── 轨迹条目 ─────────────────────
 
-  /**
-   * 一个回合（§8 的渲染单位）：用户消息 → 过程分组 → 回答 → 通知。
-   *
-   * 顺序即阅读顺序，且**不做"智能排序"**：官方也是这个次序。
-   */
-  @Builder
-  turnBlock(turn: Turn) {
-    Column({ space: Sp.M }) {
-      if (turn.user !== undefined) {
-        this.trajectoryItem(turn.user)
-      }
-      if (hasProcessGroup(turn)) {
-        this.processGroup(turn)
-      }
-      // ArkTS 规定：`@Builder` 内只能写 UI 语法，循环必须用 `ForEach`
-      ForEach(turn.answers, (it: TrajectoryItem) => {
-        this.trajectoryItem(it)
-      }, (it: TrajectoryItem) => `ans-${it.id}`)
-      ForEach(turn.notices, (it: TrajectoryItem) => {
-        this.trajectoryItem(it)
-      }, (it: TrajectoryItem) => `note-${it.id}`)
-    }
-    .width('100%')
-  }
-
-  /**
-   * 过程分组（思考 / 工具 / 子代理 / 进度 / 交付物）。
-   *
-   * 折叠默认态由**模型**决定（`defaultExpanded`：进行中展开、已完成折叠），
-   * 用户点开才覆盖——而不是"记着用户上次点过什么"当作初值。
-   */
-  @Builder
-  processGroup(turn: Turn) {
-    Column({ space: Sp.XS }) {
-      Row({ space: Sp.XS }) {
-        NativeChip({
-          label: `${this.processExpanded(turn) ? '▾' : '▸'} ${processSummary(turn)}`,
-          active: this.processExpanded(turn),
-          a11y: `${processSummary(turn)}，${this.processExpanded(turn) ? '点击收起' : '点击展开'}`,
-          onTap: () => {
-            this.toggle(turn.id);
-          }
-        })
-        if (turn.running) {
-          Text('进行中')
-            .fontSize(HarmonyType.LABEL.size)
-            .fontColor(HarmonyColor.BRAND)
-        }
-        Blank()
-      }
-      .width('100%')
-
-      if (this.processExpanded(turn)) {
-        ForEach(turn.process, (it: TrajectoryItem) => {
-          this.trajectoryItem(it)
-        }, (it: TrajectoryItem) => `proc-${it.id}`)
-      }
-    }
-    .width('100%')
-  }
-
-  /** 过程分组是否展开（模型给默认态，用户点击覆盖） */
-  private processExpanded(turn: Turn): boolean {
-    return defaultExpanded(turn, this.isExpanded(turn.id));
-  }
-
-  /** 该回合内是否有搜索命中（用于对话视图的命中色条） */
-  private turnIsHit(turn: Turn): boolean {
-    if (turn.user !== undefined && this.isHit(turn.user)) {
-      return true;
-    }
-    for (let i = 0; i < turn.answers.length; i++) {
-      if (this.isHit(turn.answers[i])) {
-        return true;
-      }
-    }
-    for (let i = 0; i < turn.process.length; i++) {
-      if (this.isHit(turn.process[i])) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  @Builder
-  trajectoryItem(item: TrajectoryItem) {
-    if (item.kind === TrajectoryKind.MESSAGE) {
-      this.messageItem(item)
-    } else if (item.kind === TrajectoryKind.REASONING) {
-      this.reasoningItem(item)
-    } else if (item.kind === TrajectoryKind.TOOL) {
-      // 工具卡归 ToolCard（右栏「工具」面板用**同一份**）
-      ToolCard({
-        item: item,
-        expanded: this.isExpanded(item.id)
-          || presentTool(item, toolStateLabel(item.toolState)).defaultExpanded,
-        onToggle: () => {
-          this.toggle(item.id);
-        }
-      })
-    } else if (item.kind === TrajectoryKind.SUBAGENT) {
-      // 子代理卡归 SubagentCard（右栏「子代理」面板用**同一份**）
-      SubagentCard({ item: item })
-    } else if (item.kind === TrajectoryKind.DELIVERABLE) {
-      // 交付物卡归 DeliverableCard（右栏「交付物」面板用**同一份**）
-      DeliverableCard({ item: item })
-    } else if (item.kind === TrajectoryKind.GOAL || item.kind === TrajectoryKind.JOB) {
-      this.goalItem(item)
-    } else if (item.kind === TrajectoryKind.ERROR) {
-      this.errorItem(item)
-    }
-  }
-  @Builder
-  reasoningItem(item: TrajectoryItem) {
-    Column({ space: Sp.XS }) {
-      Row({ space: Sp.S }) {
-        SymbolGlyph($r('sys.symbol.lightbulb'))
-          .fontSize(14)
-          .fontColor([$r('sys.color.font_tertiary')])
-        Text(item.streaming ? '思考中…'
-          : (item.elapsedMs > 0 ? `已思考 ${formatDuration(item.elapsedMs)}` : '思考过程'))
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
-          .layoutWeight(1)
-        Text(this.isExpanded(item.id) ? '收起' : '展开')
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.brand'))
-      }
-      .width('100%')
-
-      if (this.isExpanded(item.id)) {
-        MarkdownRenderer({ text: item.body, muted: true })
-      }
-    }
-    .width('100%')
-    .padding(Sp.S)
-    .borderRadius(Radius.S)
-    .borderWidth(Border.HAIRLINE)
-    .borderColor($r('sys.color.comp_divider'))
-    .accessibilityText('思考过程，点击展开或收起')
-    .onClick(() => {
-      this.toggle(item.id);
-    })
-  }
-
-
-  /**
-   * 一条消息（正文 + 行级交互）——**整行归 `MessageRow`**（P2-4）。
-   *
-   * 【为什么抽出去】这一段此前自己带着五份状态（悬停、菜单开关与归属、反馈面板归属与回执）
-   * 加两个 `@Builder`（行内操作条、上下文菜单），与"过程流的分组与顺序"这件事混在一起；
-   * 于是任何一处改动都要通读 1400 行。抽出去之后本组件只剩"哪一条放在哪一段"。
-   *
-   * 【留在父组件的两件事】① 「展开全部 / 收起全部」是**跨行**操作 ⇒ 展开集合的唯一真值在这里；
-   * ② 菜单里给不给"重发 / 撤回评价"要读中枢的反馈记录 ⇒ 由这里算好动作清单传进去
-   * （`messageActionsOf`）。这也是"判定与呈现分开"的既有规矩。
-   */
-  @Builder
-  messageItem(item: TrajectoryItem) {
-    MessageRow({
-      item: item,
-      a11yText: this.speakableText(item),
-      hasPointer: this.hasPointer,
-      hasKeyboard: this.hasKeyboard,
-      feedbackOpen: this.fbFor === item.id,
-      feedbackNotice: this.fbNote2,
-      storedRating: this.myRating(item.id),
-      storedCategory: this.storedCategoryOf(item.id),
-      storedNote: this.storedNoteOf(item.id),
-      actions: this.messageActionsOf(item),
-      onAction: (it: TrajectoryItem, id: string) => {
-        this.onMessageAction(it, id);
-      },
-      onOpenFeedback: (it: TrajectoryItem, rating: string) => {
-        this.openFeedback(it, rating);
-      },
-      onSubmitFeedback: (it: TrajectoryItem, rating: string, category: string, note: string) => {
-        this.submitFeedback(it, rating, category, note);
-      },
-      onCloseFeedback: () => {
-        this.fbFor = '';
-        this.fbNote2 = '';
-      }
-    })
-  }
-
-  /** 打开反馈面板：带上该条当前的类别/说明，便于"改主意"而不是从零填 */
-  private openFeedback(item: TrajectoryItem, rating: string): void {
-    this.fbFor = item.id;
-    this.fbRating = rating;
-    this.fbNote2 = '';
-  }
-
-  /**
-   * 该条**已存**的反馈类别 / 说明（反馈面板的初值）。
-   *
-   * 【为什么只取两段文字而不是整行】`FeedbackRow` 还带 `version` 等并发令牌字段，
-   * 拼一个"假装没有版本"的行等于凭空造一个语义不完整的对象；面板只要这两段。
-   */
-  private storedCategoryOf(messageId: string): string {
-    const row: FeedbackRow | undefined = SessionHub.shared().feedbackOf(messageId);
-    return row === undefined ? '' : row.category;
-  }
-
-  private storedNoteOf(messageId: string): string {
-    const row: FeedbackRow | undefined = SessionHub.shared().feedbackOf(messageId);
-    return row === undefined ? '' : row.note;
-  }
-
-  private submitFeedback(item: TrajectoryItem, rating: string, category: string, note: string): void {
-    SessionHub.shared().putFeedback(item.id, rating, note, category)
-      .then((n: ActionNotice) => {
-        this.fbNote2 = this.feedbackNoticeText(n);
-        if (n.code === 'feedback.saved') {
-          this.fbFor = '';
-        }
-      });
-  }
-
-  /** 该条消息**宿主记录的**评价（不是"我以为点了什么"） */
-  private myRating(messageId: string): string {
-    const row: FeedbackRow | undefined = SessionHub.shared().feedbackOf(messageId);
-    return row === undefined ? '' : row.rating;
-  }
-
-  /**
-   * 反馈回执 → 一句话。
-   *
-   * 【为什么不走 Index 的 noticeText】那是全局回执表，键来自各功能；反馈这几条要贴着面板显示，
-   * 且**失败原因必须原样透出**（`friendlyFailure` 已把宿主错误码翻成人话）。
-   */
-  private feedbackNoticeText(n: ActionNotice): string {
-    if (n.code === 'feedback.saved' || n.code === 'feedback.withdrawn') {
-      return '';
-    }
-    if (n.code === 'feedback.failed') {
-      return '评价未保存：' + n.params.reason;
-    }
-    if (n.code === 'feedback.no-version') {
-      return '无法撤回：没读到该评价的版本（不猜版本号去删）。';
-    }
-    if (n.code === 'offline') {
-      return '未连接：评价需要连上 Host 才能保存。';
-    }
-    if (n.code === 'feedback.needs-session') {
-      return '这条消息还不属于任何会话，暂时存不了评价。';
-    }
-    return '';
-  }
-  /** 打开上下文菜单（长按/右键都走这里；手势集合来自输入策略） */
-  /**
-   * 一条消息的**动作清单**（操作条与上下文菜单**共用这一份**）。
-   *
-   * 【为什么必须是同一份】§10 要的是"统一消息操作"：同一条消息在行内操作条与
-   * 长按菜单里必须是同样几项、同样顺序。写成两处必然漂移——一处加了"撤回"，另一处没有，
-   * 而用户会在两个入口得到不同答案。
-   */
-  private messageActionsOf(item: TrajectoryItem): NativeAction[] {
-    const out: NativeAction[] = [];
-    out.push({ id: 'copy', label: '复制', a11y: '复制这条消息的正文' });
-    out.push({
-      id: 'like',
-      label: '有帮助',
-      active: this.myRating(item.id) === 'positive',
-      a11y: '评价为有帮助，可选择原因'
-    });
-    out.push({
-      id: 'dislike',
-      label: '没帮助',
-      active: this.myRating(item.id) === 'negative',
-      a11y: '评价为没帮助，可选择原因'
-    });
-    out.push({ id: 'quote', label: '引用', a11y: '把这条消息引用到输入框' });
-    if (item.speaker === Speaker.USER) {
-      // 【为什么只给用户消息】"重发"对用户消息是**把同一句再发一次**（有真实协议面：
-      // `session/prompt`）；对助手消息则是"重跑那一轮"，本仓没有对应端点 ⇒ 不给，避免假入口。
-      out.push({ id: 'resend', label: '重发', a11y: '重新发送这条消息' });
-    }
-    // 已评才给"撤回"：没评就没有可撤的（按钮不该假装有事可做）
-    if (this.myRating(item.id).length > 0) {
-      out.push({ id: 'withdraw', label: '撤回评价', a11y: '撤回这条消息的反馈' });
-    }
-    return out;
-  }
-
-  /** 动作的统一处理（两个入口都走这里） */
-  private onMessageAction(item: TrajectoryItem, id: string): void {
-    if (id === 'copy') {
-      this.onCopyMessage(item.body);
-    } else if (id === 'like') {
-      this.openFeedback(item, 'positive');
-    } else if (id === 'dislike') {
-      this.openFeedback(item, 'negative');
-    } else if (id === 'quote') {
-      this.onQuoteMessage(item);
-    } else if (id === 'resend') {
-      this.onResendMessage(item);
-    } else if (id === 'withdraw') {
-      SessionHub.shared().clearFeedback(item.id).then((n: ActionNotice) => {
-        this.fbNote2 = this.feedbackNoticeText(n);
-      });
-    }
-  }
-
-
 
   /**
    * 取这次工具调用的改动对照（没有则 null）。
@@ -1006,82 +978,7 @@ export struct ConversationPane {
    */
 
 
-  @Builder
-  goalItem(item: TrajectoryItem) {
-    NativeCard({
-      iconSymbol: item.kind === TrajectoryKind.GOAL
-        ? $r('sys.symbol.checkmark_circle')
-        : $r('sys.symbol.list_bullet'),
-      title: item.title,
-      badge: item.kind === TrajectoryKind.GOAL ? '目标' : '任务',
-      tone: 'brand',
-      summary: item.progress,
-      progress: item.percent,
-      a11y: `${item.kind === TrajectoryKind.GOAL ? '目标' : '任务'} ${item.title}`
-    })
-  }
-
-  @Builder
-  errorItem(item: TrajectoryItem) {
-    Row({ space: Sp.S }) {
-      Divider().vertical(true).color($r('sys.color.alert')).height('100%')
-      Column({ space: 2 }) {
-        Text('出错了')
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.alert'))
-          .width('100%')
-        Text(item.body)
-          .fontSize(Fs.SECONDARY)
-          .width('100%')
-          .textAlign(TextAlign.Start)
-        Row({ space: Sp.L }) {
-          Text('重试').fontSize(Fs.CAPTION).fontColor($r('sys.color.brand'))
-          Text('查看诊断')
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.brand'))
-            .onClick(() => {
-              this.onOpenDetail();
-            })
-        }
-        .width('100%')
-      }
-      .layoutWeight(1)
-    }
-    .width('100%')
-    .padding(Sp.M)
-    .borderRadius(Radius.M)
-    .backgroundColor($r('sys.color.background_secondary'))
-    .accessibilityText(`错误：${item.body}`)
-  }
-
   // ───────────────────── 辅助 ─────────────────────
 
-  private isExpanded(id: string): boolean {
-    return this.expanded.indexOf(id) >= 0;
-  }
 
-  private toggle(id: string): void {
-    const out: string[] = [];
-    let found: boolean = false;
-    for (let i = 0; i < this.expanded.length; i++) {
-      if (this.expanded[i] === id) {
-        found = true;
-      } else {
-        out.push(this.expanded[i]);
-      }
-    }
-    if (!found) {
-      out.push(id);
-    }
-    this.expanded = out;
-  }
-
-
-  private speakableText(item: TrajectoryItem): string {
-    const who: string = item.speaker === Speaker.USER ? '我说' : '助手回复';
-    // 读数用**去标记**的纯文本：否则屏幕阅读器会把 `**`、反引号、链接目标一起念出来
-    const plain: string = plainTextOf(parseMarkdown(item.body));
-    const head: string = plain.length > 60 ? `${plain.substring(0, 60)}…` : plain;
-    return `${who}：${head}（共 ${plain.length} 字）`;
-  }
 }
