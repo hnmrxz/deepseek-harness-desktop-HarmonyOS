@@ -16,9 +16,9 @@
  *                  **安装/卸载插件在端侧永远做不到**（上游经 pnpm 创建进程，鸿蒙不允许），
  *                  启停随包发版的行则是纯文件操作；两者在界面文案里严格区分。
  *
- * 尚未实现（下一步）：
- *   - 核心版本的**切换/回滚动作接线**：`CoreStore.activate/rollback` 与判据已就位
- *     （且"健康检查不过绝不切换"），但界面动作还没接上，目前只给如实提示。
+ * 【已接线】核心版本的**切换/回滚动作**（这段注释曾写"尚未实现"，实际早就接上了，
+ * 属过期描述）：`entry` 的 `Index` 通过 `DshHost.switchTo/rollbackTo` 调用，
+ * 判据"健康检查不过绝不切换"在 `hostruntime/core/CoreStore` 里，功能接线门禁钉着这两条调用点。
  */
 
 export * from './core/Types';
@@ -26,5 +26,8 @@ export * from './core/Naming';
 export * from './core/CoreStore';
 export * from './core/BundledCore';
 export * from './core/PluginRows';
+// 文本层（零依赖，可被 fixture 直接执行；E369）也转发一次，读代码时不必先猜它在哪
+export * from './core/PluginRowsText';
+
 export * from './runtime/RuntimePort';
 export * from './runtime/DshHost';

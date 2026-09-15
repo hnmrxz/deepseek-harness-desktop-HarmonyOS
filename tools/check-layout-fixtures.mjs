@@ -56,6 +56,8 @@ const PURE_FILES = [
   // 核心页投影（P5-1）：依赖 Core.ets，两者一起执行
   'appstate/src/main/ets/model/Core.ets',
   'appstate/src/main/ets/model/CoreProjection.ets',
+  // 插件启停的用户行文本层（P5-6，E369）：**零依赖**，正是为此从 PluginRows 里搬出来的
+  'hostruntime/src/main/ets/core/PluginRowsText.ets',
   'appstate/src/main/ets/model/PanelRegistry.ets',
   'appstate/src/main/ets/model/NavigationState.ets',
   'appstate/src/main/ets/model/Follow.ets',
@@ -210,6 +212,7 @@ const SC = require2('./SessionContext.js');
 const SH = require2('./Sheets.js');
 const SE2 = require2('./SettingEditors.js');
 const CP = require2('./CoreProjection.js');
+const PRT = require2('./PluginRowsText.js');
 const t = makeAsserter(selfTest);
 
 console.log('# 布局 fixture 门禁（四形态 + 断点边界 + 让步链）\n');
@@ -1733,6 +1736,61 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
     t.eq('空清单 ⇒ 空数组（界面据此显示空态）', rankPluginRows([]).length, 0);
   }
 
+  // ── P5-6：插件启停的用户行文本层（E369）——「启停能不能活过重启」的唯一契约 ──
+  {
+    const { serializeUserRows, parseUserRows, userRowsPath, USER_ROWS_FILENAME } = PRT;
+
+    const rows = [
+      { id: 'ui-deliverables', disabled: true },
+      { id: 'tool-web', disabled: false }
+    ];
+    const text = serializeUserRows(rows);
+
+    // ① 输出形状：一行一条，字段名与 profile 行一致（入口脚本是**原样**搬进 patch 的）
+    t.eq('序列化：每条两行（id / disabled）',
+      text.split('\n').filter((l) => l.startsWith('- id:')).length, 2);
+    t.eq('序列化：id 行', text.includes('- id: ui-deliverables'), true);
+    t.eq('序列化：禁用为 true', text.includes('  disabled: true'), true);
+    t.eq('序列化：启用为 false（不省略字段）', text.includes('  disabled: false'), true);
+    t.eq('序列化：结尾有换行（否则入口脚本拼出来的围栏会粘住下一行）',
+      text.endsWith('\n'), true);
+    // 头部注释是"给人看"的说明；解析必须忽略它们（下面的往返断言会连带证明）
+
+    // ② 往返不变式：这是本层存在的理由 —— 两侧任何一侧改格式都会**静默丢启停**
+    const back = parseUserRows(text);
+    t.eq('往返：行数与顺序不变', back.rows.map((r) => r.id).join(','), 'ui-deliverables,tool-web');
+    t.eq('往返：禁用位不变', back.rows.map((r) => r.disabled).join(','), 'true,false');
+    t.eq('往返：**没有**任何行被忽略（有被忽略的说明格式对不上了）', back.ignored, 0);
+
+    // ③ 空集合：文件在、但一行都没有
+    t.eq('空行集合：只有头部注释', parseUserRows(serializeUserRows([])).rows.length, 0);
+    t.eq('空文本', parseUserRows('').rows.length, 0);
+    t.eq('只有注释与空行 ⇒ 无行、无误报忽略',
+      parseUserRows('# 说明\n\n# 又一条\n').ignored, 0);
+
+    // ④ 容错：忽略的行要**数出来**（不能静默丢内容）
+    // 空 id 那一行没法用；跟着它的 `disabled:` 没有归属行、同样没法用 ⇒ **两行都算忽略**
+    // （如实计数而不是"合并成一条"：用户看到 ignored 才可能去查文件）
+    t.eq('容错：`- id:` 空 ⇒ 该行与跟着的 disabled 行都算忽略',
+      parseUserRows('- id:\n  disabled: true\n').ignored, 2);
+    t.eq('容错：`disabled:` 出现在任何 `- id:` 之前 ⇒ 记一条忽略',
+      parseUserRows('  disabled: true\n').ignored, 1);
+    t.eq('容错：不认识的行 ⇒ 记一条忽略', parseUserRows('- 这行不是我们写的\n').ignored, 1);
+    t.eq('容错：坏行不影响好行',
+      parseUserRows('- id: a\n- 坏行\n- id: b\n  disabled: false\n').rows.length, 2);
+
+    // ⑤ `disabled` 的取值语义：**只有明确的 false 才算启用**（fail-closed：
+    //    解析不出来时保持"禁用"，而不是把一个看不懂的值当成"启用"）
+    t.eq('取值：缺省的 disabled 行 ⇒ 禁用（默认保守）',
+      parseUserRows('- id: a\n').rows[0].disabled, true);
+    t.eq('取值：FALSE（大写）也算启用', parseUserRows('- id: a\n  disabled: FALSE\n').rows[0].disabled, false);
+    t.eq('取值：看不懂的值 ⇒ 保持禁用', parseUserRows('- id: a\n  disabled: maybe\n').rows[0].disabled, true);
+
+    // ⑥ 路径与文件名：入口脚本按**同名**读取，两侧必须一致
+    t.eq('文件名与入口脚本一致', USER_ROWS_FILENAME, '.hdsh-plugin-rows.yml');
+    t.eq('路径 = profile 目录 + 文件名', userRowsPath('/data/app/profiles/ondevice'),
+      '/data/app/profiles/ondevice/.hdsh-plugin-rows.yml');
+  }
 }
 
 t.done();
