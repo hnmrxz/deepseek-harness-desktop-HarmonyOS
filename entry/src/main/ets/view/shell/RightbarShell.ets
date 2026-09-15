@@ -48,7 +48,7 @@ import { NativeSectionTitle } from '../NativePrimitives';
  * `RightbarShell` 有**两个挂载点**：三栏的真右栏（`AppShell.detailColumn`）与
  * 「详情」浮层（`Index.detailSheet`）。此前两处**各自**把 16 个 props 拼一遍：
  *   · 真右栏那一份经 `Index` 的 AppShell 门面往上传（`rightPanelId` / `rightFiles` / …）；
- *   · 浮层那一份在 `Index` 里**内联重算**（`deliverablesOf(this.trajectoryItems)` 等）。
+ *   · 浮层那一份在 `Index` 里**内联重算**（`deliverablesOf(this.f.trajectoryItems)` 等）。
  *
  * 两处只要有一处漏改（例如新加一个面板的数据忘了给浮层），就会出现
  * **同一个面板在两种呈现下不一样**——而"两处各写一遍必然漂移"是本仓反复踩过的坑
@@ -98,6 +98,15 @@ export struct RightbarShell {
   /** 宽度（三栏 = 槽位宽度；侧边面板 = 夹取后的宽度；Sheet 忽略它） */
   @Prop widthVp: number = 0;
   /** 面板内容（宿主投影好的 sections） */
+  /**
+   * 右侧内容的门面（P2-12）：**两个挂载点共用这一份**。
+   *
+   * 【为什么是一个门面而不是十几个 prop】本组件有两个挂载点（三栏的真右栏与「详情」浮层），
+   * 此前两处各拼一遍同样的十几个值 —— 只要一处漏改，同一个面板在两种呈现下就会不一样。
+   * 门面把"怎么投影、往哪儿转发"收在一处；每个挂载点只提供**它自己那份**
+   * （`presentation` / `widthVp` / `sections` / `onClose`）。
+   */
+  @Prop f: RightbarFacade;
   @Prop sections: DetailSection[] = [];
   /**
    * 当前该显示哪个右栏面板（`NavigationState.selectedRightPanel`）。
@@ -107,30 +116,20 @@ export struct RightbarShell {
    * 现在：可用面板由 `PanelRegistry` 决定（只有「详情」有内容），选择经注册表校验，
    * 视图只按 id 分派 —— 后续把某个候选面板的内容视图做出来，只需把它的 `available` 改成 true。
    */
-  @Prop panelId: string = '';
   /** 当前面板的中文名（标题行用；来自 descriptor 的 `label`，找不到时由宿主兜底） */
-  @Prop panelLabel: string = '详情';
   /**
    * 这条轨道上**可用**的面板清单（注册表给）。
    *
    * 【为什么由宿主给】"哪些面板可用"是注册表的判定（内容做了没有）；视图只按清单画切换器。
    * 只有一个可用面板时**不画切换器**——一行只有一个选项的按钮组是噪声。
    */
-  @Prop panels: PanelDescriptor[] = [];
   /** 预览面板的内容（`undefined` = 空态"选择文件以预览"） */
-  @Prop preview?: FilePreview;
   /** 「文件」面板的内容与回调（树 / 选中项 / 空态文案 / 两个回调，打包成一个门面） */
-  @Prop files: FileTreeFacade;
   /** 「交付物」面板的内容（宿主已按种类筛好；空数组 = 空态） */
-  @Prop deliverables: TrajectoryItem[] = [];
   /** 「子代理」面板的内容（同上；筛选规则同为纯模型 `itemsOfKind`） */
-  @Prop subagents: TrajectoryItem[] = [];
   /** 「工具」面板的内容（同上） */
-  @Prop tools: TrajectoryItem[] = [];
   /** 「轨迹」面板的内容：本会话的全部过程条目（总览自己算格子与比例） */
-  @Prop trajectoryItems: TrajectoryItem[] = [];
   /** 「轨迹」面板的会话统计（总览右上角那四项） */
-  @Prop stats: SessionStatsInput;
 
   /**
    * 工具面板里**被用户手动展开过**的条目 id。
@@ -146,15 +145,9 @@ export struct RightbarShell {
   @State timelineDragging: boolean = false;
 
   /** 切换右栏面板（宿主经注册表校验后落到 `selectedRightPanel`） */
-  onSelectPanel: (panelId: string) => void = () => {
-  };
   /** 「投喂」预览中的文件（副作用归宿主） */
-  onAttachFile: (node: FileNode) => void = () => {
-  };
 
   onClose: () => void = () => {
-  };
-  onLineTap: (section: string, text: string) => void = () => {
   };
 
   /**
@@ -166,7 +159,7 @@ export struct RightbarShell {
    */
   @Builder
   deliverablesBody() {
-    if (this.deliverables.length === 0) {
+    if (this.f.deliverables.length === 0) {
       Column({ space: Sp.S }) {
         Text('本次会话还没有交付物')
           .fontSize(Fs.SECONDARY)
@@ -182,7 +175,7 @@ export struct RightbarShell {
       .padding(Sp.M)
     } else {
       List({ space: Sp.S }) {
-        ForEach(this.deliverables, (item: TrajectoryItem) => {
+        ForEach(this.f.deliverables, (item: TrajectoryItem) => {
           ListItem() {
             DeliverableCard({ item: item })
           }
@@ -198,7 +191,7 @@ export struct RightbarShell {
   /** 子代理面板的内容：一张张 `SubagentCard`（与过程流共用同一份卡） */
   @Builder
   subagentsBody() {
-    if (this.subagents.length === 0) {
+    if (this.f.subagents.length === 0) {
       Column({ space: Sp.S }) {
         Text('本次会话还没有子代理')
           .fontSize(Fs.SECONDARY)
@@ -214,7 +207,7 @@ export struct RightbarShell {
       .padding(Sp.M)
     } else {
       List({ space: Sp.S }) {
-        ForEach(this.subagents, (item: TrajectoryItem) => {
+        ForEach(this.f.subagents, (item: TrajectoryItem) => {
           ListItem() {
             SubagentCard({ item: item })
           }
@@ -230,7 +223,7 @@ export struct RightbarShell {
   /** 工具面板的内容：一张张 `ToolCard`（与过程流共用同一份卡；展开态见 `toolExpanded` 的说明） */
   @Builder
   toolsBody() {
-    if (this.tools.length === 0) {
+    if (this.f.tools.length === 0) {
       Column({ space: Sp.S }) {
         Text('本次会话还没有工具调用')
           .fontSize(Fs.SECONDARY)
@@ -246,7 +239,7 @@ export struct RightbarShell {
       .padding(Sp.M)
     } else {
       List({ space: Sp.S }) {
-        ForEach(this.tools, (item: TrajectoryItem) => {
+        ForEach(this.f.tools, (item: TrajectoryItem) => {
           ListItem() {
             ToolCard({
               item: item,
@@ -295,7 +288,7 @@ export struct RightbarShell {
    */
   @Builder
   trajectoryBody() {
-    if (this.trajectoryItems.length === 0) {
+    if (this.f.trajectoryItems.length === 0) {
       Column({ space: Sp.S }) {
         Text('本次会话还没有过程数据')
           .fontSize(Fs.SECONDARY)
@@ -312,8 +305,8 @@ export struct RightbarShell {
     } else {
       Column() {
         TimelineOverview({
-          items: this.trajectoryItems,
-          stats: this.stats,
+          items: this.f.trajectoryItems,
+          stats: this.f.stats,
           focusedCellId: this.timelineFocused,
           dragging: this.timelineDragging,
           onFocusCell: (cellId: string) => {
@@ -336,20 +329,20 @@ export struct RightbarShell {
   framedBody() {
     Column() {
       Row({ space: Sp.S }) {
-        Text(this.panelLabel)
+        Text(this.f.panelLabel)
           .fontSize(Fs.SECONDARY)
           .fontWeight(FontWeight.Medium)
           .layoutWeight(1)
         // 切换器：≥2 个可用面板时才出现（只有一个面板时它是噪声）
-        if (this.panels.length > 1) {
+        if (this.f.panels.length > 1) {
           Row({ space: Sp.XS }) {
-            ForEach(this.panels, (d: PanelDescriptor) => {
+            ForEach(this.f.panels, (d: PanelDescriptor) => {
               NativeChip({
                 label: d.label,
-                active: d.id === this.panelId,
+                active: d.id === this.f.panelId,
                 a11y: `右栏面板：${d.label}`,
                 onTap: () => {
-                  this.onSelectPanel(d.id);
+                  this.f.onSelectPanel(d.id);
                 }
               })
             }, (d: PanelDescriptor) => d.id)
@@ -359,7 +352,7 @@ export struct RightbarShell {
           SymbolGlyph($r('sys.symbol.xmark')).fontSize(HarmonyIconSize.INLINE)
         }
         .buttonStyle(ButtonStyleMode.TEXTUAL)
-        .accessibilityText(`关闭${this.panelLabel}面板`)
+        .accessibilityText(`关闭${this.f.panelLabel}面板`)
         .onClick(() => {
           this.onClose();
         })
@@ -371,30 +364,30 @@ export struct RightbarShell {
       Divider().color($r('sys.color.comp_divider'))
 
       // 按面板 id 分派：内容视图做了的候选才会 available（其余选不进来）
-      if (this.panelId === PANEL_RIGHT_DETAIL) {
+      if (this.f.panelId === PANEL_RIGHT_DETAIL) {
         DetailPane({
           sections: this.sections,
           onLineTap: (section: string, text: string) => {
-            this.onLineTap(section, text);
+            this.f.onLineTap(section, text);
           }
         })
-      } else if (this.panelId === PANEL_RIGHT_TRAJECTORY) {
+      } else if (this.f.panelId === PANEL_RIGHT_TRAJECTORY) {
         this.trajectoryBody()
-      } else if (this.panelId === PANEL_RIGHT_TOOL) {
+      } else if (this.f.panelId === PANEL_RIGHT_TOOL) {
         this.toolsBody()
-      } else if (this.panelId === PANEL_RIGHT_SUBAGENT) {
+      } else if (this.f.panelId === PANEL_RIGHT_SUBAGENT) {
         this.subagentsBody()
-      } else if (this.panelId === PANEL_RIGHT_DELIVERABLES) {
+      } else if (this.f.panelId === PANEL_RIGHT_DELIVERABLES) {
         this.deliverablesBody()
-      } else if (this.panelId === PANEL_RIGHT_FILES) {
+      } else if (this.f.panelId === PANEL_RIGHT_FILES) {
         // 与工作区页签的文件树**同一份**呈现（FileTreePane）
-        FileTreePane({ f: this.files })
-      } else if (this.panelId === PANEL_RIGHT_PREVIEW) {
+        FileTreePane({ f: this.f.files })
+      } else if (this.f.panelId === PANEL_RIGHT_PREVIEW) {
         // 与工作区页签的预览**同一份**呈现（FilePreviewPane）
         FilePreviewPane({
-          preview: this.preview,
+          preview: this.f.preview,
           onAttachFile: (node: FileNode) => {
-            this.onAttachFile(node);
+            this.f.onAttachFile(node);
           }
         })
       }
@@ -408,30 +401,30 @@ export struct RightbarShell {
   @Builder
   sheetBody() {
     Column({ space: HarmonySpacing.CONTAINER }) {
-      NativeSectionTitle({ text: this.panelLabel, hint: '工具 / 子代理 / 交付物 / 目标 / 任务' })
-      if (this.panelId === PANEL_RIGHT_DETAIL) {
+      NativeSectionTitle({ text: this.f.panelLabel, hint: '工具 / 子代理 / 交付物 / 目标 / 任务' })
+      if (this.f.panelId === PANEL_RIGHT_DETAIL) {
         DetailPane({
           sections: this.sections,
           onLineTap: (section: string, text: string) => {
-            this.onLineTap(section, text);
+            this.f.onLineTap(section, text);
           }
         })
-      } else if (this.panelId === PANEL_RIGHT_TRAJECTORY) {
+      } else if (this.f.panelId === PANEL_RIGHT_TRAJECTORY) {
         this.trajectoryBody()
-      } else if (this.panelId === PANEL_RIGHT_TOOL) {
+      } else if (this.f.panelId === PANEL_RIGHT_TOOL) {
         this.toolsBody()
-      } else if (this.panelId === PANEL_RIGHT_SUBAGENT) {
+      } else if (this.f.panelId === PANEL_RIGHT_SUBAGENT) {
         this.subagentsBody()
-      } else if (this.panelId === PANEL_RIGHT_DELIVERABLES) {
+      } else if (this.f.panelId === PANEL_RIGHT_DELIVERABLES) {
         this.deliverablesBody()
-      } else if (this.panelId === PANEL_RIGHT_FILES) {
+      } else if (this.f.panelId === PANEL_RIGHT_FILES) {
         // 与工作区页签的文件树**同一份**呈现（FileTreePane）
-        FileTreePane({ f: this.files })
-      } else if (this.panelId === PANEL_RIGHT_PREVIEW) {
+        FileTreePane({ f: this.f.files })
+      } else if (this.f.panelId === PANEL_RIGHT_PREVIEW) {
         FilePreviewPane({
-          preview: this.preview,
+          preview: this.f.preview,
           onAttachFile: (node: FileNode) => {
-            this.onAttachFile(node);
+            this.f.onAttachFile(node);
           }
         })
       }

@@ -26,6 +26,7 @@ import type { FileNode, FilePreview, PanelDescriptor, SessionStatsInput, Traject
 import { MainHeaderShell } from './MainHeaderShell';
 import { MainShell } from './MainShell';
 import type { MainShellFacade } from './MainShell';
+import type { RightbarFacade } from './RightbarShell';
 import type { WorkspaceBrowserFacade } from '../WorkspaceBrowser';
 import type { FileTreeFacade } from '../FileTreePane';
 import { RightbarShell } from './RightbarShell';
@@ -54,29 +55,14 @@ export interface AppShellFacade {
   onOpenDrawer: () => void;
   /** 收起手机侧栏抽屉（点抽屉外部 / 选了入口 / 返回键） */
   onCloseDrawer: () => void;
-  /** 右栏当前显示的面板 id（`NavigationState.selectedRightPanel`） */
-  rightPanelId: string;
-  /** 右栏面板名（标题行用；descriptor 的 label） */
-  rightPanelLabel: string;
-  /** 右栏可用的面板清单（注册表给；≥2 个时右栏才画切换器） */
-  rightPanels: PanelDescriptor[];
-  /** 切右栏面板 */
-  onSelectRightPanel: (panelId: string) => void;
-  /** 预览面板的内容（与工作区页签同源） */
-  preview?: FilePreview;
-  /** 「投喂」预览中的文件 */
-  onAttachWorkspaceFile: (node: FileNode) => void;
-  /** 右栏「文件」面板（树 / 选中项 / 空态文案 / 两个回调） */
-  rightFiles: FileTreeFacade;
-  /** 右栏「交付物」面板的内容（宿主已按种类筛好） */
-  rightDeliverables: TrajectoryItem[];
-  /** 右栏「子代理」面板的内容（同上） */
-  rightSubagents: TrajectoryItem[];
-  /** 右栏「工具」面板的内容（同上） */
-  rightTools: TrajectoryItem[];
-  /** 右栏「轨迹」面板的内容（全部过程条目 + 会话统计） */
-  rightTrajectoryItems: TrajectoryItem[];
-  rightStats: SessionStatsInput;
+  /**
+   * 右栏内容的门面（P2-12）：**详情浮层用同一份**。
+   *
+   * 【为什么收成一个】`RightbarShell` 有两个挂载点（这里的三栏真右栏、`Index` 的详情浮层）。
+   * 此前本门面透传十来个 `right*` 值，而浮层那一份在页面根**内联重算** ——
+   * 只要一处漏改，同一个面板在两种呈现下就会不一样。现在两处都吃同一个 `RightbarFacade`。
+   */
+  rightbar: RightbarFacade;
   /** 当前面板的中文名（页头标题用；由注册表的 label 给） */
   panelLabel: string;
   beginDetailDrag: () => void;
@@ -382,31 +368,10 @@ export struct AppShell {
     RightbarShell({
       presentation: DetailPresentation.COLUMN,
       widthVp: widthVp,
-      panelId: this.f.rightPanelId,
-      panelLabel: this.f.rightPanelLabel,
-      panels: this.f.rightPanels,
-      preview: this.f.preview,
-      files: this.f.rightFiles,
-      deliverables: this.f.rightDeliverables,
-      subagents: this.f.rightSubagents,
-      tools: this.f.rightTools,
-      trajectoryItems: this.f.rightTrajectoryItems,
-      stats: this.f.rightStats,
-      onSelectPanel: (panelId: string) => {
-        this.f.onSelectRightPanel(panelId);
-      },
-      onAttachFile: (node: FileNode) => {
-        this.f.onAttachWorkspaceFile(node);
-      },
+      f: this.f.rightbar,
       sections: this.f.detailSections,
       onClose: () => {
         this.f.closeDetail();
-      },
-      onLineTap: (section: string, text: string) => {
-        // E130：详情行看起来可点，就得真的做一件事——复制该行
-        if (text.length > 0) {
-          copyText(text);
-        }
       }
     })
   }

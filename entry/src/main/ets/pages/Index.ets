@@ -170,6 +170,7 @@ import { MainShell } from '../view/shell/MainShell';
 import { AppShell } from '../view/shell/AppShell';
 import type { AppShellFacade } from '../view/shell/AppShell';
 import type { MainShellFacade } from '../view/shell/MainShell';
+import type { RightbarFacade } from '../view/shell/RightbarShell';
 import { TabContentView } from '../view/TabContentView';
 import type { TabContentFacade } from '../view/TabContentView';
 import type { WorkspaceBrowserFacade } from '../view/WorkspaceBrowser';
@@ -2102,28 +2103,8 @@ struct Index {
     RightbarShell({
       presentation: DetailPresentation.OVERLAY,
       widthVp: 0,
-      panelId: this.nav.selectedRightPanel,
-      panelLabel: this.selectedRightPanelLabel(),
-      panels: this.panelRegistry.descriptors(PanelLocation.RIGHTBAR),
-      preview: this.preview,
-      files: this.buildRightFilesFacade(),
-      deliverables: deliverablesOf(this.trajectoryItems),
-      subagents: itemsOfKind(this.trajectoryItems, TrajectoryKind.SUBAGENT),
-      tools: itemsOfKind(this.trajectoryItems, TrajectoryKind.TOOL),
-      trajectoryItems: this.trajectoryItems,
-      stats: this.sessionStats,
-      onSelectPanel: (panelId: string) => {
-        this.selectRightPanelById(panelId);
-      },
-      onAttachFile: (node: FileNode) => {
-        this.attachWorkspaceFileToComposer(node);
-      },
-      sections: this.detailSections,
-      onLineTap: (section: string, text: string) => {
-        if (text.length > 0) {
-          copyText(text);
-        }
-      }
+      f: this.buildRightbarFacade(),
+      sections: this.detailSections
     })
   }
 
@@ -2138,18 +2119,7 @@ struct Index {
     onSelectSidebarPanel: (panelId: string) => this.selectSidebarPanel(panelId),
     onNewSession: () => this.newSession(),
     panelLabel: this.selectedPanelLabel(),
-    rightPanelId: this.nav.selectedRightPanel,
-    rightPanelLabel: this.selectedRightPanelLabel(),
-    rightPanels: this.panelRegistry.descriptors(PanelLocation.RIGHTBAR),
-    onSelectRightPanel: (panelId: string) => this.selectRightPanelById(panelId),
-    onAttachWorkspaceFile: (node: FileNode) => this.attachWorkspaceFileToComposer(node),
-    rightFiles: this.buildRightFilesFacade(),
-    // 交付物面板只要『已筛好的那一类条目』——筛选是纯模型（deliverablesOf，有断言），视图不做 for
-    rightDeliverables: deliverablesOf(this.trajectoryItems),
-    rightSubagents: itemsOfKind(this.trajectoryItems, TrajectoryKind.SUBAGENT),
-    rightTools: itemsOfKind(this.trajectoryItems, TrajectoryKind.TOOL),
-    rightTrajectoryItems: this.trajectoryItems,
-    rightStats: this.sessionStats,
+    rightbar: this.buildRightbarFacade(),
     mobileDrawerOpen: this.nav.mobileDrawer === DrawerState.OPEN,
     onOpenDrawer: () => this.setDrawerOpen(true),
     onCloseDrawer: () => this.setDrawerOpen(false),
@@ -3777,6 +3747,43 @@ struct Index {
    * 与主区工作区页签用的是同一个表达式（见 `TabContentView` 里给 `WorkspacePane.selectedPath` 的写法）。
    * 空态文案也直接复用主区那份：它已按"没选工作区 / 目录下没会话 / 列目录失败"三种事实分档。
    */
+  /**
+   * 右侧内容的门面（P2-12）：**两处挂载点共用这一份**。
+   *
+   * 【为什么收在一处】`RightbarShell` 有两个挂载点 —— 三栏的真右栏（`AppShell`）与
+   * 「详情」浮层（本文件的 `detailSheet`）。此前本文件把十来个 `right*` 值
+   * **塞进 AppShell 门面**给前者，又**在同一文件里内联重算一遍**给后者：
+   * 两处各写一遍必然漂移（新加一个面板的数据很容易只给一处）。
+   * 现在两处都吃这个构造器的产物。
+   */
+  private buildRightbarFacade(): RightbarFacade {
+    const facade: RightbarFacade = {
+      panelId: this.nav.selectedRightPanel,
+      panelLabel: this.selectedRightPanelLabel(),
+      panels: this.panelRegistry.descriptors(PanelLocation.RIGHTBAR),
+      preview: this.preview,
+      files: this.buildRightFilesFacade(),
+      // 交付物面板只要『已筛好的那一类条目』——筛选是纯模型（deliverablesOf，有断言），视图不做 for
+      deliverables: deliverablesOf(this.trajectoryItems),
+      subagents: itemsOfKind(this.trajectoryItems, TrajectoryKind.SUBAGENT),
+      tools: itemsOfKind(this.trajectoryItems, TrajectoryKind.TOOL),
+      trajectoryItems: this.trajectoryItems,
+      stats: this.sessionStats,
+      onSelectPanel: (panelId: string) => {
+        this.selectRightPanelById(panelId);
+      },
+      onAttachFile: (node: FileNode) => {
+        this.attachWorkspaceFileToComposer(node);
+      },
+      onLineTap: (section: string, text: string) => {
+        if (text.length > 0) {
+          copyText(text);
+        }
+      }
+    };
+    return facade;
+  }
+
   private buildRightFilesFacade(): FileTreeFacade {
     const facade: FileTreeFacade = {
       tree: this.fileTree,
