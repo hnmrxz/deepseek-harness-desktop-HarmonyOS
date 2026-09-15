@@ -149,7 +149,8 @@ hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 **进度**：纯逻辑层（`PanelRegistry` / `NavigationState` / `ShellTracks`，46 条断言）、**侧栏外壳**
 （`view/shell/SidebarShell.ets`：品牌行 / 面板清单 / 徽标 / 三种呈现）、**右栏外壳**
 （`view/shell/RightbarShell.ets`：面板本体 / 三种呈现）、**主区页头**（`view/shell/MainHeaderShell.ets`）与**轨间把手**（`view/shell/TrackResizer.ets`）已完成
-—— AppFrame 的 chrome 已各有其主；命令面板已拆成 `GoalBar` / `SessionModelPicker` / `CommandList` 三块（呈现归组件、副作用归宿主）；
+—— AppFrame 的 chrome 已各有其主；命令面板已拆成 `GoalBar` / `SessionModelPicker` / `CommandList` 三块，连接横幅拆出 `HubBanner`
+（呈现归组件、副作用归宿主）；
 `@Provide/@Consume` 机制已在侧栏上真实验证（侧栏按面板注册表过滤入口）；
 **页面选择已收成唯一真值**（`NavigationState.selectedMainPanel`，`NavTab` 退化为迁移期别名），
 "此刻显示哪个面板"的组合逻辑也已收进纯模型（`activeMainPanelOf`）；

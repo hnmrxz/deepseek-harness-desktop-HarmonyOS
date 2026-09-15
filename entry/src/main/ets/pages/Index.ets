@@ -184,6 +184,7 @@ import { ConnectPane } from '../view/ConnectPane';
 import { ConversationPane } from '../view/ConversationPane';
 import { CommandList } from '../view/CommandList';
 import { GoalBar } from '../view/GoalBar';
+import { HubBanner } from '../view/HubBanner';
 import { SessionModelPicker } from '../view/SessionModelPicker';
 import { MainHeaderShell } from '../view/shell/MainHeaderShell';
 import { RightbarShell } from '../view/shell/RightbarShell';
@@ -3677,60 +3678,18 @@ struct Index {
 
   @Builder
   hubBanner() {
-    Column({ space: Sp.XS }) {
-      Row({ space: Sp.S }) {
-        SymbolGlyph($r('sys.symbol.exclamationmark_triangle'))
-          .fontSize(16)
-          .fontColor([$r('sys.color.warning')])
-        Column({ space: 2 }) {
-          Text(this.hubError)
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_primary'))
-            .width('100%')
-          Text(`Host ${this.hubAuthority.length > 0 ? this.hubAuthority : '未配置'} · 连接 ${this.hubPhase} · 逻辑流 ${this.hubStreams}`)
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_tertiary'))
-            .width('100%')
-        }
-        .layoutWeight(1)
-        // 「手动重连」是 D3 §4 对断连横幅的**必需**动作：
-        // 自动重试有终点（走到「重试已耗尽」就是终态），没有手动入口时
-        // 用户在 Host 刚重启、网络刚恢复这类可恢复场景下只能重启应用。
-        //
-        // 只在确实可以重试时才显示：`idle` 是「还没配置过 Host」，
-        // 此时该做的是「添加 Host」而不是重连（否则按钮点了必然失败）。
-        if (this.hubPhase === HubPhase.DEGRADED) {
-          Text('重连')
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.brand'))
-            .onClick(() => {
-              SessionHub.shared().reconnect();
-            })
-        }
-        Text('诊断')
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.brand'))
-          .onClick(() => {
-            this.openDiagnostics();
-          })
+    // 连接横幅归 HubBanner 所有（呈现 + 两个动作入口）；事实由宿主给，
+    // "重连"是中枢自己的动作（组件内直调），"诊断"是一次导航（走宿主回调）。
+    HubBanner({
+      errorText: this.hubError,
+      authority: this.hubAuthority,
+      phase: this.hubPhase,
+      streams: this.hubStreams,
+      traceTail: this.hubTraceTail(),
+      onOpenDiagnostics: () => {
+        this.openDiagnostics();
       }
-      .width('100%')
-
-      // 协议旁路日志尾部：把「连上了但列表为空」这类无法从界面区分的症状
-      // 变成可读的原始轨迹（D3 §7.8）
-      ForEach(this.hubTraceTail(), (line: string) => {
-        Text(line)
-          .fontSize(Fs.CAPTION_XS)
-          .fontFamily('monospace')
-          .fontColor($r('sys.color.font_tertiary'))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-      }, (line: string) => line)
-    }
-    .width('100%')
-    .padding(Sp.S)
-    .backgroundColor($r('sys.color.background_secondary'))
+    })
   }
 
   /** 诊断模式（D7 §3 第 4 项）：本机核心 / 远程 Host / 未接线 */

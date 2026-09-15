@@ -145,6 +145,8 @@ export class HarmonyIconSize {
   static readonly NAV: number = 20;
   /** 导航 rail / 底部标签栏里的图标（比面板里再大一号：没有文字陪伴，图标要更醒目） */
   static readonly NAV_RAIL: number = 22;
+  /** 状态提示图标（横幅里的警示符号等；原实现写死 16） */
+  static readonly STATUS: number = 16;
 }
 
 /** 圆角角色（值引用原语，不另立数字） */
