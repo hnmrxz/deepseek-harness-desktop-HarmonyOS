@@ -346,6 +346,87 @@ export function answerableDrafts(drafts: PendingAnswerDraft[]): PendingAnswerDra
   return out;
 }
 
+/**
+ * 选项标签的**显示形态**：官方把"推荐"编码在**标签后缀**里，而不是一个字段。
+ *
+ * 【取证原文】（`dsh-client-ui-user-questions/lib/client.js` 的 `parseRecommendedLabel`）：
+ * ```js
+ * const suffix = /\s*(?:\((?:recommended|推荐)\)|（(?:recommended|推荐)）)\s*$/i;
+ * return suffix.test(label)
+ *   ? { label: label.replace(suffix, ''), recommended: true }
+ *   : { label, recommended: false };
+ * ```
+ * 两处**必须同时照做**：
+ *   · **显示**去掉后缀、加「推荐」标记（官方 `option.recommended: 推荐`）；
+ *   · **提交仍然送原标签**（官方注释：`label - Original option label returned if selected`）
+ *     —— 送剥掉后缀的版本，Host 就匹配不上这个选项了。
+ */
+export interface OptionLabelDisplay {
+  /** 给人看的标签（已剥掉推荐后缀） */
+  label: string;
+  recommended: boolean;
+}
+
+/** 解析选项标签：后缀 `(recommended)` / `（推荐）`（半角/全角括号、大小写不敏感）⇒ 推荐项 */
+export function parseOptionLabel(raw: string): OptionLabelDisplay {
+  const suffix: RegExp = /\s*(?:\((?:recommended|推荐)\)|（(?:recommended|推荐)）)\s*$/i;
+  if (suffix.test(raw)) {
+    return { label: raw.replace(suffix, ''), recommended: true };
+  }
+  return { label: raw, recommended: false };
+}
+
+/**
+ * 一题的**线上答案**（字段与上游 `AskUserQuestionAnswerItem` 对齐）。
+ *
+ * `selected` 装的是**选项标签原文**（含推荐后缀），`custom` 只在有自定义答案时出现。
+ */
+export interface QuestionAnswerPayload {
+  id: string;
+  selected: string[];
+  custom?: string;
+}
+
+/**
+ * 逐题草稿 → 线上答案数组（**逐字照官方 `submitDrafts` 的规则**）。
+ *
+ * 【官方原文规则】`selected: custom === '' || item.multiSelect === true ? value.selected : []`：
+ *   · **单选 + 填了自定义** ⇒ `selected` 送**空**，只送 `custom`（用户的意思是"我自己写"，
+ *     不是"我选了 A 又自己写"）；
+ *   · **多选** ⇒ `selected` 与 `custom` **并存**（多选本来就允许"再补一条"）；
+ *   · **跳过的题** ⇒ `selected: []` 且**不带** `custom`（官方 `skipQuestion` 就是这么构造的）。
+ *
+ * 这三条此前我们是"一律都送"，与官方不一致 —— 单选里同时送选项与自定义文本，
+ * Host 会拿到一个用户没表达过的组合。
+ */
+export function encodeQuestionAnswers(questions: PendingQuestion[],
+  drafts: PendingAnswerDraft[]): QuestionAnswerPayload[] {
+  const out: QuestionAnswerPayload[] = [];
+  for (let i = 0; i < drafts.length; i++) {
+    const draft: PendingAnswerDraft = drafts[i];
+    let multi: boolean = false;
+    for (let j = 0; j < questions.length; j++) {
+      if (questions[j].id === draft.questionId) {
+        multi = questions[j].multiSelect;
+      }
+    }
+    const custom: string = draft.custom.trim();
+    if (draft.skipped) {
+      out.push({ id: draft.questionId, selected: [] });
+      continue;
+    }
+    const payload: QuestionAnswerPayload = {
+      id: draft.questionId,
+      selected: custom.length === 0 || multi ? draft.selected : [],
+    };
+    if (custom.length > 0) {
+      payload.custom = custom;
+    }
+    out.push(payload);
+  }
+  return out;
+}
+
 /** 待决事项（审批或提问；D3 §3.4 / §3.5） */
 export interface PendingItem {
   id: string;

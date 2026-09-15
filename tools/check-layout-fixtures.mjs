@@ -1967,7 +1967,8 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   // ── P7-5：提问**整组**（官方 composer takeover：一个按钮前进，最后一题变提交）──
   {
     const TR = require2('./Trajectory.js');
-    const { questionIndexStep, questionNavLabel, draftAnswered, submitBlockedText, answerableDrafts } = TR;
+    const { questionIndexStep, questionNavLabel, draftAnswered, submitBlockedText, answerableDrafts,
+      parseOptionLabel, encodeQuestionAnswers } = TR;
 
     // ① 上一题 / 下一题：**到头就停住，不循环**（官方 nav.prev/next 的语义）
     t.eq('下一步越界 ⇒ 停在最后一题', questionIndexStep(2, 3, 1), 2);
@@ -1998,6 +1999,38 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
     t.eq('未处理的题不进答案清单', answerableDrafts(list).length, 2);
     t.eq('跳过的题进清单（selected 为空）', answerableDrafts(list)[1].selected.length, 0);
     t.eq('草稿本身不被修改（纯函数）', list.length, 3);
+
+    // ⑤ 推荐标记来自**标签后缀**（官方 parseRecommendedLabel 原文正则）
+    t.eq('半角 (recommended) ⇒ 推荐，且显示时剥掉后缀',
+      JSON.stringify(parseOptionLabel('Allow once (recommended)')), '{"label":"Allow once","recommended":true}');
+    t.eq('全角（推荐）同样识别',
+      JSON.stringify(parseOptionLabel('允许一次（推荐）')), '{"label":"允许一次","recommended":true}');
+    t.eq('大小写不敏感', parseOptionLabel('X (RECOMMENDED)').recommended, true);
+    t.eq('后缀前有空格也认（正则里的 \\s*）', parseOptionLabel('X  (recommended) ').label, 'X');
+    t.eq('没有后缀 ⇒ 原样、不标推荐',
+      JSON.stringify(parseOptionLabel('允许一次')), '{"label":"允许一次","recommended":false}');
+    t.eq('只剥**结尾**那一处（中间的不动）',
+      parseOptionLabel('a (recommended) b').label, 'a (recommended) b');
+    t.eq('空标签不炸', parseOptionLabel('').recommended, false);
+
+    // ⑥ 线上答案编码：逐字照官方 submitDrafts 的三条规则
+    const q = (id, multi) => ({ id: id, text: '', detail: '', header: '', choices: [], multiSelect: multi });
+    const questions = [q('q1', false), q('q2', true), q('q3', false)];
+    const draft = (id, selected, custom, skipped) =>
+      ({ questionId: id, selected: selected, custom: custom, skipped: skipped });
+
+    const single = encodeQuestionAnswers(questions, [draft('q1', ['A'], '我自己写', false)]);
+    t.eq('单选 + 自定义 ⇒ selected 送空、只送 custom', `${single[0].selected.length}/${single[0].custom}`, '0/我自己写');
+    const multi = encodeQuestionAnswers(questions, [draft('q2', ['A', 'B'], '再补一条', false)]);
+    t.eq('多选 ⇒ selected 与 custom 并存', `${multi[0].selected.length}/${multi[0].custom}`, '2/再补一条');
+    const plain = encodeQuestionAnswers(questions, [draft('q1', ['A'], '   ', false)]);
+    t.eq('单选没写自定义 ⇒ 只送 selected，且**不带** custom 字段',
+      `${plain[0].selected.join(',')}/${plain[0].custom === undefined}`, 'A/true');
+    const skipped = encodeQuestionAnswers(questions, [draft('q1', [], '', true)]);
+    t.eq('跳过的题 ⇒ 空选择且不带 custom（官方 skipQuestion 的构造）',
+      `${skipped[0].selected.length}/${skipped[0].custom === undefined}`, '0/true');
+    t.eq('题目缺失时按单选处理（与官方"缺 multiSelect 视为单选"一致）',
+      encodeQuestionAnswers([], [draft('qx', ['A'], 'x', false)])[0].selected.length, 0);
   }
   // ── P7-6：权限预设的呈现与切换规则（官方 permission-presets）──
   {

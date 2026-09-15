@@ -107,6 +107,7 @@ import type { SessionEventShape, SlotBinding } from 'dshcompat';
 import { projectSessionList } from '../model/SessionList';
 import { localOnlySearchNote, mergeSessionSearch } from '../model/SessionSearch';
 import { permissionCommand, permissionSwitchable } from '../model/Permissions';
+import { encodeQuestionAnswers } from '../model/Trajectory';
 import type { SessionSearchHit, SessionSearchLocal, SessionSearchRequest, SessionSearchRow } from '../model/SessionSearch';
 import {
   notifyInputForPending,
@@ -129,7 +130,7 @@ import {
   ToolState,
   TrajectoryKind
 } from '../model/Trajectory';
-import type { PendingAnswerDraft, PendingChoice, PendingItem, PendingQuestion, TrajectoryItem } from '../model/Trajectory';
+import type { PendingAnswerDraft, PendingChoice, PendingItem, PendingQuestion, QuestionAnswerPayload, TrajectoryItem } from '../model/Trajectory';
 import {
   projectCredentials,
   projectSettingsEntries,
@@ -1194,23 +1195,37 @@ export class SessionHub {
    * （见 `dshcompat`/`docs/11` 的 `AskUserQuestionAnswer`）。逐题各自发一次会得到
    * "第一次就结掉、后面的答案没处去"。所以界面攒齐草稿，这里一次性构造。
    *
-   * 【被跳过的题怎么送】按"**明确不作答**"送：`selected: []` 且不带 `custom`
-   * —— 这是协议允许的取值（空选择）。**如实登记**：官方 `action.skip` 的线上确切语义
-   * 我们没取证（上游把 skip 与"自定义答案"混在一处），所以取这个最保守的合法值，
-   * 而不是编一个上游不认识的词。
+   * 【编码规则已取证，逐字照官方】`dsh-client-ui-user-questions` 的 `submitDrafts` 原文：
+   *   · **单选 + 填了自定义** ⇒ `selected: []` + `custom`（用户的意思是"我自己写"）；
+   *   · **多选** ⇒ `selected` 与 `custom` **并存**；
+   *   · **跳过** ⇒ `selected: []` 且**不带** `custom`（官方 `skipQuestion` 就是这么构造的）。
+   * 这一层不再自己拼对象，交给纯函数 `encodeQuestionAnswers`（fixture 钉住三条规则）。
+   * **更正**：上一轮这里写着"官方 skip 的语义我们没取证" —— 本轮读源码取到了，
+   * 我们的实现恰好与它一致（送空选择、不带 custom），但另外两条当时**是错的**（一律都送）。
    */
+  /** 该待决的整组题目（找不到就是空数组 ⇒ 编码按单选处理，与官方"缺 multiSelect 视为单选"一致） */
+  private pendingQuestionsOf(pendingId: string): PendingQuestion[] {
+    for (let i = 0; i < this.pendingList.length; i++) {
+      if (this.pendingList[i].id === pendingId) {
+        return this.pendingList[i].questions;
+      }
+    }
+    return [];
+  }
+
   async answerQuestionGroup(pendingId: string, drafts: PendingAnswerDraft[]): Promise<boolean> {
     const hash: number = pendingId.indexOf('#');
     const eventId: string = hash > 0 ? pendingId.substring(0, hash) : pendingId;
+    const questions: PendingQuestion[] = this.pendingQuestionsOf(pendingId);
+    const encoded: QuestionAnswerPayload[] = encodeQuestionAnswers(questions, answerableDrafts(drafts));
     const answers: Object[] = [];
-    const usable: PendingAnswerDraft[] = answerableDrafts(drafts);
-    for (let i = 0; i < usable.length; i++) {
-      const draft: PendingAnswerDraft = usable[i];
+    for (let i = 0; i < encoded.length; i++) {
       const one: Record<string, Object> = {};
-      one['id'] = draft.questionId;
-      one['selected'] = draft.selected;
-      if (!draft.skipped && draft.custom.trim().length > 0) {
-        one['custom'] = draft.custom;
+      one['id'] = encoded[i].id;
+      one['selected'] = encoded[i].selected;
+      const custom: string | undefined = encoded[i].custom;
+      if (custom !== undefined) {
+        one['custom'] = custom;
       }
       answers.push(one as Object);
     }

@@ -27,6 +27,7 @@
 
 import {
   answerableDrafts,
+  parseOptionLabel,
   Border,
   draftAnswered,
   Fs,
@@ -179,13 +180,30 @@ export struct QuestionGroupCard {
         // 选项：单选点一下就记进草稿（**不立即提交**——整组要一起交）
         ForEach((this.currentQuestion() as PendingQuestion).choices, (choice: PendingChoice) => {
           Column({ space: 2 }) {
-            Text(choice.label)
-              .fontSize(Fs.SECONDARY)
-              .fontColor(this.selectedLabel(choice.label)
-                ? $r('sys.color.brand')
-                : $r('sys.color.font_primary'))
-              .fontWeight(this.selectedLabel(choice.label) ? FontWeight.Bold : FontWeight.Normal)
-              .width('100%')
+            Row({ space: Sp.S }) {
+              /*
+               * 【推荐标记来自**标签后缀**，不是字段】官方 `parseRecommendedLabel`：
+               * 标签以 `(recommended)` / `（推荐）` 结尾 ⇒ 显示时**剥掉后缀**并加「推荐」。
+               * 而**提交必须送原标签**（官方注释：Original option label returned if selected）
+               * ⇒ 选中判定与草稿里存的都是 `choice.label`（原文），只有显示用剥过的版本。
+               */
+              Text(parseOptionLabel(choice.label).label)
+                .fontSize(Fs.SECONDARY)
+                .fontColor(this.selectedLabel(choice.label)
+                  ? $r('sys.color.brand')
+                  : $r('sys.color.font_primary'))
+                .fontWeight(this.selectedLabel(choice.label) ? FontWeight.Bold : FontWeight.Normal)
+                .layoutWeight(1)
+              if (parseOptionLabel(choice.label).recommended) {
+                Text('推荐')
+                  .fontSize(Fs.CAPTION_XS)
+                  .fontColor($r('sys.color.brand'))
+                  .padding({ left: 5, right: 5 })   // token-exempt: 徽标药丸内边距
+                  .borderRadius(5)   // token-exempt: 徽标药丸圆角
+                  .backgroundColor($r('sys.color.background_primary'))
+              }
+            }
+            .width('100%')
             if (choice.detail.length > 0) {
               Text(choice.detail)
                 .fontSize(Fs.CAPTION)
