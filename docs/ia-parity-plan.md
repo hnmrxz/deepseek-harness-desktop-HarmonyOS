@@ -134,6 +134,18 @@ AppFrame
 
 **B. 先把这些纯辅助函数搬进 appstate**（它们的归属本来就该在模型层），再走原流程——更干净但改动面更大。
 
+**修法 A 已实施（本轮）**：生成器现在会扫描 `Index` 的 `^function` / `^const`，把被搬走代码引用的
+模块级名字也收进门面（函数 → 方法 + 包装；常量 → 值），并对**裸标识符**加一道改写
+（`\bTAG\b` → `this.f.TAG`）。生成器输出的"未归类的大写名"清单仍是**待办清单**——本轮又验证了一次
+（`GoalBar`/`CommandList`/… 六个组件导入就是照它补的）。
+
+**仍剩的三处接缝（下一轮按此收尾，都是机械操作）**：
+1. **模块级函数的逐个门面条目**：`storageBaseUrl`、`composeHostUrl`、`reportConnectedHost`、`prettyJson`
+   要各自在接口 + 包装里出现一次（我本轮手工补了 `storageBaseUrl`，`reportConnectedHost` 就报下一个
+   ⇒ 说明**要一次性全补**，别一个一个来）；
+2. **重复方法**：生成器的"插入委托"与手工插入各留了一份 ⇒ 收尾时先 `grep -c "<方法名>("` 确认只有一份；
+3. **`connection` 包专名**：`extractToken` / `parseJson` 来自 `'connection'`（不是 appstate）。
+
 **结论**：`mainContent` 这一束**不是路线问题，是"少处理了一类名字"**。两束合起来已证明生成器路子在 `tabContent` 束上完全跑通。
 
 **生成脚本已留档**：`dist/scratch/mig.py`（已含两次实操修掉的全部坑：括号配平、装饰器同搬、导入差集、
