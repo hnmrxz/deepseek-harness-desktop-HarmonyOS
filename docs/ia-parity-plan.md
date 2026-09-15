@@ -309,7 +309,8 @@ Composer 的官方字段：Model / Reasoning effort / Permission / Plan / @ Refe
 | 单栏 Sheet 的切换器（P2-13） | ✅ **已落地**：切换器抽成共用 `@Builder panelSwitcher()`，`framedBody`（真右栏 / 侧边面板）与 `sheetBody`（单栏详情 Sheet）都调它 —— 此前单栏用户**根本切不到别的右栏面板**（P3 登记的第三个缺口，属功能不可达级别）。顺带把 Sheet 那行固定的「工具 / 子代理 / 交付物 / 目标 / 任务」提示换掉（它对文件/预览/详情是错措辞）|
 | 删掉平行状态机（P2-14） | ✅ **已落地**：`activeOverlay` / `Overlay` / `openOverlay` / `closeOverlay` 真实界面**从不读**（优先级由 `Index.overlayState()` 派生），而 fixture 有 3 条断言只测它自己（自证循环）⇒ 删除，fixture 570 → 567。**同清单下一个候选**：`sidebarExpanded`（字段 + setter + 无人读；"侧栏收成 rail"要么接成真功能、要么同样删——**需先定产品语义**）|
 | 侧栏可收起（P2-15） | ✅ **已落地**：`NavigationState.sidebarExpanded` 此前没有任何控制点（侧栏呈现完全由形态决定）⇒ 官方「收起侧栏」在本仓做不到。新增纯函数 `sidebarPresentationOf(mode, expanded)`（单栏一律浮层；双栏默认 rail 可展开；三栏默认 panel 可收起），品牌行给「收起」、rail 顶部给「展开」（**双向门**）；+7 条 fixture（574），并钉进功能接线门禁（第 18 项）|
-| 下一步（P2-16…） | ① P1 收尾项：**侧栏宽度记忆**（收起状态要不要持久化）与 `NewSession` 在 RAIL 里的入口 ② `Index.ets`（4026 行）里宿主处理器按域收口 ③ 右栏**滑入动画**与**拖拽调宽** —— 观感项且**必须真机验收** ④ 会话头剩余三项需要协议面 ⑤ **真机复验 E343 / D18** ——无真机不得宣称设备验收完成 |
+| 新建会话入口补全（P2-16） | ✅ **已落地**：`＋ 新建会话` 此前只在 `panelBody`（PANEL 呈现）里⇒ 收起侧栏（rail）或单栏底部标签下**都没有入口**。rail 里排在「展开侧栏」下面，底部标签排第一位；`onNewSession()` 调用点 1 → 3 处，并修正组件头部"只在品牌行下方"的过期口径 |
+| 下一步（P2-17…） | ① 侧栏**收起状态的持久化**（`LocalPrefs`：下次启动是否记住；与详情栏宽度记忆同一套做法）② `Index.ets`（4026 行）里宿主处理器按域收口 ③ 右栏**滑入动画**与**拖拽调宽** —— 观感项且**必须真机验收** ④ 会话头剩余三项需要协议面 ⑤ **真机复验 E343 / D18** ——无真机不得宣称设备验收完成 |
 
 `SettingsShell`（General / Models / Plugins / Plugin Inventory / …）。**不再往 `SettingsPane.ets` 里堆内容。**
 

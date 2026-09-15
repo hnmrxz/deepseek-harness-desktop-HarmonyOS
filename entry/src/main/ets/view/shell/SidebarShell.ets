@@ -15,7 +15,8 @@
  * | 官方职责 | 这里如何表达 |
  * |---|---|
  * | Brand | 顶部品牌行（文案由宿主给：`brand`） |
- * | New Session | 品牌行下方的 `＋ 新建会话`（回调 `onNewSession`；与 Ctrl+N 走同一条路） |
+ * | New Session | **一级入口**（回调 `onNewSession`；与 Ctrl+N 走同一条路）：展开面板时在品牌行下方，
+ *   **rail 与底部标签栏里也各有图标入口**（E362：它们此前没有，收起侧栏就开不了新会话） |
  * | Workspace 浏览器 | `WorkspaceBrowser`（**P1-3**：树挂进侧栏；此前长在主区的「工作区」页签里） |
  * | Panel 清单 | **面板注册表驱动**（P1-4：`sidebarEntries(registry)`，视图不再遍历 `navTabs()`） |
  * | 待决徽标 | 只挂在工作区那一项上（`pendingBadge` 非空才显示） |
@@ -279,6 +280,28 @@ export struct SidebarShell {
         })
       }
 
+      /*
+       * 「新建会话」在 rail 里此前**没有入口**（E362）：它只画在 `panelBody`（品牌行下方），
+       * 而 rail 正是"侧栏收起"时的呈现 ⇒ 收起侧栏之后就开不了新会话了，
+       * 只能靠 Ctrl+N（还要设备有键盘）。官方侧栏无论宽窄都把 New Session 作为一级入口。
+       *
+       * 【为什么放在展开按钮下面】两者都是"轨道级"动作（不属于任何面板席位），
+       * 排在一起读起来是一组；顺序上"展开侧栏"是恢复轨道形状，"新建会话"是常用动作。
+       */
+      Column() {
+        SymbolGlyph($r('sys.symbol.plus_circle'))
+          .fontSize(HarmonyIconSize.NAV_RAIL)
+          .fontColor([$r('sys.color.brand')])
+      }
+      .width(this.navWidthVp)
+      .height(Sz.TOUCH_MIN)
+      .justifyContent(FlexAlign.Center)
+      .borderRadius(Radius.S)
+      .accessibilityText($r('app.string.action_new_session'))
+      .onClick(() => {
+        this.onNewSession();
+      })
+
       ForEach(this.panelRegistry.descriptors(PanelLocation.SIDEBAR), (d: PanelDescriptor) => {
         Column() {
           Stack({ alignContent: Alignment.TopEnd }) {
@@ -315,6 +338,25 @@ export struct SidebarShell {
   @Builder
   tabsBody() {
     Row() {
+      // 单栏底部标签：**先把「新建会话」排在第一项**（E362：它此前只在 panelBody 里有入口，
+       // 而单栏走的是这一份 ⇒ 手机用户只能靠空态里那个按钮开新会话）。
+      // 官方在手机上把这个动作放在导航面的首项，与"侧栏一级入口"是同一个语义。
+      Column({ space: 2 }) {
+        SymbolGlyph($r('sys.symbol.plus_circle'))
+          .fontSize(HarmonyIconSize.NAV_RAIL)
+          .fontColor([$r('sys.color.brand')])
+        Text($r('app.string.action_new_session'))
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.brand'))
+      }
+      .layoutWeight(1)
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .accessibilityText($r('app.string.action_new_session'))
+      .onClick(() => {
+        this.onNewSession();
+      })
+
       ForEach(this.panelRegistry.descriptors(PanelLocation.SIDEBAR), (d: PanelDescriptor) => {
         Column({ space: 2 }) {
           Stack({ alignContent: Alignment.TopEnd }) {
