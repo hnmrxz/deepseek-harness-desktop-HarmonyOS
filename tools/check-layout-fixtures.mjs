@@ -1211,10 +1211,11 @@ console.log('\n## P0-1 搜索作用域：内部事件不得被搜到、命中必
 console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 选中的面板）');
 {
   const { PanelRegistry, PanelLocation, createPanelRegistry, sidebarPanels, rightbarPanels,
+    sidebarEntries, sidebarPinnedEntries, SIDEBAR_PINNED_ORDER,
     PANEL_SIDEBAR_SETTINGS, PANEL_SIDEBAR_WORKSPACES, PANEL_RIGHT_FILES, PANEL_RIGHT_TRAJECTORY } = PR;
   const { initialNavigationState, mainPanels, mainPanelOfLegacyTab, legacyTabOfMainPanel,
     navigateToMain, selectRightPanel, openSettings, openOverlay, closeOverlay, setDrawer, sidebarPanelIdOfTab,
-    activeMainPanelOf,
+    activeMainPanelOf, mainPanelOfSidebarPanel, sidebarPanelOfMainPanel,
     enterSession, defaultRightPanel, copyOf,
     Overlay, DrawerState, MAIN_CONVERSATION, MAIN_WORKSPACES, MAIN_SETTINGS, MAIN_CORE,
     SETTINGS_MODELS, SETTINGS_GENERAL } = NS;
@@ -1231,8 +1232,13 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
 
   // 排序：order 升序；同序按 id 稳定排序（不依赖注册顺序）
   const side = reg.descriptors(PanelLocation.SIDEBAR).map((d) => d.id);
-  t.eq('侧栏顺序：工作区 → 核心 → 设置', side.join(','), 'sidebar.workspaces,sidebar.core,sidebar.settings');
+  // E110：核心不是独立一级（内容在设置页的第一个分区里）⇒ 席位登记着但不可用
+  t.eq('侧栏可用席位：工作区 → 设置（核心按 E110 不可用）', side.join(','), 'sidebar.workspaces,sidebar.settings');
   t.eq('**Settings 固定在底部**（order 最大）', side[side.length - 1], PANEL_SIDEBAR_SETTINGS);
+  t.eq('核心席位仍登记在清单里（语义写在模型里，不靠视图恰好没遍历）',
+    sidebarPanels().map((d) => d.id).join(','), 'sidebar.workspaces,sidebar.core,sidebar.settings');
+  t.eq('主入口清单不含沉底项', sidebarEntries(reg).map((d) => d.id).join(','), 'sidebar.workspaces');
+  t.eq('沉底项恰好是设置', sidebarPinnedEntries(reg).map((d) => d.id).join(','), 'sidebar.settings');
   const right = reg.descriptors(PanelLocation.RIGHTBAR).map((d) => d.id);
   t.eq('右栏按 order 排（文件在前）', right[0], PANEL_RIGHT_FILES);
   t.eq('右栏含轨迹面板', right.indexOf(PANEL_RIGHT_TRAJECTORY) >= 0, true);
@@ -1320,11 +1326,24 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   t.eq('**下钻优先于页签**：选中设置但下钻诊断 ⇒ 诊断面板',
     activeMainPanelOf(onSettings, 'diagnostics', true), 'main.diagnostics');
 
-  // 侧栏入口 → 面板 id（注册表管"能不能用"，NavTab 暂时管"长什么样"）
+  // 迁移桥：NavTab ↔ 面板 id（迁移期间行为不变的保证）
   t.eq('工作区页签 → 侧栏工作区面板 id', sidebarPanelIdOfTab('workspaces'), 'sidebar.workspaces');
   t.eq('设置页签 → 侧栏设置面板 id', sidebarPanelIdOfTab('settings'), 'sidebar.settings');
-  t.eq('三个页签的面板都在注册表里可用',
-    reg.canSelect('sidebar', 'sidebar.core') && reg.canSelect('sidebar', 'sidebar.settings'), true);
+  t.eq('工作区与设置席位可用、核心席位按 E110 不可用',
+    reg.canSelect('sidebar', 'sidebar.workspaces') && reg.canSelect('sidebar', 'sidebar.settings')
+      && !reg.canSelect('sidebar', 'sidebar.core'), true);
+
+  // P1-4：侧栏席位 ↔ 主区面板（点侧栏入口该切到哪个面板、哪一项该高亮）
+  t.eq('工作区席位 → 工作区面板', mainPanelOfSidebarPanel(PANEL_SIDEBAR_WORKSPACES), MAIN_WORKSPACES);
+  t.eq('设置席位 → 设置面板', mainPanelOfSidebarPanel(PANEL_SIDEBAR_SETTINGS), MAIN_SETTINGS);
+  t.eq('未知席位回落工作区（不返回空串：空串会让主区空着）', mainPanelOfSidebarPanel('nope'), MAIN_WORKSPACES);
+  t.eq('工作区面板 → 工作区席位（高亮用）', sidebarPanelOfMainPanel(MAIN_WORKSPACES), PANEL_SIDEBAR_WORKSPACES);
+  t.eq('设置面板 → 设置席位', sidebarPanelOfMainPanel(MAIN_SETTINGS), PANEL_SIDEBAR_SETTINGS);
+  t.eq('会话面板没有侧栏席位 ⇒ 空串（不高亮任何一项，而不是随便高亮）',
+    sidebarPanelOfMainPanel(MAIN_CONVERSATION), '');
+  t.eq('席位 → 面板 → 席位 往返稳定',
+    sidebarPanelOfMainPanel(mainPanelOfSidebarPanel(PANEL_SIDEBAR_SETTINGS)), PANEL_SIDEBAR_SETTINGS);
+  t.eq('沉底门槛是个明确的数（视图不写 900 这种字面量）', SIDEBAR_PINNED_ORDER >= 100, true);
 
   // ── 四形态：信息架构不变，只变呈现 ──
   const single = shellTracksOf('single');
@@ -1339,11 +1358,12 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   t.eq('三栏：右栏并排成栏', triple.rightbar, 'column');
   t.eq('浮层形态下侧栏不占布局宽度', sidebarOccupiesLayout('single'), false);
   t.eq('rail 形态下侧栏占布局宽度', sidebarOccupiesLayout('double'), true);
+  // 侧栏 2（工作区 / 设置；核心席位按 E110 不可用）、右栏 6 —— 清单与形态无关，只与注册表有关
   t.eq('**三种形态的面板清单一致**（信息架构不随设备变）',
     JSON.stringify(reg.descriptors(PanelLocation.SIDEBAR).length) + '/' + JSON.stringify(reg.descriptors(PanelLocation.RIGHTBAR).length),
-    '3/6');
+    '2/6');
 
-  console.log('  ok    46 条断言：注册表（注册/排序/可用性/校验 12）+ 导航状态（页面与面板分离 16）+ 迁移桥含往返（10）+ 四形态轨道（8）');
+  console.log('  ok    注册表（注册/排序/可用性/沉底/校验）+ 导航状态（页面与面板分离）+ 迁移桥含往返 + 四形态轨道');
 }
 
 t.done();

@@ -154,10 +154,9 @@ export {
   navPresentation,
   NavPresentation,
   NavTab,
-  navTabLabel,
-  navTabLabelRes,
-  navTabSymbol,
-  LayoutMode
+  LayoutMode,
+  sidebarPanelLabelRes,
+  sidebarPanelSymbol,
 } from './ui/Breakpoints';
 
 // ── 设计令牌 ──
@@ -178,6 +177,7 @@ export type { InputModality } from './model/InputPolicy';
 // ── 页面框架：面板注册表与导航状态（P0：官方信息架构对齐；纯逻辑，可本机直接测） ──
 export {
   createPanelRegistry, PanelLocation, PanelRegistry, rightbarPanels, sidebarPanels,
+  sidebarEntries, sidebarPinnedEntries, SIDEBAR_PINNED_ORDER,
   PANEL_RIGHT_DELIVERABLES, PANEL_RIGHT_FILES, PANEL_RIGHT_PREVIEW, PANEL_RIGHT_SUBAGENT,
   PANEL_RIGHT_TOOL, PANEL_RIGHT_TRAJECTORY, PANEL_SIDEBAR_CORE, PANEL_SIDEBAR_SETTINGS,
   PANEL_SIDEBAR_WORKSPACES,
@@ -185,6 +185,8 @@ export {
 export type { PanelDescriptor, PanelList } from './model/PanelRegistry';
 export {
   activeMainPanelOf,
+  mainPanelOfSidebarPanel,
+  sidebarPanelOfMainPanel,
   closeOverlay, copyOf, defaultRightPanel, DrawerState, enterSession,
   initialNavigationState, legacyTabOfMainPanel, mainPanelOfLegacyTab, mainPanels,
   defaultSidebarPanel, navigateToMain, openOverlay, openSettings, selectRightPanel, setDrawer,

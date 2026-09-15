@@ -10,18 +10,27 @@
  *
  * ## 它拥有什么（官方 Sidebar 的语义）
  *
+ * 顺序即官方顺序：**Brand → New Session → 工作区树 → Panel 清单 → Settings（沉底）**。
+ *
  * | 官方职责 | 这里如何表达 |
  * |---|---|
  * | Brand | 顶部品牌行（文案由宿主给：`brand`） |
- * | 主入口列表 | 面板清单（当前来自 `navTabs()`，P1 会改为**面板注册表**驱动） |
+ * | New Session | 品牌行下方的 `＋ 新建会话`（回调 `onNewSession`；与 Ctrl+N 走同一条路） |
+ * | Workspace 浏览器 | `WorkspaceBrowser`（**P1-3**：树挂进侧栏；此前长在主区的「工作区」页签里） |
+ * | Panel 清单 | **面板注册表驱动**（P1-4：`sidebarEntries(registry)`，视图不再遍历 `navTabs()`） |
  * | 待决徽标 | 只挂在工作区那一项上（`pendingBadge` 非空才显示） |
  * | 二级入口 | 本地调试（原「连接诊断 + POC」合并，E96） |
- * | Settings **固定在底部** | 由面板顺序保证（`PanelRegistry` 里 Settings 的 `order` 最大） |
+ * | Settings **固定在底部** | `sidebarPinnedEntries(registry)`（`order ≥ SIDEBAR_PINNED_ORDER`）——**规则在模型里**，视图不写"settings 要沉底"这种特例 |
+ *
+ * 【P1-4 的实质】入口的**存在与顺序**归注册表，**长什么样**（图标/文案）归
+ * `sidebarPanelSymbol` / `sidebarPanelLabelRes`（按面板 id 取的编译期映射），
+ * **哪一项高亮**归宿主（`selectedPanelId`，由"选中的主区面板"经桥反查）。
+ * 视图因此不再依赖 `NavTab`——一级导航不再是"三个页签"。
  *
  * ## 三种呈现（信息架构不变，只变几何）
  *
  * `TrackPresentation.PANEL` = 三栏左侧完整面板；`RAIL` = 双栏收窄图标条；
- * `OVERLAY` = 单栏（当前是**底部标签栏**，P1 会改成抽屉——这一步只搬代码不改观感）。
+ * `OVERLAY` = 单栏（**当前仍是底部标签栏**，手机抽屉待做——它出现时内容就是同一份入口清单）。
  *
  * 【为什么把"呈现"与"栏目"分开】四形态共享同一套信息架构，变的只有几何与呈现；
  * 若按设备写三套栏目，就回到"四套 UI"了。
@@ -31,15 +40,14 @@ import {
   Fs,
   HarmonyColor,
   HarmonyIconSize,
-  NavTab,
-  navTabLabel,
-  navTabLabelRes,
-  navTabs,
-  navTabSymbol,
+  PanelDescriptor,
   PanelLocation,
   PanelRegistry,
-  sidebarPanelIdOfTab,
   Radius,
+  sidebarEntries,
+  sidebarPanelLabelRes,
+  sidebarPanelSymbol,
+  sidebarPinnedEntries,
   Sp,
   Sz,
   TrackPresentation,
@@ -47,18 +55,18 @@ import {
 import { WorkspaceBrowser } from '../WorkspaceBrowser';
 import type { WorkspaceBrowserFacade } from '../WorkspaceBrowser';
 
-/** 侧栏里一个主入口的徽标（当前只有"待决"用它） */
-interface SidebarBadge {
-  tab: NavTab;
-  text: string;
-}
-
 @Component
 export struct SidebarShell {
   /** 品牌文案（宿主给；侧栏不该自己知道应用叫什么） */
   @Prop brand: string = '';
-  /** 当前选中的页签 */
-  @Prop tab: NavTab = NavTab.WORKSPACES;
+  /**
+   * 当前高亮的**侧栏席位 id**（空串 = 什么都不高亮）。
+   *
+   * 【为什么是 id 而不是页签】P1-4：入口清单由 `PanelRegistry` 决定，视图只按 id 比高亮。
+   * 判据由宿主给（`sidebarPanelOfMainPanel(选中的主区面板)`）——会话/诊断/连接没有侧栏席位，
+   * 那时应当**没有**哪一项高亮，而不是随便高亮一项。
+   */
+  @Prop selectedPanelId: string = '';
   /** 待决徽标文案（空串 = 不显示） */
   @Prop pendingBadge: string = '';
   /** 侧栏占位宽度（rail 与 panel 两种呈现都用它） */
@@ -81,26 +89,22 @@ export struct SidebarShell {
    */
   @Consume('panelRegistry') panelRegistry: PanelRegistry;
 
-  onSelectTab: (tab: NavTab) => void = () => {
+  /** 选中某个侧栏席位（宿主把它翻译成"切到哪个主区面板"，并做注册表校验） */
+  onSelectPanel: (panelId: string) => void = () => {
+  };
+  /** 新建会话（官方侧栏在品牌行下方就有这个一级入口） */
+  onNewSession: () => void = () => {
   };
   onOpenDiagnostics: () => void = () => {
   };
 
-  /** 当前**可用**的导航入口（按注册表过滤；不可用的面板不占位置） */
-  private visibleTabs(): NavTab[] {
-    const out: NavTab[] = [];
-    const all: NavTab[] = navTabs();
-    for (let i = 0; i < all.length; i++) {
-      if (this.panelRegistry.canSelect(PanelLocation.SIDEBAR, sidebarPanelIdOfTab(all[i]))) {
-        out.push(all[i]);
-      }
-    }
-    return out;
-  }
-
-  /** 待决徽标挂在哪个页签上（官方把"待决"归到当前会话/工作区这一侧，不单列页签） */
-  private badgeFor(tab: NavTab): string {
-    return tab === NavTab.WORKSPACES ? this.pendingBadge : '';
+  /**
+   * 待决徽标挂在哪个席位上。
+   *
+   * 官方把"待决"归到当前会话/工作区这一侧，不单列入口 ⇒ 只有工作区席位带徽标。
+   */
+  private badgeFor(panelId: string): string {
+    return panelId === 'sidebar.workspaces' ? this.pendingBadge : '';
   }
 
   /** 收窄图标条上的角标 */
@@ -130,7 +134,13 @@ export struct SidebarShell {
       })
   }
 
-  /** 三栏：完整面板 */
+  /**
+   * 三栏：完整面板。
+   *
+   * 顺序即官方 Sidebar 的顺序：**Brand → New Session → 工作区树 → Panel 清单 → Settings（沉底）**。
+   * 入口清单与沉底规则都来自 `PanelRegistry`（`sidebarEntries` / `sidebarPinnedEntries`），
+   * 视图不再自己判断"哪些入口该出现、谁该在底部"。
+   */
   @Builder
   panelBody() {
     Column({ space: Sp.XS }) {
@@ -140,10 +150,28 @@ export struct SidebarShell {
         .width('100%')
         .padding({ left: Sp.M, top: Sp.M, bottom: Sp.S })
 
+      // New Session：官方侧栏的一级入口（放在品牌行下面，不藏在某个工作区里）
+      Row({ space: Sp.S }) {
+        SymbolGlyph($r('sys.symbol.plus_circle'))
+          .fontSize(HarmonyIconSize.NAV)
+          .fontColor([$r('sys.color.brand')])
+        Text($r('app.string.action_new_session'))
+          .fontSize(Fs.SECONDARY)
+          .fontColor($r('sys.color.brand'))
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .height(Sz.TOUCH_MIN)
+      .padding({ left: Sp.M, right: Sp.M })
+      .borderRadius(Radius.S)
+      .onClick(() => {
+        this.onNewSession();
+      })
+
       /*
-       * P1：工作区→会话树摆在**品牌行下面、面板入口上面**（官方 Sidebar 的顺序：
-       * Brand → 树 → Panel 列表 → Settings）。P0 时它长在主区的「工作区」页签里，
-       * 现由侧栏承载（三栏档位），主区那份改成一句说明（见 `TabContentView`）。
+       * P1：工作区→会话树摆在**品牌行下面、面板入口上面**（官方 Sidebar 的顺序）。
+       * P0 时它长在主区的「工作区」页签里，现由侧栏承载（三栏档位），
+       * 主区那份改成一句说明（见 `TabContentView`）。
        */
       Column() {
         WorkspaceBrowser({ f: this.browser, compact: true })
@@ -151,35 +179,16 @@ export struct SidebarShell {
       .width('100%')
       .layoutWeight(1)
 
-      ForEach(this.visibleTabs(), (tab: NavTab) => {
-        Row({ space: Sp.M }) {
-          SymbolGlyph(navTabSymbol(tab))
-            .fontSize(HarmonyIconSize.NAV)
-            .fontColor([this.tab === tab ? $r('sys.color.brand') : $r('sys.color.font_secondary')])
-          Text(navTabLabel(tab))
-            .fontSize(Fs.SECONDARY)
-            .fontColor(this.tab === tab ? $r('sys.color.brand') : $r('sys.color.font_primary'))
-            .layoutWeight(1)
-          if (this.badgeFor(tab).length > 0) {
-            Text(this.badgeFor(tab))
-              .fontSize(Fs.CAPTION)
-              .fontColor(HarmonyColor.ON_BRAND_TEXT)
-              .backgroundColor($r('sys.color.alert'))
-              .borderRadius(Radius.S)
-              .padding({ left: Sp.S, right: Sp.S })
-          }
-        }
-        .width('100%')
-        .height(Sz.TOUCH_MIN)
-        .padding({ left: Sp.M, right: Sp.M })
-        .borderRadius(Radius.S)
-        .backgroundColor(this.tab === tab ? $r('sys.color.background_secondary') : Color.Transparent)
-        .onClick(() => {
-          this.onSelectTab(tab);
-        })
-      }, (tab: NavTab) => tab)
+      ForEach(sidebarEntries(this.panelRegistry), (d: PanelDescriptor) => {
+        this.panelEntry(d)
+      }, (d: PanelDescriptor) => d.id)
 
       Blank()
+
+      // 沉底项（设置）：官方固定在底部，不随面板清单浮动
+      ForEach(sidebarPinnedEntries(this.panelRegistry), (d: PanelDescriptor) => {
+        this.panelEntry(d)
+      }, (d: PanelDescriptor) => d.id)
 
       // 二级入口放在最底部：它是排障用的，不该和产品入口抢位置
       this.secondaryEntry()
@@ -189,18 +198,50 @@ export struct SidebarShell {
     .padding({ left: Sp.S, right: Sp.S, bottom: Sp.S })
   }
 
+  /** 面板呈现里的一行入口（图标 + 文案 + 可选徽标 + 选中态） */
+  @Builder
+  panelEntry(d: PanelDescriptor) {
+    Row({ space: Sp.M }) {
+      SymbolGlyph(sidebarPanelSymbol(d.id))
+        .fontSize(HarmonyIconSize.NAV)
+        .fontColor([this.selectedPanelId === d.id ? $r('sys.color.brand') : $r('sys.color.font_secondary')])
+      Text(sidebarPanelLabelRes(d.id))
+        .fontSize(Fs.SECONDARY)
+        .fontColor(this.selectedPanelId === d.id ? $r('sys.color.brand') : $r('sys.color.font_primary'))
+        .layoutWeight(1)
+      if (this.badgeFor(d.id).length > 0) {
+        Text(this.badgeFor(d.id))
+          .fontSize(Fs.CAPTION)
+          .fontColor(HarmonyColor.ON_BRAND_TEXT)
+          .backgroundColor($r('sys.color.alert'))
+          .borderRadius(Radius.S)
+          .padding({ left: Sp.S, right: Sp.S })
+      }
+    }
+    .width('100%')
+    .height(Sz.TOUCH_MIN)
+    .padding({ left: Sp.M, right: Sp.M })
+    .borderRadius(Radius.S)
+    .backgroundColor(this.selectedPanelId === d.id
+      ? $r('sys.color.background_secondary')
+      : Color.Transparent)
+    .onClick(() => {
+      this.onSelectPanel(d.id);
+    })
+  }
+
   /** 双栏：收窄图标条 */
   @Builder
   railBody() {
     Column({ space: Sp.S }) {
-      ForEach(this.visibleTabs(), (tab: NavTab) => {
+      ForEach(this.panelRegistry.descriptors(PanelLocation.SIDEBAR), (d: PanelDescriptor) => {
         Column() {
           Stack({ alignContent: Alignment.TopEnd }) {
-            SymbolGlyph(navTabSymbol(tab))
+            SymbolGlyph(sidebarPanelSymbol(d.id))
               .fontSize(HarmonyIconSize.NAV_RAIL)
-              .fontColor([this.tab === tab ? $r('sys.color.brand') : $r('sys.color.font_secondary')])
-            if (this.badgeFor(tab).length > 0) {
-              this.cornerBadge(this.badgeFor(tab))
+              .fontColor([this.selectedPanelId === d.id ? $r('sys.color.brand') : $r('sys.color.font_secondary')])
+            if (this.badgeFor(d.id).length > 0) {
+              this.cornerBadge(this.badgeFor(d.id))
             }
           }
         }
@@ -208,11 +249,11 @@ export struct SidebarShell {
         .height(Sz.TOUCH_MIN)
         .justifyContent(FlexAlign.Center)
         .borderRadius(Radius.S)
-        .accessibilityText(`${navTabLabel(tab)}标签`)
+        .accessibilityText(`${d.label}标签`)
         .onClick(() => {
-          this.onSelectTab(tab);
+          this.onSelectPanel(d.id);
         })
-      }, (tab: NavTab) => tab)
+      }, (d: PanelDescriptor) => d.id)
     }
     .width(this.navWidthVp)
     .height('100%')
@@ -228,28 +269,28 @@ export struct SidebarShell {
   @Builder
   tabsBody() {
     Row() {
-      ForEach(this.visibleTabs(), (tab: NavTab) => {
+      ForEach(this.panelRegistry.descriptors(PanelLocation.SIDEBAR), (d: PanelDescriptor) => {
         Column({ space: 2 }) {
           Stack({ alignContent: Alignment.TopEnd }) {
-            SymbolGlyph(navTabSymbol(tab))
+            SymbolGlyph(sidebarPanelSymbol(d.id))
               .fontSize(HarmonyIconSize.NAV_RAIL)
-              .fontColor([this.tab === tab ? $r('sys.color.brand') : $r('sys.color.font_secondary')])
-            if (this.badgeFor(tab).length > 0) {
-              this.cornerBadge(this.badgeFor(tab))
+              .fontColor([this.selectedPanelId === d.id ? $r('sys.color.brand') : $r('sys.color.font_secondary')])
+            if (this.badgeFor(d.id).length > 0) {
+              this.cornerBadge(this.badgeFor(d.id))
             }
           }
-          Text(navTabLabelRes(tab))
+          Text(sidebarPanelLabelRes(d.id))
             .fontSize(Fs.CAPTION)
-            .fontColor(this.tab === tab ? $r('sys.color.brand') : $r('sys.color.font_secondary'))
+            .fontColor(this.selectedPanelId === d.id ? $r('sys.color.brand') : $r('sys.color.font_secondary'))
         }
         .layoutWeight(1)
         .height('100%')
         .justifyContent(FlexAlign.Center)
-        .accessibilityText(`${navTabLabel(tab)}标签`)
+        .accessibilityText(`${d.label}标签`)
         .onClick(() => {
-          this.onSelectTab(tab);
+          this.onSelectPanel(d.id);
         })
-      }, (tab: NavTab) => tab)
+      }, (d: PanelDescriptor) => d.id)
     }
     .width('100%')
     .height(Sz.NAV_RAIL)

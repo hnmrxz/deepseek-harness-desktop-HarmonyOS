@@ -245,7 +245,9 @@ AppFrame
 | 挂进侧栏（P1-3） | ✅ **已落地**：`SidebarShell` 的 PANEL 呈现里，树摆在**品牌行下面、面板入口上面**（官方顺序 Brand → 树 → Panel 列表 → Settings）；门面由 `Index.buildBrowserFacade()` 造、经 `AppShell.browser` 传给三条 SidebarShell（只有 PANEL 那处会渲染它） |
 | 主区不再重复一份（P1-3） | ✅ 三栏（`shellTracksOf(mode).sidebar === PANEL`）时，主区的「工作区」页签显示一句**说明**（"会话列表在左侧"），而不是第二份树——判据取自 `ShellTracks`，与 `AppShell` 选 `navPanel`/`navRail` 用的是同一处事实，两边不可能不一致。单栏 / 双栏仍由主区承载（底部标签栏与图标条放不下树） |
 | 顺带的职责收敛 | `archiveSession` / `toggleDeleteConfirm` 提到宿主：宽版与窄版两处共用同一份副作用与提示文案；`WorkspaceBrowserFacade` 因此**裁到 27 个成员，全部有用**（原先机器生成的 32 个里有 5 个随逻辑上移成为死成员） |
-| 下一步（P1-4） | ① 一级导航改造：侧栏入口改由 `PanelRegistry.descriptors` 驱动（不再"三个页签"）、`NewSession` 提到品牌行下方、Settings 固定底部 ② 单栏的手机抽屉（现在仍是底部标签栏 —— 过渡呈现）③ 会话搜索、"分组"显式交互 |
+| 一级导航（P1-4） | ✅ **已落地**：入口的**存在与顺序**归注册表（`sidebarEntries` / `sidebarPinnedEntries`，`SIDEBAR_PINNED_ORDER` 把"沉底"写成清单属性）；**长什么样**归 `sidebarPanelSymbol` / `sidebarPanelLabelRes`（按面板 id 的编译期映射）；**哪一项高亮**归宿主（`selectedPanelId` ← `sidebarPanelOfMainPanel(选中的主区面板)`）。`SidebarShell` 里**再无 `NavTab`**——一级导航不再是"三个页签"。顺带：`NewSession` 成为品牌行下方的一级入口（与 Ctrl+N 同一条路）|
+| 核心席位（P1-4 附带） | ✅ 把 **E110 的产品语义写进模型**：`sidebar.core` 席位仍登记，但 `available: () => false`（核心内容在设置页的第一个分区里）。此前这条语义只靠"视图恰好没遍历它"成立；顺手补上 `tab_core` 资源——`navTabLabelRes` 原先**没有**这一项、会回落成"设置"（不可达路径上的潜在缺陷，映射现已完整）|
+| 下一步（P1-5） | ① 单栏的手机抽屉（现在仍是底部标签栏：同一份入口清单，换容器）② 会话搜索、"分组"显式交互 ③ `NewSession` 在 RAIL（收窄条）上的呈现（当前只在完整面板里）|
 | 待真机确认 | **D11**：侧栏内窄版树的观感/滚动/触控目标；三栏下主区那句说明是否足够清楚；单栏/双栏主区仍是宽版行（本轮**没有**改动它们的观感） |
 
 ### P2 Main 会话框架

@@ -33,13 +33,7 @@
  * 放这里之后可在本机直接测（`tools/check-layout-fixtures.mjs`），视图只读结论。
  */
 
-import {
-  PanelDescriptor,
-  PanelLocation,
-  PanelRegistry,
-  PANEL_RIGHT_FILES,
-  PANEL_SIDEBAR_WORKSPACES,
-} from './PanelRegistry';
+import { PanelDescriptor, PanelLocation, PanelRegistry, PANEL_RIGHT_FILES, PANEL_SIDEBAR_WORKSPACES, PANEL_SIDEBAR_SETTINGS, PANEL_SIDEBAR_CORE } from './PanelRegistry';
 
 /* ───────────────────────── 主区面板 ───────────────────────── */
 
@@ -221,6 +215,37 @@ export function legacyTabOfMainPanel(panelId: string): string {
     return 'settings';
   }
   return 'workspaces';
+}
+
+/** 主区面板 id → 它在侧栏里的**席位** id（没有席位时返回空串） */
+export function sidebarPanelOfMainPanel(mainPanelId: string): string {
+  if (mainPanelId === MAIN_WORKSPACES) {
+    return PANEL_SIDEBAR_WORKSPACES;
+  }
+  if (mainPanelId === MAIN_SETTINGS) {
+    return PANEL_SIDEBAR_SETTINGS;
+  }
+  if (mainPanelId === MAIN_CORE) {
+    return PANEL_SIDEBAR_CORE;
+  }
+  // 会话 / 诊断 / 连接不是侧栏入口 ⇒ 空串（"没有哪一项该高亮"，而不是随便高亮一项）
+  return '';
+}
+
+/**
+ * 侧栏席位 id → 它代表的**主区面板** id（点侧栏入口时该切到哪个主区面板）。
+ *
+ * 【为什么未知取值回落工作区而不是空串】空串会让主区什么都不显示；
+ * 宁可回到一个有内容的默认面（与 `mainPanelOfLegacyTab` 的处理一致）。
+ */
+export function mainPanelOfSidebarPanel(sidebarPanelId: string): string {
+  if (sidebarPanelId === PANEL_SIDEBAR_SETTINGS) {
+    return MAIN_SETTINGS;
+  }
+  if (sidebarPanelId === PANEL_SIDEBAR_CORE) {
+    return MAIN_CORE;
+  }
+  return MAIN_WORKSPACES;
 }
 
 /**

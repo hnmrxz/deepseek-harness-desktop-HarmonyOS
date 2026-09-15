@@ -166,8 +166,11 @@ hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 （名字一行、动作一行；动作**不收进菜单**——菜单在真机打不开就等于功能不可达，见 `docs/50` E301）；
 ③ 树挂进侧栏 PANEL 轨道（品牌行下方，官方顺序），**三栏下主区不再重复一份**（判据取自 `ShellTracks`，
 与轨道选择同源）。
-下一步（P1-4）：侧栏入口改由 `PanelRegistry.descriptors` 驱动（一级导航不再是三个页签）+ `NewSession` +
-Settings 固定底部 + 单栏手机抽屉（⚠️ 侧栏内观感与交互须真机确认，见 `docs/device-validation.md` D11）。
+④ 侧栏入口改由**面板注册表**驱动（P1-4）：入口的存在/顺序归 `sidebarEntries` / `sidebarPinnedEntries`
+（"沉底"是清单属性）、图标与文案归按面板 id 的编译期映射、高亮归宿主 —— `SidebarShell` 里**再无 `NavTab`**，
+一级导航不再是"三个页签"；`NewSession` 成为品牌行下方的一级入口，Settings 沉底，核心席位按 E110 标为不可用。
+下一步（P1-5）：单栏手机抽屉、会话搜索、RAIL 上的 NewSession
+（⚠️ 侧栏内观感与交互须真机确认，见 `docs/device-validation.md` D11）。
 
 理由：功能不少、页面还是不像官方，根因是**信息架构没落地**——框架错则间距、颜色、Markdown 全白做。
 故 Markdown 与视觉精修**排在框架之后**，而不是先做。

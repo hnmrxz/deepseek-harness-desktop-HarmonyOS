@@ -29,6 +29,10 @@
       "value": "工作区"
     },
     {
+      "name": "tab_core",
+      "value": "核心"
+    },
+    {
       "name": "tab_settings",
       "value": "设置"
     },

@@ -19,7 +19,7 @@
  * 普通属性会让赋值落进门面副本、宿主收不到（静默行为错误）。
  */
 
-import { DetailPresentation, DetailSection, LayoutMode, MAIN_DIAGNOSTICS, NavTab, StackPage, Sz, TrackPresentation, navTabLabel, shellTracksOf, showsConversation } from 'appstate';
+import { DetailPresentation, DetailSection, LayoutMode, MAIN_DIAGNOSTICS, StackPage, Sz, TrackPresentation, shellTracksOf, showsConversation } from 'appstate';
 import { copyText } from 'platform';
 
 import { MainHeaderShell } from './MainHeaderShell';
@@ -35,9 +35,21 @@ export interface AppShellFacade {
   appName: string;
   /** 工作区→会话浏览器（侧栏 PANEL 呈现里用；其余呈现不接受它） */
   browser: WorkspaceBrowserFacade;
+  /**
+   * 当前高亮的侧栏席位 id（空串 = 不高亮任何一项）。
+   *
+   * 【为什么由宿主给】"哪一项算选中"取决于**选中的主区面板**（`sidebarPanelOfMainPanel`）——
+   * 视图不该自己拼这条线索（会话/诊断/连接没有侧栏席位的那件事，只该写在模型里一处）。
+   */
+  selectedSidebarPanel: string;
+  /** 选中某个侧栏席位（宿主翻译成"切到哪个主区面板"，并经注册表校验） */
+  onSelectSidebarPanel: (panelId: string) => void;
+  /** 新建会话（侧栏一级入口；与 Ctrl+N 走同一条路） */
+  onNewSession: () => void;
+  /** 当前面板的中文名（页头标题用；由注册表的 label 给） */
+  panelLabel: string;
   beginDetailDrag: () => void;
   closeDetail: () => void;
-  currentTab: () => NavTab;
   detailOpen: boolean;
   detailOverlayOpen: boolean;
   setDetailOverlayOpen: (value: boolean) => void;
@@ -51,7 +63,6 @@ export interface AppShellFacade {
   navWidthVp: () => number;
   openDiagnostics: () => void;
   pendingBadge: string;
-  selectTab: (tab: NavTab) => void;
   selectedSessionTitle: string;
   showsConversation: () => boolean;
   sidePanelWidthVp: () => number;
@@ -98,7 +109,7 @@ export struct AppShell {
       // 因此标题不再叫"添加 Host"——那会让用户以为这是必经步骤。
       return '远程 Host（可选）';
     }
-    return navTabLabel(this.f.currentTab());
+    return this.f.panelLabel.length > 0 ? this.f.panelLabel : this.f.appName;
   }
 
   @Builder
@@ -126,12 +137,15 @@ export struct AppShell {
       SidebarShell({
         brand: this.f.appName,
         browser: this.f.browser,
-        tab: this.f.currentTab(),
+        selectedPanelId: this.f.selectedSidebarPanel,
         pendingBadge: this.f.pendingBadge,
         navWidthVp: this.f.navWidthVp(),
         presentation: TrackPresentation.OVERLAY,
-        onSelectTab: (tab: NavTab) => {
-          this.f.selectTab(tab);
+        onSelectPanel: (panelId: string) => {
+          this.f.onSelectSidebarPanel(panelId);
+        },
+        onNewSession: () => {
+          this.f.onNewSession();
         },
         onOpenDiagnostics: () => {
           this.f.openDiagnostics();
@@ -201,12 +215,15 @@ export struct AppShell {
       SidebarShell({
         brand: this.f.appName,
         browser: this.f.browser,
-        tab: this.f.currentTab(),
+        selectedPanelId: this.f.selectedSidebarPanel,
         pendingBadge: this.f.pendingBadge,
         navWidthVp: this.f.navWidthVp(),
         presentation: TrackPresentation.RAIL,
-        onSelectTab: (tab: NavTab) => {
-          this.f.selectTab(tab);
+        onSelectPanel: (panelId: string) => {
+          this.f.onSelectSidebarPanel(panelId);
+        },
+        onNewSession: () => {
+          this.f.onNewSession();
         },
         onOpenDiagnostics: () => {
           this.f.openDiagnostics();
@@ -255,12 +272,15 @@ export struct AppShell {
       SidebarShell({
         brand: this.f.appName,
         browser: this.f.browser,
-        tab: this.f.currentTab(),
+        selectedPanelId: this.f.selectedSidebarPanel,
         pendingBadge: this.f.pendingBadge,
         navWidthVp: this.f.navWidthVp(),
         presentation: this.sidebarPresentation(),
-        onSelectTab: (tab: NavTab) => {
-          this.f.selectTab(tab);
+        onSelectPanel: (panelId: string) => {
+          this.f.onSelectSidebarPanel(panelId);
+        },
+        onNewSession: () => {
+          this.f.onNewSession();
         },
         onOpenDiagnostics: () => {
           this.f.openDiagnostics();

@@ -49,9 +49,10 @@ export interface PanelDescriptor {
    *
    * 【为什么没有 `icon`】图标是**编译期资源**（`$r('sys.symbol.…')` 只能字面量），
    * 而模型不能持有 `Resource`。第一版这里放过一个字符串名字段，但它**没有任何消费者**
-   * （视图没法把字符串变 `$r`）——留着就是空 API，故删除。图标映射仍留在
-   * `appstate/ui` 的编译期函数里（如 `navTabSymbol`），P1 侧栏完全由注册表驱动时再补一张
-   * "面板 id → 符号"的编译期表。
+   * （视图没法把字符串变 `$r`）——留着就是空 API，故删除。图标映射放在
+   * `appstate/ui` 的编译期函数里：**P1-4 已补上"面板 id → 符号"的 `sidebarPanelSymbol`**
+   * （同时把 `navTabSymbol` / `navTabLabelRes` 那两张按 `NavTab` 取的表删掉了——
+   * 侧栏入口现在由注册表决定，视图只按 id 取图标与文案）。
    */
   label: string;
   order: number;
@@ -190,22 +191,64 @@ export const PANEL_RIGHT_SUBAGENT: string = 'right.subagent';
 export const PANEL_RIGHT_DELIVERABLES: string = 'right.deliverables';
 
 /**
- * 侧栏的三个固定席位（官方语义：Workspace 浏览器、端侧核心、Settings **固定在底部**）。
+ * `order ≥ 此值` 的侧栏面板**沉到底部**（官方把 Settings 固定在底部，不随面板清单浮动）。
+ *
+ * 【为什么用 order 而不是"视图里 if 一下 settings"】"哪些入口沉底"是**清单的属性**，
+ * 不是渲染时的特例；写成 order 之后，将来若有第二个"沉底项"（例如账户），不必再改视图。
+ */
+export const SIDEBAR_PINNED_ORDER: number = 900;
+
+/**
+ * 侧栏的固定席位。
  *
  * `owner` 都用各自的域："workspace" / "core" / "settings"——侧栏不是"三个同级页签"，
- * 而是**三个不同的域在侧栏里的入口**（`ui-workspace` 填 `sidebar.workspaces`、
+ * 而是**不同域在侧栏里的入口**（`ui-workspace` 填 `sidebar.workspaces`、
  * `ui-settings` 填 `sidebar.settings`）。
+ *
+ * 【核心为什么 `available: () => false`】E110 已定的产品语义：核心不是独立一级，
+ * 而是"这台设备上 DSH 怎么跑"的配置，内容作为设置页的第一个分区呈现（真机截图核对过）。
+ * 席位仍登记在这里，是为了**把这条语义写在模型里**（而不是靠视图"恰好没遍历它"）——
+ * 谁改 `available` 都会当场改掉侧栏，而不是改出一个"点了没反应"的入口。
  */
 export function sidebarPanels(): PanelDescriptor[] {
   return [
     { id: PANEL_SIDEBAR_WORKSPACES, location: PanelLocation.SIDEBAR, owner: 'workspace',
       label: '工作区', order: 10, available: () => true },
     { id: PANEL_SIDEBAR_CORE, location: PanelLocation.SIDEBAR, owner: 'core',
-      label: '核心', order: 20, available: () => true },
+      label: '核心', order: 20, available: () => false },
     // order 很大 ⇒ 始终排在末尾（官方把 Settings 固定在底部）
     { id: PANEL_SIDEBAR_SETTINGS, location: PanelLocation.SIDEBAR, owner: 'settings',
-      label: '设置', order: 900, available: () => true },
+      label: '设置', order: SIDEBAR_PINNED_ORDER, available: () => true },
   ];
+}
+
+/**
+ * 侧栏里**不沉底**的入口（主入口清单，按 `order`）。
+ *
+ * 【为什么视图不自己遍历 + 过滤】"哪些算主入口、哪些沉底"是清单的属性；放在这里，
+ * 视图（`SidebarShell`）就只负责画，且这条规则能被 fixture 直接测。
+ */
+export function sidebarEntries(registry: PanelRegistry): PanelDescriptor[] {
+  const out: PanelDescriptor[] = [];
+  const all: PanelDescriptor[] = registry.descriptors(PanelLocation.SIDEBAR);
+  for (let i = 0; i < all.length; i++) {
+    if (all[i].order < SIDEBAR_PINNED_ORDER) {
+      out.push(all[i]);
+    }
+  }
+  return out;
+}
+
+/** 侧栏里**沉底**的入口（设置等；官方把它固定在底部，不随面板清单浮动） */
+export function sidebarPinnedEntries(registry: PanelRegistry): PanelDescriptor[] {
+  const out: PanelDescriptor[] = [];
+  const all: PanelDescriptor[] = registry.descriptors(PanelLocation.SIDEBAR);
+  for (let i = 0; i < all.length; i++) {
+    if (all[i].order >= SIDEBAR_PINNED_ORDER) {
+      out.push(all[i]);
+    }
+  }
+  return out;
 }
 
 /**

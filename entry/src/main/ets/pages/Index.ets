@@ -66,13 +66,14 @@ import {
   LayoutMode,
   showsConversation,
   shellTracksOf,
+  mainPanelOfSidebarPanel,
+  sidebarPanelOfMainPanel,
   TrackPresentation,
   selectTab as decideTabSelection,
   StackPage,
   ModelOption,
   ModelSelection,
   NavTab,
-  navTabLabel,
   PendingItem,
   PendingAttachment,
   PluginItem,
@@ -132,6 +133,7 @@ import {
   navigateToMain,
   guessFromKeyboardForm,
   mainPanels,
+  PanelDescriptor,
   PanelRegistry,
   modalityFromSources,
   modalityOf,
@@ -306,20 +308,6 @@ const LOCAL_THEME_LIGHT: string = 'light';
 const LOCAL_THEME_DARK: string = 'dark';
 
 /** 单栏下的页面栈 */
-/**
- * 一级页签的**本地化**文案（E117：跟随系统语言，默认中文）。
- *
- * 【为什么标签必须留在视图层】`navTabLabel` 在 appstate 里，那是个纯 TS 模块——
- * `$r('app.string.*')` 是 ArkUI 资源引用，只有视图层能用。资源本体放在
- * `resources/base/element/string.json`（中文，即默认）与 `resources/en_US/...`（英文），
- * 由系统按当前语言自动选择；这里只做"页签 → 资源"的映射。
- */
-function navTabLabelRes(tab: NavTab): Resource {
-  if (tab === NavTab.WORKSPACES) {
-    return $r('app.string.tab_workspaces');
-  }
-  return $r('app.string.tab_settings');
-}
 
 /** 一级导航顺序 */
 // 「核心」放在工作区与设置之间：它属于"能力/运维"一类，紧邻设置但不与设置混在一起
@@ -1999,9 +1987,12 @@ struct Index {
     appName: APP_NAME,    // 品牌名是宿主给的事实（同 brand 入参）
     // 侧栏 PANEL 呈现里要挂工作区→会话树（P1）：与主区那份**同源**（同一个门面构建器）
     browser: this.buildBrowserFacade(),
+    selectedSidebarPanel: sidebarPanelOfMainPanel(this.nav.selectedMainPanel),
+    onSelectSidebarPanel: (panelId: string) => this.selectSidebarPanel(panelId),
+    onNewSession: () => this.newSession(),
+    panelLabel: this.selectedPanelLabel(),
     beginDetailDrag: () => this.beginDetailDrag(),
     closeDetail: () => this.closeDetail(),
-    currentTab: () => this.currentTab(),
     detailOpen: this.detailOpen,
     detailOverlayOpen: this.detailOverlayOpen,
     setDetailOverlayOpen: (value: boolean) => {
@@ -2017,7 +2008,6 @@ struct Index {
     navWidthVp: () => this.navWidthVp(),
     openDiagnostics: () => this.openDiagnostics(),
     pendingBadge: this.pendingBadge,
-    selectTab: (tab: NavTab) => this.selectTab(tab),
     selectedSessionTitle: this.selectedSessionTitle,
     showsConversation: () => this.showsConversation(),
     sidePanelWidthVp: () => this.sidePanelWidthVp(),
@@ -4111,6 +4101,24 @@ struct Index {
    * 【为什么在宿主】宽版行与窄版行都要这个两步确认；判定（当前是否在确认态）与提示文案
    * 写在视图里就会有两份，而"两份确认态"必然走样。视图只问"按下去了"。
    */
+  /** 侧栏席位被按下：翻译成"切到哪个主区面板"，再走既有的页签切换（归一化/清栈等决策不重写） */
+  private selectSidebarPanel(panelId: string): void {
+    // 席位 id → 主区面板 id → 旧页签取值：双跳是迁移期的形状（控制器仍说 NavTab），
+    // 好处是"归一化 / 清栈 / 是否清会话选择"这些决策一条都不用重新实现。
+    this.selectTab(legacyTabOfMainPanel(mainPanelOfSidebarPanel(panelId)) as NavTab);
+  }
+
+  /** 新建会话（侧栏一级入口与 Ctrl+N 走同一条路） */
+  private newSession(): void {
+    SessionHub.shared().createSession();
+  }
+
+  /** 选中面板的中文名（页头标题用；注册表找不到时给空串，由视图兜底） */
+  private selectedPanelLabel(): string {
+    const d: PanelDescriptor | undefined = this.panelRegistry.find(this.nav.selectedMainPanel);
+    return d !== undefined ? d.label : '';
+  }
+
   private toggleDeleteConfirm(w: WorkspaceItem): void {
     if (this.confirmingDeletePath === w.path) {
       this.confirmingDeletePath = '';

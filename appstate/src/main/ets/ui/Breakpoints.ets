@@ -54,38 +54,36 @@ export enum NavTab {
  * E108 之后 `SESSIONS` 只是 `WORKSPACES` 的别名（会话并入工作区），
  * 因此这里**不再单列**「会话」分支——写了也是同一分支，反而会让类型收窄判成"无重叠"。
  */
-export function navTabLabel(tab: NavTab): string {
-  if (tab === NavTab.WORKSPACES) {
-    return '工作区';
-  }
-  if (tab === NavTab.CORE) {
-    return '核心';
-  }
-  return '设置';
-}
-
-/** 导航项图标（用系统符号，避免自造资源） */
-export function navTabSymbol(tab: NavTab): Resource {
-  if (tab === NavTab.WORKSPACES) {
+/**
+ * 侧栏席位的**图标**（按面板 id；官方侧栏每个入口一个系统符号）。
+ *
+ * 【为什么改为按 id 而不是按 `NavTab`】P1-4 之后侧栏入口由 `PanelRegistry` 决定
+ * （哪些入口存在、什么顺序），视图只按 id 取图标/文案 ⇒ `NavTab` 不再是导航的真值。
+ */
+export function sidebarPanelSymbol(panelId: string): Resource {
+  if (panelId === 'sidebar.workspaces') {
     return $r('sys.symbol.folder');
   }
   // 核心：用"分层的方块堆"表达"多版本核心 + 运行时分层"
   // 名字取自 SDK 符号清单（previewer/.../resources.txt，共 4027 个）中实存的一项
-  if (tab === NavTab.CORE) {
+  if (panelId === 'sidebar.core') {
     return $r('sys.symbol.square_stack_3d');
   }
   return $r('sys.symbol.gearshape');
 }
 
 /**
- * 导航项的**文字资源**（底部标签栏用；`navTabSymbol` 是它的图标版）。
+ * 侧栏席位的**文字资源**（跟随系统语言；底部标签栏也用同一份映射）。
  *
- * 【为什么它在 appstate 而不是视图里】与 `navTabSymbol` 同类：都是"页签 → 资源"的映射，
- * 放在一起才只有一份。视图层（如 `SidebarShell`）因此能只依赖 appstate 就把导航项画全。
+ * 【为什么按 id】同 `sidebarPanelSymbol`。资源本体在 `resources/base/element/string.json`
+ * （中文，默认）与 `resources/en_US/...`（英文），由系统按当前语言选择。
  */
-export function navTabLabelRes(tab: NavTab): Resource {
-  if (tab === NavTab.WORKSPACES) {
+export function sidebarPanelLabelRes(panelId: string): Resource {
+  if (panelId === 'sidebar.workspaces') {
     return $r('app.string.tab_workspaces');
+  }
+  if (panelId === 'sidebar.core') {
+    return $r('app.string.tab_core');
   }
   return $r('app.string.tab_settings');
 }

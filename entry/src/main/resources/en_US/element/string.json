@@ -29,6 +29,10 @@
       "value": "Workspaces"
     },
     {
+      "name": "tab_core",
+      "value": "Core"
+    },
+    {
       "name": "tab_settings",
       "value": "Settings"
     },
