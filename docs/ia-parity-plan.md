@@ -74,7 +74,7 @@ AppFrame
 | **主区第一束** | ✅ **已搬出**（`view/TabContentView.ets`，459 行 / 86 门面成员 / 29 处 setter 改写；Index 5040 → 4665 行）。关键：`does not meet UI component syntax` 其实是**导入路径错**的伪装 |
 | **主区第二束** | ✅ **已搬出**（`view/shell/MainShell.ets`，409 行 / 77 门面成员 / 33 处 setter 改写）。**`Index.ets` 5040 → 4518 行** |
 | **P0 验收：`Index` 不再负责页面级 Pane 选择** | ✅ **达成**：`Index.mainContent(compact)` 现在只是一句 `MainShell({ f: this.buildMainFacade(), compact: compact })`；四个 E分支（诊断/连接/会话/标签页内容）都由 `MainShell` 选择与渲染 |
-| **`view/shell/AppShell.ets`（三形态轨道 + 轨道 chrome）** | ✅ **已落地**（332 行 / 25 门面成员 / 3 处 setter 改写）：`buildSingle` / `buildDouble` / `buildTriple` 的轨道拼装、`header` / `headerTitle`、`navPanel` / `navRail` / `bottomTabs`、`detailColumn` / `detailResizer` / `sidebarPresentation` 全部归它；`Index` 的对应 builder 已删除。⇒ **`Index.ets` 4518 → 4290 行** |
+| **`view/shell/AppShell.ets`（三形态轨道 + 轨道 chrome）** | ✅ **已落地**（316 行 / 25 门面成员 / 3 处 setter 改写）：`buildSingle` / `buildDouble` / `buildTriple` 的轨道拼装、`header` / `headerTitle`、`navPanel` / `navRail` / `bottomTabs`、`detailColumn` / `detailResizer` / `sidebarPresentation` 全部归它；`Index` 的对应 builder 已删除。⇒ **`Index.ets` 4518 → 4290 行** |
 | **`AppShell` 的边界：门户留在页面根** | ✅ **有意为之**：`bindSheet` 是**组件属性**（同一节点只能绑一个），而六类浮层的内容 builder 仍在 `Index`（它们属 P4「Settings / 浮层域」，且 `@BuilderParam` 注入在真机崩过 = E118）⇒ 门户挂在**页面根** `Index.build()`，`AppShell` 只画轨道。这不是妥协而是语义正确的分层：官方 Web 的 portal 也在 `App` 根，不在任何 pane 里 |
 | **P0 收尾时发现并修掉的真实缺陷** | 🔴→🟢 门户原先挂在 `buildSingle` 的根 `Column` 上 ⇒ **双栏/三栏下列表里那些浮层根本打不开**（模型选择 `choosing`、凭据 `credentialRef`、目录 `folderOpen`、文本/整值设置 `textSettingKey`/`structSettingKey` —— 它们的触发点都在**主区内容**里，而主区在三种形态下都可见）。**不是没做，是够不着**。修法：门户提到页面根，与形态无关 |
 
