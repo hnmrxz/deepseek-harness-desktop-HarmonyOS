@@ -23,6 +23,8 @@ import { PendingAnswerDraft, CoreViewState, Fs, HarmonyIconSize, HubPhase, Pendi
 
 export interface WorkspaceBrowserFacade {
   answerPending: (item: PendingItem, drafts: PendingAnswerDraft[]) => void;
+  /** 放弃整组提问（官方 nav.cancel） */
+  cancelQuestion: (item: PendingItem) => void;
   archiveOpen: boolean;
   archivedSessionIds: string[];
   archivedSessions: () => SessionListItem[];
@@ -212,6 +214,9 @@ export struct WorkspaceBrowser {
             },
             onAnswer: (item: PendingItem, drafts: PendingAnswerDraft[]) => {
               this.f.answerPending(item, drafts);
+            },
+            onCancelQuestion: (item: PendingItem) => {
+              this.f.cancelQuestion(item);
             }
           })
         }

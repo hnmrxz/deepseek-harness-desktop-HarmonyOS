@@ -39,6 +39,8 @@ export interface MainShellFacade {
   reportConnectedHost: (baseUrl: string, token: string) => void;
   activePanel: () => string;
   answerPending: (item: PendingItem, drafts: PendingAnswerDraft[]) => void;
+  /** 放弃整组提问（官方 nav.cancel） */
+  cancelQuestion: (item: PendingItem) => void;
   attachNotice: string;
   setAttachNotice: (value: string) => void;
   attachments: PendingAttachment[];
@@ -322,6 +324,9 @@ export struct MainShell {
         },
         onAnswerPending: (item: PendingItem, drafts: PendingAnswerDraft[]) => {
           this.f.answerPending(item, drafts);
+        },
+        onCancelQuestion: (item: PendingItem) => {
+          this.f.cancelQuestion(item);
         },
         sessionId: this.f.selectedSessionId,
         workspaceName: this.f.sessionWorkspaceName,

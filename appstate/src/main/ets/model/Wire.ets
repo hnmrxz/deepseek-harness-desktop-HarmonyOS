@@ -1604,6 +1604,36 @@ export function outcomeResult(value: Object | undefined): Object {
   return outcome as Object;
 }
 
+/**
+ * 「用户放弃整组提问」的错误对象 —— **逐字段照抄官方**。
+ *
+ * ## 取证链（三层，都在官方客户端包里）
+ *
+ *   1. `dsh-client-ui-user-questions` 的 `questionError(message, code)`：
+ *      `const error = new Error(message); error.name = "UserQuestionError"; error.code = code;`
+ *      而 `pending.cancel()` 用的正是 `questionError("the user cancelled ask_user_question", "ASK_CANCELLED")`；
+ *   2. `dsh-api-gateway/lib/client.js` 的 waterfall 派发：监听器**抛错**时
+ *      `outcome = { kind: "rejected", error: projectRemoteEventRejection(error) }`
+ *      （默认值是 `{kind:"next"}`，即"交回下一个应答者"；**用户取消走的是 rejected，不是 next**）；
+ *   3. `projectRemoteEventRejection(reason)`：取 `name`（缺省 `"Error"`）、`message`、可选 `code`、可选 `details`。
+ *
+ * 三层拼起来，用户点「放弃整组问题」时线上那帧就是：
+ * `{"kind":"rejected","error":{"name":"UserQuestionError","message":"the user cancelled ask_user_question","code":"ASK_CANCELLED"}}`
+ * 与我们的 `WireError`（`name/message/code?/details?`）**形状一致** ⇒ 直接构造即可。
+ *
+ * 【为什么不能含糊地用 `{kind:'next'}`】那等于说"我不处理，交给下一个应答者"——
+ * Host 会继续问别人（最终可能 fail-closed 成别的结果），而不是"用户明确取消了这次提问"。
+ * 用错会把一次用户取消变成一次流程失败/转派。
+ */
+export function questionCancelledError(): WireError {
+  const error: WireError = {
+    name: 'UserQuestionError',
+    message: 'the user cancelled ask_user_question',
+    code: 'ASK_CANCELLED',
+  };
+  return error;
+}
+
 /** 构造 `{kind:'rejected', error}`。 */
 export function outcomeRejected(error: WireError): Object {
   const outcome: Record<string, Object> = { 'kind': 'rejected', 'error': error };

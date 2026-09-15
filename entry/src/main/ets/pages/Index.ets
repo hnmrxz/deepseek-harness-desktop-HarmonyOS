@@ -2818,6 +2818,7 @@ struct Index {
     reportConnectedHost: (baseUrl: string, token: string) => reportConnectedHost(baseUrl, token),
     activePanel: () => this.activePanel(),
     answerPending: (item: PendingItem, drafts: PendingAnswerDraft[]) => this.answerPending(item, drafts),
+    cancelQuestion: (item: PendingItem) => this.cancelQuestion(item),
     attachNotice: this.attachNotice,
     setAttachNotice: (value: string) => {
       this.attachNotice = value;
@@ -2987,6 +2988,23 @@ struct Index {
       out.push({ value: picked[i].value, label: picked[i].label });
     }
     this.choosing = out;
+  }
+
+  /**
+   * 放弃整组提问（官方 `nav.cancel`）。
+   *
+   * 线上帧已取证（见 `Wire.questionCancelledError`）：`{kind:'rejected', error:{name:'UserQuestionError',
+   * code:'ASK_CANCELLED'}}`。失败时**不移走卡片**：移走会让用户以为已经取消了。
+   */
+  private cancelQuestion(item: PendingItem): void {
+    if (!this.hubConnected) {
+      return;
+    }
+    SessionHub.shared().cancelQuestionGroup(item.id).then((ok: boolean) => {
+      this.attachNotice = ok ? '已放弃这组提问。' : '放弃提问失败：请在诊断页查看原因。';
+    }).catch(() => {
+      this.attachNotice = '放弃提问失败：请在诊断页查看原因。';
+    });
   }
 
   private answerPending(item: PendingItem, drafts: PendingAnswerDraft[]): void {
@@ -3907,6 +3925,7 @@ struct Index {
   private buildBrowserFacade(): WorkspaceBrowserFacade {
     const facade: WorkspaceBrowserFacade = {
     answerPending: (item: PendingItem, drafts: PendingAnswerDraft[]) => this.answerPending(item, drafts),
+    cancelQuestion: (item: PendingItem) => this.cancelQuestion(item),
     archiveOpen: this.archiveOpen,
     archivedSessionIds: this.archivedSessionIds,
     archivedSessions: () => this.archivedSessions(),
@@ -3955,6 +3974,7 @@ struct Index {
     onSelectSettingsSection: (sectionId: string) => this.selectSettingsSection(sectionId),
     browser: this.buildBrowserFacade(),
     answerPending: (item: PendingItem, drafts: PendingAnswerDraft[]) => this.answerPending(item, drafts),
+    cancelQuestion: (item: PendingItem) => this.cancelQuestion(item),
     applyDefaultModel: (provider: string, model: string, effort: string) => this.applyDefaultModel(provider, model, effort),
     archiveOpen: this.archiveOpen,
     setArchiveOpen: (value: boolean) => {

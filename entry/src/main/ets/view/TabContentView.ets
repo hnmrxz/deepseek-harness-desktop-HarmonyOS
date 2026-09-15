@@ -32,6 +32,8 @@ import type { WorkspaceBrowserFacade } from './WorkspaceBrowser';
 
 export interface TabContentFacade {
   answerPending: (item: PendingItem, drafts: PendingAnswerDraft[]) => void;
+  /** 放弃整组提问（官方 nav.cancel） */
+  cancelQuestion: (item: PendingItem) => void;
   applyDefaultModel: (provider: string, model: string, effort: string) => void;
   archiveOpen: boolean;
   setArchiveOpen: (value: boolean) => void;

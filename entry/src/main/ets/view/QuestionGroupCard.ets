@@ -54,6 +54,14 @@ export struct QuestionGroupCard {
   /** 整组提交（宿主一次交回 Host） */
   onSubmit: (item: PendingItem, drafts: PendingAnswerDraft[]) => void = () => {
   };
+  /**
+   * 放弃整组问题（官方 `nav.cancel: 放弃整组问题`）。
+   *
+   * 线上语义已取证：发 `{kind:'rejected', error:{name:'UserQuestionError',
+   * code:'ASK_CANCELLED'}}`（**不是** `{kind:'next'}`——那是"我不处理，交给下一个应答者"）。
+   */
+  onCancelGroup: (item: PendingItem) => void = () => {
+  };
 
   /** 逐题草稿（本组件状态：切题不丢、提交前校验用） */
   @State drafts: PendingAnswerDraft[] = [];
@@ -275,6 +283,14 @@ export struct QuestionGroupCard {
             }
           })
         }
+        NativeButton({
+          label: '放弃整组问题',
+          emphasis: 'text',
+          tone: 'neutral',
+          onTap: () => {
+            this.onCancelGroup(this.item);
+          }
+        })
         NativeButton({
           label: '跳过本题',
           emphasis: 'text',

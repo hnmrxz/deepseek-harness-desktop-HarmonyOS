@@ -595,5 +595,6 @@ export type {
   WorkspaceFileRange,
   WorkspaceListingProjection,
   WorkspaceListingWire,
-  WorkspaceTextWire
+  WorkspaceTextWire,
+  questionCancelledError
 } from './model/Wire';

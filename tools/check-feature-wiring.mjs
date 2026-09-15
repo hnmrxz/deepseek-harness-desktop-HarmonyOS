@@ -119,6 +119,13 @@ const FEATURES = [
    * 钉三段：焦点规则 + 文案规则 + 视图里的判定方法。
    */
   { name: '输入区接管', patterns: [['pendingForSession', 2], ['takeoverHeadline', 2], ['focusPending', 2]] },
+  /*
+   * 放弃整组提问（P7-9）。线上帧已取证：官方 `nav.cancel` 让监听器抛
+   * `UserQuestionError` / `ASK_CANCELLED`，网关编码成 `{kind:'rejected', error}` ——
+   * **不是** `{kind:'next'}`（那是"交给下一个应答者"）。钉三段：
+   * 错误对象构造 + 中枢方法 + 视图按钮。
+   */
+  { name: '放弃整组提问', patterns: [['questionCancelledError', 2], ['cancelQuestionGroup', 2], ['放弃整组问题', 1]] },
   { name: '侧栏收起', patterns: [['sidebarPresentationOf', 2], ['onToggleSidebarExpanded', 2], ['showExpandToggle', 2]] }
 ];
 

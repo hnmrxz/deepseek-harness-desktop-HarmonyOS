@@ -201,7 +201,9 @@ import {
   workspaceReadAllPayload,
   workspaceReadEndpoint,
   workspaceReadPayload,
-  WORKSPACE_ROOT_REQUEST_PATH
+  WORKSPACE_ROOT_REQUEST_PATH,
+  outcomeRejected,
+  questionCancelledError
 } from '../model/Wire';
 import type {
   CommandCandidate,
@@ -1239,6 +1241,34 @@ export class SessionHub {
     const ok: boolean = await this.answerWithResultValue(eventId, value as Object);
     if (ok) {
       this.resolvePending(pendingId, `已回答 ${answers.length} 题`);
+    }
+    return ok;
+  }
+
+  /**
+   * **放弃整组提问**（官方 `nav.cancel: 放弃整组问题`）。
+   *
+   * ## 发的是哪一帧（取证链见 `Wire.questionCancelledError` 的注释）
+   *
+   * 官方：`pending.cancel()` 抛 `questionError("the user cancelled ask_user_question", "ASK_CANCELLED")`
+   * ⇒ 网关把监听器的抛错编码成 `{kind:'rejected', error:{name,message,code}}`。
+   * **不是** `{kind:'next'}`：后者是"我不处理，交给下一个应答者"，Host 会继续问别人；
+   * 用户点的是"放弃这次提问"，两者语义不同。
+   *
+   * 失败时**不把卡片移走**：移走会让用户以为已经取消了。
+   */
+  async cancelQuestionGroup(pendingId: string): Promise<boolean> {
+    if (!this.unaryReady) {
+      this.lastError = '未连接：无法放弃这次提问';
+      this.notify();
+      return false;
+    }
+    const hash: number = pendingId.indexOf('#');
+    const eventId: string = hash > 0 ? pendingId.substring(0, hash) : pendingId;
+    const ok: boolean = await this.sendEventResult(eventId, outcomeRejected(questionCancelledError()));
+    if (ok) {
+      this.resolvePending(pendingId, '已放弃整组问题');
+      this.record(`question cancelled ${eventId.substring(0, 8)}`);
     }
     return ok;
   }

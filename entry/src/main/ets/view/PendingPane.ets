@@ -49,6 +49,10 @@ export struct PendingPane {
   onAnswer: (item: PendingItem, drafts: PendingAnswerDraft[]) => void = () => {
   };
 
+  /** 放弃整组提问（官方 `nav.cancel`） */
+  onCancelQuestion: (item: PendingItem) => void = () => {
+  };
+
   /** 自由文本输入（按待决 id 保存） */
   @State freeText: string = '';
   @State freeTextFor: string = '';
@@ -169,6 +173,9 @@ export struct PendingPane {
       item: item,
       onSubmit: (it: PendingItem, drafts: PendingAnswerDraft[]) => {
         this.onAnswer(it, drafts);
+      },
+      onCancelGroup: (it: PendingItem) => {
+        this.onCancelQuestion(it);
       }
     })
   }

@@ -56,6 +56,9 @@ export struct ConversationPane {
   @Prop pending: PendingItem[] = [];
   onDecidePending: (item: PendingItem, choiceId: string, reason: string) => void = () => {
   };
+  /** 放弃整组提问（官方 nav.cancel） */
+  onCancelQuestion: (item: PendingItem) => void = () => {
+  };
   onAnswerPending: (item: PendingItem, drafts: PendingAnswerDraft[]) => void = () => {
   };
 
@@ -946,6 +949,9 @@ export struct ConversationPane {
             },
             onAnswer: (item: PendingItem, drafts: PendingAnswerDraft[]) => {
               this.onAnswerPending(item, drafts);
+            },
+            onCancelQuestion: (item: PendingItem) => {
+              this.onCancelQuestion(item);
             }
           })
         }
