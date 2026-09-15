@@ -72,6 +72,10 @@ const PURE_FILES = [
   'dshcompat/src/main/ets/QueueCodes.ets',
   // 提交失败后的草稿恢复规则（P7-15）：零依赖
   'appstate/src/main/ets/model/ComposerSend.ets',
+  // 失败码 → 用户文案（P7-19）：表的**键**来自 dshcompat（上游事实只许住那层），
+  // 因此这里也要把 ErrorCodes 编进来（见下面 tsc 的 `paths` 映射）
+  'dshcompat/src/main/ets/ErrorCodes.ets',
+  'appstate/src/main/ets/model/FailureText.ets',
   // 浮层回执归属（P2-8，E353）：零依赖
   'appstate/src/main/ets/model/Sheets.ets',
   // 设置编辑浮层的输入提示（P2-10）：零依赖
@@ -139,23 +143,54 @@ function buildAndLoad() {
   const globals = join(SRC, 'globals.d.ts');
   writeFileSync(globals, GLOBALS_DTS, 'utf8');
 
+  /*
+   * 裸 CLI 参数换成 **tsconfig**：原因是需要 `paths` 映射。
+   *
+   * 【为什么需要它】纯逻辑模块里 `model/FailureText.ets` 的**错误码**必须从 `dshcompat` 导入
+   * （上游字面量只许住那一层，`tools/arch-check.mjs` 强制），而本脚本把 .ets 平铺复制到同一个
+   * 目录、没有模块解析映射 ⇒ tsc 报 `Cannot find module 'dshcompat'`。
+   * 这里生成一个**只转出错误码**的垫片并映射 `dshcompat` → 它：既不拉进整个 dshcompat，
+   * 也让"码来自上游那一层"这件事在测试里保持成立。
+   */
+  const shim = join(SRC, 'dshcompat.ts');
+  writeFileSync(shim, "export * from './ErrorCodes';\n", 'utf8');
+  const config = {
+    compilerOptions: {
+      target: 'ES2020',
+      module: 'commonjs',
+      moduleResolution: 'node',
+      outDir: OUT,
+      rootDir: SRC,
+      baseUrl: SRC,
+      paths: { dshcompat: ['dshcompat.ts'] },
+      skipLibCheck: true,
+      strict: false
+    },
+    files: [...tsFiles, globals, shim]
+  };
+  const configPath = join(WORK, 'tsconfig.json');
+  writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+
   try {
-    execFileSync(process.execPath, [
-      tsc,
-      '--target', 'ES2020',
-      '--module', 'commonjs',
-      '--outDir', OUT,
-      '--skipLibCheck',
-      '--strict', 'false',
-      ...tsFiles,
-      globals
-    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+    execFileSync(process.execPath, [tsc, '-p', configPath], { stdio: ['ignore', 'pipe', 'pipe'] });
   } catch (e) {
     const out = `${e.stdout || ''}${e.stderr || ''}`.toString();
     console.error('tsc 编译纯逻辑源文件失败——说明 LayoutController/Tokens/Breakpoints 不是合法 TS：');
     console.error(out.trim() || '(无输出)');
     process.exit(1);
   }
+
+  /*
+   * 运行时垫片（**必需**，与 `check-core-loop.mjs` 同一个坑）：tsconfig 的 `paths`
+   * 只管**编译期**解析，产出的 JS 里仍然是 `require('dshcompat')` —— Node 到运行时找不到。
+   * 所以按 Node 的解析规则在输出目录下放一层最小的 `node_modules`：不复制代码，
+   * 只写 `package.json` 指回编译产物（`out/dshcompat.js`）。
+   */
+  const shimDir = join(OUT, 'node_modules', 'dshcompat');
+  mkdirSync(shimDir, { recursive: true });
+  writeFileSync(join(shimDir, 'package.json'),
+    JSON.stringify({ name: 'dshcompat', version: '0.0.0', main: '../../dshcompat.js' }, null, 2) + '\n',
+    'utf8');
 
   // 运行时垫片：`Tokens.ets` 在**模块顶层**就调 ArkUI 全局 `$r(...)` 取系统资源，
   // 而 Node 里没有这个全局（实测：直接 require 会 `ReferenceError: $r is not defined`）。
@@ -246,6 +281,7 @@ const MI = require2('./MessageImage.js');
 const IA = require2('./InputAttachment.js');
 const IT = require2('./InputTrigger.js');
 const CS = require2('./ComposerSend.js');
+const FT = require2('./FailureText.js');
 const QR = require2('./QueueCodes.js');
 const t = makeAsserter(selfTest);
 
@@ -2475,6 +2511,72 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   t.eq('已到点但还没收到"已开始" ⇒ 正在重试…', retryWaitLine(0, false), '正在重试…');
   t.eq('负剩余（事件迟到）也算已到点', retryWaitLine(-5000, false), '正在重试…');
   t.eq('已收到 retry-started ⇒ 不再显示秒数', retryWaitLine(7000, true), '');
+}
+
+
+// ── P7-19：失败文案表（可达集合必须都有专门文案；兜底必须保留原始码） ──
+{
+  const { failureText, hasFailureText, untranslatedFailure, FAILURE_TEXT_TABLE,
+    CLIENT_FAILURE_TEXT_TABLE, REACHABLE_FAILURE_CODES } = FT;
+
+  // ① 对账：可达集合里每个码都必须有**专门**文案（不是兜底）
+  /*
+   * 【这一条现在要更仔细】`session/attachment-invalid` 有专门文案，但**故意不进表**：
+   * 同一个码覆盖"文件回执"与"图片"两条路，必须按 Host 原文分流（`attachmentInvalidText`）。
+   * 于是判据不是"表里有没有"，而是"能不能给出**非兜底**的文案"——用文案是否等于兜底来判，
+   * 而不是用表的存在来判。（`hasFailureText()` 因此也要把这条算进去，见其实现。）
+   */
+  const missing = REACHABLE_FAILURE_CODES.filter((c) => !hasFailureText(c));
+  t.eq('可达错误码全部有专门文案', missing.join(','), '');
+  t.eq('可达集合非空（否则这条断言是空转）', REACHABLE_FAILURE_CODES.length > 20, true);
+
+  // ② 专门文案不许以原始码开头（那等于没写文案）
+  const rawLooking = [];
+  for (const entry of FAILURE_TEXT_TABLE) {
+    if (entry.text.startsWith(entry.code) || entry.text.length < 8) rawLooking.push(entry.code);
+  }
+  t.eq('专门文案不许以 code 开头、也不许过短（像兜底）', rawLooking.join(','), '');
+
+  // ③ 兜底必须**带上原始码**：上游多了新码时，界面上要看得见
+  const unknown = failureText('brand/new-code', 'something happened');
+  t.eq('未知码的兜底带上原始码', unknown.includes('brand/new-code'), true);
+  t.eq('未知码的兜底说清"还没有专门文案"', unknown.includes('还没有专门文案'), true);
+  t.eq('未知码的兜底带上 Host 原文', unknown.includes('something happened'), true);
+  t.eq('未知码的兜底不含"操作失败"这类含糊话', unknown.includes('操作失败'), false);
+
+  // ④ 已知码会附上 Host 原文（原文是第一手证据，不能丢）
+  const known = failureText('session/conflict', 'session "abc" already has cwd "/x"');
+  t.eq('已知码文案里带上 Host 原文', known.includes('already has cwd'), true);
+  t.eq('已知码不再以原始码开头', known.startsWith('session/conflict'), false);
+  t.eq('没有原文时不硬拼括号', failureText('session/conflict', '').includes('Host 原文'), false);
+
+  // ⑤ 几个高风险码必须有**可行动**的处置（抽查语义，不只查存在）
+  t.eq('会话冲突要教用户换目录或打开已有会话',
+    failureText('session/conflict', '').includes('换一个目录'), true);
+  t.eq('模型不可用要指向设置页',
+    failureText('session/model-unavailable', '').includes('设置'), true);
+  t.eq('设置版本冲突要说明"重试无用、要重读"',
+    failureText('settings/conflict', '').includes('重新读取'), true);
+  t.eq('目录选择器不可用要说清那是桌面端能力',
+    failureText('directory-picker/unavailable', '').includes('桌面'), true);
+
+  // ⑥ 客户端自己的码也要有文案（它与上游码同表查）
+  t.eq('客户端码有文案', hasFailureText('client/endpoint-invalid'), true);
+  t.eq('客户端码文案表非空', CLIENT_FAILURE_TEXT_TABLE.length > 0, true);
+
+  // ⑦ 连接层的四个传输码：文案必须**带上底层 reason**（E71：固定文案会盖掉唯一线索）
+  for (const carrierCode of ['carrier/parse', 'carrier/closed', 'carrier/transport', 'carrier/timeout']) {
+    t.eq(`${carrierCode} 有专门文案且带上 reason`,
+      hasFailureText(carrierCode) && failureText(carrierCode, '探活超时（连接级）').includes('探活超时'), true);
+  }
+
+  // ⑧ 附件被拒要**按 Host 原文分流**（同一个码三种成因，处置不同）
+  const img = failureText('session/attachment-invalid', 'Unsupported or malformed image data.');
+  const file = failureText('session/attachment-invalid', 'File was not uploaded for this session.');
+  t.eq('图片那条说"图像解码器可能不可用"', img.includes('图像解码器不可用'), true);
+  t.eq('文件那条说"不属于这条会话"', file.includes('不属于这条会话'), true);
+  t.eq('两条文案必须不同（否则等于没分流）', img !== file, true);
+  t.eq('文件那条不把用户引向"图片坏了"', file.includes('这张图'), false);
 }
 
 

@@ -40,6 +40,9 @@ export {
   toolStateLabel
 } from './model/Present';
 export type { OutputPreview } from './model/Present';
+// 失败码 → 用户文案（P7-19：把散在中枢里的特例与兜底收成一张可对账的表）
+export { failureText, hasFailureText, untranslatedFailure, CLIENT_FAILURE_TEXT_TABLE, FAILURE_TEXT_TABLE, REACHABLE_FAILURE_CODES } from './model/FailureText';
+export type { FailureTextEntry } from './model/FailureText';
 
 // ── 工作区与文件 ──
 export {

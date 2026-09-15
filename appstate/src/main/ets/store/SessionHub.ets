@@ -32,6 +32,7 @@
 import { Connection } from 'connection';
 import { SessionJob } from '../model/Jobs';
 import { retryCountLine } from '../model/Present';
+import { failureText } from '../model/FailureText';
 import {
   AttachmentDraftInput,
   AttachmentKind,
@@ -5254,23 +5255,15 @@ function collapseNode(node: FileNode): FileNode {
  * 上游对不可预览的文件是**明确拒绝**（D2b §2.3），拒绝理由本身就是给用户的信息；
  * 但要翻译成「发生了什么 + 可以做什么」，而不是把错误码抛到界面上（D3 §4 文案纪律）。
  */
+/**
+ * 工作区文件的失败码 → 一句话（P7-19：表已并入 `model/FailureText.ets`，这里只委托）。
+ *
+ * 这条路径的兜底**不能**写"读取失败"以外的判断：`workspace-file/*` 有六种码，
+ * 每一种的处置都不同（不存在 / 越界 / 太大 / 非文本 / 非常规文件 / 不是目录），
+ * 含糊成一句会让用户不知道是该换文件还是该改路径。
+ */
 function friendlyWorkspaceFailure(code: string, message: string): string {
-  if (code === 'workspace-file/not-text') {
-    return '二进制文件（非 UTF-8 文本），端侧不预览。可在 Host 侧用工具读取。';
-  }
-  if (code === 'workspace-file/too-large') {
-    return '文件超过 Host 的单页上限，端侧不预览。可在 Host 侧用工具分段读取。';
-  }
-  if (code === 'workspace-file/not-regular-file') {
-    return '不是一个普通文件（可能是目录或符号链接），无法预览。';
-  }
-  if (code === 'workspace-file/not-found') {
-    return '文件不存在或已被移动。';
-  }
-  if (code === 'workspace-file/outside-workspace') {
-    return '该路径在会话工作区之外，Host 拒绝访问。';
-  }
-  return message.length > 0 ? `读取失败：${message}（${code}）` : `读取失败：${code}`;
+  return failureText(code, message);
 }
 
 /** 空的排队项数组（规避无类型数组字面量）。 */
@@ -5680,62 +5673,22 @@ function authAdvice(status: number, message: string): string {
  * 通道承载多条并发长连接），而不是 Host 或协议栈的问题——
  * 同样的调用从宿主直连全部成功。文案要能把用户引向这个判断。
  */
+/**
+ * 失败码 → 给用户看的一句话（**表的真值在 `model/FailureText.ets`**，P7-19）。
+ *
+ * 【为什么搬家】这里此前是本仓唯一的失败文案表：8 个特例 + 一个兜底 `${code} ${message}`，
+ * 而文件预览另有一个 `friendlyWorkspaceFailure()`（5 个）。上游有一张**权威错误码表**
+ * （`dsh-api-session-controller/lib/typert.host.js` 的 `RemoteErrorDetailsMap`，46 个码），
+ * 于是大量码在真机上就是「session/conflict session "xxx" already has cwd …」这种只有开发者读得懂的句子。
+ * 现在表在纯模型里，能被 fixture 钉住（尤其"兜底必须带上原始码"这条），
+ * 而这里只留一行委托——中枢不再持有产品文案。
+ */
 function friendlyFailure(code: string, message: string): string {
-  if (code === 'client/endpoint-invalid') {
-    return `客户端拼装了一个 Host 不认识的 endpoint（${message}）。这是本客户端的兼容面缺陷，`
-      + '请提交诊断报告以便修正上表——重试与换网络都不会有用。';
-  }
-  if (code === 'carrier/parse') {
-    return '响应无法解析——通常是中间转发通道截断了连接（开发期的端口转发常见）。'
-      + '请改用直连本机回环，或使用 hostkit 的加密隧道。'
-      + (message.length > 0 ? `（底层原因：${message}）` : '');
-  }
-  if (code === 'carrier/closed' || code === 'carrier/transport') {
-    /*
-     * 【为什么必须把底层 `message` 带上（E71）】`reason` 一路从
-     * `RemoteMux.onSocketClosed(reason)`（`:457` 以 `onError('carrier/closed', reason)` 传给每条
-     * 逻辑流）传到这里，内容通常是**明确的**——例如 `探活超时（连接级）：在阈值内未收到任何回帧`
-     * 或 `send 失败 code=-1`。但这条固定文案把它覆盖掉了，于是端侧只能看到
-     * "连接在传输中断开"，排查被迫从零开始猜（本项目为此耗掉数轮，且一度把方向指向"转发通道"）。
-     * 带上它，一次运行就能判定该改探活判死策略还是发送时机。
-     */
-    return '连接在传输中断开——中间转发通道不稳定，或 Host 已停止。'
-      + '请检查 Host 是否仍在运行；若经端口转发访问，请改用 hostkit 隧道。'
-      + (message.length > 0 ? `（底层原因：${message}）` : '');
-  }
-  if (code === 'carrier/timeout') {
-    return '请求超时。请检查网络连通性；若 Host 负载很高可稍后重试。';
-  }
-  if (code === GATEWAY_ARGUMENTS_INVALID || code === GATEWAY_INPUT_INVALID) {
-    return `调用参数与 Host 的契约不符（${message}）。这是客户端兼容面的问题，请提交诊断报告以便修正上表。`;
-  }
   /*
-   * 附件被拒（P0-3/P0-4）。
-   *
-   * 【这个 code 覆盖**三种**情形，文案必须分得开】
-   *   ① 发提示词时解析 `file` 片段的回执（`resolvePromptFileReceipts`）——
-   *      上游原文 `"File was not uploaded for this session."` + `reason: FILE_NOT_STAGED`；
-   *   ② 读历史图片字节（`session/attachment`）——引用不属于这条会话；
-   *   ③ **图片数据本身**不被接纳。本机真 Host 实测（`check-core-loop.mjs` 的 M2f 步）
-   *      拿图片内联发送时，回的正是这个 code 加
-   *      `"Unsupported or malformed image data."`。
-   *      注意这句话**有两种成因**（E384）：图片真的坏了，**或** Host 随包的图像解码器
-   *      不可用（我们的核心里 `sharp.impl` 曾是 E79 留下的桩，`dsh-attachment-local`
-   *      正是用它解码）。两者在线上是同一句话，所以文案必须把两种可能都说了，
-   *      并指向诊断报告——那里有 Host 原生件的真实探测结论（`runtime.natives`）。
-   * 也就是说：**同一个 code，原因要看 `message`**，不能只看 code。
-   * 上一版只写了"图片附件"，对文件那条路是错的；这一版按 message 分支——
-   * 用户拿到的是一句能行动的话，而不是一句听起来合理但方向错了的话。
+   * 两个例外仍留在中枢，因为它们的文案要**结合上下文**（不是单纯查表）：
+   *   · `carrier/*` 要把底层 `reason` 一起带出来（E71 的教训：固定文案会盖掉唯一线索）；
+   *   · `session/attachment-invalid` 要按 `message` 里的 image 字样分两种成因（E384）。
+   * 两者的文案同样在纯模型里，只是由这里决定"带哪句上下文"。
    */
-  if (code === SESSION_ATTACHMENT_INVALID) {
-    if (message.indexOf('image') >= 0) {
-      return 'Host 说这张图无法接纳（格式不支持、数据损坏，**或 Host 侧的图像解码器不可用**）。'
-        + '诊断报告里的「运行时事实」会给出 Host 原生件的真实探测结论，先看那一条再决定是换图还是报缺陷。'
-        + (message.length > 0 ? `（Host 原文：${message}）` : '');
-    }
-    return 'Host 拒绝了这个附件：它不属于这条会话（附件回执与图片引用都是**会话作用域**的）。'
-      + '常见原因：附件是在另一个会话里选的，或会话切走后又把旧附件发了出去。'
-      + '重新选择文件后再发即可。' + (message.length > 0 ? `（Host 原文：${message}）` : '');
-  }
-  return `${code} ${message}`;
+  return failureText(code, message);
 }

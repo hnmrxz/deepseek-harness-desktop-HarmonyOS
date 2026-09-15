@@ -191,7 +191,13 @@ const FEATURES = [
    * 拼个 title、正文空白 ⇒ 设备网络最差时用户看到"出错了 + 一片空白"。钉三段：投影（中枢读五个槽位）
    * + 两段文案（纯模型）+ 行组件（含每秒倒计时）。
    */
-  { name: '重试行', patterns: [['retryCountLine', 2], ['retryWaitLine', 2], ['RetryRow', 2]] }
+  { name: '重试行', patterns: [['retryCountLine', 2], ['retryWaitLine', 2], ['RetryRow', 2]] },
+  /*
+   * 失败文案表（P7-19）。上游有一张权威错误码表（46 个码），而本仓此前只有 8+5 个特例，
+   * 其余落到兜底 `${code} ${message}` ⇒ 真机上出现「session/conflict session "x" already has cwd …」
+   * 这种只有开发者读得懂的句子。现在文案表在纯模型里、可达集合可对账，中枢只委托。
+   */
+  { name: '失败文案', patterns: [['failureText', 2], ['REACHABLE_FAILURE_CODES', 2], ['FAILURE_TEXT_TABLE', 2]] }
 ];
 
 /**

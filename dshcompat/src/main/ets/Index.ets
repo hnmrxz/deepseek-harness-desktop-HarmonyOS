@@ -188,3 +188,6 @@ export {
   QUEUE_RACE_STEER_CLOSED,
   STEER_UNAVAILABLE
 } from './QueueCodes';
+
+// 上游错误码的具名常量（P7-19）：码是上游事实，文案是产品选择，两层分开
+export * from './ErrorCodes';
