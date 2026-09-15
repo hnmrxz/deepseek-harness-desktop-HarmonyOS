@@ -50,6 +50,14 @@ export const SETTINGS_GENERAL: string = 'settings.general';
 export const SETTINGS_MODELS: string = 'settings.models';
 export const SETTINGS_PLUGINS: string = 'settings.plugins';
 export const SETTINGS_INVENTORY: string = 'settings.plugin-inventory';
+/*
+ * 以下四项是**本仓特有**的设置分区（官方没有对应分区，见 PanelRegistry.settingsSections 的说明）：
+ * 核心（E110）、预设（E129）、技能（E135）、设备（本机事实）。
+ */
+export const SETTINGS_CORE: string = 'settings.core';
+export const SETTINGS_PRESETS: string = 'settings.presets';
+export const SETTINGS_SKILLS: string = 'settings.skills';
+export const SETTINGS_DEVICE: string = 'settings.device';
 
 /** 浮层 id（与既有六类浮层一一对应，另加命令面板与搜索） */
 export enum Overlay {

@@ -57,6 +57,18 @@
       "value": "设备"
     },
     {
+      "name": "settings_inventory",
+      "value": "插件清单"
+    },
+    {
+      "name": "settings_presets",
+      "value": "预设"
+    },
+    {
+      "name": "settings_skills",
+      "value": "技能"
+    },
+    {
       "name": "action_new_session",
       "value": "新建会话"
     },

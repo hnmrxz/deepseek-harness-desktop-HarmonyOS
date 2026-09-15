@@ -18,7 +18,6 @@ import {
   HostRecord,
   ModelOption,
   ModelSelection,
-  modelSelectionLabel,
   pluginSummary,
   PluginItem,
   // 插件可安装性三态契约（D6 §6.2）：不把"未知"渲染成"可安装"
@@ -35,9 +34,10 @@ import {
   presetIsBundled,
   splitSettingKey,
   Sp,
-  Sz
+  Sz,
+  settingsSectionLabelRes
 } from 'appstate';
-import type { CoreViewState, SettingsNamespaceState } from 'appstate';
+import type { CoreViewState, PanelDescriptor, SettingsNamespaceState } from 'appstate';
 import { SessionHub } from 'appstate';
 import { CorePane } from './CorePane';
 
@@ -231,7 +231,6 @@ export struct SettingsPane {
   @Prop permissionOptions: string[] = [];
 
   /** 插件分区子页签（E114：配置 / 列表） */
-  @State pluginView: string = 'config';
   /** 插件清单的过滤词（只作用于「列表」子页签） */
   @State pluginFilter: string = '';
 
@@ -291,7 +290,19 @@ export struct SettingsPane {
   onOpenDiagnostics: () => void = () => {
   };
 
-  @State tab: string = 'general';
+  /**
+   * 当前分区（P4-1：**唯一真值在 `NavigationState.settingsSection`**，由宿主传进来）。
+   *
+   * 【为什么不再是视图里的 `@State tab`】设置分区是**导航状态**的一部分：从侧栏「设置」进来、
+   * 从别处深链到某一分区、以及"返回"该回到哪一段，都要看它。视图自己存一份，
+   * 等于让导航状态与显示内容两处各说一套。
+   */
+  @Prop section: string = 'settings.general';
+  /** 可用分区清单（注册表给；切换器按它画，顺序也由它定） */
+  @Prop sections: PanelDescriptor[] = [];
+  /** 选一个分区（宿主经注册表校验后写进 `settingsSection`） */
+  onSelectSection: (sectionId: string) => void = () => {
+  };
 
   build() {
     Column() {
@@ -311,7 +322,7 @@ export struct SettingsPane {
 
       Scroll() {
         Column({ space: Sp.L }) {
-          if (this.tab === 'skills') {
+          if (this.section === 'settings.skills') {
             /*
              * E135：技能分区。
              *
@@ -375,7 +386,7 @@ export struct SettingsPane {
               .fontSize(Fs.CAPTION)
               .fontColor($r('sys.color.font_tertiary'))
               .width('100%')
-          } else if (this.tab === 'preset') {
+          } else if (this.section === 'settings.presets') {
             /*
              * E161：**预设名单卡片**（官方形态）。
              *
@@ -532,7 +543,7 @@ export struct SettingsPane {
               .fontSize(Fs.CAPTION)
               .fontColor($r('sys.color.font_tertiary'))
               .width('100%')
-          } else if (this.tab === 'core') {
+          } else if (this.section === 'settings.core') {
             // 核心分区：与原来的一级「核心」页内容一致（版本切换/回滚、插件、运行时事实）
             Column({ space: Sp.S }) {
               if (this.coreNotice.length > 0) {
@@ -562,12 +573,16 @@ export struct SettingsPane {
               })
             }
             .width('100%')
-          } else if (this.tab === 'general') {
+          } else if (this.section === 'settings.general') {
             this.generalTab()
-          } else if (this.tab === 'model') {
+          } else if (this.section === 'settings.models') {
             this.modelTab()
-          } else if (this.tab === 'plugins') {
+          } else if (this.section === 'settings.plugins') {
             this.pluginsTab()
+          } else if (this.section === 'settings.plugin-inventory') {
+            // 只读清单独立成分区（官方 `settings-plugin-inventory`）：它是"这家宿主装了什么"，
+            // 与"哪些插件可以配置"是两件事（此前是插件段里的一个子页签）
+            this.pluginListView()
           } else {
             this.deviceTab()
           }
@@ -611,19 +626,13 @@ export struct SettingsPane {
   tabBar() {
     Scroll() {
       Row({ space: Sp.S }) {
-        // E110：核心（版本/插件/运行时事实）作为设置的一项——它与"这台设备怎么跑"同类
-        // E114 顺序对齐官方：官方「通用」是第一个分区，因此通用排在最前
-        // E117：分区名走资源（默认中文，英文系统读 en_US）
-        this.tabChip('general', $r('app.string.settings_general'))
-        // 官方分区就叫「模型」（API 密钥是该分区里的字段，不另立分区）
-        this.tabChip('model', $r('app.string.settings_models'))
-        this.tabChip('plugins', $r('app.string.settings_plugins'))
-        this.tabChip('core', $r('app.string.settings_core'))
-        // E129：Agent 预设分区（官方把它放在设置里，用于管理名单与设默认）
-        this.tabChip('preset', '预设')
-        // E135：技能（官方为 dsh-skill + dsh-client-ui-skill；我们的兼容面已有 skills/list）
-        this.tabChip('skills', '技能')
-        this.tabChip('device', $r('app.string.settings_device'))
+        /*
+         * 分区清单来自注册表（`settingsSections`，官方四段在前、本仓特有四项在后）。
+         * 文案走 `settingsSectionLabelRes`（跟随系统语言），与侧栏入口同一套做法。
+         */
+        ForEach(this.sections, (d: PanelDescriptor) => {
+          this.tabChip(d.id, settingsSectionLabelRes(d.id))
+        }, (d: PanelDescriptor) => d.id)
       }
       .padding({ left: Sp.M, right: Sp.M })
     }
@@ -637,12 +646,12 @@ export struct SettingsPane {
   tabChip(key: string, label: ResourceStr) {
     Text(label)
       .fontSize(Fs.SECONDARY)
-      .fontColor(this.tab === key ? Color.White : $r('sys.color.font_secondary'))
+      .fontColor(this.section === key ? Color.White : $r('sys.color.font_secondary'))
       .padding({ left: Sp.M, right: Sp.M, top: Sp.S, bottom: Sp.S })
       .borderRadius(Radius.L)
-      .backgroundColor(this.tab === key ? $r('sys.color.brand') : $r('sys.color.background_secondary'))
+      .backgroundColor(this.section === key ? $r('sys.color.brand') : $r('sys.color.background_secondary'))
       .onClick(() => {
-        this.tab = key;
+        this.onSelectSection(key);
       })
   }
 
@@ -1630,8 +1639,6 @@ export struct SettingsPane {
   @Builder
   pluginsTab() {
     Row({ space: Sp.S }) {
-      this.subChip('config', '配置')
-      this.subChip('list', '列表')
       Blank()
       Text(pluginSummary(this.plugins))
         .fontSize(Fs.CAPTION)
@@ -1639,26 +1646,7 @@ export struct SettingsPane {
     }
     .width('100%')
 
-    if (this.pluginView === 'config') {
-      this.pluginConfigView()
-    } else {
-      this.pluginListView()
-    }
-  }
-
-  @Builder
-  subChip(value: string, label: string) {
-    Text(label)
-      .fontSize(Fs.SECONDARY)
-      .fontColor(this.pluginView === value ? Color.White : $r('sys.color.font_secondary'))
-      .padding({ left: Sp.M, right: Sp.M, top: Sp.XS, bottom: Sp.XS })
-      .borderRadius(Radius.L)
-      .backgroundColor(this.pluginView === value
-        ? $r('sys.color.brand')
-        : $r('sys.color.background_secondary'))
-      .onClick(() => {
-        this.pluginView = value;
-      })
+    this.pluginConfigView()
   }
 
   /** 只读清单 + 关键词过滤（官方"插件列表"标签页的语义） */

@@ -57,6 +57,18 @@
       "value": "Device"
     },
     {
+      "name": "settings_inventory",
+      "value": "Plugin inventory"
+    },
+    {
+      "name": "settings_presets",
+      "value": "Presets"
+    },
+    {
+      "name": "settings_skills",
+      "value": "Skills"
+    },
+    {
       "name": "action_new_session",
       "value": "New session"
     },

@@ -28,6 +28,14 @@
 
 /** 一条轨道（官方把 sidebar / main / rightbar 看作独立结构，而不是一个页面里的几个区块） */
 export enum PanelLocation {
+  /**
+   * 设置域内部的二级分区（General / Models / Plugins / Plugin Inventory …）。
+   *
+   * 【为什么它也算一种"位置"】设置页的切换器与侧栏/右栏的切换器是**同一件事**：
+   * "一组可选面板 + 排序 + 可用性"。放进注册表之后，三处共用一套机制
+   * （`descriptors(location)` / `canSelect` / `firstAvailable`），不必各写一套。
+   */
+  SETTINGS = 'settings',
   SIDEBAR = 'sidebar',
   MAIN = 'main',
   RIGHTBAR = 'rightbar',
@@ -193,6 +201,44 @@ export const PANEL_SIDEBAR_SETTINGS: string = 'sidebar.settings';
  */
 export const PANEL_RIGHT_DETAIL: string = 'right.detail';
 
+/**
+ * 设置域的分区（P4-1）。
+ *
+ * 【官方四段 + 本仓特有四项】官方 `ui-settings` 的分区是
+ * **General / Models / Plugins / Plugin Inventory**（矩阵 §4 的四个 id 各一行）。
+ * 本仓另有四项在官方没有对应分区、但确实是"设置"（前端已有内容、且已登记在矩阵里）：
+ *   · **核心**（E110：核心内容作为设置的第一段；官方没有独立核心页）
+ *   · **预设**（E129：官方把 Agent 预设放在设置里管理）
+ *   · **技能**（E135：`skills/list` 的呈现面）
+ *   · **设备**（本机事实：权限/模态/外观等）
+ * 它们排在官方四段**之后**，并在 `owner` 上标成 `'hdsh'`：谁是官方对齐项、谁是端侧补充，
+ * 一眼可分（不给它们编一个"官方分区名"）。
+ *
+ * 【为什么把"插件清单"拆成独立分区】它此前是插件段里的一个子页签（`config` / `list`）。
+ * 官方把它作为**独立分区**（`settings-plugin-inventory`，只读的 Cordis Loader 清单）——
+ * 只读清单与"可配置的插件卡"是两件事，拆开后各自的入口、排序与可用性都能被注册表统一管。
+ */
+export function settingsSections(): PanelDescriptor[] {
+  return [
+    { id: 'settings.general', location: PanelLocation.SETTINGS, owner: 'settings',
+      label: '通用', order: 10, available: () => true },
+    { id: 'settings.models', location: PanelLocation.SETTINGS, owner: 'settings',
+      label: '模型', order: 20, available: () => true },
+    { id: 'settings.plugins', location: PanelLocation.SETTINGS, owner: 'settings',
+      label: '插件', order: 30, available: () => true },
+    { id: 'settings.plugin-inventory', location: PanelLocation.SETTINGS, owner: 'settings',
+      label: '插件清单', order: 40, available: () => true },
+    { id: 'settings.core', location: PanelLocation.SETTINGS, owner: 'hdsh',
+      label: '核心', order: 50, available: () => true },
+    { id: 'settings.presets', location: PanelLocation.SETTINGS, owner: 'hdsh',
+      label: '预设', order: 60, available: () => true },
+    { id: 'settings.skills', location: PanelLocation.SETTINGS, owner: 'hdsh',
+      label: '技能', order: 70, available: () => true },
+    { id: 'settings.device', location: PanelLocation.SETTINGS, owner: 'hdsh',
+      label: '设备', order: 80, available: () => true },
+  ];
+}
+
 /** 右栏面板 id（官方右栏的六个候选） */
 export const PANEL_RIGHT_FILES: string = 'right.files';
 export const PANEL_RIGHT_PREVIEW: string = 'right.preview';
@@ -322,6 +368,10 @@ export function createPanelRegistry(mainPanels: PanelDescriptor[]): PanelRegistr
   const right: PanelDescriptor[] = rightbarPanels();
   for (let i = 0; i < right.length; i++) {
     registry.register(right[i]);
+  }
+  const sections: PanelDescriptor[] = settingsSections();
+  for (let i = 0; i < sections.length; i++) {
+    registry.register(sections[i]);
   }
   return registry;
 }

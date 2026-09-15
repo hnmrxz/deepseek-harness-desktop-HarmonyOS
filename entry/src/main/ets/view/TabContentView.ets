@@ -22,7 +22,7 @@
  */
 
 import { ActionNotice, AgentPresetRow, CoreViewState, CredentialItem, FileNode, FilePreview, Fs, HostRecord, HubPhase, LayoutMode, ModelOption, ModelSelection, NavTab, PendingItem, PluginItem, SessionHub, SessionListItem, SettingGroup, SkillRow, Sp, StackPage, WorkspaceItem, aboutInfo, projectGeneralGroups } from 'appstate';
-import type { SettingChoice, SettingItem, SettingsNamespaceState } from 'appstate';
+import type { PanelDescriptor, SettingChoice, SettingItem, SettingsNamespaceState } from 'appstate';
 import { LocalPrefs } from 'platform';
 import { HubBanner } from './HubBanner';
 import { PendingPane } from './PendingPane';
@@ -43,6 +43,12 @@ export interface TabContentFacade {
   browser: WorkspaceBrowserFacade;
   /** 工作区树是否已经由侧栏承载（三栏档位）：主区就不该再重复一份 */
   browserInSidebar: boolean;
+  /** 设置域当前分区（`NavigationState.settingsSection`） */
+  settingsSection: string;
+  /** 设置域的可用分区清单（注册表给；顺序即呈现顺序） */
+  settingsSections: PanelDescriptor[];
+  /** 切设置分区（宿主经注册表校验后写进 `settingsSection`） */
+  onSelectSettingsSection: (sectionId: string) => void;
   choosing: SettingChoice[] | undefined;
   setChoosing: (value: SettingChoice[] | undefined) => void;
   choosingCurrent: string;
@@ -206,6 +212,12 @@ export struct TabContentView {
       })
     } else {
       SettingsPane({
+        // P4-1：分区与清单由注册表给（唯一真值在 NavigationState.settingsSection）
+        section: this.f.settingsSection,
+        sections: this.f.settingsSections,
+        onSelectSection: (sectionId: string) => {
+          this.f.onSelectSettingsSection(sectionId);
+        },
         // E118：核心分区的内容直接由属性传入（不再用 @BuilderParam 注入父 Builder——
         // 真机上点开该分区会 JS 崩溃）
         coreView: this.f.coreView,

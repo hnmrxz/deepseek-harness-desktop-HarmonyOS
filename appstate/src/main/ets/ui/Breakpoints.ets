@@ -78,6 +78,38 @@ export function sidebarPanelSymbol(panelId: string): Resource {
  * 【为什么按 id】同 `sidebarPanelSymbol`。资源本体在 `resources/base/element/string.json`
  * （中文，默认）与 `resources/en_US/...`（英文），由系统按当前语言选择。
  */
+/**
+ * 设置分区 → 文案资源（按分区 id；P4-1）。
+ *
+ * 【为什么与侧栏同一套做法】分区名要跟随系统语言（E117），而 `$r` 只能字面量 ⇒
+ * 资源映射只能放在编译期函数里。视图拿 descriptor 决定"有哪些分区、什么顺序"，
+ * 拿这个函数决定"叫什么"（与侧栏的入口完全同构）。
+ */
+export function settingsSectionLabelRes(sectionId: string): Resource {
+  if (sectionId === 'settings.general') {
+    return $r('app.string.settings_general');
+  }
+  if (sectionId === 'settings.models') {
+    return $r('app.string.settings_models');
+  }
+  if (sectionId === 'settings.plugins') {
+    return $r('app.string.settings_plugins');
+  }
+  if (sectionId === 'settings.plugin-inventory') {
+    return $r('app.string.settings_inventory');
+  }
+  if (sectionId === 'settings.core') {
+    return $r('app.string.settings_core');
+  }
+  if (sectionId === 'settings.presets') {
+    return $r('app.string.settings_presets');
+  }
+  if (sectionId === 'settings.skills') {
+    return $r('app.string.settings_skills');
+  }
+  return $r('app.string.settings_device');
+}
+
 export function sidebarPanelLabelRes(panelId: string): Resource {
   if (panelId === 'sidebar.workspaces') {
     return $r('app.string.tab_workspaces');

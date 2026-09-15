@@ -278,6 +278,18 @@ Composer 的官方字段：Model / Reasoning effort / Permission / Plan / @ Refe
 | 下一步（P4：设置域） | ① 设置页的域划分（General / Models / Plugins / Plugin Inventory，官方 `ui-settings` 的四个分区）——现在是一个 `SettingsPane` ② 设置项写入的统一事务与失败回执（已有 `SettingsWriteResult`，但要按域收口）③ 手机抽屉里的设置入口与「Settings 固定底部」在四形态下的观感（真机）|
 
 ### P4 Settings 域
+
+**进度（2026-09-15，P4-1 已落地）**
+
+| 子项 | 状态 |
+|---|---|
+| 设置分区进注册表 | ✅ **P4-1**：新增 `PanelLocation.SETTINGS` + `settingsSections()`（8 项），`createPanelRegistry` 一并注册 ⇒ 设置页的切换器与侧栏/右栏**共用同一套机制**（`descriptors(location)` / `canSelect` / `firstAvailable`），三处不必各写一套 |
+| **官方四段成为真分区** | ✅ 通用 / 模型 / 插件 / **插件清单**（`settings-plugin-inventory`）。清单此前只是插件段里的一个子页签（`config` / `list`）——官方把它作为**独立分区**（只读的 Cordis Loader 清单），两者是"能配置什么"与"装了什么"两件事 ⇒ 拆开 |
+| 本仓特有四项标明归属 | ✅ 核心（E110）/ 预设（E129）/ 技能（E135）/ 设备（本机事实）排在官方四段**之后**，`owner: 'hdsh'` ⇒ 谁是官方对齐项、谁是端侧补充一眼可分（**不给它们编一个官方分区名**）|
+| 分区状态回归导航 | ✅ 视图里的 `@State tab` 已删除：唯一真值是 `NavigationState.settingsSection`，切换走 `openSettings(nav, section, registry)`（经注册表校验）——深链/返回/从别处进设置都看这一处 |
+| 顺带清理 | ✅ `pluginsTab` 的子页签（`subChip` + `@State pluginView`）随清单独立而删除；`modelSelectionLabel` 死导入清除 |
+| 下一步（P4-2…） | ① 设置页**按域拆组件**（`SettingsGeneral` / `SettingsModels` / `SettingsPlugins` / `SettingsInventory` / …）——`SettingsPane` 仍有 1878 行，是当前最大的视图文件 ② 设置项写入的统一事务与失败回执按域收口 ③ 手机抽屉里的设置入口与四形态观感（真机）|
+
 `SettingsShell`（General / Models / Plugins / Plugin Inventory / …）。**不再往 `SettingsPane.ets` 里堆内容。**
 
 ### P5 视觉精修

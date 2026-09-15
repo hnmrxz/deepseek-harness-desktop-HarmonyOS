@@ -157,6 +157,7 @@ export {
   NavPresentation,
   NavTab,
   LayoutMode,
+  settingsSectionLabelRes,
   sidebarPanelLabelRes,
   sidebarPanelSymbol,
 } from './ui/Breakpoints';
@@ -181,6 +182,7 @@ export type { InputModality } from './model/InputPolicy';
 export {
   createPanelRegistry, PanelLocation, PanelRegistry, rightbarPanels, sidebarPanels,
   sidebarEntries, sidebarPinnedEntries, SIDEBAR_PINNED_ORDER,
+  settingsSections,
   PANEL_RIGHT_DELIVERABLES, PANEL_RIGHT_DETAIL, PANEL_RIGHT_FILES, PANEL_RIGHT_PREVIEW, PANEL_RIGHT_SUBAGENT,
   PANEL_RIGHT_TOOL, PANEL_RIGHT_TRAJECTORY, PANEL_SIDEBAR_CORE, PANEL_SIDEBAR_SETTINGS,
   PANEL_SIDEBAR_WORKSPACES,
@@ -195,7 +197,9 @@ export {
   defaultSidebarPanel, navigateToMain, openOverlay, openSettings, selectRightPanel, setDrawer,
   setSidebarExpanded, sidebarPanelIdOfTab,
   MAIN_CONNECT, MAIN_CONVERSATION, MAIN_CORE, MAIN_DIAGNOSTICS, MAIN_SETTINGS, MAIN_WORKSPACES,
-  Overlay as NavOverlay, SETTINGS_GENERAL, SETTINGS_INVENTORY, SETTINGS_MODELS, SETTINGS_PLUGINS,
+  Overlay as NavOverlay,
+  SETTINGS_CORE, SETTINGS_DEVICE, SETTINGS_GENERAL, SETTINGS_INVENTORY, SETTINGS_MODELS,
+  SETTINGS_PLUGINS, SETTINGS_PRESETS, SETTINGS_SKILLS,
 } from './model/NavigationState';
 export type { NavigationState } from './model/NavigationState';
 

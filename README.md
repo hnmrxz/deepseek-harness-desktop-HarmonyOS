@@ -181,6 +181,13 @@ hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 **P2-2 已落地**：会话头的**后台任务条** —— `Jobs` 模型 40 条断言与中枢 `jobs` 字段一直都在，
 但视图零消费者（又一次"通道有、没接"）；现已接成 中枢 → `Index` → `MainShell` → 会话头任务条
 （live 任务每秒走字、无障碍整段取自模型），并把这条接线登记进功能接线门禁（第 16 条）。
+**P4（设置域）已开工**：设置分区进了注册表（P4-1）——新增 `PanelLocation.SETTINGS` +
+`settingsSections()`（8 项：官方四段**通用 / 模型 / 插件 / 插件清单**在前，本仓特有的
+核心 / 预设 / 技能 / 设备标 `owner: 'hdsh'` 在后），与侧栏、右栏**共用同一套**
+「清单 + 排序 + 可用性 + 切换器」机制；视图里的 `@State tab` 删除，唯一真值回到
+`NavigationState.settingsSection`。「插件清单」从插件段的子页签**升级为独立分区**（官方口径）。
+下一步：设置页按域拆组件（`SettingsPane` 1878 行，仍是最大的视图文件）。
+
 **P3 收口**：右栏「**轨迹**」面板落地（P3-6）—— 时间总览抽成 `view/TimelineOverview.ets`，
 主区轨迹视图与右栏**共用同一份**；右栏**只放总览不放全量台账**（官方右栏的 trajectory 是"当前回合的过程"，
 而本仓 `TrajectoryItem` 没有回合字段 ⇒ 宁可少放一份，也不照抄主区台账）。

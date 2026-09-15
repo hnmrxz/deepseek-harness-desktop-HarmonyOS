@@ -1222,7 +1222,7 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   const { PanelRegistry, PanelLocation, createPanelRegistry, sidebarPanels, rightbarPanels,
     sidebarEntries, sidebarPinnedEntries, SIDEBAR_PINNED_ORDER,
     PANEL_SIDEBAR_SETTINGS, PANEL_SIDEBAR_WORKSPACES,
-    PANEL_RIGHT_DETAIL, PANEL_RIGHT_FILES, PANEL_RIGHT_TRAJECTORY } = PR;
+    PANEL_RIGHT_DETAIL, PANEL_RIGHT_FILES, PANEL_RIGHT_TRAJECTORY, settingsSections } = PR;
   const { initialNavigationState, mainPanels, mainPanelOfLegacyTab, legacyTabOfMainPanel,
     navigateToMain, selectRightPanel, openSettings, openOverlay, closeOverlay, setDrawer, sidebarPanelIdOfTab,
     activeMainPanelOf, mainPanelOfSidebarPanel, sidebarPanelOfMainPanel,
@@ -1234,7 +1234,8 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   const reg = createPanelRegistry(mainPanels());
 
   // ── 注册表：位置是面板的属性，不是页面的 if 分支 ──
-  t.eq('三条轨道的面板都注册了', reg.size(), mainPanels().length + sidebarPanels().length + rightbarPanels().length);
+  t.eq('四条轨道的面板都注册了（含设置域的分区）',
+    reg.size(), mainPanels().length + sidebarPanels().length + rightbarPanels().length + settingsSections().length);
   t.eq('重复 id 被拒绝（不静默覆盖）',
     reg.register({ id: MAIN_CONVERSATION, location: PanelLocation.MAIN, owner: 'x', label: 'x', order: 1, available: () => true }), false);
   t.eq('空 id 被拒绝',
@@ -1376,6 +1377,25 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   t.eq('席位 → 面板 → 席位 往返稳定',
     sidebarPanelOfMainPanel(mainPanelOfSidebarPanel(PANEL_SIDEBAR_SETTINGS)), PANEL_SIDEBAR_SETTINGS);
   t.eq('沉底门槛是个明确的数（视图不写 900 这种字面量）', SIDEBAR_PINNED_ORDER >= 100, true);
+
+  // ── P4-1：设置域分区（官方四段在前、本仓特有四项在后）──
+  const sections = reg.descriptors(PanelLocation.SETTINGS).map((d) => d.id);
+  t.eq('官方四段排在最前（通用 / 模型 / 插件 / 插件清单）', sections.slice(0, 4).join(','),
+    'settings.general,settings.models,settings.plugins,settings.plugin-inventory');
+  t.eq('本仓特有四项排在后面（核心 / 预设 / 技能 / 设备）', sections.slice(4).join(','),
+    'settings.core,settings.presets,settings.skills,settings.device');
+  t.eq('分区总量 8（官方 4 + 本仓 4）', settingsSections().length, 8);
+  t.eq('owner 能区分"官方对齐项"与"端侧补充"',
+    settingsSections().filter((d) => d.owner === 'hdsh').map((d) => d.id).join(','),
+    'settings.core,settings.presets,settings.skills,settings.device');
+  t.eq('默认分区是通用（初值）', initialNavigationState().settingsSection, 'settings.general');
+  t.eq('切分区经注册表校验后写入', openSettings(initialNavigationState(), 'settings.skills', reg).settingsSection,
+    'settings.skills');
+  t.eq('**不可用的分区切不过去**（注册表校验对设置域同样生效）',
+    reg.canSelect(PanelLocation.SETTINGS, 'settings.nope'), false);
+  // 「插件清单」曾经是插件段里的子页签，现在必须是**独立分区**（官方 settings-plugin-inventory）
+  t.eq('插件清单是独立分区（不再是子页签）',
+    sections.indexOf('settings.plugin-inventory') >= 0 && sections.indexOf('settings.plugins') >= 0, true);
 
   // ── 四形态：信息架构不变，只变呈现 ──
   const single = shellTracksOf('single');

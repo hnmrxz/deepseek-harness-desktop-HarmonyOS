@@ -4155,6 +4155,11 @@ struct Index {
   }
 
   /** 切右栏面板（经注册表校验：内容没做的候选切不过去） */
+  /** 切设置分区（经注册表校验；写进 `NavigationState.settingsSection`——唯一真值） */
+  private selectSettingsSection(sectionId: string): void {
+    this.nav = openSettings(this.nav, sectionId, this.panelRegistry);
+  }
+
   private selectRightPanelById(panelId: string): void {
     this.nav = selectRightPanel(this.nav, panelId, this.panelRegistry);
   }
@@ -4257,6 +4262,9 @@ struct Index {
   private buildTabFacade(): TabContentFacade {
     const facade: TabContentFacade = {
     browserInSidebar: shellTracksOf(this.mode).sidebar === TrackPresentation.PANEL,
+    settingsSection: this.nav.settingsSection,
+    settingsSections: this.panelRegistry.descriptors(PanelLocation.SETTINGS),
+    onSelectSettingsSection: (sectionId: string) => this.selectSettingsSection(sectionId),
     browser: this.buildBrowserFacade(),
     answerPending: (item: PendingItem, selected: string[], custom: string) => this.answerPending(item, selected, custom),
     applyDefaultModel: (provider: string, model: string, effort: string) => this.applyDefaultModel(provider, model, effort),
