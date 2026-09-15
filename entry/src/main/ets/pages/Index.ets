@@ -185,6 +185,8 @@ import { ConnectPane } from '../view/ConnectPane';
 import { ConversationPane } from '../view/ConversationPane';
 import { CommandList } from '../view/CommandList';
 import { GoalBar } from '../view/GoalBar';
+import { TabContentView } from '../view/TabContentView';
+import type { TabContentFacade } from '../view/TabContentView';
 import { HubBanner } from '../view/HubBanner';
 import { SessionModelPicker } from '../view/SessionModelPicker';
 import { MainHeaderShell } from '../view/shell/MainHeaderShell';
@@ -4422,287 +4424,8 @@ struct Index {
    * 【为什么把待决放在最上面】它属于"现在就需要你动手"的东西，藏在别处等于拖延；
    * 而官方 web 也是把审批/提问直接摆在对话流里，不另开页签。
    */
-  @Builder
-  workspaceHub(compact: boolean) {
-    Column({ space: Sp.S }) {
-      // 连接状态条（E111）：**先区分"正在连"与"连不上"**。
-      // 启动时要等本机核心就绪（几十秒），这段时间中枢的 lastError 可能带着中间态文本；
-      // 无条件渲染它，用户就会看到「无法连接核心」闪一下——那是假报错。
-      if (this.connectBusy || !this.connectSettled) {
-        Text($r('app.string.connecting_local_core'))
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
-          .width('100%')
-          .padding(Sp.S)
-          .borderRadius(Radius.S)
-          .backgroundColor($r('sys.color.background_secondary'))
-      } else if (this.hubError.length > 0) {
-        this.hubBanner()
-      }
-
-      Row({ space: 4 }) {
-        /*
-         * E163（用户反馈①）：**顶层不再放「新建会话」**。
-         * 用户原话："新建会话应当在工作区文件夹上点击，而不是处在顶层外围，不然不知是给哪个工作区加会话。"
-         * 现在入口在每个工作区组头（见 `workspaceGroup`），建会话时会把该工作区注册成目标 ⇒
-         * "给哪个工作区加会话"从"猜"变成"看得见"。
-         */
-        Text('选择工作区后，在其组头点「+ 会话」')
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
-      }
-      .width('100%')
-      .height(Sz.TOUCH_MIN)
-      Blank()
-      Text($r('app.string.action_choose_folder'))
-        .fontSize(Fs.CAPTION)
-        .fontColor($r('sys.color.brand'))
-        .onClick(() => {
-          this.openFolderPicker();
-        })
-      .width('100%')
-      .height(Sz.TOUCH_MIN)
-
-      if (this.pending.length > 0) {
-        Column({ space: Sp.XS }) {
-          Text(`待你决定 · ${this.pending.length}`)
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.warning'))
-            .width('100%')
-          PendingPane({
-            items: this.pending,
-            onDecide: (item: PendingItem, choiceId: string, reason: string) => {
-              this.decidePending(item, choiceId, reason);
-            },
-            onAnswer: (item: PendingItem, selected: string[], custom: string) => {
-              this.answerPending(item, selected, custom);
-            }
-          })
-        }
-        .width('100%')
-        .constraintSize({ maxHeight: 320 })
-      }
-
-      /*
-       * E134：归档列表（官方语义：注册表全局归档集）。
-       *
-       * 【为什么是只读】线协议只给了 `workspace/archiveSession`，**没有反向端点**——
-       * 所以这里列出它们、可以点开看，但不提供"恢复"（那会是个点不动的按钮）。
-       * 归档集为空时整段不出现，不占版面。
-       */
-      if (this.archivedSessionIds.length > 0) {
-        /*
-         * E165：归档**默认折叠**（反馈②）。这一行是入口；点开才列出已归档会话。
-         * 说明文字写清语义，避免"归档了为什么还在这里"的误解。
-         */
-        Row({ space: Sp.S }) {
-          Text(`${$r('app.string.section_archive')} · ${this.archivedSessionIds.length}`)
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_tertiary'))
-            .layoutWeight(1)
-          Text(this.archiveOpen ? '收起' : '展开')
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.brand'))
-        }
-        .width('100%')
-        .padding(Sp.M)
-        .borderRadius(Radius.S)
-        .backgroundColor($r('sys.color.background_secondary'))
-        .onClick(() => {
-          this.archiveOpen = !this.archiveOpen;
-        })
-
-        if (this.archiveOpen) {
-        Column({ space: Sp.XS }) {
-          Text(`${$r('app.string.section_archive')} · ${this.archivedSessionIds.length}`)
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_tertiary'))
-            .width('100%')
-          ForEach(this.archivedSessions(), (s: SessionListItem) => {
-            Row({ space: Sp.S }) {
-              SymbolGlyph($r('sys.symbol.archivebox')).fontSize(16)
-                .fontColor([$r('sys.color.font_secondary')])
-              Text(s.title.length > 0 ? s.title : $r('app.string.label_unnamed_session'))
-                .fontSize(Fs.SECONDARY)
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .layoutWeight(1)
-              Text(formatClock(s.updatedAt))
-                .fontSize(Fs.CAPTION)
-                .fontColor($r('sys.color.font_tertiary'))
-            }
-            .width('100%')
-            .padding(Sp.M)
-            .borderRadius(Radius.S)
-            .backgroundColor($r('sys.color.background_primary'))
-            .onClick(() => {
-              this.openSession(s.id);
-            })
-          }, (s: SessionListItem) => s.id)
-        }
-        .width('100%')
-        .padding(Sp.M)
-        .borderRadius(Radius.M)
-        .backgroundColor($r('sys.color.background_secondary'))
-        }
-      }
-
-      if (this.workspaces.length === 0) {
-        // 空态按核心阶段分档（D7 §3 第 7 项）：把"看不到会话"引向正确的排查方向
-        Column({ space: Sp.S }) {
-          SymbolGlyph($r('sys.symbol.folder'))
-            .fontSize(36)
-            .fontColor([$r('sys.color.font_tertiary')])
-          Text(sessionEmptyCopy(this.coreView.phase).title)
-            .fontSize(Fs.BODY)
-            .fontColor($r('sys.color.font_secondary'))
-          Text(sessionEmptyCopy(this.coreView.phase).hint)
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_tertiary'))
-            .textAlign(TextAlign.Center)
-        }
-        .width('100%')
-        .layoutWeight(1)
-        .justifyContent(FlexAlign.Center)
-      } else {
-        List({ space: Sp.M }) {
-          ForEach(this.workspaces, (w: WorkspaceItem) => {
-            ListItem() {
-              this.workspaceGroup(w)
-            }
-          }, (w: WorkspaceItem) => w.path)
-        }
-        .width('100%')
-        .layoutWeight(1)
-        .scrollBar(BarState.Off)
-      }
-    }
-    .width('100%')
-    .height('100%')
-    .padding(Sp.M)
-  }
 
   /** 一个工作区：组头（名字/路径/会话数/文件入口）+ 组内会话行 */
-  @Builder
-  workspaceGroup(w: WorkspaceItem) {
-    Column({ space: Sp.XS }) {
-      Row({ space: Sp.S }) {
-        SymbolGlyph($r('sys.symbol.folder')).fontSize(16)
-          .fontColor([w.primary ? $r('sys.color.brand') : $r('sys.color.font_secondary')])
-        Column({ space: 2 }) {
-          Text(w.name.length > 0 ? w.name : w.path)
-            .fontSize(Fs.BODY)
-            .fontWeight(FontWeight.Medium)
-            .width('100%')
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-          Text(`${w.path} · ${w.sessionCount} 会话`)
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_tertiary'))
-            .width('100%')
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-        }
-        .layoutWeight(1)
-        // E163：**在该工作区里建会话**（反馈①：入口挂在工作区上，用户看得见"给谁加"）
-        Text('+ 会话')
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.brand'))
-          .onClick(() => {
-            this.createSessionIn(w);
-          })
-        Text($r('app.string.action_files'))
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.brand'))
-          .onClick(() => {
-            this.openWorkspaceFiles(w);
-          })
-        /*
-         * E132：删除工作区（只删**注册**，不删目录）。
-         *
-         * 【为什么要两步确认】它虽然不动磁盘文件，但会让"这个目录在这里出现过、以及它下面
-         * 那些会话的归属"消失——一次误触的代价不小，而 ArkUI 的 Row 里塞不下一个说得清楚的
-         * 确认弹窗。所以同一位置先变成「确认删除 / 取消」，用户看清了再按。
-         * 【为什么有时不显示】删除需要**注册表 id**；列表里的工作区是由会话 cwd 归并出来的，
-         * 只有注册表里登记过的才有 id。没有 id 就**不显示**这个入口（而不是给一个点了没反应的）。
-         */
-        if (this.registryIdOf(w).length > 0) {
-          Text(this.confirmingDeletePath === w.path
-            ? $r('app.string.action_delete_confirm')
-            : $r('app.string.action_delete'))
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.alert'))
-            .onClick(() => {
-              if (this.confirmingDeletePath === w.path) {
-                this.confirmingDeletePath = '';
-                this.deleteWorkspaceByPath(w);
-              } else {
-                this.confirmingDeletePath = w.path;
-                // E140：状态字符串经资源管理器取值；并附上名字——确认框必须指名道姓
-                const note: string = this.localized($r('app.string.confirm_delete_workspace_note'));
-                this.settingWriteNote = note.length > 0
-                  ? `${note}（${w.name.length > 0 ? w.name : w.path}）`
-                  : `再按一次「确认删除」即移除该工作区的登记；磁盘上的目录与文件不会被删除。（${w.name.length > 0 ? w.name : w.path}）`;
-              }
-            })
-        }
-      }
-      .width('100%')
-
-      ForEach(this.sessionsOf(w), (s: SessionListItem) => {
-        Column({ space: 2 }) {
-          Row({ space: Sp.S }) {
-            Text(s.title.length > 0 ? s.title : $r('app.string.label_unnamed_session'))
-              .fontSize(Fs.SECONDARY)
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .layoutWeight(1)
-            if (s.running) {
-              Text($r('app.string.status_running'))
-                .fontSize(Fs.CAPTION)
-                .fontColor($r('sys.color.brand'))
-            }
-            /*
-             * E134：归档会话（官方语义是"注册表全局归档集"）。
-             * 【为什么没有"取消归档"】线协议里只有 `workspace/archiveSession`，
-             * **没有反向端点**——所以这里只提供归档，不造一个点不动的"恢复"。
-             */
-            Text($r('app.string.action_archive'))
-              .fontSize(Fs.CAPTION)
-              .fontColor($r('sys.color.font_tertiary'))
-              .onClick(() => {
-                SessionHub.shared().archiveSession(s.id).then((n: ActionNotice) => {
-                  this.settingWriteNote = this.noticeText(n);
-                }).catch((e: Object) => {
-                  const err = e as Error;
-                  this.settingWriteNote = `${this.localized($r('app.string.note_archive_failed'))}${err.message}`;
-                });
-              })
-          }
-          .width('100%')
-          Text(s.blank ? $r('app.string.status_not_started')
-            : `${relativeTime(s.updatedAt, Date.now())} · ${formatClock(s.updatedAt)}`)
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_tertiary'))
-            .width('100%')
-            .maxLines(1)
-        }
-        .width('100%')
-        .padding({ left: Sp.L, right: Sp.M, top: Sp.S, bottom: Sp.S })
-        .borderRadius(Radius.S)
-        .backgroundColor(this.selectedSessionId === s.id
-          ? $r('sys.color.background_secondary')
-          : $r('sys.color.background_primary'))
-        .onClick(() => {
-          this.openSession(s.id);
-        })
-      }, (s: SessionListItem) => s.id)
-    }
-    .width('100%')
-    .padding(Sp.M)
-    .borderRadius(Radius.M)
-    .backgroundColor($r('sys.color.background_secondary'))
-  }
 
   /**
    * 核心页内容（E110：原「核心」页签并入设置，作为设置页的第一个页签）。
@@ -4745,188 +4468,129 @@ struct Index {
     .height('100%')
   }
 
+  /** 标签页内容所需能力的门面（**每次渲染重建**：值型快照、写型 setter、方法型闭包） */
+  private buildTabFacade(): TabContentFacade {
+    const facade: TabContentFacade = {
+    answerPending: (item: PendingItem, selected: string[], custom: string) => this.answerPending(item, selected, custom),
+    applyDefaultModel: (provider: string, model: string, effort: string) => this.applyDefaultModel(provider, model, effort),
+    archiveOpen: this.archiveOpen,
+    setArchiveOpen: (value: boolean) => {
+      this.archiveOpen = value;
+    },
+    archivedSessionIds: this.archivedSessionIds,
+    archivedSessions: () => this.archivedSessions(),
+    attachWorkspaceFileToComposer: (node: FileNode) => this.attachWorkspaceFileToComposer(node),
+    choosing: this.choosing,
+    setChoosing: (value: SettingChoice[] | undefined) => {
+      this.choosing = value;
+    },
+    choosingCurrent: this.choosingCurrent,
+    setChoosingCurrent: (value: string) => {
+      this.choosingCurrent = value;
+    },
+    choosingKey: this.choosingKey,
+    setChoosingKey: (value: string) => {
+      this.choosingKey = value;
+    },
+    choosingLabel: this.choosingLabel,
+    setChoosingLabel: (value: string) => {
+      this.choosingLabel = value;
+    },
+    confirmingDeletePath: this.confirmingDeletePath,
+    setConfirmingDeletePath: (value: string) => {
+      this.confirmingDeletePath = value;
+    },
+    connectBusy: this.connectBusy,
+    connectSettled: this.connectSettled,
+    coreNotice: this.coreNotice,
+    coreView: this.coreView,
+    createSessionIn: (w: WorkspaceItem) => this.createSessionIn(w),
+    credentials: this.credentials,
+    currentTab: () => this.currentTab(),
+    decidePending: (item: PendingItem, choiceId: string, reason: string) => this.decidePending(item, choiceId, reason),
+    deleteWorkspaceByPath: (w: WorkspaceItem) => this.deleteWorkspaceByPath(w),
+    fileTree: this.fileTree,
+    forgetHost: () => this.forgetHost(),
+    hosts: this.hosts,
+    hubAuthority: this.hubAuthority,
+    hubConnected: this.hubConnected,
+    hubError: this.hubError,
+    hubPhase: this.hubPhase,
+    hubStreams: this.hubStreams,
+    hubTraceTail: () => this.hubTraceTail(),
+    localItemOf: (key: string) => this.localItemOf(key),
+    localized: (id: Resource) => this.localized(id),
+    mode: this.mode,
+    models: this.models,
+    noticeText: (n: ActionNotice) => this.noticeText(n),
+    onCoreAction: (id: string) => this.onCoreAction(id),
+    onCoreSelectVersion: (version: string) => this.onCoreSelectVersion(version),
+    onResetPluginRows: () => this.onResetPluginRows(),
+    onTogglePlugin: (id: string, disabled: boolean) => this.onTogglePlugin(id, disabled),
+    openCredentialSheet: (ref: string) => this.openCredentialSheet(ref),
+    openDiagnostics: () => this.openDiagnostics(),
+    openFile: (node: FileNode) => this.openFile(node),
+    openFolderPicker: () => this.openFolderPicker(),
+    openSession: (id: string) => this.openSession(id),
+    openStructSettingSheet: (item: SettingItem) => this.openStructSettingSheet(item),
+    openTextSettingSheet: (item: SettingItem) => this.openTextSettingSheet(item),
+    openWorkspaceFiles: (w: WorkspaceItem) => this.openWorkspaceFiles(w),
+    pending: this.pending,
+    pendingWorkspacePick: this.pendingWorkspacePick,
+    setPendingWorkspacePick: (value: boolean) => {
+      this.pendingWorkspacePick = value;
+    },
+    permissionCurrent: this.permissionCurrent,
+    permissionOptions: this.permissionOptions,
+    plugins: this.plugins,
+    presetNote: this.presetNote,
+    presets: this.presets,
+    preview: this.preview,
+    registryIdOf: (w: WorkspaceItem) => this.registryIdOf(w),
+    resetSetting: (key: string) => this.resetSetting(key),
+    selectedSessionId: this.selectedSessionId,
+    selection: this.selection,
+    setSelection: (value: ModelSelection) => {
+      this.selection = value;
+    },
+    sessionForWorkspace: (workspaceId: string) => this.sessionForWorkspace(workspaceId),
+    sessionsOf: (w: WorkspaceItem) => this.sessionsOf(w),
+    settingItemOf: (key: string) => this.settingItemOf(key),
+    settingWriteNote: this.settingWriteNote,
+    setSettingWriteNote: (value: string) => {
+      this.settingWriteNote = value;
+    },
+    settings: this.settings,
+    settingsStates: this.settingsStates,
+    skillNote: this.skillNote,
+    skills: this.skills,
+    stackPage: this.stackPage,
+    setStackPage: (value: StackPage) => {
+      this.stackPage = value;
+    },
+    toggleDirectory: (path: string) => this.toggleDirectory(path),
+    treeEmptyHint: this.treeEmptyHint,
+    setTreeEmptyHint: (value: string) => {
+      this.treeEmptyHint = value;
+    },
+    treeEmptyTitle: this.treeEmptyTitle,
+    setTreeEmptyTitle: (value: string) => {
+      this.treeEmptyTitle = value;
+    },
+    workspaces: this.workspaces,
+    writeSetting: (key: string, value: Object, label: string) => this.writeSetting(key, value, label),
+    wsDrill: this.wsDrill,
+    setWsDrill: (value: number) => {
+      this.wsDrill = value;
+    },
+    };
+    return facade;
+  }
+
   @Builder
   tabContent(compact: boolean) {
-    /*
-     * E108：工作区视图（合并了原来的「会话」与「待决」两个页签）。
-     * 官方 web 的侧栏就是"工作区为组、会话挂在组下"；待决属于**当前这次对话**，显示在列表顶部。
-     * 文件浏览仍是工作区里的下钻（`wsDrill > 0`，见下一个分支）。
-     */
-    if (this.currentTab() === NavTab.WORKSPACES && this.wsDrill === 0) {
-      this.workspaceHub(compact)
-    } else if (this.currentTab() === NavTab.WORKSPACES) {
-      WorkspacePane({
-        workspaces: this.workspaces,
-        onPickFolder: () => {
-          this.openFolderPicker();
-        },
-        tree: this.fileTree,
-        selectedPath: this.preview === undefined ? '' : this.preview.path,
-        preview: this.preview,
-        compact: compact && this.mode === LayoutMode.SINGLE,
-        drillLevel: this.wsDrill,
-        treeEmptyTitle: this.treeEmptyTitle,
-        treeEmptyHint: this.treeEmptyHint,
-        onSelectWorkspace: (id: string) => {
-          const scope: string = this.sessionForWorkspace(id);
-          // 空态文案按「为什么空」分档（D3 §4：空态要说明可以做什么）
-          this.pendingWorkspacePick = true;
-          if (scope.length === 0) {
-            this.treeEmptyTitle = '该工作区下还没有会话';
-            this.treeEmptyHint = '文件浏览的作用域是会话级（workspaceFileScopeId = 会话 id），请先在这个目录里新建一个会话。';
-          } else {
-            this.treeEmptyTitle = '该目录暂无文件';
-            this.treeEmptyHint = '目录确实为空，或 Host 拒绝列出它的内容（详见连接诊断）。';
-            if (this.hubConnected) {
-              SessionHub.shared().openWorkspace(scope);
-            }
-          }
-          if (this.mode === LayoutMode.SINGLE) {
-            this.wsDrill = 1;
-          }
-        },
-        onToggleDirectory: (path: string) => {
-          this.toggleDirectory(path);
-        },
-        onOpenFile: (node: FileNode) => {
-          this.openFile(node);
-        },
-        onAttachFile: (node: FileNode) => {
-          this.attachWorkspaceFileToComposer(node);
-        },
-        onBack: () => {
-          this.wsDrill = this.wsDrill > 0 ? this.wsDrill - 1 : 0;
-        }
-      })
-    } else {
-      SettingsPane({
-        // E118：核心分区的内容直接由属性传入（不再用 @BuilderParam 注入父 Builder——
-        // 真机上点开该分区会 JS 崩溃）
-        coreView: this.coreView,
-        permissionCurrent: this.permissionCurrent,
-        permissionOptions: this.permissionOptions,
-        coreNotice: this.coreNotice,
-        onCoreAction: (id: string) => {
-          this.onCoreAction(id);
-        },
-        onCoreSelectVersion: (version: string) => {
-          this.onCoreSelectVersion(version);
-        },
-        onTogglePluginRow: (id: string, disabled: boolean) => {
-          this.onTogglePlugin(id, disabled);
-        },
-        onResetPluginRowsAction: () => {
-          this.onResetPluginRows();
-        },
-        // E114：官方「通用」分区承载的是**用户面向的功能包设置**（外观/语言/会话…），
-        // 引擎参数不在其中。这里做同样的策展：白名单命名空间整组显示，
-        // 其余命名空间里**用户改过**的项收进「其他已修改项」，既不占版面又撤得回。
-        groups: projectGeneralGroups(this.settings),
-        // E128：模型页要能编辑提供方的设置分区（baseURL / 模型目录），所以另传全量
-        allGroups: this.settings,
-        // E135：技能清单（数据层已就绪；形状未识别时界面如实显示结论）
-        skills: this.skills,
-        skillNote: this.skillNote,
-        // E161：预设名单（数据层已按真机实测契约接线）
-        presets: this.presets,
-        presetNote: this.presetNote,
-        /*
-         * E170：预设的**复制**（官方唯一创建入口）与**删除**（仅自定义项）。
-         * 【为什么自动命名而不弹输入框】官方用复制对话框让我们填"标识 + 名称"；
-         * 端侧先做**一步完成**的版本（`<id>-copy` / `<名称> 副本`）——它是一个完整可用的动作，
-         * 而不是半成品表单；需要改名时再走查看/编辑那条线（`read` 已就绪）。
-         */
-        onPresetCopy: (from: string, name: string) => {
-          const id: string = `${from}-copy`;
-          SessionHub.shared().copyAgentPreset(from, id, `${name.length > 0 ? name : from} 副本`)
-            .then((n: ActionNotice) => {
-              this.settingWriteNote = this.noticeText(n);
-            }).catch((e: Object) => {
-              this.settingWriteNote = `复制预设失败：${(e as Error).message}`;
-            });
-        },
-        onPresetDelete: (id: string) => {
-          SessionHub.shared().deleteAgentPreset(id)
-            .then((n: ActionNotice) => {
-              this.settingWriteNote = this.noticeText(n);
-            }).catch((e: Object) => {
-              this.settingWriteNote = `删除预设失败：${(e as Error).message}`;
-            });
-        },
-        credentials: this.credentials,
-        plugins: this.plugins,
-        hosts: this.hosts,
-        models: this.models,
-        selection: this.selection,
-        about: aboutInfo(),
-        writeNote: this.settingWriteNote,
-        states: this.settingsStates,
-        onToggleSetting: (key: string, value: boolean) => {
-          if (this.settingItemOf(key) === undefined) {
-            // 本地偏好：本客户端自己的开关，没有上游写路径。
-            // 如实说明它只在本机生效，而不是假装写成功了。
-            this.settingWriteNote = `「${key}」是本机偏好，只在本次运行内生效（尚未做持久化）。`;
-            return;
-          }
-          this.writeSetting(key, value as Object, key);
-        },
-        onPickChoice: (key: string, current: string) => {
-          const item: SettingItem | undefined = this.settingItemOf(key);
-          if (item === undefined) {
-            // 本机偏好：没有上游写路径，但**有端侧持久化路径**（`platform/LocalPrefs`）。
-            // 仍然复用同一个选中浮层（选项来源换成端侧那一组），提交时由 `applyChoice` 分流。
-            const local: SettingItem | undefined = this.localItemOf(key);
-            if (local === undefined) {
-              this.settingWriteNote = `「${key}」既不属于 Host 设置、也不在本机偏好表里。`;
-              return;
-            }
-            this.choosingKey = key;
-            this.choosingLabel = local.label;
-            this.choosingCurrent = current;
-            this.choosing = local.choices;
-            return;
-          }
-          if (item.choices.length === 0) {
-            // 防御分支：列表里的 TEXT 项已直接走 `onEditText`，不会走到这里。
-            this.openTextSettingSheet(item);
-            return;
-          }
-          this.choosingKey = key;
-          this.choosingLabel = item.label;
-          this.choosingCurrent = current;
-          this.choosing = item.choices;
-        },
-        onEditText: (item: SettingItem) => {
-          this.openTextSettingSheet(item);
-        },
-        onEditStruct: (item: SettingItem) => {
-          this.openStructSettingSheet(item);
-        },
-        onResetSetting: (key: string) => {
-          this.resetSetting(key);
-        },
-        onPickEffort: (effort: string) => {
-          this.selection = {
-            provider: this.selection.provider, modelId: this.selection.modelId, effort: effort
-          };
-        },
-        onSelectModel: (provider: string, model: string, effort: string) => {
-          this.applyDefaultModel(provider, model, effort);
-        },
-        onAuthorizeCredential: (ref: string) => {
-          this.openCredentialSheet(ref);
-        },
-        onPairHost: () => {
-          this.stackPage = StackPage.CONNECT;
-        },
-        onRevokeHost: (id: string) => {
-          this.forgetHost();
-        },
-        onOpenDiagnostics: () => {
-          this.openDiagnostics();
-        }
-      })
-    }
+    // 标签页内容归 TabContentView 所有（P0：主区搬迁第一束）；宿主只给门面（每次渲染重建）。
+    TabContentView({ f: this.buildTabFacade(), compact: compact })
   }
 
 }
