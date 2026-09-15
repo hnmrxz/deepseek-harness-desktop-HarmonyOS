@@ -149,6 +149,51 @@ export function sortPending(items: PendingItem[]): PendingItem[] {
   return copy;
 }
 
+/**
+ * 重试计数行（P7-18，对齐官方 `ModelRetryItem` 的 `{retry}/{maxRetries}` 与 `mode === 'always'` 时的 ∞）。
+ *
+ * 官方在 `mode === 'normal'` 时显示 `node.maxRetries`，否则显示 `∞`
+ * （源码：`const maximum = node.mode === "normal" ? node.maxRetries : "∞";`）。
+ * 我们照同一个判据，但不画符号：`∞` 在中文界面里不如「不限次数」直白。
+ *
+ * @param attempt 第几次（≤0 时返回空串：没有重试信息就不该显示这一行）
+ * @param max 上限（**-1 = 上游没给上限**）
+ * @param mode 模式（`'normal'` / `'always'` / 空）
+ */
+export function retryCountLine(attempt: number, max: number, mode: string): string {
+  if (attempt <= 0) {
+    return '';
+  }
+  if (max > 0) {
+    return `正在重试（第 ${attempt}/${max} 次）`;
+  }
+  if (mode === 'always') {
+    return `正在重试（第 ${attempt} 次，不限次数）`;
+  }
+  return `正在重试（第 ${attempt} 次）`;
+}
+
+/**
+ * 倒计时行（剩余毫秒 → 人话）。
+ *
+ * 三种状态各有对应说法，**不许含糊**：
+ *   · 还没到点 ⇒ 「约 N 秒后重试」；
+ *   · 到点了但还没收到"已开始" ⇒ 「正在重试…」（诚实：等待结束，请求已发/将发）；
+ *   · 已经收到 `llm/retry-started` ⇒ 空串（调用方显示"正在重试"即可，不再显示秒数）。
+ *
+ * 秒数**向上取整**：显示 "0 秒后" 而实际还需 0.4 秒会让人以为卡住了。
+ */
+export function retryWaitLine(remainingMs: number, started: boolean): string {
+  if (started) {
+    return '';
+  }
+  if (remainingMs <= 0) {
+    return '正在重试…';
+  }
+  const seconds: number = Math.ceil(remainingMs / 1000);
+  return `约 ${seconds} 秒后重试`;
+}
+
 /** 风险等级文案 */
 export function riskLabel(risk: RiskLevel): string {
   if (risk === RiskLevel.DANGEROUS) {

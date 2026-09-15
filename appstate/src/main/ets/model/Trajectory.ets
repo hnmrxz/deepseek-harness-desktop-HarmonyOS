@@ -117,6 +117,20 @@ export interface TrajectoryItem {
   /** 是否默认展开（如失败的工具、错误） */
   expanded: boolean;
   /**
+   * 重试计数与上限（仅 ERROR 且来自 `llm/retry`；P7-18）。
+   *
+   * `retryMax` 为 **-1** 表示"上游没给上限"（`mode: 'always'` 的分支里没有 `maxRetries`）。
+   * 用 -1 而不是 0：0 会被读成"上限是 0 次"，那是另一个意思。
+   */
+  retryAttempt: number;
+  retryMax: number;
+  /** 本次重试前的等待毫秒数（0 = 没有等待信息） */
+  retryDelayMs: number;
+  /** 重试模式：`''`（不是重试）/ `'normal'` / `'always'` */
+  retryMode: string;
+  /** 重试是否**已经开始**（`llm/retry-started` 到达后为 true；此时不再显示倒计时） */
+  retryStarted: boolean;
+  /**
    * 命令配对 id（仅 COMMAND；`command/run` 与 `command/done` 靠它落成同一条）。
    *
    * 上游出处：`dsh-commands` 的 `execute()` 先 append `command/run{commandId,…}`，
@@ -169,7 +183,12 @@ export function makeItem(id: string, kind: TrajectoryKind, at: number): Trajecto
     internal: false,
     images: [],
     commandId: '',
-    commandKind: ''
+    commandKind: '',
+    retryAttempt: 0,
+    retryMax: -1,
+    retryDelayMs: 0,
+    retryMode: '',
+    retryStarted: false
   };
 }
 
@@ -227,6 +246,18 @@ export function mergeTrajectoryItem(previous: TrajectoryItem, next: TrajectoryIt
     kind = nextKind;
   }
   merged.commandKind = kind;
+
+  /*
+   * 重试配对（P7-18）：`llm/retry` 给"第几次 / 上限 / 等待多久 / 失败原因"，
+   * 稍后的 `llm/retry-started` 只说"这一次开始了"。两者落到同一条上，
+   * 于是界面能从"倒计时"切到"正在重试"——这正是官方 `ModelRetryItem` 的两态。
+   */
+  merged.retryAttempt = next.retryAttempt > 0 ? next.retryAttempt : previous.retryAttempt;
+  // 上限只在 normal 分支出现：新值缺失（-1）时保留旧值，别把"5 次上限"擦成"无上限"
+  merged.retryMax = next.retryMax >= 0 ? next.retryMax : previous.retryMax;
+  merged.retryDelayMs = next.retryDelayMs > 0 ? next.retryDelayMs : previous.retryDelayMs;
+  merged.retryMode = next.retryMode.length > 0 ? next.retryMode : previous.retryMode;
+  merged.retryStarted = next.retryStarted || previous.retryStarted;
   return merged;
 }
 

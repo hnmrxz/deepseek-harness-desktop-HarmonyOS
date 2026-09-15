@@ -184,7 +184,14 @@ const FEATURES = [
    * composer notice." 我们此前把任何失败都写成红色横幅 ⇒ 连点两下「插话」/轮次刚结束去插话
    * 都会显示"修改待发队列失败"（假失败）。钉两端：纯判定 + 中枢里的分支。
    */
-  { name: '队列竞态', patterns: [['isBenignQueueRace', 2], ['QUEUE_ITEM_NOT_FOUND', 2], ['STEER_UNAVAILABLE', 2]] }
+  { name: '队列竞态', patterns: [['isBenignQueueRace', 2], ['QUEUE_ITEM_NOT_FOUND', 2], ['STEER_UNAVAILABLE', 2]] },
+  /*
+   * 模型请求的重试行（P7-18）。上游 `llm/retry` 携带 `{retry, maxRetries, delayMs, mode, failure}`
+   * （`dsh-llm-retry` 的类型逐字），官方据此渲染一个**带倒计时**的节点；我们此前只读 `retry`
+   * 拼个 title、正文空白 ⇒ 设备网络最差时用户看到"出错了 + 一片空白"。钉三段：投影（中枢读五个槽位）
+   * + 两段文案（纯模型）+ 行组件（含每秒倒计时）。
+   */
+  { name: '重试行', patterns: [['retryCountLine', 2], ['retryWaitLine', 2], ['RetryRow', 2]] }
 ];
 
 /**

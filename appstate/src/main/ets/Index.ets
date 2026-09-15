@@ -35,7 +35,7 @@ export {
   pendingSortKey,
   previewOutput,
   relativeTime,
-  riskLabel,
+  retryCountLine, retryWaitLine, riskLabel,
   sortPending,
   toolStateLabel
 } from './model/Present';

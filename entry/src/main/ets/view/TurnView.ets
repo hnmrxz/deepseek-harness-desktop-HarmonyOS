@@ -47,6 +47,7 @@ import { DeliverableCard } from './DeliverableCard';
 import { SubagentCard } from './SubagentCard';
 import { ToolCard } from './ToolCard';
 import { CommandRow } from './CommandRow';
+import { RetryRow } from './RetryRow';
 
 /**
  * 把"全部展开 / 收起全部"从回合渲染里接出去（E351）。
@@ -295,6 +296,9 @@ export struct TurnView {
     } else if (item.kind === TrajectoryKind.COMMAND) {
       // 斜杠命令归 CommandRow（P7-13）：命令不是"谁说的话"，是一次操作 + 它的结局
       CommandRow({ item: item })
+    } else if (item.kind === TrajectoryKind.ERROR && item.retryAttempt > 0) {
+      // 模型请求的重试（P7-18）：单独一行，带"第几次/上限 + 倒计时 + 失败原因"
+      RetryRow({ item: item })
     } else if (item.kind === TrajectoryKind.ERROR) {
       this.errorItem(item)
     }
@@ -427,8 +431,14 @@ export struct TurnView {
           .fontSize(Fs.SECONDARY)
           .width('100%')
           .textAlign(TextAlign.Start)
+        /*
+         * 【P7-18：删掉那个假的「重试」标签】
+         * 它长得像按钮却**没有任何 onClick**（只有「查看诊断」接了动作）——
+         * 用户点它没有任何反应，而本仓的规矩是"不放点了没反应的假入口"。
+         * 真正要重发一条消息，走消息行自己的「重发」（那条路有真实协议面）；
+         * 模型请求的自动重试由 Host 负责，界面上不该给一个假的"手动重试"。
+         */
         Row({ space: Sp.L }) {
-          Text('重试').fontSize(Fs.CAPTION).fontColor($r('sys.color.brand'))
           Text('查看诊断')
             .fontSize(Fs.CAPTION)
             .fontColor($r('sys.color.brand'))

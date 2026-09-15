@@ -88,8 +88,21 @@ export enum ContentSlot {
   STREAM = 'stream',
   /** 轮次结束原因 */
   TURN_REASON = 'turn-reason',
-  /** 重试计数 */
+  /** 重试计数（第几次） */
   RETRY = 'retry',
+  /**
+   * 重试上限（`llm/retry` 的 `maxRetries`；**仅 `mode: 'normal'` 有**，`'always'` 没有上限）。
+   *
+   * 出处：`dsh-llm-retry/lib/types/types.d.ts` 的 `LlmRetryEventData` 是可辨识联合——
+   * `{mode:'normal', retry, maxRetries, delayMs, failure}` 或 `{mode:'always', retry, delayMs, failure}`。
+   */
+  RETRY_MAX = 'retry-max',
+  /** 本次重试前的等待毫秒数（`delayMs`；官方界面用它算倒计时） */
+  RETRY_DELAY_MS = 'retry-delay-ms',
+  /** 重试模式（`'normal'` = 有上限；`'always'` = 不限次） */
+  RETRY_MODE = 'retry-mode',
+  /** 失败原因（`failure.message`；上游 invariant 保证它是**非空字符串**） */
+  RETRY_FAILURE = 'retry-failure',
   /** 边界序号（轮次号 / 步号 / 队列下标）；只驱动状态，不显示为用户内容 */
   ORDINAL = 'ordinal',
   /** 命令或其结果的文本 */
@@ -337,19 +350,37 @@ export const SESSION_EVENT_SHAPES: SessionEventShape[] = [
   },
   // ── 重试（失败可视化的真实来源） ──────────────────────────────────
   {
+    /*
+     * 重试（P7-18）。字段按上游类型**逐字**绑定：
+     *   `dsh-llm-retry/lib/types/types.d.ts` 的 `LlmRetryEventData`
+     *     = `{mode:'normal', retry, maxRetries, delayMs, failure:{code,message}}`
+     *     | `{mode:'always', retry, delayMs, failure:{code,message}}`
+     * `failure` 的内部形状此前写的是"未实测"——现在有权威声明了（见上面那行），
+     * 而且 `invariant.js` 明确要求 `failure.message`/`failure.code` 都是**非空字符串**。
+     */
     type: 'llm/retry',
     standalone: true,
     slots: [
-      // 实测 data 顶层有 delayMs / failure / maxRetries / retry，
-      // 但 failure 的内部形状（错误码字段名）**未实测**，故不在此绑定。
       { slot: ContentSlot.RETRY, path: 'retry' },
+      { slot: ContentSlot.RETRY_MAX, path: 'maxRetries' },
+      { slot: ContentSlot.RETRY_DELAY_MS, path: 'delayMs' },
+      { slot: ContentSlot.RETRY_MODE, path: 'mode' },
+      { slot: ContentSlot.RETRY_FAILURE, path: 'failure.message' },
       { slot: ContentSlot.MODEL, path: 'provider' }
     ]
   },
   {
+    /*
+     * 重试**已开始**（等待结束、下一次请求发出前写入上游的日志）。
+     * 官方界面据此把"倒计时"换成"正在重试"⇒ 这一帧不能丢（此前 `standalone: false`
+     * 意味着投影直接忽略它）。它与 `llm/retry` 靠 `retryId` 配对——我们按 turn/step/retry
+     * 落到同一条（见 `SessionHub` 的说明）。
+     */
     type: 'llm/retry-started',
-    standalone: false,
-    slots: [{ slot: ContentSlot.RETRY, path: 'retry' }]
+    standalone: true,
+    slots: [
+      { slot: ContentSlot.RETRY, path: 'retry' }
+    ]
   },
   // ── 请求上下文 ────────────────────────────────────────────────────
   {

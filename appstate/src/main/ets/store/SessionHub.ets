@@ -31,6 +31,7 @@
 
 import { Connection } from 'connection';
 import { SessionJob } from '../model/Jobs';
+import { retryCountLine } from '../model/Present';
 import {
   AttachmentDraftInput,
   AttachmentKind,
@@ -5114,9 +5115,53 @@ export function projectWireRecord(record: Object): TrajectoryItem | undefined {
   if (kind === TrajectoryKind.ERROR) {
     // 失败信号默认展开：D3 §4 要求失败必须可见，而不是等用户点开
     item.expanded = true;
+    /*
+     * 重试（P7-18）：把上游那五个字段读进来，界面才能说出"第几次 / 上限 / 还有多久 / 为什么"。
+     *
+     * 【此前只读了 `retry` 一个字段，而且只用来拼 `title`（`重试 2`）】结果真机上看到的是一条
+     * "出错了 + 空白正文"——**用户既不知道在重试，也不知道为什么**。而重试恰恰是设备网络最差时
+     * 最常见的状态（官方为此专门做了一个带倒计时的 `ModelRetryItem`）。
+     *
+     * 两帧落到同一条：`llm/retry`（记下 plan）与 `llm/retry-started`（说这次开始了）。
+     * 它们靠 `retryId` 配对，但 `retryId` 是**每次重试唯一**的 ⇒ 若按它做 id，两帧会各占一条。
+     * 这里用 `轮次/步/第几次` 组成稳定 id：同一轮同一步的同一次重试只有一条。
+     * （`turn`/`step` 未必在每帧上都有，缺失时退回按 `retry` 计数——最坏情况是两帧分开显示，
+     *   但绝不会把两条不同的重试合并成一条。）
+     */
     const retry: ResolvedSlot = resolveSlot(data, shape, ContentSlot.RETRY);
+    const retryMax: ResolvedSlot = resolveSlot(data, shape, ContentSlot.RETRY_MAX);
+    const retryDelay: ResolvedSlot = resolveSlot(data, shape, ContentSlot.RETRY_DELAY_MS);
+    const retryMode: ResolvedSlot = resolveSlot(data, shape, ContentSlot.RETRY_MODE);
+    const failure: ResolvedSlot = resolveSlot(data, shape, ContentSlot.RETRY_FAILURE);
     if (retry.found) {
-      item.title = `重试 ${asText(retry.value)}`;
+      item.retryAttempt = retryNumber(retry.value);
+    }
+    if (retryMax.found) {
+      item.retryMax = retryNumber(retryMax.value);
+    }
+    if (retryDelay.found) {
+      item.retryDelayMs = retryNumber(retryDelay.value);
+    }
+    if (retryMode.found) {
+      item.retryMode = asText(retryMode.value);
+    }
+    if (item.retryMode.length === 0 && item.retryAttempt > 0) {
+      // 只有 `retry` 没有 `mode`：这是重试帧（老 Host 或字段裁剪），按 normal 处理
+      item.retryMode = 'normal';
+    }
+    if (item.retryAttempt > 0) {
+      // 重试**已经开始**（那一帧只有 retry 计数，没有 delay/mode）
+      if (!retryDelay.found && !retryMode.found && failure.found === false) {
+        item.retryStarted = true;
+      }
+      item.id = `ev-retry-${item.retryAttempt}`;
+    }
+    if (failure.found) {
+      // 失败原因进正文：那条"出错了"的卡片必须能说出为什么
+      item.body = asText(failure.value);
+    }
+    if (retry.found) {
+      item.title = retryCountLine(item.retryAttempt, item.retryMax, item.retryMode);
     }
   }
   return item;
@@ -5511,6 +5556,19 @@ function applyTodoSlots(item: TrajectoryItem, data: Object | undefined,
 }
 
 /** 上游呈现家族（`dshcompat.EventFamily`）→ 本层轨迹枚举 */
+/** 把一个槽位值收窄成非负整数（拿不到数字就返回 0：调用方按"没有这个信息"处理） */
+function retryNumber(value: Object | undefined): number {
+  if (typeof value === 'number') {
+    const n: number = value as number;
+    return n > 0 ? Math.floor(n) : 0;
+  }
+  if (typeof value === 'string') {
+    const parsed: number = Number.parseInt(value as string, 10);
+    return Number.isNaN(parsed) || parsed <= 0 ? 0 : parsed;
+  }
+  return 0;
+}
+
 function familyKind(family: EventFamily): TrajectoryKind {
   if (family === EventFamily.REASONING) {
     return TrajectoryKind.REASONING;

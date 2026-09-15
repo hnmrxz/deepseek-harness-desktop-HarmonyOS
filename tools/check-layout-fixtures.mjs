@@ -227,6 +227,7 @@ const TJ = require2('./Trajectory.js');
 const RE = require2('./RemoteEvents.js');
 const SE = require2('./Search.js');
 const PR = require2('./PanelRegistry.js');
+const PST = require2('./Present.js');
 const ST = require2('./ShellTracks.js');
 const NS = require2('./NavigationState.js');
 const MD = require2('./Markdown.js');
@@ -2456,5 +2457,25 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   t.eq('前缀相同但不同的码不命中', isBenignQueueRace('session/steer-unavailable-x'), false);
   t.eq('非竞态返回 NONE', queueRaceKind('gateway/internal'), QUEUE_RACE_NONE);
 }
+
+// ── P7-18：重试行的文案（计数行 / 倒计时行） ──
+{
+  const { retryCountLine, retryWaitLine } = PST;
+
+  t.eq('第 2/5 次（normal 有上限）', retryCountLine(2, 5, 'normal'), '正在重试（第 2/5 次）');
+  t.eq('always 模式：没有上限 ⇒ 说"不限次数"，不画 ∞',
+    retryCountLine(3, -1, 'always'), '正在重试（第 3 次，不限次数）');
+  t.eq('没有上限信息且模式未知 ⇒ 只说第几次（不编上限）',
+    retryCountLine(3, -1, ''), '正在重试（第 3 次）');
+  t.eq('上限为 0/负 ⇒ 不显示成"第 2/0 次"', retryCountLine(2, 0, 'normal'), '正在重试（第 2 次）');
+  t.eq('次数缺失 ⇒ 空串（没有重试信息就不该有这一行）', retryCountLine(0, 5, 'normal'), '');
+  // 倒计时：向上取整（显示"0 秒"而其实还要 0.4 秒会让人以为卡住）
+  t.eq('剩 7000ms ⇒ 约 7 秒后重试', retryWaitLine(7000, false), '约 7 秒后重试');
+  t.eq('剩 400ms ⇒ 仍写 1 秒（向上取整）', retryWaitLine(400, false), '约 1 秒后重试');
+  t.eq('已到点但还没收到"已开始" ⇒ 正在重试…', retryWaitLine(0, false), '正在重试…');
+  t.eq('负剩余（事件迟到）也算已到点', retryWaitLine(-5000, false), '正在重试…');
+  t.eq('已收到 retry-started ⇒ 不再显示秒数', retryWaitLine(7000, true), '');
+}
+
 
 t.done();
