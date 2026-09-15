@@ -138,6 +138,26 @@ export const CREDENTIAL_REJECTED = 'credential/rejected';
  * `appstate/store/SessionHub.ts` 的 `friendlyFailure()`。
  */
 export const SESSION_ATTACHMENT_INVALID = 'session/attachment-invalid';
+/**
+ * 排队项已不在待发状态（**良性竞态，不是失败**）。
+ *
+ * 上游出处（`dsh-api-session-controller/lib/index.js` 的 `updateQueue` 处理）：
+ *   `throw new RemoteError("session/queue-item-not-found", "queued item is no longer pending", { itemId })`
+ * 触发条件：这一行**已经被 Agent 取走**（或已被前一次操作删掉）。用户"点两下"、
+ * 或界面快照比 Host 慢一拍时**必然**撞上——官方客户端的注释写明这种情况**静默收敛**
+ * （"a row already claimed by the agent (`queue-item-not-found`) converges silently"）。
+ */
+export const QUEUE_ITEM_NOT_FOUND = 'session/queue-item-not-found';
+/**
+ * 当前轮次已不再接受插话（**良性竞态，不是失败**）。
+ *
+ * 同一处的判定：
+ *   `if (request.action.kind === "steer" && (target !== "next-turn" || agent.status !== "running"))
+ *      throw new RemoteError("session/steer-unavailable", "current turn no longer accepts steering", { itemId })`
+ * 触发条件：轮次**刚好结束**。这正是用户最容易撞上的时刻（他看到轮次停了才去点"插话"），
+ * 官方同样按静默收敛处理。
+ */
+export const STEER_UNAVAILABLE = 'session/steer-unavailable';
 /** 模型目录（无参数，只读，适合作连通性探测） */
 export const MODEL_CATALOG_ENDPOINT: string = 'session/modelCatalog';
 /** 插件清单（无参数，只读） */

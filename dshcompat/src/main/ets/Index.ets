@@ -177,3 +177,14 @@ export {
   SESSION_EVENT_SHAPES,
   slotBinding
 } from './EventShape';export type { SessionEventShape, SlotBinding } from './EventShape';
+
+// 排队项的两个良性竞态（P7-16）：协议码 + 判定（零依赖，可被 fixture 直接钉住）
+export {
+  isBenignQueueRace,
+  queueRaceKind,
+  QUEUE_ITEM_NOT_FOUND,
+  QUEUE_RACE_ITEM_GONE,
+  QUEUE_RACE_NONE,
+  QUEUE_RACE_STEER_CLOSED,
+  STEER_UNAVAILABLE
+} from './QueueCodes';

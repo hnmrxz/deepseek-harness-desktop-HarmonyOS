@@ -68,6 +68,8 @@ const PURE_FILES = [
   'appstate/src/main/ets/model/InputAttachment.ets',
   // 输入触发管线（P7-14）：零依赖，`@` 引用与 `/` 命令的词法
   'appstate/src/main/ets/model/InputTrigger.ets',
+  // 排队项的良性竞态（P7-16）：**协议码住在 dshcompat**（架构红线），零依赖
+  'dshcompat/src/main/ets/QueueCodes.ets',
   // 提交失败后的草稿恢复规则（P7-15）：零依赖
   'appstate/src/main/ets/model/ComposerSend.ets',
   // 浮层回执归属（P2-8，E353）：零依赖
@@ -243,6 +245,7 @@ const MI = require2('./MessageImage.js');
 const IA = require2('./InputAttachment.js');
 const IT = require2('./InputTrigger.js');
 const CS = require2('./ComposerSend.js');
+const QR = require2('./QueueCodes.js');
 const t = makeAsserter(selfTest);
 
 console.log('# 布局 fixture 门禁（四形态 + 断点边界 + 让步链）\n');
@@ -2431,5 +2434,27 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
     shouldRestoreDraft(false, false, '', ''), false);
 }
 
+
+// ── P7-16：排队项的良性竞态（官方按"静默收敛"，不该给用户报错） ──
+{
+  const { isBenignQueueRace, queueRaceKind, QUEUE_ITEM_NOT_FOUND, STEER_UNAVAILABLE,
+    QUEUE_RACE_ITEM_GONE, QUEUE_RACE_STEER_CLOSED, QUEUE_RACE_NONE } = QR;
+
+  t.eq('排队项已被取走 ⇒ 良性竞态（不是失败）', isBenignQueueRace(QUEUE_ITEM_NOT_FOUND), true);
+  t.eq('轮次已结束无法插话 ⇒ 良性竞态', isBenignQueueRace(STEER_UNAVAILABLE), true);
+  t.eq('码值必须与上游逐字一致（item）', QUEUE_ITEM_NOT_FOUND, 'session/queue-item-not-found');
+  t.eq('码值必须与上游逐字一致（steer）', STEER_UNAVAILABLE, 'session/steer-unavailable');
+  t.eq('两种竞态要分得开（文案不同）',
+    queueRaceKind(QUEUE_ITEM_NOT_FOUND) !== queueRaceKind(STEER_UNAVAILABLE), true);
+  t.eq('种类取值稳定', `${queueRaceKind(QUEUE_ITEM_NOT_FOUND)}/${queueRaceKind(STEER_UNAVAILABLE)}`,
+    `${QUEUE_RACE_ITEM_GONE}/${QUEUE_RACE_STEER_CLOSED}`);
+  // 反向：真失败**不许**被当成良性（否则会把真正的错误吞掉）
+  t.eq('附件不属于本会话 ⇒ 不是良性竞态', isBenignQueueRace('session/attachment-invalid'), false);
+  t.eq('网关参数不符 ⇒ 不是良性竞态', isBenignQueueRace('gateway/arguments-invalid'), false);
+  t.eq('空码 ⇒ 不是良性竞态', isBenignQueueRace(''), false);
+  t.eq('大小写变体不命中', isBenignQueueRace('SESSION/QUEUE-ITEM-NOT-FOUND'), false);
+  t.eq('前缀相同但不同的码不命中', isBenignQueueRace('session/steer-unavailable-x'), false);
+  t.eq('非竞态返回 NONE', queueRaceKind('gateway/internal'), QUEUE_RACE_NONE);
+}
 
 t.done();

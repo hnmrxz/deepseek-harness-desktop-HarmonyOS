@@ -176,7 +176,15 @@ const FEATURES = [
    * 只管清空：发送失败时用户的长消息凭空消失，只能重敲。钉三段：纯规则 + 中枢的
    * "这次是否已排队"标记 + 视图的恢复调用点。
    */
-  { name: '失败恢复草稿', patterns: [['shouldRestoreDraft', 2], ['lastSendQueued', 3], ['draft = submitted', 1]] }
+  { name: '失败恢复草稿', patterns: [['shouldRestoreDraft', 2], ['lastSendQueued', 3], ['draft = submitted', 1]] },
+  /*
+   * 排队项的两个良性竞态（P7-16）。官方 `dsh-client-ui-conversation` 的注释写明：
+   * "A turn closing mid-way (`steer-unavailable`) or a row already claimed by the agent
+   * (`queue-item-not-found`) **converges silently**, while a genuine failure surfaces as one
+   * composer notice." 我们此前把任何失败都写成红色横幅 ⇒ 连点两下「插话」/轮次刚结束去插话
+   * 都会显示"修改待发队列失败"（假失败）。钉两端：纯判定 + 中枢里的分支。
+   */
+  { name: '队列竞态', patterns: [['isBenignQueueRace', 2], ['QUEUE_ITEM_NOT_FOUND', 2], ['STEER_UNAVAILABLE', 2]] }
 ];
 
 /**

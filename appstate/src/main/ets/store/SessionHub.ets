@@ -73,6 +73,9 @@ import {
   CREDENTIAL_REJECTED,
   SESSION_ATTACHMENT_ENDPOINT,
   SESSION_ATTACHMENT_INVALID,
+  QUEUE_RACE_ITEM_GONE,
+  QUEUE_RACE_NONE,
+  queueRaceKind,
   MODEL_CATALOG_ENDPOINT,
   PLUGIN_INVENTORY_ENDPOINT,
   PROJECTION_TITLE,
@@ -4189,6 +4192,30 @@ export class SessionHub {
     if (!result.ok) {
       const failure = result.error;
       const code: string = failure === undefined ? 'unknown' : failure.code;
+      /*
+       * P7-16：两个**良性竞态**按官方语义"静默收敛"，不报错。
+       *
+       * 官方客户端的原话（`dsh-client-ui-conversation` 的 steer-all 注释）：
+       * "A turn closing mid-way (`steer-unavailable`) or a row already claimed by the agent
+       * (`queue-item-not-found`) **converges silently**, while a genuine failure surfaces as
+       * one composer notice."
+       *
+       * 我们此前把任何失败都写成红色横幅「修改待发队列失败」⇒ 连点两下「插话」时第二下
+       * 必然撞 `queue-item-not-found`、轮次刚结束去插话必然撞 `steer-unavailable`，
+       * 用户于是看到"失败"（而他其实插话成功、或本来就没轮次可插）。
+       * 判据在 `dshcompat/QueueCodes.ets`（**上游字面量只许住 dshcompat**——第一版我把它写进
+       * appstate，`tools/arch-check.mjs` 当场判红），用户可见的文案留在本层。
+       */
+      const race: string = queueRaceKind(code);
+      if (race !== QUEUE_RACE_NONE) {
+        // **静默 ≠ 不留痕**：排障时要能看出"那次点按其实撞上了竞态"，但界面上不该出现"失败"
+        this.record(race === QUEUE_RACE_ITEM_GONE
+          ? 'updateQueue race：这一行已被宿主处理（不再待发）——按无事发生处理，不报错'
+          : 'updateQueue race：当前轮次已结束，无法插话——消息仍在队列里，下一轮会正常发出');
+        this.notify();
+        // 视为"已收敛"：调用方不该再显示自己的失败文案（否则又变成一次假失败）
+        return true;
+      }
       this.lastError = `修改待发队列失败：${friendlyFailure(code, failure === undefined ? '' : failure.message)}`;
       this.record(`updateQueue fail ${code}`);
       this.notify();
