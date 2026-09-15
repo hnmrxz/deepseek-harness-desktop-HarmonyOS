@@ -181,6 +181,15 @@ hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 **P2-2 已落地**：会话头的**后台任务条** —— `Jobs` 模型 40 条断言与中枢 `jobs` 字段一直都在，
 但视图零消费者（又一次"通道有、没接"）；现已接成 中枢 → `Index` → `MainShell` → 会话头任务条
 （live 任务每秒走字、无障碍整段取自模型），并把这条接线登记进功能接线门禁（第 16 条）。
+**P0 回归修复（E343）**：真机（Mate 70 Pro+）冷启后点一下界面即被系统杀进程——
+`RangeError: Stack overflow!`，栈里成对出现 `MainShell.ets:405` 与 `:404`。根因是主区分派的**兜底分支写成了自递归**
+（`else { this.mainContent(this.compact) }`）：`MainShell` 只分派「诊断 / 连接 / 会话」，剩下工作区 / 核心 / 设置
+三类面板本应由**主区第二束** `TabContentView` 渲染，搬迁时这一束忘了接上；而 `MainShellFacade.tabFacade`
+一直由宿主造着却**零消费者**（第 7 例"通道有、没消费者"）——正是它掩盖了这个空洞。
+修复 = 兜底渲染 `TabContentView({ f: this.f.tabFacade, compact: this.compact })`。**并补一道门禁**
+`tools/check-builder-recursion.mjs`：`@Builder` 体内不许出现自己的名字（剥注释后判定，5 条注入式自检，
+且**对修前的提交归真命中**——门禁必须先在已知坏版本上红过一次才算证明）；功能接线门禁同步新增「主区兜底」项（16 → 17）。
+⚠️ 该项**真机复验仍待做**：无真机时不得宣称设备验收完成。
 **P4-4 已落地**：设置页又拆出两个域组件 —— `view/SettingsGeneral.ets`（通用段 + 只读权限事实 + 本地调试入口）
 与 `view/SettingsDevice.ets`（已记住的 Host + 关于本机）。**设置页 1890 → 760 行**（P4-1…P4-4 五轮合计），
 拆分出的域组件：`SettingRow` / `SettingsModels` / `SettingsPlugins` / `SettingsInventory` / `SettingsGeneral` / `SettingsDevice`。

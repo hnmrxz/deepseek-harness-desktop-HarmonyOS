@@ -112,6 +112,12 @@ export interface MainShellFacade {
   stackPage: StackPage;
   setStackPage: (value: StackPage) => void;
   statsLine: string;
+  /**
+   * 主区**剩下三类面板**（工作区 / 设置 / 核心）的门面——交给 `TabContentView` 渲染。
+   *
+   * 本组件自己分派「诊断 / 连接 / 会话」，其余落进兜底分支由这一束接管（见 `mainContent` 的 else，E343）。
+   * 曾经它是**零消费者**（本组件根本没用过，只有宿主在造）；E343 修完后它才真正被用上。
+   */
   tabFacade: TabContentFacade;
   togglePlan: () => void;
   traceEnabled: boolean;
@@ -402,7 +408,22 @@ export struct MainShell {
         }
       })
     } else {
-      this.mainContent(this.compact)
+      /*
+       * 兜底分支：**不许再调 `mainContent`**（E343）。
+       *
+       * 这里曾经是 `this.mainContent(this.compact)`，真机上点一下就 `RangeError: Stack overflow!`
+       * 直接杀进程——栈里成对出现 `MainShell.ets:405`（这句）与 `:404`（`else` 本身），
+       * 即"兜底又把自己叫了一遍"，而 `mainContent` 每次都会重新走到这条 `else`。
+       *
+       * 【为什么会走到 else】主区还剩工作区 / 核心 / 设置三类面板，它们过去由**主区的第二束**
+       * （`TabContentView`）直接渲染，搬迁后本组件忘了把这一束接上。
+       * 静态阅读时它看着像"交回给上面继续分派"，实际是**自递归**。
+       *
+       * 【正确形态】兜底 = 把剩下的面板交给**真正拥有它们的那一束**，而不是回头再问自己：
+       * 这里直接渲染 `TabContentView`（工作区 / 设置 / 核心的既有分派点，自带兜底、不再外调）。
+       * 门禁 `tools/check-builder-recursion.mjs` 守着这条规矩：`@Builder` 体内不许出现自己的名字。
+       */
+      TabContentView({ f: this.f.tabFacade, compact: this.compact })
     }
   }
 
