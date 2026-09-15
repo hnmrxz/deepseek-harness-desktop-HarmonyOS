@@ -262,6 +262,15 @@ Composer 的官方字段：Model / Reasoning effort / Permission / Plan / @ Refe
 面板：Files / Preview / Trajectory / Tool Details / Subagent / Deliverables。
 **验收**：右栏内容由注册表驱动（不是 `DetailPane` 里的一串 `if`）；宽度/让步链沿用既有 `LayoutController`。
 
+**进度（2026-09-15，P3-1 已落地）**
+
+| 子项 | 状态 |
+|---|---|
+| `selectedRightPanel` 真正被消费 | ✅ **P3-1**：`RightbarShell` 新增 `panelId` / `panelLabel`，**按面板 id 分派**、标题取 descriptor 的 `label`；两条呈现（真右栏 / Sheet）都走同一套。此前它无条件渲染 `DetailPane`，于是 `selectedRightPanel` 在模型里躺了好几轮**没有消费者**（同 `mobileDrawer` / `enterSession` / `jobs` 的"通道有、没接"） |
+| 缺口的**真实位置**：内容视图，不是面板体系 | ✅ 如实登记：官方六个候选（文件/轨迹/工具/子代理/交付物/预览）的**席位在，内容视图没做** ⇒ 一律 `available: () => false`（E110 口径：不能填的入口不进选择集，避免"点进去是空面板"）。本仓唯一有内容的右栏面板是**新增的**「详情」（`right.detail` = 已投影的 sections），并在模型注释里写明它对应官方哪一类（`conversation.detail`），**不冒充"文件"** |
+| 初值与回落一起收口 | ✅ `initialNavigationState().selectedRightPanel` 与 `defaultRightPanel()` 的兜底都指到「详情」——否则宿主不调 `defaultRightPanel` 时右栏会落到一个不可用的 id 上（**面板分派之后**这等于空栏） |
+| 下一步（P3-2…） | ① 候选面板的内容视图：优先「文件」（工作区文件树）与「预览」（文件预览，两者的**素材与渲染都已在仓内**，属"搬家+接线"而不是新功能）② 面板切换器（≥2 个可用面板时才有意义，**现在不做**，避免落一个没人用的空构件）③ 侧边面板滑入动画、面板自身拖拽调宽（P0 遗留） |
+
 ### P4 Settings 域
 `SettingsShell`（General / Models / Plugins / Plugin Inventory / …）。**不再往 `SettingsPane.ets` 里堆内容。**
 

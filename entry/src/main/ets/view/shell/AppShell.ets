@@ -52,6 +52,10 @@ export interface AppShellFacade {
   onOpenDrawer: () => void;
   /** 收起手机侧栏抽屉（点抽屉外部 / 选了入口 / 返回键） */
   onCloseDrawer: () => void;
+  /** 右栏当前显示的面板 id（`NavigationState.selectedRightPanel`） */
+  rightPanelId: string;
+  /** 右栏面板名（标题行用；descriptor 的 label） */
+  rightPanelLabel: string;
   /** 当前面板的中文名（页头标题用；由注册表的 label 给） */
   panelLabel: string;
   beginDetailDrag: () => void;
@@ -357,6 +361,8 @@ export struct AppShell {
     RightbarShell({
       presentation: DetailPresentation.COLUMN,
       widthVp: widthVp,
+      panelId: this.f.rightPanelId,
+      panelLabel: this.f.rightPanelLabel,
       sections: this.f.detailSections,
       onClose: () => {
         this.f.closeDetail();

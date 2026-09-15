@@ -1974,6 +1974,8 @@ struct Index {
     RightbarShell({
       presentation: DetailPresentation.OVERLAY,
       widthVp: 0,
+      panelId: this.nav.selectedRightPanel,
+      panelLabel: this.selectedRightPanelLabel(),
       sections: this.detailSections,
       onLineTap: (section: string, text: string) => {
         if (text.length > 0) {
@@ -1994,6 +1996,8 @@ struct Index {
     onSelectSidebarPanel: (panelId: string) => this.selectSidebarPanel(panelId),
     onNewSession: () => this.newSession(),
     panelLabel: this.selectedPanelLabel(),
+    rightPanelId: this.nav.selectedRightPanel,
+    rightPanelLabel: this.selectedRightPanelLabel(),
     mobileDrawerOpen: this.nav.mobileDrawer === DrawerState.OPEN,
     onOpenDrawer: () => this.setDrawerOpen(true),
     onCloseDrawer: () => this.setDrawerOpen(false),
@@ -4112,6 +4116,12 @@ struct Index {
   /** 开合手机侧栏抽屉（模型 `setDrawer`；它是唯一真值，视图不自持一份） */
   private setDrawerOpen(open: boolean): void {
     this.nav = setDrawer(this.nav, open ? DrawerState.OPEN : DrawerState.CLOSED);
+  }
+
+  /** 右栏当前面板的中文名（标题行用；注册表找不到时兜底"详情"） */
+  private selectedRightPanelLabel(): string {
+    const d: PanelDescriptor | undefined = this.panelRegistry.find(this.nav.selectedRightPanel);
+    return d !== undefined ? d.label : '详情';
   }
 
   private selectSidebarPanel(panelId: string): void {

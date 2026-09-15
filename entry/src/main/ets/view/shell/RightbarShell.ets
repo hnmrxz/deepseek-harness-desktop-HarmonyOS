@@ -22,11 +22,11 @@
  *
  * `PanelRegistry` 里的六个右栏候选面板（文件 / 轨迹 / 工具 / 子代理 / 交付物 / 预览）
  * 目前**还没有各自的视图**——右栏内容仍是"一份 sections"，由宿主投影好传进来。
- * 把 `selectedRightPanel` 真正接到不同面板上属 P3（届时这里按 descriptor 分派，
+ * **P3-1 已落地**：这里按 `selectedRightPanel`（`panelId`）分派，标题取 descriptor 的 `label`；
  * 而不是继续吃一份 sections）。
  */
 
-import { DetailPresentation, DetailSection, Fs, HarmonyIconSize, HarmonySpacing, Sp, Sz } from 'appstate';
+import { DetailPresentation, DetailSection, Fs, HarmonyIconSize, HarmonySpacing, PANEL_RIGHT_DETAIL, Sp, Sz } from 'appstate';
 import { DetailPane } from '../DetailPane';
 import { NativeSectionTitle } from '../NativePrimitives';
 
@@ -38,6 +38,17 @@ export struct RightbarShell {
   @Prop widthVp: number = 0;
   /** 面板内容（宿主投影好的 sections） */
   @Prop sections: DetailSection[] = [];
+  /**
+   * 当前该显示哪个右栏面板（`NavigationState.selectedRightPanel`）。
+   *
+   * 【P3-1：这个 prop 让右栏第一次**真的**按面板分派】此前它无条件渲染 `DetailPane`，
+   * 于是 `selectedRightPanel` 在模型里躺了好几轮没有消费者（"通道有、没接"）。
+   * 现在：可用面板由 `PanelRegistry` 决定（只有「详情」有内容），选择经注册表校验，
+   * 视图只按 id 分派 —— 后续把某个候选面板的内容视图做出来，只需把它的 `available` 改成 true。
+   */
+  @Prop panelId: string = '';
+  /** 当前面板的中文名（标题行用；来自 descriptor 的 `label`，找不到时由宿主兜底） */
+  @Prop panelLabel: string = '详情';
 
   onClose: () => void = () => {
   };
@@ -49,7 +60,7 @@ export struct RightbarShell {
   framedBody() {
     Column() {
       Row({ space: Sp.S }) {
-        Text('详情')
+        Text(this.panelLabel)
           .fontSize(Fs.SECONDARY)
           .fontWeight(FontWeight.Medium)
           .layoutWeight(1)
@@ -57,7 +68,7 @@ export struct RightbarShell {
           SymbolGlyph($r('sys.symbol.xmark')).fontSize(HarmonyIconSize.INLINE)
         }
         .buttonStyle(ButtonStyleMode.TEXTUAL)
-        .accessibilityText('关闭详情')
+        .accessibilityText(`关闭${this.panelLabel}面板`)
         .onClick(() => {
           this.onClose();
         })
@@ -68,12 +79,15 @@ export struct RightbarShell {
 
       Divider().color($r('sys.color.comp_divider'))
 
-      DetailPane({
-        sections: this.sections,
-        onLineTap: (section: string, text: string) => {
-          this.onLineTap(section, text);
-        }
-      })
+      // 按面板 id 分派：目前只有「详情」有内容（其余候选的 available 是 false，选不进来）
+      if (this.panelId === PANEL_RIGHT_DETAIL) {
+        DetailPane({
+          sections: this.sections,
+          onLineTap: (section: string, text: string) => {
+            this.onLineTap(section, text);
+          }
+        })
+      }
     }
     .width(this.widthVp)
     .height('100%')
@@ -84,13 +98,15 @@ export struct RightbarShell {
   @Builder
   sheetBody() {
     Column({ space: HarmonySpacing.CONTAINER }) {
-      NativeSectionTitle({ text: '详情', hint: '工具 / 子代理 / 交付物 / 目标 / 任务' })
-      DetailPane({
-        sections: this.sections,
-        onLineTap: (section: string, text: string) => {
-          this.onLineTap(section, text);
-        }
-      })
+      NativeSectionTitle({ text: this.panelLabel, hint: '工具 / 子代理 / 交付物 / 目标 / 任务' })
+      if (this.panelId === PANEL_RIGHT_DETAIL) {
+        DetailPane({
+          sections: this.sections,
+          onLineTap: (section: string, text: string) => {
+            this.onLineTap(section, text);
+          }
+        })
+      }
     }
     .width('100%')
     .height('100%')

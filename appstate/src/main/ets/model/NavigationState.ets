@@ -33,7 +33,7 @@
  * 放这里之后可在本机直接测（`tools/check-layout-fixtures.mjs`），视图只读结论。
  */
 
-import { PanelDescriptor, PanelLocation, PanelRegistry, PANEL_RIGHT_FILES, PANEL_SIDEBAR_WORKSPACES, PANEL_SIDEBAR_SETTINGS, PANEL_SIDEBAR_CORE } from './PanelRegistry';
+import { PanelDescriptor, PanelLocation, PanelRegistry, PANEL_RIGHT_DETAIL, PANEL_RIGHT_FILES, PANEL_SIDEBAR_WORKSPACES, PANEL_SIDEBAR_SETTINGS, PANEL_SIDEBAR_CORE } from './PanelRegistry';
 
 /* ───────────────────────── 主区面板 ───────────────────────── */
 
@@ -93,7 +93,7 @@ export function initialNavigationState(): NavigationState {
     currentWorkspaceId: '',
     sidebarExpanded: true,
     selectedMainPanel: MAIN_CONVERSATION,
-    selectedRightPanel: PANEL_RIGHT_FILES,
+    selectedRightPanel: PANEL_RIGHT_DETAIL,
     settingsSection: SETTINGS_GENERAL,
     mobileDrawer: DrawerState.CLOSED,
     activeOverlay: Overlay.NONE,
@@ -372,7 +372,8 @@ export function enterSession(state: NavigationState, sessionId: string,
 /** 默认右栏面板（装配方在没有任何可用选择时兜底） */
 export function defaultRightPanel(registry: PanelRegistry): string {
   const first: string = registry.firstAvailable(PanelLocation.RIGHTBAR);
-  return first.length > 0 ? first : PANEL_RIGHT_FILES;
+  // 兜底也指向"详情"：它是当前唯一有内容的面板（见 `PANEL_RIGHT_DETAIL` 的说明）
+  return first.length > 0 ? first : PANEL_RIGHT_DETAIL;
 }
 
 /** 默认侧栏面板（用于"侧栏先显示哪个域"） */

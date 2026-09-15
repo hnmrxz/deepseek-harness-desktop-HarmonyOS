@@ -182,6 +182,17 @@ export const PANEL_SIDEBAR_WORKSPACES: string = 'sidebar.workspaces';
 export const PANEL_SIDEBAR_CORE: string = 'sidebar.core';
 export const PANEL_SIDEBAR_SETTINGS: string = 'sidebar.settings';
 
+/**
+ * 右栏"详情"面板（本仓当前**唯一有内容**的右栏面板：投影好的 sections 清单）。
+ *
+ * 【为什么它不在官方的六个候选里】官方右栏的候选是"文件 / 轨迹 / 工具 / 子代理 / 交付物 / 预览"
+ * （内容都是**原始素材**），我们的"sections"是**已经投影好的摘要行**——它更像官方的
+ * `conversation.detail`，而不是那六个。与其把一个摘要清单硬塞进"文件"这个 id 下（名字骗人），
+ * 不如如实登记成第七个面板。它同时也说明：右栏要真正对齐官方，缺的是**六个面板的内容视图**，
+ * 而不是"面板体系"本身。
+ */
+export const PANEL_RIGHT_DETAIL: string = 'right.detail';
+
 /** 右栏面板 id（官方右栏的六个候选） */
 export const PANEL_RIGHT_FILES: string = 'right.files';
 export const PANEL_RIGHT_PREVIEW: string = 'right.preview';
@@ -259,18 +270,28 @@ export function sidebarPinnedEntries(registry: PanelRegistry): PanelDescriptor[]
  */
 export function rightbarPanels(): PanelDescriptor[] {
   return [
+    // 唯一有内容的面板（sections 清单）；order 最小 ⇒ 它是默认面板
+    { id: PANEL_RIGHT_DETAIL, location: PanelLocation.RIGHTBAR, owner: 'conversation',
+      label: '详情', order: 5, available: () => true },
+    /*
+     * 官方右栏的六个候选：**席位登记着，但内容视图还没做**（`available: () => false`）。
+     *
+     * 【为什么不先"可选"再补内容】按 E110 的口径：不能填的入口不进选择集。
+     * 若让它们可选，用户点进去会看到一个空面板——那比"暂时少一个入口"糟得多。
+     * 内容视图一旦落地（P3 后续），把这里的断言改成 `true` 即可，**面板体系本身不用动**。
+     */
     { id: PANEL_RIGHT_FILES, location: PanelLocation.RIGHTBAR, owner: 'workspace',
-      label: '文件', order: 10, available: () => true },
+      label: '文件', order: 10, available: () => false },
     { id: PANEL_RIGHT_TRAJECTORY, location: PanelLocation.RIGHTBAR, owner: 'conversation',
-      label: '轨迹', order: 20, available: () => true },
+      label: '轨迹', order: 20, available: () => false },
     { id: PANEL_RIGHT_TOOL, location: PanelLocation.RIGHTBAR, owner: 'conversation',
-      label: '工具', order: 30, available: () => true },
+      label: '工具', order: 30, available: () => false },
     { id: PANEL_RIGHT_SUBAGENT, location: PanelLocation.RIGHTBAR, owner: 'conversation',
-      label: '子代理', order: 40, available: () => true },
+      label: '子代理', order: 40, available: () => false },
     { id: PANEL_RIGHT_DELIVERABLES, location: PanelLocation.RIGHTBAR, owner: 'conversation',
-      label: '交付物', order: 50, available: () => true },
+      label: '交付物', order: 50, available: () => false },
     { id: PANEL_RIGHT_PREVIEW, location: PanelLocation.RIGHTBAR, owner: 'workspace',
-      label: '预览', order: 60, available: () => true },
+      label: '预览', order: 60, available: () => false },
   ];
 }
 
