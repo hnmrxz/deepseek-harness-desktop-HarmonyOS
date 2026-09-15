@@ -155,6 +155,10 @@ export {
 } from './model/Core';
 export type { CoreActionSpec, CoreFact, CoreVersionRow, CoreViewInput, CoreViewState, EmptyCopy, PluginRow } from './model/Core';
 
+// ── 核心页投影（宿主报告的结构子集 → 事实与行） ──
+export { pluginInventoryFact, pluginRowOf, rankPluginRows } from './model/CoreProjection';
+export type { PluginInventoryTotals } from './model/CoreProjection';
+
 // ── 断点与导航模型 ──
 export {
   detailPanelAvailable,

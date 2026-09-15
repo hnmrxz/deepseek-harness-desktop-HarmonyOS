@@ -101,7 +101,6 @@ import {
   parseStructInput,
   parseNotifyRoute,
   buildCoreView,
-  classifyPlugin,
   CoreFact,
   CorePhase,
   CoreViewState,
@@ -117,8 +116,9 @@ import {
   projectDetailSections,
   projectHosts,
   projectWorkspaces,
-  pluginNativeOf,
-  PluginNative,
+  pluginInventoryFact,
+  pluginRowOf,
+  rankPluginRows,
   SessionHub,
   Sz,
   TrajectoryItem,
@@ -158,7 +158,7 @@ import {
  * 原因：`HubSnapshot` / `HubSubscriber` 在 appstate 里是 `export type` 导出的类型，
  * 与值导入分开写更贴近 ArkTS 的类型/值导入区分。
  */
-import type { AttachOutcome, CredentialWriteResult, HubSnapshot, HubSubscriber, InputModality, LayoutDecision, LayoutInput, ModalityEvidence, NavState, NavigationState, OverlayState, PluginRow, SessionJob, SessionStatsInput, SettingChoice, SettingInputResult, SettingItem, SettingsKeyParts, SettingsWriteResult, TabSelection } from 'appstate';
+import type { AttachOutcome, PluginInventoryTotals, CredentialWriteResult, HubSnapshot, HubSubscriber, InputModality, LayoutDecision, LayoutInput, ModalityEvidence, NavState, NavigationState, OverlayState, PluginRow, SessionJob, SessionStatsInput, SettingChoice, SettingInputResult, SettingItem, SettingsKeyParts, SettingsWriteResult, TabSelection } from 'appstate';
 import { emitter } from '@kit.BasicServicesKit';
 import { parseJson } from 'connection';
 import { EVENT_HOST_CONNECTED, EVENT_KEY_HOST_TOKEN, EVENT_KEY_HOST_URL } from 'platform';
@@ -187,7 +187,7 @@ import { harmonySheetOptions, NativeButton } from '../view/NativePrimitives';
 // 端侧核心运行层（D6）：核心版本仓库与激活事务。运行时载体尚未接线，
 // 因此这里现在只用它的"仓库/状态"部分，不声称任何"已启动"。
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { BundledInstallResult, DshHost, HostPluginReport, HostStartResult, HostStatus, OpResult, RuntimeProbe, hostStateIsTransient } from 'hostruntime';
+import { BundledInstallResult, DshHost, HostStartResult, HostStatus, OpResult, RuntimeProbe, hostStateIsTransient } from 'hostruntime';
 
 /**
  * 把紧凑 JSON 美化以便人读写；失败时原样返回。
@@ -3004,6 +3004,22 @@ struct Index {
       return;
     }
 
+    /*
+     * 宿主报告 → 本页投影：逐字段取出（ArkTS 禁止结构化类型，见 CoreProjection 顶部说明）。
+     * 行在这里只做"清单行 → 界面行"的搬运，排序与文案都在 appstate 的纯函数里。
+     */
+    const inventory: PluginInventoryTotals = {
+      pluginRows: status.plugins.totals.pluginRows,
+      pureJs: status.plugins.totals.pureJs,
+      native: status.plugins.totals.native,
+      unknown: status.plugins.totals.unknown,
+      disabled: status.plugins.totals.disabled
+    };
+    const pluginRows: PluginRow[] = [];
+    for (const r of status.plugins.rows) {
+      pluginRows.push(pluginRowOf(r.id, r.name, r.nativeKind, r.disabled));
+    }
+
     const probe: RuntimeProbe = status.probe;
     const facts: CoreFact[] = [
       probe.nodeVersion.length > 0
@@ -3026,7 +3042,8 @@ struct Index {
         status.installed.length > 0 ? `已安装 ${status.installed.length} 个版本` : '空',
         status.installed.length > 0 ? 'ok' : 'warn',
         repoNote),
-      this.pluginInventoryFact(status.plugins)
+      pluginInventoryFact(status.plugins.note, status.plugins.version, inventory,
+        status.plugins.nativePackages.length)
     ];
 
     /*
@@ -3053,55 +3070,8 @@ struct Index {
       previousVersion: status.previousVersion,
       profileName: status.profile,
       facts: facts,
-      plugins: this.corePluginRows(status.plugins)
+      plugins: rankPluginRows(pluginRows)
     });
-  }
-
-  /**
-   * 插件清单的**来源与统计**，作为核心页的一条事实。
-   *
-   * 【为什么要有这一行】清单是"某个已安装版本"的属性，且它由**打包时**写进树里
-   * （端侧不遍历目录现算，见 D6 §6.2.1）。所以用户必须能看出清单来自哪一版；
-   * 装的是没有清单的旧包时，也要说清"是这个包没带清单"，而不是让他以为插件为零。
-   */
-  private pluginInventoryFact(report: HostPluginReport): CoreFact {
-    if (report.note.length > 0) {
-      return unknownFact('插件清单', report.note);
-    }
-    const t = report.totals;
-    return fact('插件清单',
-      `${t.pluginRows} 行 · 纯 JS ${t.pureJs} · 依赖原生 ${t.native}`
-        + (t.disabled > 0 ? ` · 默认禁用 ${t.disabled}` : ''),
-      t.native > 0 ? 'warn' : 'ok',
-      `来自核心 ${report.version}；含原生模块的包 ${report.nativePackages.length} 个。`
-        + '「依赖原生」的插件受签名策略约束，只能随应用发版。');
-  }
-
-  /**
-   * 树内插件清单 → 核心页的行。
-   *
-   * 端侧的 nativeKind 来自打包时沿**依赖闭包**的判定（D6 §6.2.1），所以这里的分类是
-   * **真实取值**，正常情况不会出现「待确认」。
-   * `version` 留空：清单描述的是"包内的行"，行本身没有独立版本，编一个版本号比留空更糟。
-   */
-  private corePluginRows(report: HostPluginReport): PluginRow[] {
-    const rows: PluginRow[] = [];
-    for (const r of report.rows) {
-      rows.push(classifyPlugin(r.name, '', pluginNativeOf(r.nativeKind), r.id, r.disabled));
-    }
-    // 排序：**先看该看的**。端侧核心实测 152 行里 146 行是"可安装"的普通插件；
-    // 按清单原顺序铺开，真正需要用户注意的 6 行（依赖原生、运行时装不了）与
-    // 3 行（默认禁用）会被淹掉。
-    // **只排序、不隐藏**：插件清单的价值恰恰在于"到底装了什么"能被查全，
-    // 藏掉 146 行会让这个问题无法回答。sort 是稳定的，同档内保持清单原顺序。
-    const rank = (p: PluginRow): number => {
-      if (p.nativeKind === PluginNative.NATIVE) {
-        return 0;
-      }
-      return p.disabled ? 1 : 2;
-    };
-    rows.sort((a: PluginRow, b: PluginRow) => rank(a) - rank(b));
-    return rows;
   }
 
   /**

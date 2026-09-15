@@ -53,6 +53,9 @@ const PURE_FILES = [
   'appstate/src/main/ets/model/Sheets.ets',
   // 设置编辑浮层的输入提示（P2-10）：零依赖
   'appstate/src/main/ets/model/SettingEditors.ets',
+  // 核心页投影（P5-1）：依赖 Core.ets，两者一起执行
+  'appstate/src/main/ets/model/Core.ets',
+  'appstate/src/main/ets/model/CoreProjection.ets',
   'appstate/src/main/ets/model/PanelRegistry.ets',
   'appstate/src/main/ets/model/NavigationState.ets',
   'appstate/src/main/ets/model/Follow.ets',
@@ -206,6 +209,7 @@ const SD = require2('./SettingsDomains.js');
 const SC = require2('./SessionContext.js');
 const SH = require2('./Sheets.js');
 const SE2 = require2('./SettingEditors.js');
+const CP = require2('./CoreProjection.js');
 const t = makeAsserter(selfTest);
 
 console.log('# 布局 fixture 门禁（四形态 + 断点边界 + 让步链）\n');
@@ -1652,6 +1656,59 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
     t.eq('结构项的占位与文本项同源', structSettingEditorHints('').placeholder, '当前未设置');
     t.eq('结构项没有约束说明（JSON 由 Host 校验）', structSettingEditorHints('x').hint, '');
   }
+  // ── P5-1：核心页的插件清单投影（宿主报告的字段 → 事实与行）──
+  {
+    const { pluginInventoryFact, pluginRowOf, rankPluginRows } = CP;
+
+    // 有清单：一行说清规模 + 构成 + 来源
+    const full = pluginInventoryFact('', '0.9.1',
+      { pluginRows: 152, pureJs: 146, native: 6, unknown: 0, disabled: 3 }, 3);
+    t.eq('清单：标签', full.label, '插件清单');
+    t.eq('清单：规模与构成', full.value, '152 行 · 纯 JS 146 · 依赖原生 6 · 默认禁用 3');
+    // 有原生依赖 ⇒ warn（这正是用户必须看见的那件事）
+    t.eq('清单：含原生 ⇒ warn', full.verdict, 'warn');
+    t.eq('清单：说明给出"来自哪一版"',
+      full.hint.startsWith('来自核心 0.9.1；含原生模块的包 3 个。'), true);
+
+    // 无原生、无禁用：不加多余的尾巴（"默认禁用 0" 这种话不该出现）
+    const clean = pluginInventoryFact('', '1.0.0',
+      { pluginRows: 10, pureJs: 10, native: 0, unknown: 0, disabled: 0 }, 0);
+    t.eq('清单：无原生无禁用', clean.value, '10 行 · 纯 JS 10 · 依赖原生 0');
+    t.eq('清单：无原生 ⇒ ok', clean.verdict, 'ok');
+
+    // 没有清单（旧核心包）：必须说"是这个包没带清单"，而不是显示 0 行
+    const none = pluginInventoryFact('该核心版本未携带插件清单', '',
+      { pluginRows: 0, pureJs: 0, native: 0, unknown: 0, disabled: 0 }, 0);
+    t.eq('没有清单 ⇒ 写"未探测"而不是 0', none.value, '未探测');
+    t.eq('没有清单 ⇒ 判定为未知', none.verdict, 'unknown');
+    t.eq('没有清单 ⇒ 原样给出原因', none.hint, '该核心版本未携带插件清单');
+
+    // 行映射：清单的 nativeKind 是打包器取值，界面取值必须由映射决定
+    t.eq('行：纯 JS ⇒ 可安装', pluginRowOf('a', 'alpha', 'PURE_JS', false).installable, true);
+    t.eq('行：依赖原生 ⇒ 不可安装（只能随应用发版）',
+      pluginRowOf('b', 'beta', 'NATIVE', false).installable, false);
+    t.eq('行：读不出来 ⇒ 待确认（不猜成可安装）',
+      pluginRowOf('e', 'eps', 'UNKNOWN', false).nativeKind, 'unknown');
+    t.eq('行：清单无独立版本号 ⇒ 留空（不编一个）',
+      pluginRowOf('a', 'alpha', 'PURE_JS', false).version, '');
+    t.eq('行：默认禁用随行带出', pluginRowOf('c', 'gamma', 'PURE_JS', true).disabled, true);
+
+    // 排序：依赖原生 → 默认禁用 → 可安装，同档保持清单原顺序
+    const rows = [
+      pluginRowOf('a', 'alpha', 'PURE_JS', false),
+      pluginRowOf('b', 'beta', 'NATIVE', false),
+      pluginRowOf('c', 'gamma', 'PURE_JS', true),
+      pluginRowOf('d', 'delta', 'NATIVE', true),
+      pluginRowOf('e', 'eps', 'UNKNOWN', false)
+    ];
+    const ranked = rankPluginRows(rows);
+    t.eq('排序：依赖原生 → 默认禁用 → 可安装', ranked.map((r) => r.id).join(','), 'b,d,c,a,e');
+    t.eq('排序：一个都不少（只排序不隐藏）', ranked.length, 5);
+    t.eq('排序不改原数组顺序（调用点那份仍可复用）',
+      rows.map((r) => r.id).join(','), 'a,b,c,d,e');
+    t.eq('空清单 ⇒ 空数组（界面据此显示空态）', rankPluginRows([]).length, 0);
+  }
+
 }
 
 t.done();
