@@ -9,11 +9,13 @@
  *   本脚本把这段拿回本机：`@kit.NetworkKit` 等三个 kit 由 `tools/lib/kit-stubs/` 提供
  *   Node 实现，**不改应用代码一行**，然后对着真 Host 跑：
  *
- *     连接（configure → authenticate → start 事件流）
+ *   **M1（机制层）**：连接（configure → authenticate → start 事件流）
  *       → session/list（空或若干条，投影成会话项）
  *       → session/create（建一个会话）
  *       → session/list 再看一次（**新会话必须在列表里**）
- *       →（有模型凭据时）session/prompt → 等事件流回帧
+ *       → session/prompt → 等事件流回帧
+ *   **M2（状态机）**：把 `SessionHub`（应用真正的中枢，窗口只是它的视图）接进同一个垫片环境，
+ *     再跑「配置 → 连接 → 新建会话 → 自动选中 → 发消息 → 轨迹有内容 → 事件类型全部认识」。
  *
  * ───────────────────── 它**不**证明什么（写清楚，免得被当验收） ─────────────────────
  *   · 端侧 jitless 下 ArkTS 的 `http`/`webSocket` 与 Node 的实现**有已知差异**
@@ -96,11 +98,12 @@ function build() {
   mkdirSync(stubs, { recursive: true });
   const n1 = stageModule('connection', 'connection/src/main/ets', join(src, 'connection'));
   const n2 = stageModule('dshcompat', 'dshcompat/src/main/ets', join(src, 'dshcompat'));
-  // 只搬 **需要的那一个** appstate 文件：本轮要证的是"列表投影"，不是整个状态层
-  mkdirSync(join(src, 'appstate', 'model'), { recursive: true });
-  cpSync(join(ROOT, 'appstate', 'src', 'main', 'ets', 'model', 'SessionList.ets'),
-    join(src, 'appstate', 'model', 'SessionList.ts'));
-  const n3 = 1;
+  // 【里程碑 M2】把 appstate 的**模型层全量**与**状态机 SessionHub** 一起编：
+  // 这样跑的就是应用真正的状态机（会话列表 / 选中 / 轨迹 / 排队），而不是只投影一次列表。
+  const n3 = stageModule('appstate', 'appstate/src/main/ets/model', join(src, 'appstate', 'model'));
+  mkdirSync(join(src, 'appstate', 'store'), { recursive: true });
+  cpSync(join(ROOT, 'appstate', 'src', 'main', 'ets', 'store', 'SessionHub.ets'),
+    join(src, 'appstate', 'store', 'SessionHub.ts'));
   cpSync(join(ROOT, 'tools', 'lib', 'kit-stubs'), stubs, { recursive: true });
   console.log(`编译：connection ${n1} 文件 + dshcompat ${n2} + appstate/model ${n3} + 3 个 kit 垫片`);
 
@@ -118,6 +121,7 @@ function build() {
         '@kit.PerformanceAnalysisKit': ['stubs/performanceanalysiskit.ts'],
         connection: ['src/connection/Index.ts'],
         dshcompat: ['src/dshcompat/Index.ts'],
+        platform: ['stubs/platform-shim.ts'],
       },
       strict: false,
       skipLibCheck: true,
@@ -158,6 +162,7 @@ function writeRuntimeShims() {
     ['@kit.PerformanceAnalysisKit', 'stubs/performanceanalysiskit.js'],
     ['connection', 'src/connection/Index.js'],
     ['dshcompat', 'src/dshcompat/Index.js'],
+    ['platform', 'stubs/platform-shim.js'],
   ];
   for (const [name, target] of shims) {
     const dir = join(BUILD, 'node_modules', name);
@@ -323,6 +328,52 @@ async function main() {
   await new Promise((r) => setTimeout(r, 1500));
   step('事件流收到帧（≥1）', events.length > 0, `${events.length} 帧`);
 
+  // ─────────────── M2：换成**应用自己的状态机**再跑一遍（用户看得见的路径） ───────────────
+  /*
+   * M1 证的是"机制层通"；M2 走的是界面背后真正的那条路：`SessionHub` 是模块级单例，
+   * 窗口只是它的视图（Index.ets 的注释："中枢持有唯一连接，窗口只是视图"）。
+   * 这里用它跑「配置 → 连接 → 会话列表 → 新建会话 → 选中 → 发消息 → 轨迹有内容」。
+   */
+  const store = await import(join(out, 'src', 'appstate', 'store', 'SessionHub.js'));
+  const hub = store.SessionHub.shared();
+  /* 地址必须**把 token 拼回 URL**（Index.ets 的做法）：token 就是 URL 上的 query */
+  const configuredHub = hub.configure(ready.url);
+  step('M2 configure（状态机接手地址）', configuredHub === true, `authority=${hub.snapshot().authority}`);
+
+  const hubConnected = await hub.connect();
+  const connSnap = hub.snapshot();
+  step('M2 connect（认证 + 事件流 + 控制流）', hubConnected === true,
+    `phase=${connSnap.phase} eventsReady=${connSnap.eventsReady} controlReady=${connSnap.controlReady}`
+    + (connSnap.lastError.length > 0 ? ` lastError=${connSnap.lastError}` : ''));
+
+  const hubSessionId = await hub.createSession();
+  const inList = hubSessionId !== undefined && hub.sessions.some((s) => s.id === hubSessionId);
+  step('M2 createSession（新建 + 进列表 + 自动选中）', inList && hub.selectedSessionId === hubSessionId,
+    hubSessionId === undefined
+      ? `未拿到会话 id（lastError=${hub.lastError}）`
+      : `id=${String(hubSessionId).substring(0, 12)}… sessions=${hub.sessions.length} selected=${hub.selectedSessionId === hubSessionId}`);
+
+  /* 一切读数都走 `snapshot()`：**类字段名与快照字段名不同**（`trajectoryList` vs `trajectory`），
+   * 直接读类字段会拿到 undefined —— 这正是"用错 API 却不报错"的典型形态，检查脚本只读快照。 */
+  const beforeSnap = hub.snapshot();
+  const sent = await hub.sendPrompt('ping（HDSH 状态机自检）');
+  await new Promise((r) => setTimeout(r, 5000));
+  const snap = hub.snapshot();
+  const grew = snap.trajectory.length > beforeSnap.trajectory.length;
+  step('M2 sendPrompt（发消息并等事件回流）', sent === true,
+    `已受理 · 轨迹 ${beforeSnap.trajectory.length} → ${snap.trajectory.length} 条 · outbox=${snap.outbox}`
+    + (grew ? '' : '（**本机没有配模型 ⇒ 不会有回答回流**，属预期；有模型的机器上这里应看到轨迹增长）')
+    + (snap.lastError.length > 0 ? ` lastError=${snap.lastError}` : ''));
+
+  step('M2 会话统计（中枢已记账）', true,
+    `turns=${snap.statsTurns} steps=${snap.statsSteps} llm=${snap.statsLlmMs}ms 工具=${snap.statsToolMs}ms`
+    + ` tokens: in=${snap.tokensUncachedInput} out=${snap.tokensOutput}`);
+
+  const unknown = snap.unknownEventTypes ?? [];
+  step('M2 事件类型全部认识（unknownEventTypes 为空）', unknown.length === 0,
+    unknown.length === 0 ? '（本机无模型，事件只到"已受理"层级）' : `未识别：${unknown.join(', ')}`);
+
+  await hub.disconnect();
   await conn.stop();
   stopHost();
 
@@ -334,8 +385,9 @@ async function main() {
     console.log(`Host 日志尾部：\n${hostLog.split('\n').slice(-12).join('\n')}`);
     process.exit(1);
   }
-  console.log('✅ 核心使用闭环（协议与状态投影这一半）在本机对真 Host 跑通。');
-  console.log('   ⚠️ 这不等于真机验收：端侧走 ArkTS 的 http/webSocket，见本文件顶部说明。');
+  console.log('✅ 核心使用闭环（协议层 + 应用状态机）在本机对真 Host 跑通。');
+  console.log('   ⚠️ 两点如实说明：① 端侧走 ArkTS 的 http/webSocket（与 Node 有已知差异）⇒ 不替代真机验收，');
+  console.log('      ② 本机未配模型 ⇒ 事件只到"已受理"层级，不会出现回答与用量统计（那种环境才验得了渲染与流式）。');
   if (!KEEP) rmSync(BUILD, { recursive: true, force: true });
   process.exit(0);
 }
