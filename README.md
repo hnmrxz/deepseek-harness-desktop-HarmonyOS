@@ -181,6 +181,11 @@ hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 **P2-2 已落地**：会话头的**后台任务条** —— `Jobs` 模型 40 条断言与中枢 `jobs` 字段一直都在，
 但视图零消费者（又一次"通道有、没接"）；现已接成 中枢 → `Index` → `MainShell` → 会话头任务条
 （live 任务每秒走字、无障碍整段取自模型），并把这条接线登记进功能接线门禁（第 16 条）。
+**P4-2 已开工**：设置页按域拆组件 —— 拆出 `view/SettingsPlugins.ets`（插件配置域）与
+`view/SettingsInventory.ets`（只读清单域），正好对应 P4-1 刚分开的两个分区；
+顺带删掉 52 行**零调用**的 `credentialsTab`（凭据早已并入模型段）与一处**重复渲染的摘要行**。
+`SettingsPane` 1890 → **1698 行**。下一步拆最大的一块：模型域（≈400 行）。
+
 **P4（设置域）已开工**：设置分区进了注册表（P4-1）——新增 `PanelLocation.SETTINGS` +
 `settingsSections()`（8 项：官方四段**通用 / 模型 / 插件 / 插件清单**在前，本仓特有的
 核心 / 预设 / 技能 / 设备标 `owner: 'hdsh'` 在后），与侧栏、右栏**共用同一套**

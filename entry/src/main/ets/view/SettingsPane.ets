@@ -18,12 +18,9 @@ import {
   HostRecord,
   ModelOption,
   ModelSelection,
-  pluginSummary,
   PluginItem,
   // 插件可安装性三态契约（D6 §6.2）：不把"未知"渲染成"可安装"
   PluginNative,
-  PluginRow,
-  classifyPlugin,
   Radius,
   SettingGroup,
   SettingItem,
@@ -39,6 +36,8 @@ import {
 } from 'appstate';
 import type { CoreViewState, PanelDescriptor, SettingsNamespaceState } from 'appstate';
 import { SessionHub } from 'appstate';
+import { SettingsInventory } from './SettingsInventory';
+import { SettingsPlugins } from './SettingsPlugins';
 import { CorePane } from './CorePane';
 
 /**
@@ -232,7 +231,6 @@ export struct SettingsPane {
 
   /** 插件分区子页签（E114：配置 / 列表） */
   /** 插件清单的过滤词（只作用于「列表」子页签） */
-  @State pluginFilter: string = '';
 
   @Prop groups: SettingGroup[] = [];
   @Prop credentials: CredentialItem[] = [];
@@ -582,7 +580,8 @@ export struct SettingsPane {
           } else if (this.section === 'settings.plugin-inventory') {
             // 只读清单独立成分区（官方 `settings-plugin-inventory`）：它是"这家宿主装了什么"，
             // 与"哪些插件可以配置"是两件事（此前是插件段里的一个子页签）
-            this.pluginListView()
+            // 只读清单归 SettingsInventory（官方 settings-plugin-inventory）
+            SettingsInventory({ plugins: this.plugins })
           } else {
             this.deviceTab()
           }
@@ -1553,58 +1552,6 @@ export struct SettingsPane {
 
   // ───────────── 凭据 ─────────────
 
-  @Builder
-  credentialsTab() {
-    Text('凭据只显示配置状态，端侧不保存也不显示明文值。')
-      .fontSize(Fs.CAPTION)
-      .fontColor($r('sys.color.font_tertiary'))
-      .width('100%')
-
-    ForEach(this.credentials, (c: CredentialItem) => {
-      Row({ space: Sp.M }) {
-        SymbolGlyph(c.configured ? $r('sys.symbol.checkmark_circle') : $r('sys.symbol.exclamationmark_triangle'))
-          .fontSize(16)
-          .fontColor([c.configured ? $r('sys.color.confirm') : $r('sys.color.warning')])
-        Column({ space: 2 }) {
-          Text(c.ref)
-            .fontSize(Fs.SECONDARY)
-            // 【不要在这里写 layoutWeight（E95，真机实测）】外层 Column 里再嵌一层
-            // `layoutWeight`，会让内层 Column / 外层 Row 被**撑到父级最大高度**：
-            // 真机上的表现是"凭据那一行卡片纵向铺满整屏、ref 居中、说明被挤到底边"。
-            // 文本不需要权重——宽度用 width('100%') 就够。模型页没有这层嵌套，所以它是正常的。
-            .width('100%')
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-          Text(this.credentialHint(c))
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_tertiary'))
-            .width('100%')
-            .maxLines(2)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-        }
-        .layoutWeight(1)
-
-        // 【为什么不写成 if/else 分支】实测：把三个分支各写一个 `Text` 时，
-        // `configured` 从 true 变回 false 后界面**仍停留在旧分支**上
-        // （诊断输出显示组件已收到 `cfg=false`，而按钮文字还是「更换」）。
-        // 三个分支的结构完全相同（都是 `Text`），ArkUI 复用了旧的渲染节点。
-        // 压成一个 `Text` 之后，文案随状态重算，不再有分支可被复用。
-        // 教训：条件渲染的**各分支结构不同**时才用分支；只是文案不同就用三元表达式。
-        Text(credentialActionLabel(c))
-          .fontSize(Fs.CAPTION)
-          .fontColor(c.writable ? $r('sys.color.brand') : $r('sys.color.font_tertiary'))
-          .onClick(() => {
-            if (c.writable && !c.interactive) {
-              this.onAuthorizeCredential(c.ref);
-            }
-          })
-      }
-      .width('100%')
-      .padding(Sp.M)
-      .borderRadius(Radius.M)
-      .backgroundColor($r('sys.color.background_secondary'))
-    }, (c: CredentialItem) => credentialRowKey(c))
-  }
 
   /** 凭据项的说明文字 */
   private credentialHint(c: CredentialItem): string {
@@ -1624,9 +1571,6 @@ export struct SettingsPane {
    * 这是**记录事实**而不是偷懒——等能读到插件包清单（package.json / 是否存在 .node）后，
    * 再把真实取值传进来即可，界面与契约都不用改。
    */
-  private pluginRowOf(p: PluginItem): PluginRow {
-    return classifyPlugin(p.moduleName, '', PluginNative.UNKNOWN);
-  }
 
   /**
    * 插件分区（E114 对齐官方：官方在这里分**配置**与**列表**两个子页签）。
@@ -1638,147 +1582,19 @@ export struct SettingsPane {
    */
   @Builder
   pluginsTab() {
-    Row({ space: Sp.S }) {
-      Blank()
-      Text(pluginSummary(this.plugins))
-        .fontSize(Fs.CAPTION)
-        .fontColor($r('sys.color.font_tertiary'))
-    }
-    .width('100%')
-
-    this.pluginConfigView()
+    /*
+     * 摘要行与卡片都归 `SettingsPlugins`。
+     *
+     * 【顺带修掉的一处重复】此前这里画了一行摘要、组件里又画了一行（同一句话出现两次）——
+     * 抽取组件时才发现：**"这段内容到底归谁"写清楚之后，重复自己就露出来了**。
+     */
+    SettingsPlugins({ plugins: this.plugins })
   }
 
   /** 只读清单 + 关键词过滤（官方"插件列表"标签页的语义） */
-  @Builder
-  pluginListView() {
-    TextInput({ placeholder: '按名称或 entryId 过滤…' })
-      .fontSize(Fs.SECONDARY)
-      .height(40)
-      .width('100%')
-      .onChange((value: string) => {
-        this.pluginFilter = value;
-      })
-
-    ForEach(this.filteredPlugins(), (p: PluginItem) => {
-      Row({ space: Sp.M }) {
-        Circle({ width: 8, height: 8 })
-          .fill(p.phase === 'active' ? $r('sys.color.confirm') : $r('sys.color.font_tertiary'))
-        Column({ space: 2 }) {
-          Text(p.moduleName)
-            .fontSize(Fs.SECONDARY)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .width('100%')
-          Text(`${p.entryId} · ${p.enabled ? '已启用' : '已禁用'}${p.phase.length > 0 ? ` · ${p.phase}` : ''}`)
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_tertiary'))
-            .width('100%')
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-        }
-        .layoutWeight(1)
-        if (p.firstParty) {
-          Text('第一方')
-            .fontSize(Fs.CAPTION_XS)
-            .fontColor($r('sys.color.font_tertiary'))
-            .padding({ left: 5, right: 5 })
-            .borderRadius(5)
-            .backgroundColor($r('sys.color.background_primary'))
-        }
-      }
-      .width('100%')
-      .padding(Sp.M)
-      .borderRadius(Radius.M)
-      .backgroundColor($r('sys.color.background_secondary'))
-    }, (p: PluginItem) => p.entryId)
-
-    Text('只读清单：这里的行不可点击，改动请切到「配置」。')
-      .fontSize(Fs.CAPTION)
-      .fontColor($r('sys.color.font_tertiary'))
-      .width('100%')
-  }
 
   /** 关键词过滤后的插件清单（空关键词 = 全部） */
-  private filteredPlugins(): PluginItem[] {
-    const q: string = this.pluginFilter.trim().toLowerCase();
-    if (q.length === 0) {
-      return this.plugins;
-    }
-    const out: PluginItem[] = [];
-    for (let i = 0; i < this.plugins.length; i++) {
-      const p: PluginItem = this.plugins[i];
-      if (p.moduleName.toLowerCase().includes(q) || p.entryId.toLowerCase().includes(q)) {
-        out.push(p);
-      }
-    }
-    return out;
-  }
 
-  @Builder
-  pluginConfigView() {
-    Row({ space: Sp.S }) {
-      Text(pluginSummary(this.plugins))
-        .fontSize(Fs.CAPTION)
-        .fontColor($r('sys.color.font_tertiary'))
-        .layoutWeight(1)
-    }
-    .width('100%')
-
-    // 【为什么这里只有说明、没有"市场"按钮】原实现有个「市场」文字，点了没有任何反应——
-    // 它是个假入口。而"能不能运行时安装插件"在端侧有一个**硬边界**（E86）：
-    // 上游 `dsh plugin add` 的实现是 `spawnSync("pnpm", …)`（`dsh/lib/plugin-Ddi42qoW.js:109`），
-    // 而鸿蒙不允许应用创建进程（D6 E15）⇒ 纯 JS 插件同样装不了，"只有原生插件装不了"是**错**的。
-    // 所以：不提供任何安装/市场入口，只如实列出随包发版的插件与启停状态。
-    // 另外上游清单不含「是否含原生模块」，因此下方一律标「待确认」——不给会失败的承诺（D6 §6.2）。
-    Text('端侧无法创建进程（上游安装通道 `dsh plugin add` 经 `spawnSync("pnpm")`，见 D6 E15/E86），因此插件只能随核心包发版，这里不提供安装或市场入口。上游插件清单也不含「是否含原生模块」，故一律标注「待确认」。')
-      .fontSize(Fs.CAPTION)
-      .fontColor($r('sys.color.font_tertiary'))
-      .width('100%')
-
-    ForEach(this.plugins, (p: PluginItem) => {
-      Row({ space: Sp.M }) {
-        Circle({ width: 8, height: 8 })
-          .fill(p.phase === 'active' ? $r('sys.color.confirm') : $r('sys.color.font_tertiary'))
-        Column({ space: 2 }) {
-          Text(p.moduleName)
-            .fontSize(Fs.SECONDARY)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .width('100%')
-          Text(`${p.entryId} · ${p.enabled ? '已启用' : '已禁用'}${p.phase.length > 0 ? ` · ${p.phase}` : ''}`)
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_tertiary'))
-            .width('100%')
-        }
-        .layoutWeight(1)
-        if (p.firstParty) {
-          Text('第一方')
-            .fontSize(Fs.CAPTION_XS)
-            .fontColor($r('sys.color.font_tertiary'))
-            .padding({ left: 5, right: 5 })
-            .borderRadius(5)
-            .backgroundColor($r('sys.color.background_primary'))
-        }
-        // 可安装性徽标：取值由 appstate 的三态契约给出（纯 JS / 需发版 / 待确认）
-        Text(this.pluginRowOf(p).badge)
-          .fontSize(Fs.CAPTION_XS)
-          .fontColor($r('sys.color.font_tertiary'))
-          .padding({ left: 5, right: 5 })
-          .borderRadius(5)
-          .backgroundColor($r('sys.color.background_primary'))
-      }
-      .width('100%')
-      .padding(Sp.M)
-      .borderRadius(Radius.M)
-      .backgroundColor($r('sys.color.background_secondary'))
-    }, (p: PluginItem) => p.entryId)
-
-    Text('插件的安装与卸载由 Host 侧执行；端侧只展示状态与触发操作（D1 §7.6.4）。')
-      .fontSize(Fs.CAPTION)
-      .fontColor($r('sys.color.font_tertiary'))
-      .width('100%')
-  }
 
   // ───────────── 设备 ─────────────
 
