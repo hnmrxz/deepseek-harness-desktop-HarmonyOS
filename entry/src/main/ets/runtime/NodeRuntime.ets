@@ -23,7 +23,6 @@ import {
   buildHostEnv,
   HOST_DEFAULT_PORT,
   HostHandle,
-  NativeFact,
   RuntimeKind,
   RuntimePort,
   RuntimeProbe

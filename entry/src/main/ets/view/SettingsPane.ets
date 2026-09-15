@@ -18,10 +18,8 @@ import {
   HostRecord,
   ModelOption,
   ModelSelection,
-  PluginItem,
-  // 插件可安装性三态契约（D6 §6.2）：不把"未知"渲染成"可安装"
-  PluginNative,
   Radius,
+  PluginItem,
   SettingGroup,
   SettingItem,
   SkillRow,

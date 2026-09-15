@@ -190,6 +190,11 @@ hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 `tools/check-builder-recursion.mjs`：`@Builder` 体内不许出现自己的名字（剥注释后判定，5 条注入式自检，
 且**对修前的提交归真命中**——门禁必须先在已知坏版本上红过一次才算证明）；功能接线门禁同步新增「主区兜底」项（16 → 17）。
 ⚠️ 该项**真机复验仍待做**：无真机时不得宣称设备验收完成。
+**顺带清掉搬迁的尾巴（E345）**：查这件事时又查出 `Index.ets` 里**三个零调用的 `@Builder`**
+（`hubBanner` / `coreTabContent` / `tabContent`——内容都已在 AppShell 与两束组件里，只剩宿主这份壳；
+`@Entry` 组件不会渲染它们）与**全仓 22 个零使用 import**（`Index` 12 个、`MainShell` 9 个、其余 6 文件各 1 个）。
+`Index.ets` 4460 → **4384 行**，全仓零使用 import 归零。
+下一步接着拆设置页剩下的段（`SettingsCore` / `SettingsPresets` / `SettingsSkills`）。
 **P4-4 已落地**：设置页又拆出两个域组件 —— `view/SettingsGeneral.ets`（通用段 + 只读权限事实 + 本地调试入口）
 与 `view/SettingsDevice.ets`（已记住的 Host + 关于本机）。**设置页 1890 → 760 行**（P4-1…P4-4 五轮合计），
 拆分出的域组件：`SettingRow` / `SettingsModels` / `SettingsPlugins` / `SettingsInventory` / `SettingsGeneral` / `SettingsDevice`。

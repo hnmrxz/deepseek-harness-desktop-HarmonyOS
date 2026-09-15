@@ -25,7 +25,6 @@ import { ActionNotice, AgentPresetRow, CoreViewState, CredentialItem, FileNode, 
 import type { PanelDescriptor, SettingChoice, SettingItem, SettingsNamespaceState } from 'appstate';
 import { LocalPrefs } from 'platform';
 import { HubBanner } from './HubBanner';
-import { PendingPane } from './PendingPane';
 import { SettingsPane } from './SettingsPane';
 import { WorkspacePane } from './WorkspacePane';
 import { WorkspaceBrowser } from './WorkspaceBrowser';

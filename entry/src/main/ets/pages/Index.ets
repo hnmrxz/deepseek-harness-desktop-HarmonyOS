@@ -159,9 +159,6 @@ import { emitter } from '@kit.BasicServicesKit';
 import { parseJson } from 'connection';
 import { EVENT_HOST_CONNECTED, EVENT_KEY_HOST_TOKEN, EVENT_KEY_HOST_URL } from 'platform';
 import { ConnectPane } from '../view/ConnectPane';
-import { ConversationPane } from '../view/ConversationPane';
-import { CommandList } from '../view/CommandList';
-import { GoalBar } from '../view/GoalBar';
 import { MainShell } from '../view/shell/MainShell';
 import { AppShell } from '../view/shell/AppShell';
 import type { AppShellFacade } from '../view/shell/AppShell';
@@ -170,18 +167,9 @@ import { TabContentView } from '../view/TabContentView';
 import type { TabContentFacade } from '../view/TabContentView';
 import type { WorkspaceBrowserFacade } from '../view/WorkspaceBrowser';
 import type { FileTreeFacade } from '../view/FileTreePane';
-import { HubBanner } from '../view/HubBanner';
-import { SessionModelPicker } from '../view/SessionModelPicker';
-import { MainHeaderShell } from '../view/shell/MainHeaderShell';
 import { RightbarShell } from '../view/shell/RightbarShell';
-import { SidebarShell } from '../view/shell/SidebarShell';
-import { TrackResizer } from '../view/shell/TrackResizer';
-import { CorePane } from '../view/CorePane';
 import { DetailPane } from '../view/DetailPane';
-import { DiagnosticsPane } from '../view/DiagnosticsPane';
-import { PendingPane } from '../view/PendingPane';
 import { NodeRuntime } from '../runtime/NodeRuntime';
-import { SettingsPane } from '../view/SettingsPane';
 import { WorkspacePane } from '../view/WorkspacePane';
 import { hitOfKeyEvent } from '../view/ShortcutKeys';
 import type { ShortcutHit } from '../view/ShortcutKeys';
@@ -3340,22 +3328,6 @@ struct Index {
     return all.slice(all.length - 4);
   }
 
-  @Builder
-  hubBanner() {
-    // 连接横幅归 HubBanner 所有（呈现 + 两个动作入口）；事实由宿主给，
-    // "重连"是中枢自己的动作（组件内直调），"诊断"是一次导航（走宿主回调）。
-    HubBanner({
-      errorText: this.hubError,
-      authority: this.hubAuthority,
-      phase: this.hubPhase,
-      streams: this.hubStreams,
-      traceTail: this.hubTraceTail(),
-      onOpenDiagnostics: () => {
-        this.openDiagnostics();
-      }
-    })
-  }
-
   /** 诊断模式（D7 §3 第 4 项）：本机核心 / 远程 Host / 未接线 */
   private diagMode(): DiagMode {
     const ready: boolean = this.coreView.phase === CorePhase.READY
@@ -4078,14 +4050,6 @@ struct Index {
     this.wsDrill = 1;
   }
 
-  /**
-   * 工作区视图：动作行 → 待决（若有）→ 工作区分组（组内列会话）。
-   *
-   * 【为什么把待决放在最上面】它属于"现在就需要你动手"的东西，藏在别处等于拖延；
-   * 而官方 web 也是把审批/提问直接摆在对话流里，不另开页签。
-   */
-
-  /** 一个工作区：组头（名字/路径/会话数/文件入口）+ 组内会话行 */
 
   /**
    * 核心页内容（E110：原「核心」页签并入设置，作为设置页的第一个页签）。
@@ -4094,40 +4058,6 @@ struct Index {
    * 与"设置"并列成两个一级页签，会让用户在两个地方找同一类东西（官方 web 也没有独立的"核心"页，
    * 它是设置里的一个分区）。内容原样搬过来，能力一个不少。
    */
-  @Builder
-  coreTabContent() {
-    Column({ space: Sp.S }) {
-      if (this.coreNotice.length > 0) {
-        Text(this.coreNotice)
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_secondary'))
-          .width('100%')
-          .padding(Sp.S)
-          .borderRadius(Radius.S)
-          .backgroundColor($r('sys.color.background_secondary'))
-      }
-      CorePane({
-        view: this.coreView,
-        onAction: (id: string) => {
-          this.onCoreAction(id);
-        },
-        onSelectVersion: (version: string) => {
-          this.onCoreSelectVersion(version);
-        },
-        onTogglePlugin: (id: string, disabled: boolean) => {
-          this.onTogglePlugin(id, disabled);
-        },
-        onResetPluginRows: () => {
-          this.onResetPluginRows();
-        },
-        pluginNotice: this.pluginNotice
-      })
-        .layoutWeight(1)
-    }
-    .width('100%')
-    .height('100%')
-  }
-
   /** 标签页内容所需能力的门面（**每次渲染重建**：值型快照、写型 setter、方法型闭包） */
   /** 工作区浏览器所需能力的门面（由 `buildTabFacade()` 的同类包装行筛出：同源同形状） */
   /**
@@ -4380,12 +4310,6 @@ struct Index {
     },
     };
     return facade;
-  }
-
-  @Builder
-  tabContent(compact: boolean) {
-    // 标签页内容归 TabContentView 所有（P0：主区搬迁第一束）；宿主只给门面（每次渲染重建）。
-    TabContentView({ f: this.buildTabFacade(), compact: compact })
   }
 
 }

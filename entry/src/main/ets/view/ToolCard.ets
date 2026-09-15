@@ -23,7 +23,7 @@
  */
 
 import {
-  Fs, ToolKind, ToolState, TrajectoryItem, formatClock, formatDuration,
+  ToolKind, ToolState, TrajectoryItem, formatClock, formatDuration,
   presentDiff, presentTool, previewOutput, toolStateLabel, toolSummaryOf,
 } from 'appstate';
 import type { DiffPresentation, ToolPresentation } from 'appstate';

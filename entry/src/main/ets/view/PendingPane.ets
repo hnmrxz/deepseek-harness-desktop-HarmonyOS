@@ -16,7 +16,6 @@ import {
   RiskLevel,
   riskLabel,
   Sp,
-  Sz,
   sortPending,
   Border
 } from 'appstate';

@@ -33,7 +33,7 @@
  * 放这里之后可在本机直接测（`tools/check-layout-fixtures.mjs`），视图只读结论。
  */
 
-import { PanelDescriptor, PanelLocation, PanelRegistry, PANEL_RIGHT_DETAIL, PANEL_RIGHT_FILES, PANEL_SIDEBAR_WORKSPACES, PANEL_SIDEBAR_SETTINGS, PANEL_SIDEBAR_CORE } from './PanelRegistry';
+import { PanelDescriptor, PanelLocation, PanelRegistry, PANEL_RIGHT_DETAIL, PANEL_SIDEBAR_WORKSPACES, PANEL_SIDEBAR_SETTINGS, PANEL_SIDEBAR_CORE } from './PanelRegistry';
 
 /* ───────────────────────── 主区面板 ───────────────────────── */
 

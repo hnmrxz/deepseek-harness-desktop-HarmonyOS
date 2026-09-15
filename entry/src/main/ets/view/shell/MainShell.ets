@@ -17,7 +17,7 @@
  * 而它**已经是组件 `HubBanner`**，故这里直接渲染组件。
  */
 
-import { ActionNotice, CommandCandidate, DiagEntry, DiagMode, DiagReport, Fs, HostRecord, HubPhase, MAIN_CONNECT, MAIN_CONVERSATION, ModelOption, ModelSelection, PanelRegistry, PendingAttachment, PendingItem, Radius, ReferenceCandidate, SessionHub, SessionJob, Sp, StackPage, TrajectoryItem, aboutInfo, diagHintOf, diagTitleOf, filterDiagEntries, formatClock, openSettings, projectGeneralGroups, relativeTime, sessionEmptyCopy } from 'appstate';
+import { ActionNotice, CommandCandidate, DiagEntry, DiagMode, DiagReport, Fs, HostRecord, HubPhase, MAIN_CONNECT, MAIN_CONVERSATION, ModelOption, ModelSelection, PanelRegistry, PendingAttachment, PendingItem, Radius, ReferenceCandidate, SessionHub, SessionJob, Sp, StackPage, TrajectoryItem, diagHintOf, diagTitleOf, filterDiagEntries, openSettings } from 'appstate';
 import hilog from '@ohos.hilog';
 import { CommandList } from '../CommandList';
 import { ConnectPane } from '../ConnectPane';
@@ -28,12 +28,8 @@ import { SessionModelPicker } from '../SessionModelPicker';
 import { copyText } from 'platform';
 import type { HubSnapshot, InputModality, NavigationState, SessionStatsInput } from 'appstate';
 import { TabContentView } from '../TabContentView';
-import { extractToken, parseJson } from 'connection';
+import { extractToken } from 'connection';
 import type { TabContentFacade } from '../TabContentView';
-import { HubBanner } from '../HubBanner';
-import { PendingPane } from '../PendingPane';
-import { SettingsPane } from '../SettingsPane';
-import { WorkspacePane } from '../WorkspacePane';
 
 export interface MainShellFacade {
   TAG: string;
