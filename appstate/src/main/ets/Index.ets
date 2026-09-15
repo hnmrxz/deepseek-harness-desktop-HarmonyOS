@@ -100,6 +100,7 @@ export {
   settingsUnsetArgs,
   splitSettingKey
 } from './model/Settings';
+export { sessionContextLine, workspaceNameOf } from './model/SessionContext';
 export type {
   AboutInfo,
   ConnectionBanner,

@@ -528,6 +528,7 @@ node tools/check-arkts-entry.mjs --self-test  # 判定器自检（8 个样例，
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| v1.11 | 2026-09-15 | **P2-7 会话头上下文行（E352）**：补官方 `conversation.header` 的 **Workspace context / Model / 最近活动** 三项（规则在零依赖的 `model/SessionContext.ets`，fixture +14 → **547 条**）；Agent preset / Schedule / Open in App 三项**如实不做**（缺"当前会话的预设名"与协议面），留在 §6 缺口台账 |
 | v1.10 | 2026-09-15 | **P2-6 第二刀：`TurnView`（E351）** —— "一个回合怎么画"整块搬出（492 行），展开集合留在子组件而按钮在父组件 ⇒ 引入**控制器对象**（与 ArkUI `Scroller` 同源）；思考块抽 `ReasoningRow` 供轨迹视图与过程分组**共用**；轨迹视图另留条目级 `flatItem` 分派（**共享卡片、不共享分派**）。`ConversationPane` 1087 → **984 行**（P2-4…P2-6 合计 1414 → 984）。死代码门禁当轮抓出 2 处搬迁残留 |
 | v1.9 | 2026-09-15 | **死代码门禁 `check-dead-code.mjs`（E350）**：把"搬迁留下的壳"（零使用 import / `@Builder` / 组件成员）变成第 9 道门禁——前两轮三次手工扫出的同类缺陷（E345/E346/E346b）从此自动拦。门禁本身立刻查出 3 处真死代码（`MessageFeedback.itemId` / `MessageRow.menuHint` / `SettingsPane.settingRow`）并连带清掉级联死代码；含 9 条注入式自检 + 对修前 `SettingsPane` 归真命中 5 处 |
 | v1.8 | 2026-09-15 | **P2-5 会话头抽成 `ConversationHeader`（E349）**：视图切换 / 轨迹工具栏 / 后台任务条 / 时间总览 / 会话内搜索条四块 chrome 整块搬出（284 行），`ConversationPane` 1234 → **1093 行**；`stats` 改为必需 prop（不造"全 0 默认统计"）。记录该类脚本化编辑的**第五次事故与三条硬规则**（不混用整块替换与局部再改 / 编辑后先 grep 锚点 / 报错里出现自己的占位符先怀疑文件被改坏） |

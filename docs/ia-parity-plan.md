@@ -299,7 +299,8 @@ Composer 的官方字段：Model / Reasoning effort / Permission / Plan / @ Refe
 | 会话头四块 chrome 抽组件（P2-5） | ✅ **已落地**：`view/ConversationHeader.ets`（284 行）收走「视图切换 + 轨迹工具栏」「后台任务条」「时间总览」「会话内搜索条」四块**不在列表里的**东西。**分工口径**：跨行状态（搜索命中判定、任务条定时器）留父组件、块内状态留子组件；`stats` 改成必需 prop（不造"全 0 默认统计"——那会让"没接到数据"看起来像"这场会话什么也没花"）。`ConversationPane` 1234 → **1093 行** |
 | 死代码门禁（P2-6 第一刀） | ✅ **已落地**：第 9 道门禁 `tools/check-dead-code.mjs`（零使用 import / `@Builder` / 组件成员）。当轮即查出并删掉 3 处真死代码（`MessageFeedback.itemId` / `MessageRow.menuHint` / `SettingsPane.settingRow`），并连带清掉级联的 `ConversationPane.inputModality()`。含 9 条注入式自检 + 对修前版本归真命中 5 处 |
 | 回合渲染抽组件（P2-6 第二刀） | ✅ **已落地**：`view/TurnView.ets`（492 行）+ `view/ReasoningRow.ets`（83 行，轨迹视图与过程分组**共用**）。展开集合留子组件、按钮在父组件 ⇒ **控制器对象**；轨迹视图的条目级分派用 `flatItem`（共享卡片、不共享分派）。`ConversationPane` 1087 → **984 行**（1414 → 984）。死代码门禁当轮抓出 2 处残留（`reasoningItem` 已被取代、`hitIds`/`fbRating` 无读者）|
-| 下一步（P2-7…） | ① 官方会话头缺的字段：Session title / Agent preset / Goal / Schedule / Open in App / Workspace context（现在会话头只有视图切换、任务条、时间总览、搜索）② `Index.ets` 4419 行按域继续拆（门户 + 六类浮层 + 宿主处理器）③ 右栏面板滑入动画与拖拽调宽、单栏 Sheet 切换器 ④ **真机复验 E343 / D18** ——无真机不得宣称设备验收完成 |
+| 会话头上下文行（P2-7） | ✅ **已落地**：补官方 `conversation.header` 的 **Workspace context / Model / 最近活动** 三项（数据都已在手）；规则做成零依赖纯函数 `appstate/model/SessionContext.ets`（+14 条 fixture）。**没做的三项各有原因**：Agent preset 缺"当前会话的预设名"，Schedule / Open in App 缺协议面 —— 不猜、不摆假入口。`ConversationHeader` 284 → 318 行 |
+| 下一步（P2-8…） | ① `Index.ets` 4419 行按域继续拆（门户 + 六类浮层 + 宿主处理器）② 右栏面板滑入动画与拖拽调宽、单栏 Sheet 切换器 ③ 会话头剩余三项需要协议面（`Agent preset` 的当前值、`Schedule`）——先在 `docs/parity-matrix.md` §6 记清要什么，再等上游或明确不做 ④ **真机复验 E343 / D18** ——无真机不得宣称设备验收完成 |
 
 `SettingsShell`（General / Models / Plugins / Plugin Inventory / …）。**不再往 `SettingsPane.ets` 里堆内容。**
 

@@ -94,6 +94,7 @@ import {
   DEFAULT_MODEL_NS,
   SettingsWriteOutcome,
   settingsDomainOfNs,
+  workspaceNameOf,
   splitSettingKey,
   parseSettingInput,
   parseStructInput,
@@ -1707,6 +1708,31 @@ struct Index {
   }
 
   /** 当前页签（派生值：由主区面板经桥反查；视图不再持有第二份真值） */
+  /**
+   * 选中会话的工作区名（给会话头的上下文行）。
+   *
+   * 【为什么拿不到就给空串】「不知道」与「没有工作区」是两件事，而在这一格上两者的表现相同：
+   * 整段不显示。拿不到的原因如实写在代码里——会话列表还没回来，或这条会话 host 侧给了空 cwd。
+   */
+  private selectedSessionWorkspaceName(): string {
+    for (let i = 0; i < this.sessions.length; i++) {
+      if (this.sessions[i].id === this.selectedSessionId) {
+        return workspaceNameOf(this.sessions[i].cwd);
+      }
+    }
+    return '';
+  }
+
+  /** 选中会话的最近活动时间（毫秒；0 = 列表里没有它 ⇒ 不显示「多久没动」） */
+  private selectedSessionUpdatedAt(): number {
+    for (let i = 0; i < this.sessions.length; i++) {
+      if (this.sessions[i].id === this.selectedSessionId) {
+        return this.sessions[i].updatedAt;
+      }
+    }
+    return 0;
+  }
+
   private currentTab(): NavTab {
     return legacyTabOfMainPanel(this.nav.selectedMainPanel) as NavTab;
   }
@@ -3270,6 +3296,9 @@ struct Index {
       this.searchOpen = value;
     },
     selectedSessionId: this.selectedSessionId,
+    // 会话头上下文行（P2-7）：工作区名从选中会话的 cwd 派生（拿不到就空串 ⇒ 界面不显示那段）
+    sessionWorkspaceName: this.selectedSessionWorkspaceName(),
+    sessionUpdatedAt: this.selectedSessionUpdatedAt(),
     selection: this.selection,
     sendDraft: () => this.sendDraft(),
     sessionStats: this.sessionStats,

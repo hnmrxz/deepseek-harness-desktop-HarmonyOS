@@ -47,6 +47,8 @@ const PURE_FILES = [
   'appstate/src/main/ets/model/Markdown.ets',
   // 设置域判定（P4-6）：零依赖，故可以被本 fixture 直接执行
   'appstate/src/main/ets/model/SettingsDomains.ets',
+  // 会话头上下文行（P2-7）：零依赖，故可以被本 fixture 直接执行
+  'appstate/src/main/ets/model/SessionContext.ets',
   'appstate/src/main/ets/model/PanelRegistry.ets',
   'appstate/src/main/ets/model/NavigationState.ets',
   'appstate/src/main/ets/model/Follow.ets',
@@ -197,6 +199,7 @@ const ST = require2('./ShellTracks.js');
 const NS = require2('./NavigationState.js');
 const MD = require2('./Markdown.js');
 const SD = require2('./SettingsDomains.js');
+const SC = require2('./SessionContext.js');
 const t = makeAsserter(selfTest);
 
 console.log('# 布局 fixture 门禁（四形态 + 断点边界 + 让步链）\n');
@@ -1542,6 +1545,31 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
     // 白名单本身也要钉住：多一个/少一个都会让"通用"页的内容变样
     t.eq('通用白名单五项', GENERAL_NAMESPACES.length, 5);
     t.eq('通用白名单内容', GENERAL_NAMESPACES.join(','), 'ui-theme,locale,ui-conversation,ui-chat,ui-onboarding');
+  }
+
+  // ── P2-7：会话头上下文行（工作区名 · 模型 · 最近活动）──
+  {
+    const { workspaceNameOf, sessionContextLine } = SC;
+
+    // 工作区名：取末两段（同名目录会撞 ⇒ 留父目录前缀）
+    t.eq('工作区名：末两段', workspaceNameOf('/home/u/projects/app'), 'projects/app');
+    t.eq('工作区名：只有一段时不留前缀', workspaceNameOf('/srv'), 'srv');
+    t.eq('工作区名：尾斜杠不影响', workspaceNameOf('/home/u/app/'), 'u/app');
+    t.eq('工作区名：家目录（~ 已展开）照样取末两段', workspaceNameOf('~/work/hdsh'), 'work/hdsh');
+    t.eq('工作区名：根目录', workspaceNameOf('/'), '/');
+    t.eq('工作区名：空串 ⇒ 空串（不显示这一段）', workspaceNameOf(''), '');
+    t.eq('工作区名：只有空白 ⇒ 空串', workspaceNameOf('   '), '');
+    t.eq('工作区名：相对路径也照切', workspaceNameOf('a/b/c'), 'b/c');
+
+    // 上下文行：三段都拿到
+    t.eq('三段齐全', sessionContextLine('projects/app', 'DeepSeek-V3.2', '12 分钟前'),
+      '工作区 projects/app · 模型 DeepSeek-V3.2 · 12 分钟前');
+    // 每段拿不到就不出现（不留空的分隔符）
+    t.eq('没有工作区', sessionContextLine('', 'DeepSeek-V3.2', '刚刚'), '模型 DeepSeek-V3.2 · 刚刚');
+    t.eq('没有模型', sessionContextLine('app', '', '刚刚'), '工作区 app · 刚刚');
+    t.eq('没有时间', sessionContextLine('app', 'm', ''), '工作区 app · 模型 m');
+    t.eq('只有工作区', sessionContextLine('app', '', ''), '工作区 app');
+    t.eq('一段都没有 ⇒ 空串（界面整行不画）', sessionContextLine('', '', ''), '');
   }
 }
 

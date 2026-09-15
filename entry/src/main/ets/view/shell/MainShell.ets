@@ -100,6 +100,10 @@ export interface MainShellFacade {
   searchOpen: boolean;
   setSearchOpen: (value: boolean) => void;
   selectedSessionId: string;
+  /** 会话头上下文行的工作区名（从选中会话的 cwd 派生；空 = 不知道，不显示） */
+  sessionWorkspaceName: string;
+  /** 选中会话的最近活动时间（毫秒；0 = 不知道 ⇒ 不显示「多久没动」） */
+  sessionUpdatedAt: number;
   selection: ModelSelection;
   sendDraft: () => void;
   sessionStats: SessionStatsInput;
@@ -312,6 +316,8 @@ export struct MainShell {
           this.f.answerPending(item, selected, custom);
         },
         sessionId: this.f.selectedSessionId,
+        workspaceName: this.f.sessionWorkspaceName,
+        sessionUpdatedAt: this.f.sessionUpdatedAt,
         jobs: this.f.jobs,
         items: this.f.trajectoryItems,
         running: this.f.running,

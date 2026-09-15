@@ -8,7 +8,7 @@
  * 所有动作通过回调上报宿主，便于接入真实连接时只改宿主。
  */
 
-import { Border, CommandCandidate, FeedbackRow, FollowSignal, Fs, HarmonyColor, HarmonyType, ModelOption, ModelSelection, PendingAttachment, PendingItem, QueuedItem, Radius, ReferenceCandidate, SessionHub, Sp, Speaker, TrajectoryItem, TrajectoryKind, cellIdForListIndex, chatRowOfItemIndex, chatVisibleItems, contextMenuGestures, defaultExpanded, followTimerShouldRun, formatDuration, groupTurns, hasProcessGroup, jobTickerNeeded, listIndexForCell, matchConversationIndices, matchTrajectoryIndices, nextFollowing, parseMarkdown, plainTextOf, presentTool, processSummary, shouldJumpOnNewItems, stepMatch, toolStateLabel } from 'appstate';
+import { Border, CommandCandidate, FeedbackRow, FollowSignal, Fs, HarmonyColor, HarmonyType, ModelOption, ModelSelection, PendingAttachment, PendingItem, QueuedItem, Radius, ReferenceCandidate, SessionHub, Sp, Speaker, TrajectoryItem, TrajectoryKind, cellIdForListIndex, chatRowOfItemIndex, chatVisibleItems, contextMenuGestures, defaultExpanded, followTimerShouldRun, formatDuration, groupTurns, hasProcessGroup, jobTickerNeeded, listIndexForCell, matchConversationIndices, matchTrajectoryIndices, modelSelectionLabel, nextFollowing, parseMarkdown, plainTextOf, presentTool, processSummary, shouldJumpOnNewItems, stepMatch, toolStateLabel } from 'appstate';
 /** 类型单独 import type（本仓约定：值与类型分开写） */
 import type { ActionNotice, SessionJob, SessionStatsInput, Turn } from 'appstate';
 import type { NativeAction } from './NativePrimitives';
@@ -28,6 +28,10 @@ import { PendingPane } from './PendingPane';
 @Component
 export struct ConversationPane {
   @Prop @Watch('onSessionChanged') sessionId: string = '';
+  /** 会话头上下文行：工作区名（宿主从选中会话的 cwd 派生；空 = 不显示） */
+  @Prop workspaceName: string = '';
+  /** 选中会话的最近活动时间（毫秒；0 = 不显示） */
+  @Prop sessionUpdatedAt: number = 0;
   @Prop items: TrajectoryItem[] = [];
   @Prop running: boolean = false;
   @Prop offline: boolean = false;
@@ -757,6 +761,9 @@ export struct ConversationPane {
         searchQuery: this.searchQuery,
         matchPos: this.matchPos,
         hitCount: this.hits().length,
+        workspaceName: this.workspaceName,
+        sessionUpdatedAt: this.sessionUpdatedAt,
+        modelLabel: modelSelectionLabel(this.selection, this.models),
         onPickView: (value: string) => {
           this.view = value;
         },

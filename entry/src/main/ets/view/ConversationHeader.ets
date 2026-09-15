@@ -28,7 +28,8 @@
 import {
   Fs, JobDot, Radius, SemanticColor, Sp, Sz,
   jobCountLabel, jobDotState, jobDurationText, jobDurationTitle, jobElapsedMs,
-  jobListA11y, jobListVisible, jobRowStatusText, matchCounterText, orderedJobs
+  jobListA11y, jobListVisible, jobRowStatusText, matchCounterText, orderedJobs,
+  relativeTime, sessionContextLine
 } from 'appstate';
 import type { SessionJob, SessionStatsInput, TrajectoryItem } from 'appstate';
 import { TimelineOverview } from './TimelineOverview';
@@ -62,6 +63,12 @@ export struct ConversationHeader {
   /** 命中位置 / 命中总数（父组件算好——它扫的是整条过程流） */
   @Prop matchPos: number = -1;
   @Prop hitCount: number = 0;
+  /** 上下文行：工作区名（空 = 不显示这一段） */
+  @Prop workspaceName: string = '';
+  /** 选中会话的最近活动时间（毫秒；0 = 不显示「多久没动」） */
+  @Prop sessionUpdatedAt: number = 0;
+  /** 当前模型名（父组件用 `modelSelectionLabel` 拼好；空 = 不显示） */
+  @Prop modelLabel: string = '';
 
   /** 切视图（对话 / 轨迹） */
   onPickView: (view: string) => void = () => {
@@ -87,6 +94,21 @@ export struct ConversationHeader {
   };
   onDragChange: (dragging: boolean) => void = () => {
   };
+
+  /**
+   * 上下文行：工作区 · 模型 · 最近活动。
+   *
+   * 【为什么在视图里拼】三段事实都在本组件手边（两个 prop + 父组件拼好的模型名），
+   * 而「每段拿不到就不出现」的规则在 `sessionContextLine`（纯模型、有 fixture）。
+   * 【为什么要传 now】`relativeTime` 需要「现在」，由调用点给 ⇒ 这一行随时钟自然更新，
+   * 不引入第二个定时器（任务条已经有一个每秒刻度）。
+   */
+  private contextLine(): string {
+    const updated: string = this.sessionUpdatedAt > 0
+      ? relativeTime(this.sessionUpdatedAt, Date.now())
+      : '';
+    return sessionContextLine(this.workspaceName, this.modelLabel, updated);
+  }
 
   /** 状态点 → 语义色（模型给语义 `JobDot`，颜色是视图的事） */
   private jobDotColor(status: string): Resource {
@@ -114,6 +136,18 @@ export struct ConversationHeader {
        * 官方 web 也是这两个视图；混在一起会让"想安静读答案"的人被工具卡刷屏，
        * 而"想查某次工具参数"的人又要在气泡之间翻找。
        */
+      // 上下文行（P2-7，对齐官方 conversation.header 的 Workspace context / Model 两项）：
+      // 一段都拿不到时整行不画——空行占位比没有更难读。
+      if (this.contextLine().length > 0) {
+        Text(this.contextLine())
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.font_tertiary'))
+          .width('100%')
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .padding({ left: Sp.M, right: Sp.M, top: Sp.XS })
+      }
+
       Row({ space: Sp.S }) {
         this.viewChip('chat', $r('app.string.view_chat'))
         this.viewChip('trajectory', $r('app.string.view_trajectory'))
