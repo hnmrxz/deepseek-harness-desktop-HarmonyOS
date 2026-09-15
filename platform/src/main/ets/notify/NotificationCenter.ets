@@ -241,6 +241,9 @@ export class NotificationCenter {
   }
 }
 
+// dead-exempt: 等 hdsh-notify 那条接线 —— 逐条通知到渠道的路由被 SDK 两份同名枚举
+// （`@ohos.notification`.SlotType 与 notificationManager.SlotType 不可互赋）挡住，
+// 渠道等级定不下来，"谁允许绕过静默时段"就还没有调用点。见 parity-matrix 的 hdsh-notify 行。
 /** 优先级 → 是否允许绕过静默时段（渠道等级由用户在各渠道上配置） */
 export function priorityAllowsBypassDnd(priority: NotifyPriority): boolean {
   return priority === NotifyPriority.HIGH;

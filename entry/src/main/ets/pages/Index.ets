@@ -29,6 +29,7 @@ import {
 } from 'dshcompat';
 import type { VersionCheck } from 'dshcompat';
 import type { DiagnosticItem, DiagnosticReport } from 'connection';
+import type { RuntimeFacts } from 'platform';
 import {
   applyThemeMode,
   copyText,
@@ -38,6 +39,7 @@ import {
   pickFolder,
   localizedOr,
   readDeviceFacts,
+  runtimeFacts,
   readInputSources,
   themeModeOf,
   watchInputSources
@@ -1409,6 +1411,14 @@ struct Index {
     lines.push(`# ${APP_NAME} 诊断报告（${new Date().toISOString()}）`);
     lines.push(`Host: ${this.hubAuthority.length > 0 ? this.hubAuthority : '未配置'}`);
     lines.push(`阶段: ${this.hubPhase} · 连接=${this.hubConnected}`);
+    /*
+     * 运行时事实（P5-7 / E370）：窗口台账（platform/RuntimeSingleton）一直在写，却**没有任何读点**
+     * ⇒ D1 §7.7.5b 要的"窗口数 >1 且只有一条连接"这条证据在应用里根本取不出来。
+     * 这里接上读数：窗口数 + 各窗口标签 + 运行时长，复制诊断报告即可交给真机验收。
+     */
+    const facts: RuntimeFacts = runtimeFacts();
+    lines.push(`窗口: ${facts.windowCount} 个${facts.labels.length > 0 ? `（${facts.labels.join(' / ')}）` : ''}`
+      + ` · 运行 ${Math.round(facts.uptimeMs / 1000)} 秒 · runtimeId=${facts.runtimeId}`);
     lines.push('');
     for (let i = 0; i < this.diag.entries.length; i++) {
       const e: DiagEntry = this.diag.entries[i];

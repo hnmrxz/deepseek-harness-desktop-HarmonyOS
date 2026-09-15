@@ -24,9 +24,10 @@
  * 4. **门面字段零读点**（跨文件，E367）：`export interface *Facade` 的字段在**整仓**里搜不到一个
  *    `.字段`。前三条只看本文件，而门面通道的写法天生跨文件（**声明与读者在子组件、实现在宿主**）——
  *    只看一个文件既数不到读者也数不到写者；
- * 5. **零消费者导出**（跨文件，E368）：appstate 的导出在整仓 **+ `tools/`** 里出现 ≤2 次
- *    （= 只有声明 + barrel 再导出）。语料含 `tools/` 是硬要求：本仓纯逻辑大量**只被 fixture 读**，
- *    不含 tools 会一次误报 19 个；而 `model/Wire.ets`（上游协议词汇表）整文件排除。
+ * 5. **零消费者导出**（跨文件，E368 / P5-7）：**appstate + platform** 的导出在整仓 **+ `tools/`**
+ *    里出现 ≤2 次（= 只有声明 + barrel 再导出）。两条边界都是实测出来的：语料含 `tools/` 是硬要求
+ *    （本仓纯逻辑大量**只被 fixture 读**，不含 tools 会一次误报 19 个）；`connection` / `dshcompat` /
+ *    `model/Wire.ets` 这些**上游协议词汇表不扫**（形状先按协议写全，扫它等于装个常红灯泡）。
  *
  * ## 三条刻意写下来的边界（避免误报，也避免"把门禁写成噪音"）
  *
@@ -291,10 +292,14 @@ export function deadFacadeFields(sources, corpusText) {
  */
 export function deadExports(sources, corpusText) {
   const out = [];
-  const skip = new Set(['model/Wire.ets']);
+  const skip = new Set(['appstate/src/main/ets/model/Wire.ets']);
   for (const src of sources) {
-    if (!src.path.startsWith('appstate/src/main/ets/')) continue;
-    if (skip.has(src.path.slice('appstate/src/main/ets/'.length))) continue;
+    // 扫描面 = appstate + platform：两层都是**自研机制**，导出即承诺"有人会用"。
+    // 不扫 connection / dshcompat：那两层（以及 Wire.ets）是**上游协议词汇表**，
+    // 形状先按协议写全、投影用到哪几项是后话，扫它等于给门禁装了个常红灯泡。
+    if (!src.path.startsWith('appstate/src/main/ets/')
+      && !src.path.startsWith('platform/src/main/ets/')) continue;
+    if (skip.has(src.path)) continue;
     const lines = src.text.split('\n');
     for (let i = 0; i < lines.length; i++) {
       const m = lines[i].match(/^export (?:interface|type|enum|function|class|const) (\w+)/);
@@ -571,7 +576,9 @@ function main(argv) {
   const corpus = corpusSources.map((x) => stripStringsOnly(x.text)).join('\n');
   for (const v of deadFacadeFields(sources, corpus)) violations.push(v);
   for (const v of deadExports(sources, corpus)) violations.push(v);
-  exportChecked = sources.reduce((n, x) => n + (x.text.match(/^export (?:interface|type|enum|function|class|const) /gm) || []).length, 0);
+  exportChecked = corpusSources
+    .filter((x) => x.path.startsWith('appstate/src/main/ets/') || x.path.startsWith('platform/src/main/ets/'))
+    .reduce((n, x) => n + (x.text.match(/^export (?:interface|type|enum|function|class|const) /gm) || []).length, 0);
 
   console.log('# 死代码门禁：搬迁留下的壳不许留在原地\n');
   console.log(`扫描文件 ${files.length} 个 · 判定声明 ${checked} 处 · 门面字段 ${facadeChecked} 个 · 导出符号 ${exportChecked} 个`);
