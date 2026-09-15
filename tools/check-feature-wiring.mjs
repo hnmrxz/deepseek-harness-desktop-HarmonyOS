@@ -126,6 +126,12 @@ const FEATURES = [
    * 错误对象构造 + 中枢方法 + 视图按钮。
    */
   { name: '放弃整组提问', patterns: [['questionCancelledError', 2], ['cancelQuestionGroup', 2], ['放弃整组问题', 1]] },
+  /*
+   * 计划待审（P7-10）。官方 `dsh-client-ui-user-questions` 的 `planReviewOf` 把
+   * "带 plan-review 意图的单题请求"换成计划面板（计划待审 / 确认执行 / 拒绝 / 去聊天里说）。
+   * 钉三段：意图投影 + 收窄判定 + 视图面板。
+   */
+  { name: '计划待审', patterns: [['intentKind', 2], ['planReviewOf', 2], ['计划待审', 1]] },
   { name: '侧栏收起', patterns: [['sidebarPresentationOf', 2], ['onToggleSidebarExpanded', 2], ['showExpandToggle', 2]] }
 ];
 

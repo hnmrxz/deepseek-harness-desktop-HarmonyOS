@@ -1968,7 +1968,7 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   {
     const TR = require2('./Trajectory.js');
     const { questionIndexStep, questionNavLabel, draftAnswered, submitBlockedText, answerableDrafts,
-      parseOptionLabel, encodeQuestionAnswers } = TR;
+      parseOptionLabel, encodeQuestionAnswers, planReviewOf } = TR;
 
     // ① 上一题 / 下一题：**到头就停住，不循环**（官方 nav.prev/next 的语义）
     t.eq('下一步越界 ⇒ 停在最后一题', questionIndexStep(2, 3, 1), 2);
@@ -2031,6 +2031,38 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
       `${skipped[0].selected.length}/${skipped[0].custom === undefined}`, '0/true');
     t.eq('题目缺失时按单选处理（与官方"缺 multiSelect 视为单选"一致）',
       encodeQuestionAnswers([], [draft('qx', ['A'], 'x', false)])[0].selected.length, 0);
+
+    // ⑦ 计划待审面板的**六条收窄规则**（官方 planReviewOf 逐条照做）
+    const choice = (label) => ({ id: label, label: label, detail: '' });
+    // 提问组要带 intent/detail/choices ⇒ 用显式对象（ArkTS 侧同形状）
+    const planQ = (over) => {
+      const base = { id: 'q1', text: '请审这份计划', detail: '第一步…第二步…', header: '',
+        choices: [choice('确认执行'), choice('拒绝')], multiSelect: false,
+        intentKind: 'plan-review', intentApprove: '确认执行' };
+      for (const k of Object.keys(over)) base[k] = over[k];
+      return base;
+    };
+
+    t.eq('正常形态 ⇒ 认出计划面板', planReviewOf([planQ({})]) !== undefined, true);
+    t.eq('approve 标签与选项对得上', planReviewOf([planQ({})]).approveLabel, '确认执行');
+    t.eq('另一个选项当"拒绝"', planReviewOf([planQ({})]).declineLabel, '拒绝');
+    t.eq('计划正文就是 detail', planReviewOf([planQ({})]).plan, '第一步…第二步…');
+
+    t.eq('多题 ⇒ 交给通用题组（面板放不下）',
+      planReviewOf([planQ({}), planQ({ id: 'q2' })]), undefined);
+    t.eq('intent 不是 plan-review ⇒ 通用流程', planReviewOf([planQ({ intentKind: 'other' })]), undefined);
+    t.eq('没有 detail ⇒ 通用流程（计划正文缺失没法审）',
+      planReviewOf([planQ({ detail: '' })]), undefined);
+    t.eq('多选 ⇒ 通用流程（两颗按钮表达不了多选）', planReviewOf([planQ({ multiSelect: true })]), undefined);
+    t.eq('**三个**选项 ⇒ 通用流程（官方：第三个选项面板表达不了）',
+      planReviewOf([planQ({ choices: [choice('确认执行'), choice('拒绝'), choice('再看看')] })]), undefined);
+    t.eq('approve 指名的标签不在选项里 ⇒ 通用流程（不知道哪个是"确认执行"）',
+      planReviewOf([planQ({ intentApprove: '批准' })]), undefined);
+    t.eq('只有一个选项（就是 approve）⇒ 仍出面板，且没有拒绝项',
+      (() => {
+        const r = planReviewOf([planQ({ choices: [choice('确认执行')] })]);
+        return r !== undefined && r.declineLabel === '';
+      })(), true);
   }
   // ── P7-6：权限预设的呈现与切换规则（官方 permission-presets）──
   {

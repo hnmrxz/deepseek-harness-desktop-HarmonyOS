@@ -27,6 +27,7 @@
 
 import {
   answerableDrafts,
+  planReviewOf,
   parseOptionLabel,
   Border,
   draftAnswered,
@@ -42,7 +43,8 @@ import {
   RiskLevel,
   Sp,
   Sz,
-  submitBlockedText
+  submitBlockedText,
+  PlanReview
 } from 'appstate';
 import { NativeButton } from './NativePrimitives';
 
@@ -84,6 +86,11 @@ export struct QuestionGroupCard {
 
   private total(): number {
     return this.item.questions.length;
+  }
+
+  /** 这张卡是不是"计划待审"（判定在模型里，这里只读结论） */
+  private planReviewOfCurrent(): PlanReview | undefined {
+    return planReviewOf(this.item.questions);
   }
 
   /**
@@ -165,163 +172,246 @@ export struct QuestionGroupCard {
     this.onSubmit(this.item, answerableDrafts(this.ensureDrafts()));
   }
 
-  build() {
+  /**
+   * 计划待审面板（官方 `dsh-client-ui-user-questions` 的 `planReviewOf` + 文案）。
+   *
+   * 官方的三颗按钮与它们的**线上动作**：
+   *   · **去聊天里说** ⇒ `pending.cancel()` ⇒ 就是我们上一轮实现的
+   *     `{kind:'rejected', error:{name:'UserQuestionError', code:'ASK_CANCELLED'}}`（放弃整组）；
+   *   · **拒绝**（只在请求给了第二个选项时出现）⇒ 用那个选项的**标签原文**作答；
+   *   · **确认执行** ⇒ 用 `intent.approve` 指名的那个标签作答。
+   * 判定（六条收窄规则）在 `model/Trajectory.planReviewOf`，有 fixture 钉住。
+   */
+  @Builder
+  planReview(review: PlanReview) {
     Column({ space: Sp.S }) {
-      if (this.total() > 1) {
-        Text(questionNavLabel(this.index, this.total()))
+      Row({ space: Sp.S }) {
+        Circle({ width: 8, height: 8 })   // token-exempt: 状态点几何（官方 header 前的圆点）
+          .fill($r('sys.color.brand'))
+        Text('计划待审')
           .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
-          .width('100%')
+          .fontColor($r('sys.color.brand'))
+          .layoutWeight(1)
       }
+      .width('100%')
 
-      if (this.currentQuestion() !== undefined) {
-        Text((this.currentQuestion() as PendingQuestion).text)
-          .fontSize(Fs.BODY)
-          .fontWeight(FontWeight.Medium)
-          .width('100%')
-        if ((this.currentQuestion() as PendingQuestion).detail.length > 0) {
-          Text((this.currentQuestion() as PendingQuestion).detail)
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_secondary'))
-            .width('100%')
-        }
-        // 选项：单选点一下就记进草稿（**不立即提交**——整组要一起交）
-        ForEach((this.currentQuestion() as PendingQuestion).choices, (choice: PendingChoice) => {
-          Column({ space: 2 }) {
-            Row({ space: Sp.S }) {
-              /*
-               * 【推荐标记来自**标签后缀**，不是字段】官方 `parseRecommendedLabel`：
-               * 标签以 `(recommended)` / `（推荐）` 结尾 ⇒ 显示时**剥掉后缀**并加「推荐」。
-               * 而**提交必须送原标签**（官方注释：Original option label returned if selected）
-               * ⇒ 选中判定与草稿里存的都是 `choice.label`（原文），只有显示用剥过的版本。
-               */
-              Text(parseOptionLabel(choice.label).label)
-                .fontSize(Fs.SECONDARY)
-                .fontColor(this.selectedLabel(choice.label)
-                  ? $r('sys.color.brand')
-                  : $r('sys.color.font_primary'))
-                .fontWeight(this.selectedLabel(choice.label) ? FontWeight.Bold : FontWeight.Normal)
-                .layoutWeight(1)
-              if (parseOptionLabel(choice.label).recommended) {
-                Text('推荐')
-                  .fontSize(Fs.CAPTION_XS)
-                  .fontColor($r('sys.color.brand'))
-                  .padding({ left: 5, right: 5 })   // token-exempt: 徽标药丸内边距
-                  .borderRadius(5)   // token-exempt: 徽标药丸圆角
-                  .backgroundColor($r('sys.color.background_primary'))
-              }
-            }
-            .width('100%')
-            if (choice.detail.length > 0) {
-              Text(choice.detail)
-                .fontSize(Fs.CAPTION)
-                .fontColor($r('sys.color.font_tertiary'))
-                .width('100%')
-            }
-          }
-          .width('100%')
-          .padding({ left: Sp.M, right: Sp.M, top: Sp.S, bottom: Sp.S })
-          .borderRadius(Radius.S)
-          .borderWidth(Border.HAIRLINE)
-          .borderColor(this.selectedLabel(choice.label)
-            ? $r('sys.color.brand')
-            : $r('sys.color.comp_divider'))
-          .margin({ top: Sp.XS })
-          .onClick(() => {
-            const q: PendingQuestion = this.currentQuestion() as PendingQuestion;
-            if (q.multiSelect) {
-              this.toggleSelected(this.index, choice.label, !this.selectedLabel(choice.label));
-            } else {
-              this.writeDraft(this.index, {
-                questionId: this.draftAt(this.index).questionId,
-                selected: [choice.label],
-                custom: '',
-                skipped: false
-              });
-            }
-            this.blockText = '';
-          })
-        }, (choice: PendingChoice) => `${this.item.id}-${this.index}-${choice.id}`)
-
-        // 自定义答案（官方 `custom.placeholder: 输入你的答案`）
-        TextInput({
-          text: this.draftAt(this.index).custom,
-          placeholder: '输入你的答案'
-        })
-          .fontSize(Fs.CAPTION)
-          .height(Sz.TOUCH_MIN)
-          .width('100%')
-          .onChange((value: string) => {
-            const draft: PendingAnswerDraft = this.draftAt(this.index);
-            this.writeDraft(this.index, {
-              questionId: draft.questionId,
-              selected: draft.selected,
-              custom: value,
-              skipped: false
-            });
-            this.blockText = '';
-          })
-      }
-
-      if (this.blockText.length > 0) {
-        Text(this.blockText)
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.warning'))
-          .width('100%')
-      }
+      Text(review.plan)
+        .fontSize(Fs.SECONDARY)
+        .fontColor($r('sys.color.font_secondary'))
+        .width('100%')
 
       Row({ space: Sp.S }) {
-        // 官方 `nav.prev: 上一题`（第一题时不给 —— 到头就停住，不循环）
-        if (this.index > 0) {
-          NativeButton({
-            label: '上一题',
-            emphasis: 'text',
-            tone: 'neutral',
-            onTap: () => {
-              this.index = questionIndexStep(this.index, this.total(), -1);
-              this.blockText = '';
-            }
-          })
-        }
         NativeButton({
-          label: '放弃整组问题',
+          label: '去聊天里说',
           emphasis: 'text',
           tone: 'neutral',
           onTap: () => {
             this.onCancelGroup(this.item);
           }
         })
-        NativeButton({
-          label: '跳过本题',
-          emphasis: 'text',
-          tone: 'neutral',
-          onTap: () => {
-            const draft: PendingAnswerDraft = this.draftAt(this.index);
-            this.writeDraft(this.index, {
-              questionId: draft.questionId,
-              selected: [],
-              custom: '',
-              skipped: true
-            });
-            this.blockText = '';
-            if (this.index < this.total() - 1) {
-              this.index = questionIndexStep(this.index, this.total(), 1);
-            } else {
-              this.onSubmit(this.item, answerableDrafts(this.ensureDrafts()));
-            }
-          }
-        })
         Blank()
+        if (review.declineLabel.length > 0) {
+          NativeButton({
+            label: '拒绝',
+            emphasis: 'outline',
+            tone: 'neutral',
+            onTap: () => {
+              this.submitSingle(review.declineLabel);
+            }
+          })
+        }
         NativeButton({
-          label: this.primaryLabel(),
+          label: '确认执行',
           emphasis: 'solid',
           tone: 'brand',
           onTap: () => {
-            this.primaryAction();
+            this.submitSingle(review.approveLabel);
           }
         })
       }
       .width('100%')
+    }
+    .width('100%')
+    .padding(Sp.M)
+    .borderRadius(Radius.L)
+    .backgroundColor($r('sys.color.background_secondary'))
+  }
+
+  /** 计划面板的单选作答：把选中的标签交回宿主（仍走整组那条通道，只是组里只有一题） */
+  private submitSingle(label: string): void {
+    const at: number = 0;
+    const questionId: string = this.item.questions.length > 0 ? this.item.questions[0].id : '';
+    const drafts: PendingAnswerDraft[] = [{
+      questionId: questionId,
+      selected: [label],
+      custom: '',
+      skipped: false
+    }];
+    this.onSubmit(this.item, drafts);
+  }
+
+  build() {
+    Column({ space: Sp.S }) {
+      if (this.planReviewOfCurrent() !== undefined) {
+        this.planReview(this.planReviewOfCurrent()!)
+      } else {
+        if (this.total() > 1) {
+          Text(questionNavLabel(this.index, this.total()))
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.font_tertiary'))
+            .width('100%')
+        }
+
+        if (this.currentQuestion() !== undefined) {
+          Text((this.currentQuestion() as PendingQuestion).text)
+            .fontSize(Fs.BODY)
+            .fontWeight(FontWeight.Medium)
+            .width('100%')
+          if ((this.currentQuestion() as PendingQuestion).detail.length > 0) {
+            Text((this.currentQuestion() as PendingQuestion).detail)
+              .fontSize(Fs.CAPTION)
+              .fontColor($r('sys.color.font_secondary'))
+              .width('100%')
+          }
+          // 选项：单选点一下就记进草稿（**不立即提交** —— 整组要一起交）
+          ForEach((this.currentQuestion() as PendingQuestion).choices, (choice: PendingChoice) => {
+            Column({ space: 2 }) {
+              Row({ space: Sp.S }) {
+                /*
+                 * 【推荐标记来自**标签后缀**，不是字段】官方 `parseRecommendedLabel`：
+                 * 标签以 `(recommended)` / `（推荐）` 结尾 ⇒ 显示时**剥掉后缀**并加「推荐」。
+                 * 而**提交必须送原标签**（官方注释：Original option label returned if selected）
+                 * ⇒ 选中判定与草稿里存的都是 `choice.label`（原文），只有显示用剥过的版本。
+                 */
+                Text(parseOptionLabel(choice.label).label)
+                  .fontSize(Fs.SECONDARY)
+                  .fontColor(this.selectedLabel(choice.label)
+                    ? $r('sys.color.brand')
+                    : $r('sys.color.font_primary'))
+                  .fontWeight(this.selectedLabel(choice.label) ? FontWeight.Bold : FontWeight.Normal)
+                  .layoutWeight(1)
+                if (parseOptionLabel(choice.label).recommended) {
+                  Text('推荐')
+                    .fontSize(Fs.CAPTION_XS)
+                    .fontColor($r('sys.color.brand'))
+                    .padding({ left: 5, right: 5 })   // token-exempt: 徽标药丸内边距
+                    .borderRadius(5)   // token-exempt: 徽标药丸圆角
+                    .backgroundColor($r('sys.color.background_primary'))
+                }
+              }
+              .width('100%')
+              if (choice.detail.length > 0) {
+                Text(choice.detail)
+                  .fontSize(Fs.CAPTION)
+                  .fontColor($r('sys.color.font_tertiary'))
+                  .width('100%')
+              }
+            }
+            .width('100%')
+            .padding({ left: Sp.M, right: Sp.M, top: Sp.S, bottom: Sp.S })
+            .borderRadius(Radius.S)
+            .borderWidth(Border.HAIRLINE)
+            .borderColor(this.selectedLabel(choice.label)
+              ? $r('sys.color.brand')
+              : $r('sys.color.comp_divider'))
+            .margin({ top: Sp.XS })
+            .onClick(() => {
+              const q: PendingQuestion = this.currentQuestion() as PendingQuestion;
+              if (q.multiSelect) {
+                this.toggleSelected(this.index, choice.label, !this.selectedLabel(choice.label));
+              } else {
+                this.writeDraft(this.index, {
+                  questionId: this.draftAt(this.index).questionId,
+                  selected: [choice.label],
+                  custom: '',
+                  skipped: false
+                });
+              }
+              this.blockText = '';
+            })
+          }, (choice: PendingChoice) => `${this.item.id}-${this.index}-${choice.id}`)
+
+          // 自定义答案（官方 `custom.placeholder: 输入你的答案`）
+          TextInput({
+            text: this.draftAt(this.index).custom,
+            placeholder: '输入你的答案'
+          })
+            .fontSize(Fs.CAPTION)
+            .height(Sz.TOUCH_MIN)
+            .width('100%')
+            .onChange((value: string) => {
+              const draft: PendingAnswerDraft = this.draftAt(this.index);
+              this.writeDraft(this.index, {
+                questionId: draft.questionId,
+                selected: draft.selected,
+                custom: value,
+                skipped: false
+              });
+              this.blockText = '';
+            })
+        }
+
+        if (this.blockText.length > 0) {
+          Text(this.blockText)
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.warning'))
+            .width('100%')
+        }
+
+        Row({ space: Sp.S }) {
+          // 官方 `nav.cancel: 放弃整组问题`
+          NativeButton({
+            label: '放弃整组问题',
+            emphasis: 'text',
+            tone: 'neutral',
+            onTap: () => {
+              this.onCancelGroup(this.item);
+            }
+          })
+          NativeButton({
+            label: '跳过本题',
+            emphasis: 'text',
+            tone: 'neutral',
+            onTap: () => {
+              const draft: PendingAnswerDraft = this.draftAt(this.index);
+              this.writeDraft(this.index, {
+                questionId: draft.questionId,
+                selected: [],
+                custom: '',
+                skipped: true
+              });
+              this.blockText = '';
+              if (this.index < this.total() - 1) {
+                this.index = questionIndexStep(this.index, this.total(), 1);
+              } else {
+                this.onSubmit(this.item, answerableDrafts(this.ensureDrafts()));
+              }
+            }
+          })
+          // 官方 `nav.prev: 上一题`（第一题时不给 —— 到头就停住，不循环）
+          if (this.index > 0) {
+            NativeButton({
+              label: '上一题',
+              emphasis: 'text',
+              tone: 'neutral',
+              onTap: () => {
+                this.index = questionIndexStep(this.index, this.total(), -1);
+                this.blockText = '';
+              }
+            })
+          }
+          Blank()
+          NativeButton({
+            label: this.primaryLabel(),
+            emphasis: 'solid',
+            tone: 'brand',
+            onTap: () => {
+              this.primaryAction();
+            }
+          })
+        }
+        .width('100%')
+      }
     }
     .width('100%')
     .padding(Sp.M)

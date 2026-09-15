@@ -1117,13 +1117,21 @@ export class SessionHub {
           });
         }
       }
+      /*
+       * `intent` 是"这张卡该怎么呈现"的声明（目前只有 `plan-review`）。
+       * 官方据此把整张卡换成「计划待审」面板 —— 我们不投影它，等于那份计划
+       * 永远只能以通用题组的样子出现（用户看不到"确认执行/拒绝/去聊天里说"）。
+       */
+      const intent: Object | undefined = getRecord(q, 'intent');
       group.push({
         id: qidRaw,
         text: getString(q, 'question') ?? '',
         detail: getString(q, 'detail') ?? '',
         header: getString(q, 'header') ?? '',
         choices: choices,
-        multiSelect: getBoolean(q, 'multiSelect') === true
+        multiSelect: getBoolean(q, 'multiSelect') === true,
+        intentKind: intent === undefined ? '' : (getString(intent, 'kind') ?? ''),
+        intentApprove: intent === undefined ? '' : (getString(intent, 'approve') ?? '')
       });
     }
     const first: Object = questions[0];

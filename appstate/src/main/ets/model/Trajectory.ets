@@ -278,6 +278,74 @@ export interface PendingQuestion {
   header: string;
   choices: PendingChoice[];
   multiSelect: boolean;
+  /**
+   * 提问声明的**呈现意图**（上游 `AskUserQuestionItem.intent`，可缺省）。
+   *
+   * 目前唯一取值是 `plan-review`（"这是一份计划，请审"）——官方据此把这张卡换成
+   * **计划待审**面板（`dsh-client-ui-user-questions` 的 `planReviewOf`）。
+   * `approve` 是**选项标签原文**，不是 id：官方用它去选项里找出"确认执行"那一项。
+   */
+  intentKind: string;
+  intentApprove: string;
+}
+
+/**
+ * 计划待审**面板**的判定（官方 `dsh-client-ui-user-questions` 的 `planReviewOf`，逐条照做）。
+ *
+ * ## 官方为什么要这么多条件
+ *
+ * 它的注释写得很清楚：**意图只改变布局，绝不改变"可达的答案"** ——
+ * 面板必须能发出这个请求允许的**每一个**答案，否则就交给通用题组流程：
+ *   · 只认**单题**（多题面板放不下）；
+ *   · 必须带 `detail`（计划正文本身就是 detail）；
+ *   · **不能是多选**；
+ *   · 选项**至多两个**（"确认执行 + 另一个"；第三个选项面板表达不了）；
+ *   · `intent.approve` 必须能在选项标签里找到（否则不知道哪个是"确认执行"）；
+ *   · 除 approve 之外的**最多一个**选项才当"拒绝"（没有就只显示确认执行）。
+ *
+ * 少任何一条都退回通用题组 —— 这条纪律比"尽量显示计划面板"重要：
+ * 面板发不出的答案等于用户答不了。
+ */
+export interface PlanReview {
+  questionId: string;
+  /** 计划正文（题目正文之外的完整计划） */
+  plan: string;
+  /** "确认执行"那一项的**标签原文** */
+  approveLabel: string;
+  /** "拒绝"那一项的标签原文；空串 = 这个请求没给拒绝项（面板只显示确认执行） */
+  declineLabel: string;
+}
+
+/** 计划待审面板的判定（不满足官方那六条 ⇒ undefined，交给通用题组流程） */
+export function planReviewOf(questions: PendingQuestion[]): PlanReview | undefined {
+  if (questions.length !== 1) {
+    return undefined;
+  }
+  const q: PendingQuestion = questions[0];
+  if (q.intentKind !== 'plan-review' || q.detail.length === 0 || q.multiSelect) {
+    return undefined;
+  }
+  if (q.choices.length === 0 || q.choices.length > 2) {
+    return undefined;
+  }
+  let approve: PendingChoice | undefined = undefined;
+  let decline: PendingChoice | undefined = undefined;
+  for (let i = 0; i < q.choices.length; i++) {
+    if (q.choices[i].label === q.intentApprove) {
+      approve = q.choices[i];
+    } else {
+      decline = q.choices[i];
+    }
+  }
+  if (approve === undefined) {
+    return undefined;
+  }
+  return {
+    questionId: q.id,
+    plan: q.detail,
+    approveLabel: approve.label,
+    declineLabel: decline === undefined ? '' : decline.label,
+  };
 }
 
 /** 一道题的作答草稿（官方提交前要逐题校验：`error.incomplete` / `error.unanswered`） */

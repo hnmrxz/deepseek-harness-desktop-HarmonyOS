@@ -99,8 +99,8 @@ export type { DetailRow } from './model/TrajectoryDetail';
 export { PERMISSION_UNAVAILABLE, PERMISSION_UNSET, permissionChipLabel, permissionChoices, permissionCommand, permissionSwitchable, permissionUnavailableHint } from './model/Permissions';
 export type { PermissionChoice } from './model/Permissions';
 // 提问组（P7-5）：整组题目 + 逐题草稿 + 官方提交拦阻文案
-export { answerableDrafts, draftAnswered, encodeQuestionAnswers, parseOptionLabel, questionIndexStep, questionNavLabel, submitBlockedText } from './model/Trajectory';
-export type { OptionLabelDisplay, PendingAnswerDraft, PendingQuestion, QuestionAnswerPayload } from './model/Trajectory';
+export { answerableDrafts, draftAnswered, encodeQuestionAnswers, parseOptionLabel, planReviewOf, questionIndexStep, questionNavLabel, submitBlockedText } from './model/Trajectory';
+export type { OptionLabelDisplay, PendingAnswerDraft, PendingQuestion, PlanReview, QuestionAnswerPayload } from './model/Trajectory';
 // 会话搜索（官方 sidebar 的 search：Host 内容命中 + 本地标题命中合并成扁平结果）
 // 输入区接管的焦点规则（P7-2，对齐官方 approval/user-questions 的 composer takeover）
 export { pendingElsewhere, pendingForSession, takeoverCommand, takeoverHeadline, takeoverStripText } from './model/PendingFocus';
