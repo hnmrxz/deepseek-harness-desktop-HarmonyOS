@@ -18,12 +18,12 @@ import {
   formatBytes,
   Fs,
   NodeKind,
-  PreviewKind,
   Radius,
   Sp,
   Sz,
   WorkspaceItem
 } from 'appstate';
+import { FilePreviewPane } from './FilePreviewPane';
 
 @Component
 export struct WorkspacePane {
@@ -333,132 +333,17 @@ export struct WorkspacePane {
 
   @Builder
   previewView() {
-    Column() {
-      if (this.preview === undefined) {
-        Column({ space: Sp.S }) {
-          SymbolGlyph($r('sys.symbol.doc_text')).fontSize(32)
-            .fontColor([$r('sys.color.font_tertiary')])
-          Text('选择文件以预览')
-            .fontSize(Fs.SECONDARY)
-            .fontColor($r('sys.color.font_secondary'))
-          Text('支持文本、代码、Markdown 与图片')
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_tertiary'))
-        }
-        .width('100%')
-        .layoutWeight(1)
-        .justifyContent(FlexAlign.Center)
-      } else {
-        this.previewHeader()
-        Divider().color($r('sys.color.comp_divider'))
-        this.previewBody()
+    // 预览呈现归 FilePreviewPane（右栏的「预览」面板用**同一份**，见该文件的说明）
+    FilePreviewPane({
+      preview: this.preview,
+      onAttachFile: (node: FileNode) => {
+        this.onAttachFile(node);
       }
-    }
-    .width('100%')
-    .height('100%')
+    })
   }
 
-  @Builder
-  previewHeader() {
-    Column({ space: Sp.XS }) {
-      Row({ space: Sp.S }) {
-        Text(this.preview!.name)
-          .fontSize(Fs.SECONDARY)
-          .fontWeight(FontWeight.Medium)
-          .layoutWeight(1)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-        Text('投喂')
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.brand'))
-          .onClick(() => {
-            this.onAttachFile(this.previewAsNode());
-          })
-      }
-      .width('100%')
-      Text(this.previewMeta())
-        .fontSize(Fs.CAPTION)
-        .fontColor($r('sys.color.font_tertiary'))
-        .maxLines(2)
-        .width('100%')
-    }
-    .width('100%')
-    .padding(Sp.M)
-  }
 
-  @Builder
-  previewBody() {
-    if (this.preview!.kind === PreviewKind.TOO_LARGE) {
-      Column({ space: Sp.S }) {
-        SymbolGlyph($r('sys.symbol.exclamationmark_triangle')).fontSize(28)
-          .fontColor([$r('sys.color.warning')])
-        Text('文件过大，未在端侧预览')
-          .fontSize(Fs.SECONDARY)
-        Text(`大小 ${formatBytes(this.preview!.size)}，超过端侧预览上限。可在 Host 侧用工具读取。`)
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
-          .textAlign(TextAlign.Center)
-          .padding({ left: Sp.L, right: Sp.L })
-      }
-      .width('100%')
-      .layoutWeight(1)
-      .justifyContent(FlexAlign.Center)
-    } else if (this.preview!.kind === PreviewKind.BINARY) {
-      Column({ space: Sp.S }) {
-        SymbolGlyph($r('sys.symbol.doc_text')).fontSize(28)
-          .fontColor([$r('sys.color.font_tertiary')])
-        Text('二进制文件，无文本预览')
-          .fontSize(Fs.SECONDARY)
-          .fontColor($r('sys.color.font_secondary'))
-      }
-      .width('100%')
-      .layoutWeight(1)
-      .justifyContent(FlexAlign.Center)
-    } else {
-      Scroll() {
-        Column({ space: Sp.S }) {
-          if (this.preview!.truncated) {
-            Text(`仅显示前 ${formatBytes(this.preview!.text.length)}（原文件 ${formatBytes(this.preview!.size)}）`)
-              .fontSize(Fs.CAPTION)
-              .fontColor($r('sys.color.warning'))
-              .width('100%')
-          }
-          Text(this.preview!.text)
-            .fontSize(this.preview!.kind === PreviewKind.CODE ? Fs.CAPTION : Fs.SECONDARY)
-            .fontFamily(this.preview!.kind === PreviewKind.CODE ? 'monospace' : '')
-            .width('100%')
-            .textAlign(TextAlign.Start)
-        }
-        .width('100%')
-        .padding(Sp.M)
-      }
-      .layoutWeight(1)
-      .width('100%')
-      .align(Alignment.TopStart)
-      .scrollBar(BarState.Auto)
-    }
-  }
 
-  private previewMeta(): string {
-    const p: FilePreview = this.preview!;
-    const kindText: string = p.kind === PreviewKind.CODE
-      ? `代码 · ${p.language}`
-      : (p.kind === PreviewKind.MARKDOWN ? 'Markdown' : (p.kind === PreviewKind.IMAGE ? '图片' : '文本'));
-    const sizeText: string = formatBytes(p.size);
-    return sizeText.length > 0 ? `${kindText} · ${sizeText}` : kindText;
-  }
 
   /** 预览对应的节点（用于"投喂"动作） */
-  private previewAsNode(): FileNode {
-    return {
-      name: this.preview!.name,
-      path: this.preview!.path,
-      kind: NodeKind.FILE,
-      size: this.preview!.size,
-      modifiedAt: 0,
-      loaded: true,
-      children: [],
-      deliverable: false
-    };
-  }
 }

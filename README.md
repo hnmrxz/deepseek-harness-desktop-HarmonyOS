@@ -181,6 +181,10 @@ hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 **P2-2 已落地**：会话头的**后台任务条** —— `Jobs` 模型 40 条断言与中枢 `jobs` 字段一直都在，
 但视图零消费者（又一次"通道有、没接"）；现已接成 中枢 → `Index` → `MainShell` → 会话头任务条
 （live 任务每秒走字、无障碍整段取自模型），并把这条接线登记进功能接线门禁（第 16 条）。
+**P3-2 已落地**：右栏「**预览**」面板 —— 预览呈现从 `WorkspacePane` 抽成 `view/FilePreviewPane.ets`，
+右栏与工作区页签**共用同一份**（含空态与两档"看不了"的说明）；注册表里 `right.preview` 从此可用。
+可用面板 ≥2 ⇒ 右栏标题行出现**切换器**（只在一个可用面板时不画，避免噪声）。
+
 **P3（右栏）已开工**：右栏**按面板 id 分派**（P3-1）——`RightbarShell` 新增 `panelId`/`panelLabel`，
 `selectedRightPanel` 这个在模型里躺了几轮的字段**第一次有了消费者**（此前视图无条件渲染 `DetailPane`，
 那条"切右栏面板"的 fixture 断言其实与界面无关）。同时如实登记了缺口的真实位置：

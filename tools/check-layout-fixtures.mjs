@@ -1251,10 +1251,12 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   t.eq('沉底项恰好是设置', sidebarPinnedEntries(reg).map((d) => d.id).join(','), 'sidebar.settings');
   const right = reg.descriptors(PanelLocation.RIGHTBAR).map((d) => d.id);
   // P3-1：右栏当前**唯一有内容**的面板是"详情"（sections 清单）；官方那六个候选登记着但不可用
-  t.eq('右栏可用面板只有详情', right.join(','), PANEL_RIGHT_DETAIL);
-  t.eq('官方六个候选仍登记在清单里（内容视图未做，按 E110 不进选择集）',
+  // P3-2：预览面板接上了（呈现与工作区页签共用 FilePreviewPane）
+  t.eq('右栏可用面板：详情 + 预览', right.join(','), 'right.detail,right.preview');
+  t.eq('官方候选仍登记在清单里（内容视图未做的按 E110 不进选择集）',
     rightbarPanels().length, 7);
-  t.eq('六个候选此刻都不可用', rightbarPanels().filter((d) => d.id !== 'right.detail' && d.available()).length, 0);
+  t.eq('尚未接内容的五个候选仍不可用',
+    rightbarPanels().filter((d) => d.available()).length, 2);
   t.eq('默认右栏面板 = 详情（firstAvailable）', defaultRightPanel(reg), 'right.detail');
   t.eq('初值也指向详情（宿主不调 defaultRightPanel 时也不会落到空面板）',
     initialNavigationState().selectedRightPanel, 'right.detail');
@@ -1384,10 +1386,10 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   t.eq('三栏：右栏并排成栏', triple.rightbar, 'column');
   t.eq('浮层形态下侧栏不占布局宽度', sidebarOccupiesLayout('single'), false);
   t.eq('rail 形态下侧栏占布局宽度', sidebarOccupiesLayout('double'), true);
-  // 侧栏 2（工作区 / 设置；核心席位按 E110 不可用）、右栏 1（详情）—— 可用清单与形态无关，只与注册表有关
+  // 侧栏 2（工作区 / 设置；核心席位按 E110 不可用）、右栏 2（详情 + 预览）—— 可用清单与形态无关，只与注册表有关
   t.eq('**三种形态的面板清单一致**（信息架构不随设备变）',
     JSON.stringify(reg.descriptors(PanelLocation.SIDEBAR).length) + '/' + JSON.stringify(reg.descriptors(PanelLocation.RIGHTBAR).length),
-    '2/1');
+    '2/2');
 
   console.log('  ok    注册表（注册/排序/可用性/沉底/校验）+ 导航状态（页面与面板分离）+ 迁移桥含往返 + 四形态轨道');
 }

@@ -22,6 +22,7 @@
 import { DetailPresentation, DetailSection, LayoutMode, MAIN_DIAGNOSTICS, StackPage, Sz, TrackPresentation, shellTracksOf, showsConversation } from 'appstate';
 import { copyText } from 'platform';
 
+import type { FileNode, FilePreview, PanelDescriptor } from 'appstate';
 import { MainHeaderShell } from './MainHeaderShell';
 import { MainShell } from './MainShell';
 import type { MainShellFacade } from './MainShell';
@@ -56,6 +57,14 @@ export interface AppShellFacade {
   rightPanelId: string;
   /** 右栏面板名（标题行用；descriptor 的 label） */
   rightPanelLabel: string;
+  /** 右栏可用的面板清单（注册表给；≥2 个时右栏才画切换器） */
+  rightPanels: PanelDescriptor[];
+  /** 切右栏面板 */
+  onSelectRightPanel: (panelId: string) => void;
+  /** 预览面板的内容（与工作区页签同源） */
+  preview?: FilePreview;
+  /** 「投喂」预览中的文件 */
+  onAttachWorkspaceFile: (node: FileNode) => void;
   /** 当前面板的中文名（页头标题用；由注册表的 label 给） */
   panelLabel: string;
   beginDetailDrag: () => void;
@@ -363,6 +372,14 @@ export struct AppShell {
       widthVp: widthVp,
       panelId: this.f.rightPanelId,
       panelLabel: this.f.rightPanelLabel,
+      panels: this.f.rightPanels,
+      preview: this.f.preview,
+      onSelectPanel: (panelId: string) => {
+        this.f.onSelectRightPanel(panelId);
+      },
+      onAttachFile: (node: FileNode) => {
+        this.f.onAttachWorkspaceFile(node);
+      },
       sections: this.f.detailSections,
       onClose: () => {
         this.f.closeDetail();

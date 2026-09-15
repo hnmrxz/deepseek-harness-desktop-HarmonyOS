@@ -290,8 +290,9 @@ export function rightbarPanels(): PanelDescriptor[] {
       label: '子代理', order: 40, available: () => false },
     { id: PANEL_RIGHT_DELIVERABLES, location: PanelLocation.RIGHTBAR, owner: 'conversation',
       label: '交付物', order: 50, available: () => false },
+    // 「预览」在 P3-2 接上：呈现用 `FilePreviewPane`（与工作区页签**同一份**），故可用
     { id: PANEL_RIGHT_PREVIEW, location: PanelLocation.RIGHTBAR, owner: 'workspace',
-      label: '预览', order: 60, available: () => false },
+      label: '预览', order: 60, available: () => true },
   ];
 }
 

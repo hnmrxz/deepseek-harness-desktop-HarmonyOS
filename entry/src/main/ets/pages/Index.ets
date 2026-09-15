@@ -67,6 +67,7 @@ import {
   showsConversation,
   DrawerState,
   enterSession,
+  selectRightPanel,
   setDrawer,
   shellTracksOf,
   mainPanelOfSidebarPanel,
@@ -137,6 +138,7 @@ import {
   guessFromKeyboardForm,
   mainPanels,
   PanelDescriptor,
+  PanelLocation,
   PanelRegistry,
   modalityFromSources,
   modalityOf,
@@ -1976,6 +1978,14 @@ struct Index {
       widthVp: 0,
       panelId: this.nav.selectedRightPanel,
       panelLabel: this.selectedRightPanelLabel(),
+      panels: this.panelRegistry.descriptors(PanelLocation.RIGHTBAR),
+      preview: this.preview,
+      onSelectPanel: (panelId: string) => {
+        this.selectRightPanelById(panelId);
+      },
+      onAttachFile: (node: FileNode) => {
+        this.attachWorkspaceFileToComposer(node);
+      },
       sections: this.detailSections,
       onLineTap: (section: string, text: string) => {
         if (text.length > 0) {
@@ -1998,6 +2008,9 @@ struct Index {
     panelLabel: this.selectedPanelLabel(),
     rightPanelId: this.nav.selectedRightPanel,
     rightPanelLabel: this.selectedRightPanelLabel(),
+    rightPanels: this.panelRegistry.descriptors(PanelLocation.RIGHTBAR),
+    onSelectRightPanel: (panelId: string) => this.selectRightPanelById(panelId),
+    onAttachWorkspaceFile: (node: FileNode) => this.attachWorkspaceFileToComposer(node),
     mobileDrawerOpen: this.nav.mobileDrawer === DrawerState.OPEN,
     onOpenDrawer: () => this.setDrawerOpen(true),
     onCloseDrawer: () => this.setDrawerOpen(false),
@@ -4122,6 +4135,11 @@ struct Index {
   private selectedRightPanelLabel(): string {
     const d: PanelDescriptor | undefined = this.panelRegistry.find(this.nav.selectedRightPanel);
     return d !== undefined ? d.label : '详情';
+  }
+
+  /** 切右栏面板（经注册表校验：内容没做的候选切不过去） */
+  private selectRightPanelById(panelId: string): void {
+    this.nav = selectRightPanel(this.nav, panelId, this.panelRegistry);
   }
 
   private selectSidebarPanel(panelId: string): void {

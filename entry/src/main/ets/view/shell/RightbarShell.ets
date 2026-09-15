@@ -26,8 +26,11 @@
  * 而不是继续吃一份 sections）。
  */
 
-import { DetailPresentation, DetailSection, Fs, HarmonyIconSize, HarmonySpacing, PANEL_RIGHT_DETAIL, Sp, Sz } from 'appstate';
+import { DetailPresentation, DetailSection, Fs, HarmonyIconSize, HarmonySpacing, PANEL_RIGHT_DETAIL, PANEL_RIGHT_PREVIEW, Sp, Sz } from 'appstate';
+import type { FileNode, FilePreview, PanelDescriptor } from 'appstate';
 import { DetailPane } from '../DetailPane';
+import { FilePreviewPane } from '../FilePreviewPane';
+import { NativeChip } from '../NativePrimitives';
 import { NativeSectionTitle } from '../NativePrimitives';
 
 @Component
@@ -49,6 +52,22 @@ export struct RightbarShell {
   @Prop panelId: string = '';
   /** 当前面板的中文名（标题行用；来自 descriptor 的 `label`，找不到时由宿主兜底） */
   @Prop panelLabel: string = '详情';
+  /**
+   * 这条轨道上**可用**的面板清单（注册表给）。
+   *
+   * 【为什么由宿主给】"哪些面板可用"是注册表的判定（内容做了没有）；视图只按清单画切换器。
+   * 只有一个可用面板时**不画切换器**——一行只有一个选项的按钮组是噪声。
+   */
+  @Prop panels: PanelDescriptor[] = [];
+  /** 预览面板的内容（`undefined` = 空态"选择文件以预览"） */
+  @Prop preview?: FilePreview;
+
+  /** 切换右栏面板（宿主经注册表校验后落到 `selectedRightPanel`） */
+  onSelectPanel: (panelId: string) => void = () => {
+  };
+  /** 「投喂」预览中的文件（副作用归宿主） */
+  onAttachFile: (node: FileNode) => void = () => {
+  };
 
   onClose: () => void = () => {
   };
@@ -64,6 +83,21 @@ export struct RightbarShell {
           .fontSize(Fs.SECONDARY)
           .fontWeight(FontWeight.Medium)
           .layoutWeight(1)
+        // 切换器：≥2 个可用面板时才出现（只有一个面板时它是噪声）
+        if (this.panels.length > 1) {
+          Row({ space: Sp.XS }) {
+            ForEach(this.panels, (d: PanelDescriptor) => {
+              NativeChip({
+                label: d.label,
+                active: d.id === this.panelId,
+                a11y: `右栏面板：${d.label}`,
+                onTap: () => {
+                  this.onSelectPanel(d.id);
+                }
+              })
+            }, (d: PanelDescriptor) => d.id)
+          }
+        }
         Button() {
           SymbolGlyph($r('sys.symbol.xmark')).fontSize(HarmonyIconSize.INLINE)
         }
@@ -79,12 +113,20 @@ export struct RightbarShell {
 
       Divider().color($r('sys.color.comp_divider'))
 
-      // 按面板 id 分派：目前只有「详情」有内容（其余候选的 available 是 false，选不进来）
+      // 按面板 id 分派：内容视图做了的候选才会 available（其余选不进来）
       if (this.panelId === PANEL_RIGHT_DETAIL) {
         DetailPane({
           sections: this.sections,
           onLineTap: (section: string, text: string) => {
             this.onLineTap(section, text);
+          }
+        })
+      } else if (this.panelId === PANEL_RIGHT_PREVIEW) {
+        // 与工作区页签的预览**同一份**呈现（FilePreviewPane）
+        FilePreviewPane({
+          preview: this.preview,
+          onAttachFile: (node: FileNode) => {
+            this.onAttachFile(node);
           }
         })
       }
@@ -104,6 +146,13 @@ export struct RightbarShell {
           sections: this.sections,
           onLineTap: (section: string, text: string) => {
             this.onLineTap(section, text);
+          }
+        })
+      } else if (this.panelId === PANEL_RIGHT_PREVIEW) {
+        FilePreviewPane({
+          preview: this.preview,
+          onAttachFile: (node: FileNode) => {
+            this.onAttachFile(node);
           }
         })
       }
