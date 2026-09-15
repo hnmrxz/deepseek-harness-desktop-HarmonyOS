@@ -27,6 +27,7 @@ import { MainHeaderShell } from './MainHeaderShell';
 import { MainShell } from './MainShell';
 import type { MainShellFacade } from './MainShell';
 import type { WorkspaceBrowserFacade } from '../WorkspaceBrowser';
+import type { FileTreeFacade } from '../FileTreePane';
 import { RightbarShell } from './RightbarShell';
 import { SidebarShell } from './SidebarShell';
 import { TrackResizer } from './TrackResizer';
@@ -65,6 +66,8 @@ export interface AppShellFacade {
   preview?: FilePreview;
   /** 「投喂」预览中的文件 */
   onAttachWorkspaceFile: (node: FileNode) => void;
+  /** 右栏「文件」面板（树 / 选中项 / 空态文案 / 两个回调） */
+  rightFiles: FileTreeFacade;
   /** 当前面板的中文名（页头标题用；由注册表的 label 给） */
   panelLabel: string;
   beginDetailDrag: () => void;
@@ -374,6 +377,7 @@ export struct AppShell {
       panelLabel: this.f.rightPanelLabel,
       panels: this.f.rightPanels,
       preview: this.f.preview,
+      files: this.f.rightFiles,
       onSelectPanel: (panelId: string) => {
         this.f.onSelectRightPanel(panelId);
       },

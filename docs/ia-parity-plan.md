@@ -270,7 +270,8 @@ Composer 的官方字段：Model / Reasoning effort / Permission / Plan / @ Refe
 | 缺口的**真实位置**：内容视图，不是面板体系 | ✅ 如实登记：官方六个候选（文件/轨迹/工具/子代理/交付物/预览）的**席位在，内容视图没做** ⇒ 一律 `available: () => false`（E110 口径：不能填的入口不进选择集，避免"点进去是空面板"）。本仓唯一有内容的右栏面板是**新增的**「详情」（`right.detail` = 已投影的 sections），并在模型注释里写明它对应官方哪一类（`conversation.detail`），**不冒充"文件"** |
 | 初值与回落一起收口 | ✅ `initialNavigationState().selectedRightPanel` 与 `defaultRightPanel()` 的兜底都指到「详情」——否则宿主不调 `defaultRightPanel` 时右栏会落到一个不可用的 id 上（**面板分派之后**这等于空栏） |
 | 「预览」面板 + 面板切换器（P3-2） | ✅ **已落地**：预览呈现从 `WorkspacePane` 的第三列抽成 **`view/FilePreviewPane.ets`**（含空态 / 头部「投喂」/ 代码等宽正文 / 过大与二进制两档空态）——右栏的「预览」面板与工作区页签**共用同一份**（抄一份必然走样）。注册表里 `right.preview` 从此 `available: true`。右栏新增**切换器**（`NativeChip` 行，**只在可用面板 ≥2 时出现**：只有一个面板时它是噪声）|
-| 下一步（P3-3…） | ① 「文件」面板（工作区文件树：素材与渲染都在仓内，属"搬家 + 接线"）② 「轨迹」「工具」「子代理」「交付物」四个候选的内容视图（素材在 `ConversationPane` 的对应 builder 里，需要各自搬成面板组件）③ 侧边面板滑入动画、面板自身拖拽调宽（P0 遗留）|
+| 「文件」面板（P3-3） | ✅ **已落地**：文件树（展开 / 选中 / 交付物标记）从 `WorkspacePane` 抽成 **`view/FileTreePane.ets`**（133 行，带 `FileTreeFacade` 门面），右栏「文件」面板与工作区页签**共用同一份**；`right.files` 从此 `available: true`。空态文案仍由宿主按三种事实分档给（"没选工作区 / 目录下没会话 / 列目录失败"）。`WorkspacePane` **464 → 274 行**（预览 + 文件树两轮搬出）|
+| 下一步（P3-4…） | ① 「轨迹」「工具」「子代理」「交付物」四个候选的内容视图（素材在 `ConversationPane` 的对应 builder 里，需各自搬成面板组件）② 侧边面板滑入动画、面板自身拖拽调宽（P0 遗留）③ 单栏 Sheet 里要不要也放切换器（目前 Sheet 只显示当前面板，待真机看需要）|
 
 ### P4 Settings 域
 `SettingsShell`（General / Models / Plugins / Plugin Inventory / …）。**不再往 `SettingsPane.ets` 里堆内容。**

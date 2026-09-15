@@ -166,6 +166,7 @@ import type { MainShellFacade } from '../view/shell/MainShell';
 import { TabContentView } from '../view/TabContentView';
 import type { TabContentFacade } from '../view/TabContentView';
 import type { WorkspaceBrowserFacade } from '../view/WorkspaceBrowser';
+import type { FileTreeFacade } from '../view/FileTreePane';
 import { HubBanner } from '../view/HubBanner';
 import { SessionModelPicker } from '../view/SessionModelPicker';
 import { MainHeaderShell } from '../view/shell/MainHeaderShell';
@@ -1980,6 +1981,7 @@ struct Index {
       panelLabel: this.selectedRightPanelLabel(),
       panels: this.panelRegistry.descriptors(PanelLocation.RIGHTBAR),
       preview: this.preview,
+      files: this.buildRightFilesFacade(),
       onSelectPanel: (panelId: string) => {
         this.selectRightPanelById(panelId);
       },
@@ -2011,6 +2013,7 @@ struct Index {
     rightPanels: this.panelRegistry.descriptors(PanelLocation.RIGHTBAR),
     onSelectRightPanel: (panelId: string) => this.selectRightPanelById(panelId),
     onAttachWorkspaceFile: (node: FileNode) => this.attachWorkspaceFileToComposer(node),
+    rightFiles: this.buildRightFilesFacade(),
     mobileDrawerOpen: this.nav.mobileDrawer === DrawerState.OPEN,
     onOpenDrawer: () => this.setDrawerOpen(true),
     onCloseDrawer: () => this.setDrawerOpen(false),
@@ -4181,6 +4184,25 @@ struct Index {
       const err = e as Error;
       this.settingWriteNote = `${this.localized($r('app.string.note_archive_failed'))}${err.message}`;
     });
+  }
+
+  /**
+   * 右栏「文件」面板的门面。
+   *
+   * 【为什么选中项取预览的路径】"选中"的唯一真值就是**当前预览的文件**（`preview.path`）——
+   * 与主区工作区页签用的是同一个表达式（见 `TabContentView` 里给 `WorkspacePane.selectedPath` 的写法）。
+   * 空态文案也直接复用主区那份：它已按"没选工作区 / 目录下没会话 / 列目录失败"三种事实分档。
+   */
+  private buildRightFilesFacade(): FileTreeFacade {
+    const facade: FileTreeFacade = {
+      tree: this.fileTree,
+      selectedPath: this.preview === undefined ? '' : this.preview.path,
+      emptyTitle: this.treeEmptyTitle,
+      emptyHint: this.treeEmptyHint,
+      onToggleDirectory: (path: string) => this.toggleDirectory(path),
+      onOpenFile: (node: FileNode) => this.openFile(node)
+    };
+    return facade;
   }
 
   private buildBrowserFacade(): WorkspaceBrowserFacade {

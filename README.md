@@ -181,6 +181,10 @@ hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 **P2-2 已落地**：会话头的**后台任务条** —— `Jobs` 模型 40 条断言与中枢 `jobs` 字段一直都在，
 但视图零消费者（又一次"通道有、没接"）；现已接成 中枢 → `Index` → `MainShell` → 会话头任务条
 （live 任务每秒走字、无障碍整段取自模型），并把这条接线登记进功能接线门禁（第 16 条）。
+**P3-3 已落地**：右栏「**文件**」面板 —— 文件树从 `WorkspacePane` 抽成 `view/FileTreePane.ets`，
+右栏与工作区页签**共用同一份**（展开/选中/交付物标记/分档空态）；`WorkspacePane` 464 → **274 行**
+（预览与文件树两轮搬出后，它退化成"列表 + 两个挂载点"的装配层）。右栏可用面板：详情 / 文件 / 预览。
+
 **P3-2 已落地**：右栏「**预览**」面板 —— 预览呈现从 `WorkspacePane` 抽成 `view/FilePreviewPane.ets`，
 右栏与工作区页签**共用同一份**（含空态与两档"看不了"的说明）；注册表里 `right.preview` 从此可用。
 可用面板 ≥2 ⇒ 右栏标题行出现**切换器**（只在一个可用面板时不画，避免噪声）。

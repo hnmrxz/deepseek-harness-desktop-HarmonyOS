@@ -274,14 +274,16 @@ export function rightbarPanels(): PanelDescriptor[] {
     { id: PANEL_RIGHT_DETAIL, location: PanelLocation.RIGHTBAR, owner: 'conversation',
       label: '详情', order: 5, available: () => true },
     /*
-     * 官方右栏的六个候选：**席位登记着，但内容视图还没做**（`available: () => false`）。
+     * 官方右栏的候选里，**内容视图还没做的**（`available: () => false`）：
+     * 轨迹 / 工具 / 子代理 / 交付物四个（文件与预览已在 P3-2/P3-3 接上）。
      *
      * 【为什么不先"可选"再补内容】按 E110 的口径：不能填的入口不进选择集。
      * 若让它们可选，用户点进去会看到一个空面板——那比"暂时少一个入口"糟得多。
      * 内容视图一旦落地（P3 后续），把这里的断言改成 `true` 即可，**面板体系本身不用动**。
      */
+    // 「文件」在 P3-3 接上：呈现用 `FileTreePane`（与工作区页签**同一份**）⇒ 可用
     { id: PANEL_RIGHT_FILES, location: PanelLocation.RIGHTBAR, owner: 'workspace',
-      label: '文件', order: 10, available: () => false },
+      label: '文件', order: 10, available: () => true },
     { id: PANEL_RIGHT_TRAJECTORY, location: PanelLocation.RIGHTBAR, owner: 'conversation',
       label: '轨迹', order: 20, available: () => false },
     { id: PANEL_RIGHT_TOOL, location: PanelLocation.RIGHTBAR, owner: 'conversation',

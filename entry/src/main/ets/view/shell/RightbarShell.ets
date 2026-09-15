@@ -26,10 +26,12 @@
  * 而不是继续吃一份 sections）。
  */
 
-import { DetailPresentation, DetailSection, Fs, HarmonyIconSize, HarmonySpacing, PANEL_RIGHT_DETAIL, PANEL_RIGHT_PREVIEW, Sp, Sz } from 'appstate';
+import { DetailPresentation, DetailSection, Fs, HarmonyIconSize, HarmonySpacing, PANEL_RIGHT_DETAIL, PANEL_RIGHT_FILES, PANEL_RIGHT_PREVIEW, Sp, Sz } from 'appstate';
 import type { FileNode, FilePreview, PanelDescriptor } from 'appstate';
 import { DetailPane } from '../DetailPane';
 import { FilePreviewPane } from '../FilePreviewPane';
+import { FileTreePane } from '../FileTreePane';
+import type { FileTreeFacade } from '../FileTreePane';
 import { NativeChip } from '../NativePrimitives';
 import { NativeSectionTitle } from '../NativePrimitives';
 
@@ -61,6 +63,8 @@ export struct RightbarShell {
   @Prop panels: PanelDescriptor[] = [];
   /** 预览面板的内容（`undefined` = 空态"选择文件以预览"） */
   @Prop preview?: FilePreview;
+  /** 「文件」面板的内容与回调（树 / 选中项 / 空态文案 / 两个回调，打包成一个门面） */
+  @Prop files: FileTreeFacade;
 
   /** 切换右栏面板（宿主经注册表校验后落到 `selectedRightPanel`） */
   onSelectPanel: (panelId: string) => void = () => {
@@ -121,6 +125,9 @@ export struct RightbarShell {
             this.onLineTap(section, text);
           }
         })
+      } else if (this.panelId === PANEL_RIGHT_FILES) {
+        // 与工作区页签的文件树**同一份**呈现（FileTreePane）
+        FileTreePane({ f: this.files })
       } else if (this.panelId === PANEL_RIGHT_PREVIEW) {
         // 与工作区页签的预览**同一份**呈现（FilePreviewPane）
         FilePreviewPane({
@@ -148,6 +155,9 @@ export struct RightbarShell {
             this.onLineTap(section, text);
           }
         })
+      } else if (this.panelId === PANEL_RIGHT_FILES) {
+        // 与工作区页签的文件树**同一份**呈现（FileTreePane）
+        FileTreePane({ f: this.files })
       } else if (this.panelId === PANEL_RIGHT_PREVIEW) {
         FilePreviewPane({
           preview: this.preview,

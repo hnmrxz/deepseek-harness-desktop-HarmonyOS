@@ -12,18 +12,16 @@
  */
 
 import {
-  fileSummary,
   FileNode,
   FilePreview,
-  formatBytes,
   Fs,
-  NodeKind,
   Radius,
   Sp,
   Sz,
   WorkspaceItem
 } from 'appstate';
 import { FilePreviewPane } from './FilePreviewPane';
+import { FileTreePane } from './FileTreePane';
 
 @Component
 export struct WorkspacePane {
@@ -238,96 +236,23 @@ export struct WorkspacePane {
 
   @Builder
   treeView() {
-    Column() {
-      if (this.tree.length === 0) {
-        Column({ space: Sp.S }) {
-          SymbolGlyph($r('sys.symbol.folder')).fontSize(32)
-            .fontColor([$r('sys.color.font_tertiary')])
-          Text(this.treeEmptyTitle)
-            .fontSize(Fs.SECONDARY)
-            .fontColor($r('sys.color.font_secondary'))
-          Text(this.treeEmptyHint)
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_tertiary'))
-            .textAlign(TextAlign.Center)
-            .padding({ left: Sp.L, right: Sp.L })
+    // 文件树归 FileTreePane（右栏的「文件」面板用**同一份**，见该文件的说明）
+    FileTreePane({
+      f: {
+        tree: this.tree,
+        selectedPath: this.selectedPath,
+        emptyTitle: this.treeEmptyTitle,
+        emptyHint: this.treeEmptyHint,
+        onToggleDirectory: (path: string) => {
+          this.onToggleDirectory(path);
+        },
+        onOpenFile: (node: FileNode) => {
+          this.onOpenFile(node);
         }
-        .width('100%')
-        .layoutWeight(1)
-        .justifyContent(FlexAlign.Center)
-      } else {
-        List() {
-          ForEach(this.tree, (node: FileNode) => {
-            ListItem() {
-              this.treeRow(node, 0)
-            }
-            if (node.kind === NodeKind.DIRECTORY && node.loaded) {
-              ForEach(node.children, (child: FileNode) => {
-                ListItem() {
-                  this.treeRow(child, 1)
-                }
-              }, (child: FileNode) => child.path)
-            }
-          }, (node: FileNode) => node.path)
-        }
-        .layoutWeight(1)
-        .width('100%')
-        .padding(Sp.S)
-        .scrollBar(BarState.Auto)
-      }
-    }
-    .width('100%')
-    .height('100%')
-  }
-
-  @Builder
-  treeRow(node: FileNode, depth: number) {
-    Row({ space: Sp.S }) {
-      Text('　'.repeat(depth))
-        .fontSize(Fs.CAPTION)
-      SymbolGlyph(node.kind === NodeKind.DIRECTORY
-        ? (node.loaded ? $r('sys.symbol.folder') : $r('sys.symbol.folder'))
-        : $r('sys.symbol.doc_text'))
-        .fontSize(14)
-        .fontColor([node.deliverable ? $r('sys.color.brand') : $r('sys.color.font_secondary')])
-
-      Text(node.name)
-        .fontSize(Fs.SECONDARY)
-        .fontColor(this.selectedPath === node.path
-          ? $r('sys.color.brand')
-          : $r('sys.color.font_primary'))
-        .layoutWeight(1)
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-      if (node.deliverable) {
-        Text('交付物')
-          .fontSize(Fs.CAPTION_XS)
-          .fontColor($r('sys.color.brand'))
-          .padding({ left: 5, right: 5 })
-          .borderRadius(5)
-          .backgroundColor($r('sys.color.background_secondary'))
-      }
-
-      Text(fileSummary(node, formatBytes))
-        .fontSize(Fs.CAPTION)
-        .fontColor($r('sys.color.font_tertiary'))
-    }
-    .width('100%')
-    .height(Sz.TOUCH_MIN - 6)
-    .padding({ left: Sp.S, right: Sp.S })
-    .borderRadius(Radius.S)
-    .backgroundColor(this.selectedPath === node.path
-      ? $r('sys.color.background_secondary')
-      : Color.Transparent)
-    .onClick(() => {
-      if (node.kind === NodeKind.DIRECTORY) {
-        this.onToggleDirectory(node.path);
-      } else {
-        this.onOpenFile(node);
       }
     })
   }
+
 
   // ───────────── 文件预览 ─────────────
 
