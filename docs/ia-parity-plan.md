@@ -308,7 +308,8 @@ Composer 的官方字段：Model / Reasoning effort / Permission / Plan / @ Refe
 | 右侧内容门面接线（P2-12 第二步） | ✅ **已落地**：`RightbarShell` 改吃 `f: RightbarFacade`（12 props → 1，39 处用法改 `this.f.X`）；`AppShellFacade` 的 11 个 `right*` 成员全删；两处挂载点都调 `Index.buildRightbarFacade()`（浮层此前内联重算 ⇒ 新加面板很容易只给一处）。**行数 4019 → 4026（+7）**：收益是"两处只有一个真值"，不是变小 |
 | 单栏 Sheet 的切换器（P2-13） | ✅ **已落地**：切换器抽成共用 `@Builder panelSwitcher()`，`framedBody`（真右栏 / 侧边面板）与 `sheetBody`（单栏详情 Sheet）都调它 —— 此前单栏用户**根本切不到别的右栏面板**（P3 登记的第三个缺口，属功能不可达级别）。顺带把 Sheet 那行固定的「工具 / 子代理 / 交付物 / 目标 / 任务」提示换掉（它对文件/预览/详情是错措辞）|
 | 删掉平行状态机（P2-14） | ✅ **已落地**：`activeOverlay` / `Overlay` / `openOverlay` / `closeOverlay` 真实界面**从不读**（优先级由 `Index.overlayState()` 派生），而 fixture 有 3 条断言只测它自己（自证循环）⇒ 删除，fixture 570 → 567。**同清单下一个候选**：`sidebarExpanded`（字段 + setter + 无人读；"侧栏收成 rail"要么接成真功能、要么同样删——**需先定产品语义**）|
-| 下一步（P2-15…） | ① **定 `sidebarExpanded` 的产品语义**：接成"侧栏收成 rail"的真功能，或按 P2-14 同样删掉 ② `Index.ets`（4026 行）里宿主处理器按域收口（会话 / 工作区 / 诊断各一处）③ 右栏**滑入动画**与**拖拽调宽** —— 观感项且**必须真机验收**，等设备通道 ④ 会话头剩余三项需要协议面 ⑤ **真机复验 E343 / D18** ——无真机不得宣称设备验收完成 |
+| 侧栏可收起（P2-15） | ✅ **已落地**：`NavigationState.sidebarExpanded` 此前没有任何控制点（侧栏呈现完全由形态决定）⇒ 官方「收起侧栏」在本仓做不到。新增纯函数 `sidebarPresentationOf(mode, expanded)`（单栏一律浮层；双栏默认 rail 可展开；三栏默认 panel 可收起），品牌行给「收起」、rail 顶部给「展开」（**双向门**）；+7 条 fixture（574），并钉进功能接线门禁（第 18 项）|
+| 下一步（P2-16…） | ① P1 收尾项：**侧栏宽度记忆**（收起状态要不要持久化）与 `NewSession` 在 RAIL 里的入口 ② `Index.ets`（4026 行）里宿主处理器按域收口 ③ 右栏**滑入动画**与**拖拽调宽** —— 观感项且**必须真机验收** ④ 会话头剩余三项需要协议面 ⑤ **真机复验 E343 / D18** ——无真机不得宣称设备验收完成 |
 
 `SettingsShell`（General / Models / Plugins / Plugin Inventory / …）。**不再往 `SettingsPane.ets` 里堆内容。**
 

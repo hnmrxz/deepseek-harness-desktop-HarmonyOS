@@ -55,8 +55,37 @@ export function shellTracksOf(mode: LayoutMode): ShellTracks {
     rightbar: TrackPresentation.COLUMN };
 }
 
-/** 侧栏在该形态下是否占布局宽度（浮层形态不占） */
-export function sidebarOccupiesLayout(mode: LayoutMode): boolean {
-  const tracks: ShellTracks = shellTracksOf(mode);
-  return tracks.sidebar === TrackPresentation.PANEL || tracks.sidebar === TrackPresentation.RAIL;
+/**
+ * 侧栏**实际**用哪种呈现：形态给默认，用户的"展开 / 收起"给偏好。
+ *
+ * ## 为什么需要它（`sidebarExpanded` 此前是一个没有控制点的字段）
+ *
+ * `NavigationState.sidebarExpanded` 早就存在（初始 `true`、`copyOf` 会拷、还有
+ * `setSidebarExpand`），但**没有任何消费者**：侧栏呈现完全由形态决定
+ * （`shellTracksOf(mode)`）。于是官方 AppFrame 那个"收起侧栏腾出宽度"的动作在本仓**做不到** ——
+ * 三栏窄窗口下想多看主区一点，没有任何办法（这是一个功能缺口，不是一个状态字段的冗余）。
+ *
+ * ## 规则（两条，都很保守）
+ *
+ * 1. **单栏一律浮层**：手机竖屏下"展开的侧栏"会盖住主区，用户要的是抽屉 ⇒
+ *    `expanded` 在单栏下**不生效**（不是忽略用户，而是那个档位本来就没有第二个选项）。
+ * 2. **其余形态跟随偏好**：双栏默认 rail（600–839vp 放不下两条展开轨道），
+ *    用户展开就是 PANEL；三栏默认 PANEL，收起就是 rail（腾出 ⌈200vp⌉ 给主区）。
+ *    宽度不够时**不阻止**用户——`LayoutController` 的档位判定已经保证了"能到这个形态
+ *    就有基本空间"，而"我要不要这 200vp"是用户的判断。
+ */
+export function sidebarPresentationOf(mode: LayoutMode, expanded: boolean): TrackPresentation {
+  if (mode === LayoutMode.SINGLE) {
+    return TrackPresentation.OVERLAY;
+  }
+  if (expanded) {
+    return TrackPresentation.PANEL;
+  }
+  return TrackPresentation.RAIL;
+}
+
+/** 侧栏在该形态（与该展开状态）下是否占布局宽度（浮层形态不占） */
+export function sidebarOccupiesLayout(mode: LayoutMode, expanded: boolean): boolean {
+  const presentation: TrackPresentation = sidebarPresentationOf(mode, expanded);
+  return presentation === TrackPresentation.PANEL || presentation === TrackPresentation.RAIL;
 }

@@ -98,7 +98,13 @@ const FEATURES = [
    * 这条接线曾断过——兜底写成 `this.mainContent(...)`（真机栈溢出杀进程，见 E343）。
    * 故钉住"视图里真的绑定了 tabFacade"（它是"剩下的面板归谁渲染"的唯一凭据）。
    */
-  { name: '主区兜底', patterns: [['TabContentView\\(\\{ f: this\\.f\\.tabFacade', 1], ['tabFacade', 2]] }
+  { name: '主区兜底', patterns: [['TabContentView\\(\\{ f: this\\.f\\.tabFacade', 1], ['tabFacade', 2]] },
+  /*
+   * 侧栏可收起（P2-15）。这一条是**功能缺口**而不是"接线断了"：`NavigationState.sidebarExpanded`
+   * 长期没有任何控制点（侧栏呈现完全由形态决定），于是官方 AppFrame 那个"收起侧栏腾出宽度"
+   * 的动作在本仓做不到。现在钉住三段接线：纯函数判定 + 门面开关 + 视图里的控制点。
+   */
+  { name: '侧栏收起', patterns: [['sidebarPresentationOf', 2], ['onToggleSidebarExpanded', 2], ['showExpandToggle', 2]] }
 ];
 
 const problems = [];

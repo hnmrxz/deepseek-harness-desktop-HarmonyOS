@@ -1242,7 +1242,7 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
     DrawerState, MAIN_CONVERSATION, MAIN_WORKSPACES, MAIN_SETTINGS, MAIN_CORE,
     SETTINGS_MODELS, SETTINGS_GENERAL } = NS;
 
-  const { shellTracksOf, sidebarOccupiesLayout } = ST;
+  const { shellTracksOf, sidebarOccupiesLayout, sidebarPresentationOf } = ST;
   const reg = createPanelRegistry(mainPanels());
 
   // ── 注册表：位置是面板的属性，不是页面的 if 分支 ──
@@ -1415,8 +1415,20 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   const triple = shellTracksOf('triple');
   t.eq('三栏：侧栏是完整面板', triple.sidebar, 'panel');
   t.eq('三栏：右栏并排成栏', triple.rightbar, 'column');
-  t.eq('浮层形态下侧栏不占布局宽度', sidebarOccupiesLayout('single'), false);
-  t.eq('rail 形态下侧栏占布局宽度', sidebarOccupiesLayout('double'), true);
+  t.eq('浮层形态下侧栏不占布局宽度', sidebarOccupiesLayout('single', true), false);
+  t.eq('rail 形态下侧栏占布局宽度', sidebarOccupiesLayout('double', false), true);
+
+  // ── 侧栏可收起（P2-15）：形态给默认，用户的展开/收起给偏好 ──
+  {
+    const { sidebarPresentationOf } = ST;
+    t.eq('三栏展开：完整面板', sidebarPresentationOf('triple', true), 'panel');
+    t.eq('三栏收起：rail（腾出宽度给主区）', sidebarPresentationOf('triple', false), 'rail');
+    t.eq('双栏展开：完整面板（用户要，就给）', sidebarPresentationOf('double', true), 'panel');
+    t.eq('双栏收起：rail（这是默认）', sidebarPresentationOf('double', false), 'rail');
+    t.eq('**单栏一律浮层**：那个档位没有第二个选项', sidebarPresentationOf('single', true), 'overlay');
+    t.eq('单栏收起也还是浮层', sidebarPresentationOf('single', false), 'overlay');
+    t.eq('收起后的 rail 仍占布局宽度（只是窄）', sidebarOccupiesLayout('triple', false), true);
+  }
   // 侧栏 2（工作区 / 设置；核心席位按 E110 不可用）、右栏 7（详情 / 文件 / 轨迹 / 工具 / 子代理 / 交付物 / 预览）—— 可用清单与形态无关，只与注册表有关
   t.eq('**三种形态的面板清单一致**（信息架构不随设备变）',
     JSON.stringify(reg.descriptors(PanelLocation.SIDEBAR).length) + '/' + JSON.stringify(reg.descriptors(PanelLocation.RIGHTBAR).length),

@@ -74,6 +74,13 @@ export struct SidebarShell {
   /** 呈现方式（由 `ui/ShellTracks` 按形态算出；这里只映射几何） */
   @Prop presentation: TrackPresentation = TrackPresentation.PANEL;
   /**
+   * 本次渲染要不要给"收起 / 展开侧栏"的入口（P2-15）。
+   *
+   * 【为什么由宿主决定】单栏下侧栏是抽屉，"展开成完整面板"在那个档位不存在
+   * （`sidebarPresentationOf` 的规则）⇒ 给了按钮就是假入口。宿主拿形态判断，视图只照做。
+   */
+  @Prop showExpandToggle: boolean = false;
+  /**
    * 工作区→会话浏览器（P1：官方 `ui-workspace` 的座位就在 Sidebar 里）。
    *
    * 【为什么侧栏拿它而不是自己造】树本身（工作区分组、会话归属、待决、归档）归 `WorkspaceBrowser`；
@@ -96,6 +103,9 @@ export struct SidebarShell {
   onNewSession: () => void = () => {
   };
   onOpenDiagnostics: () => void = () => {
+  };
+  /** 收起 / 展开侧栏（P2-15：唯一控制点；真值在 `NavigationState.sidebarExpanded`） */
+  onToggleExpanded: () => void = () => {
   };
 
   /**
@@ -144,11 +154,25 @@ export struct SidebarShell {
   @Builder
   panelBody() {
     Column({ space: Sp.XS }) {
-      Text(this.brand)
-        .fontSize(Fs.TITLE_S)
-        .fontWeight(FontWeight.Bold)
-        .width('100%')
-        .padding({ left: Sp.M, top: Sp.M, bottom: Sp.S })
+      Row({ space: Sp.S }) {
+        Text(this.brand)
+          .fontSize(Fs.TITLE_S)
+          .fontWeight(FontWeight.Bold)
+          .layoutWeight(1)
+        // 「收起侧栏」：官方 AppFrame 的这个动作在本仓此前**做不到**（侧栏呈现完全由形态决定）。
+        // 单栏不给（那个档位是抽屉，没有"展开的侧栏"这个状态）。
+        if (this.showExpandToggle) {
+          SymbolGlyph($r('sys.symbol.chevron_left'))
+            .fontSize(HarmonyIconSize.NAV)
+            .fontColor([$r('sys.color.font_secondary')])
+            .accessibilityText('收起侧栏')
+            .onClick(() => {
+              this.onToggleExpanded();
+            })
+        }
+      }
+      .width('100%')
+      .padding({ left: Sp.M, right: Sp.M, top: Sp.M, bottom: Sp.S })
 
       // New Session：官方侧栏的一级入口（放在品牌行下面，不藏在某个工作区里）
       Row({ space: Sp.S }) {
@@ -234,6 +258,27 @@ export struct SidebarShell {
   @Builder
   railBody() {
     Column({ space: Sp.S }) {
+      // 收起之后**必须能回来**：否则"收起"是一道单向门（用户只能重启应用）。
+      // 与品牌行那个按钮是同一个动作的两面。
+      // 【图标用 chevron 而不是某个"side bar"符号】本仓有实测教训：符号名不存在时
+      // 不报错、只是画不出来（E-symbol）。chevron_left / chevron_right 是本仓已在用的
+      // 一对（页头返回键与文件树都用它），"左=收起、右=展开"也自洽。
+      if (this.showExpandToggle) {
+        Column() {
+          SymbolGlyph($r('sys.symbol.chevron_right'))
+            .fontSize(HarmonyIconSize.NAV_RAIL)
+            .fontColor([$r('sys.color.font_secondary')])
+        }
+        .width(this.navWidthVp)
+        .height(Sz.TOUCH_MIN)
+        .justifyContent(FlexAlign.Center)
+        .borderRadius(Radius.S)
+        .accessibilityText('展开侧栏')
+        .onClick(() => {
+          this.onToggleExpanded();
+        })
+      }
+
       ForEach(this.panelRegistry.descriptors(PanelLocation.SIDEBAR), (d: PanelDescriptor) => {
         Column() {
           Stack({ alignContent: Alignment.TopEnd }) {
@@ -258,6 +303,7 @@ export struct SidebarShell {
     .width(this.navWidthVp)
     .height('100%')
     .padding({ top: Sp.M })
+    .alignItems(HorizontalAlign.Center)
   }
 
   /**

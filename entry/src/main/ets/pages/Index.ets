@@ -91,6 +91,7 @@ import {
   SettingValueType,
   DEFAULT_MODEL_NS,
   SettingsWriteOutcome,
+  setSidebarExpanded,
   settingsDomainOfNs,
   sheetNoteVisible,
   workspaceNameOf,
@@ -2116,6 +2117,9 @@ struct Index {
     // 侧栏 PANEL 呈现里要挂工作区→会话树（P1）：与主区那份**同源**（同一个门面构建器）
     browser: this.buildBrowserFacade(),
     selectedSidebarPanel: sidebarPanelOfMainPanel(this.nav.selectedMainPanel),
+    // 侧栏展开 / 收起（P2-15）：真值在 NavigationState.sidebarExpanded，视图只读它
+    sidebarExpanded: this.nav.sidebarExpanded,
+    onToggleSidebarExpanded: () => this.toggleSidebarExpanded(),
     onSelectSidebarPanel: (panelId: string) => this.selectSidebarPanel(panelId),
     onNewSession: () => this.newSession(),
     panelLabel: this.selectedPanelLabel(),
@@ -3679,6 +3683,18 @@ struct Index {
    */
   /** 侧栏席位被按下：翻译成"切到哪个主区面板"，再走既有的页签切换（归一化/清栈等决策不重写） */
   /** 开合手机侧栏抽屉（模型 `setDrawer`；它是唯一真值，视图不自持一份） */
+  /**
+   * 收起 / 展开侧栏（P2-15）。
+   *
+   * 【为什么这个动作此前不存在】侧栏呈现完全由形态决定（`shellTracksOf(mode)`），
+   * 而 `NavigationState.sidebarExpanded` 这个字段**没有任何控制点** ——
+   * 于是官方 AppFrame 那个"收起侧栏腾出宽度"的动作在本仓做不到（功能缺口，不是字段冗余）。
+   * 现在：形态给默认（双栏 rail / 三栏 panel），用户展开或收起给偏好。
+   */
+  private toggleSidebarExpanded(): void {
+    this.nav = setSidebarExpanded(this.nav, !this.nav.sidebarExpanded);
+  }
+
   private setDrawerOpen(open: boolean): void {
     this.nav = setDrawer(this.nav, open ? DrawerState.OPEN : DrawerState.CLOSED);
   }

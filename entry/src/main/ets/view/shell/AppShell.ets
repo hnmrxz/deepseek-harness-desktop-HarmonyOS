@@ -19,7 +19,7 @@
  * 普通属性会让赋值落进门面副本、宿主收不到（静默行为错误）。
  */
 
-import { DetailPresentation, DetailSection, LayoutMode, MAIN_DIAGNOSTICS, StackPage, Sz, TrackPresentation, shellTracksOf, showsConversation } from 'appstate';
+import { DetailPresentation, DetailSection, LayoutMode, MAIN_DIAGNOSTICS, StackPage, Sz, TrackPresentation, shellTracksOf, showsConversation, sidebarPresentationOf } from 'appstate';
 import { copyText } from 'platform';
 
 import type { FileNode, FilePreview, PanelDescriptor, SessionStatsInput, TrajectoryItem } from 'appstate';
@@ -45,6 +45,10 @@ export interface AppShellFacade {
    * 视图不该自己拼这条线索（会话/诊断/连接没有侧栏席位的那件事，只该写在模型里一处）。
    */
   selectedSidebarPanel: string;
+  /** 侧栏是否展开（P2-15：真值在 `NavigationState.sidebarExpanded`） */
+  sidebarExpanded: boolean;
+  /** 收起 / 展开侧栏 */
+  onToggleSidebarExpanded: () => void;
   /** 选中某个侧栏席位（宿主翻译成"切到哪个主区面板"，并经注册表校验） */
   onSelectSidebarPanel: (panelId: string) => void;
   /** 新建会话（侧栏一级入口；与 Ctrl+N 走同一条路） */
@@ -191,6 +195,10 @@ export struct AppShell {
         },
         onOpenDiagnostics: () => {
           this.f.openDiagnostics();
+        },
+        showExpandToggle: this.f.mode !== LayoutMode.SINGLE,
+        onToggleExpanded: () => {
+          this.f.onToggleSidebarExpanded();
         }
       })
     }
@@ -245,8 +253,14 @@ export struct AppShell {
     .height('100%')
   }
 
+  /**
+   * 侧栏这条轨道这次用哪种呈现（P2-15）。
+   *
+   * 形态给**默认**，用户的"展开 / 收起"给**偏好** —— 判定在 `sidebarPresentationOf`
+   * （纯函数、有 fixture）。单栏一律浮层（那个档位没有"展开的侧栏"）。
+   */
   private sidebarPresentation(): TrackPresentation {
-    return shellTracksOf(this.f.mode).sidebar;
+    return sidebarPresentationOf(this.f.mode, this.f.sidebarExpanded);
   }
 
   @Builder
@@ -269,6 +283,10 @@ export struct AppShell {
         },
         onOpenDiagnostics: () => {
           this.f.openDiagnostics();
+        },
+        showExpandToggle: this.f.mode !== LayoutMode.SINGLE,
+        onToggleExpanded: () => {
+          this.f.onToggleSidebarExpanded();
         }
       })
     }
@@ -336,6 +354,10 @@ export struct AppShell {
         },
         onOpenDiagnostics: () => {
           this.f.openDiagnostics();
+        },
+        showExpandToggle: this.f.mode !== LayoutMode.SINGLE,
+        onToggleExpanded: () => {
+          this.f.onToggleSidebarExpanded();
         }
       })
     }
