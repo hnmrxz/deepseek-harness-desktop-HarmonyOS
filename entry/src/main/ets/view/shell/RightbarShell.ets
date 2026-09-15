@@ -26,12 +26,14 @@
  * 而不是继续吃一份 sections）。
  */
 
-import { DetailPresentation, DetailSection, Fs, HarmonyIconSize, HarmonySpacing, PANEL_RIGHT_DELIVERABLES, PANEL_RIGHT_DETAIL, PANEL_RIGHT_FILES, PANEL_RIGHT_PREVIEW, Sp, Sz } from 'appstate';
+import { DetailPresentation, DetailSection, Fs, HarmonyIconSize, HarmonySpacing, PANEL_RIGHT_DELIVERABLES, PANEL_RIGHT_DETAIL, PANEL_RIGHT_FILES, PANEL_RIGHT_PREVIEW, PANEL_RIGHT_SUBAGENT, PANEL_RIGHT_TOOL, Sp, Sz, presentTool, toolStateLabel } from 'appstate';
 import type { FileNode, FilePreview, PanelDescriptor, TrajectoryItem } from 'appstate';
 import { DetailPane } from '../DetailPane';
 import { FilePreviewPane } from '../FilePreviewPane';
 import { DeliverableCard } from '../DeliverableCard';
 import { FileTreePane } from '../FileTreePane';
+import { SubagentCard } from '../SubagentCard';
+import { ToolCard } from '../ToolCard';
 import type { FileTreeFacade } from '../FileTreePane';
 import { NativeChip } from '../NativePrimitives';
 import { NativeSectionTitle } from '../NativePrimitives';
@@ -68,6 +70,19 @@ export struct RightbarShell {
   @Prop files: FileTreeFacade;
   /** 「交付物」面板的内容（宿主已按种类筛好；空数组 = 空态） */
   @Prop deliverables: TrajectoryItem[] = [];
+  /** 「子代理」面板的内容（同上；筛选规则同为纯模型 `itemsOfKind`） */
+  @Prop subagents: TrajectoryItem[] = [];
+  /** 「工具」面板的内容（同上） */
+  @Prop tools: TrajectoryItem[] = [];
+
+  /**
+   * 工具面板里**被用户手动展开过**的条目 id。
+   *
+   * 【为什么这里可以有本地状态】主区的"展开全部/收起全部"只管主区那份列表；
+   * 右栏面板的展开属于面板自己的交互状态，放在它自己身上比往宿主再串一条数组更诚实
+   * （卡片的 `expanded` 仍是入参 —— 组件本身不持状态，见 `ToolCard` 的说明）。
+   */
+  @State toolExpanded: string[] = [];
 
   /** 切换右栏面板（宿主经注册表校验后落到 `selectedRightPanel`） */
   onSelectPanel: (panelId: string) => void = () => {
@@ -119,6 +134,95 @@ export struct RightbarShell {
     }
   }
 
+  /** 子代理面板的内容：一张张 `SubagentCard`（与过程流共用同一份卡） */
+  @Builder
+  subagentsBody() {
+    if (this.subagents.length === 0) {
+      Column({ space: Sp.S }) {
+        Text('本次会话还没有子代理')
+          .fontSize(Fs.SECONDARY)
+          .fontColor($r('sys.color.font_secondary'))
+        Text('助手派生子代理时，会在这里列出')
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.font_tertiary'))
+          .textAlign(TextAlign.Center)
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .justifyContent(FlexAlign.Center)
+      .padding(Sp.M)
+    } else {
+      List({ space: Sp.S }) {
+        ForEach(this.subagents, (item: TrajectoryItem) => {
+          ListItem() {
+            SubagentCard({ item: item })
+          }
+        }, (item: TrajectoryItem) => item.id)
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .padding(Sp.S)
+      .scrollBar(BarState.Auto)
+    }
+  }
+
+  /** 工具面板的内容：一张张 `ToolCard`（与过程流共用同一份卡；展开态见 `toolExpanded` 的说明） */
+  @Builder
+  toolsBody() {
+    if (this.tools.length === 0) {
+      Column({ space: Sp.S }) {
+        Text('本次会话还没有工具调用')
+          .fontSize(Fs.SECONDARY)
+          .fontColor($r('sys.color.font_secondary'))
+        Text('助手调用工具时，会在这里列出参数与改动')
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.font_tertiary'))
+          .textAlign(TextAlign.Center)
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .justifyContent(FlexAlign.Center)
+      .padding(Sp.M)
+    } else {
+      List({ space: Sp.S }) {
+        ForEach(this.tools, (item: TrajectoryItem) => {
+          ListItem() {
+            ToolCard({
+              item: item,
+              // 与主区同一套判据：手动展开过，或模型说这类工具默认展开
+              expanded: this.toolExpanded.indexOf(item.id) >= 0
+                || presentTool(item, toolStateLabel(item.toolState)).defaultExpanded,
+              onToggle: () => {
+                this.toggleTool(item.id);
+              }
+            })
+          }
+        }, (item: TrajectoryItem) => item.id)
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .padding(Sp.S)
+      .scrollBar(BarState.Auto)
+    }
+  }
+
+  /** 展开/收起一张工具卡（与主区 `toggle(id)` 同一语义：在集合里加/删） */
+  private toggleTool(id: string): void {
+    const out: string[] = [];
+    let found: boolean = false;
+    for (let i = 0; i < this.toolExpanded.length; i++) {
+      if (this.toolExpanded[i] === id) {
+        found = true;
+      } else {
+        out.push(this.toolExpanded[i]);
+      }
+    }
+    if (!found) {
+      out.push(id);
+    }
+    this.toolExpanded = out;
+  }
+
   /** 并排（真右栏）与侧边浅层面板共用一套带标题行的形态 */
   @Builder
   framedBody() {
@@ -166,6 +270,10 @@ export struct RightbarShell {
             this.onLineTap(section, text);
           }
         })
+      } else if (this.panelId === PANEL_RIGHT_TOOL) {
+        this.toolsBody()
+      } else if (this.panelId === PANEL_RIGHT_SUBAGENT) {
+        this.subagentsBody()
       } else if (this.panelId === PANEL_RIGHT_DELIVERABLES) {
         this.deliverablesBody()
       } else if (this.panelId === PANEL_RIGHT_FILES) {
@@ -198,6 +306,10 @@ export struct RightbarShell {
             this.onLineTap(section, text);
           }
         })
+      } else if (this.panelId === PANEL_RIGHT_TOOL) {
+        this.toolsBody()
+      } else if (this.panelId === PANEL_RIGHT_SUBAGENT) {
+        this.subagentsBody()
       } else if (this.panelId === PANEL_RIGHT_DELIVERABLES) {
         this.deliverablesBody()
       } else if (this.panelId === PANEL_RIGHT_FILES) {

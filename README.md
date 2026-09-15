@@ -181,6 +181,11 @@ hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 **P2-2 已落地**：会话头的**后台任务条** —— `Jobs` 模型 40 条断言与中枢 `jobs` 字段一直都在，
 但视图零消费者（又一次"通道有、没接"）；现已接成 中枢 → `Index` → `MainShell` → 会话头任务条
 （live 任务每秒走字、无障碍整段取自模型），并把这条接线登记进功能接线门禁（第 16 条）。
+**P3-5 已落地**：右栏「**工具**」「**子代理**」面板 —— 工具卡抽成 `view/ToolCard.ets`（163 行，
+含改动对照的那一整套判定，宿主只给数据 + 展开态 + 回调）、子代理卡抽成 `view/SubagentCard.ets`（40 行），
+两者都与会话过程流**共用同一份**卡；`ConversationPane` 1714 → **1534 行**。
+右栏可用面板六个（详情 / 文件 / 工具 / 子代理 / 交付物 / 预览），只剩「轨迹」内容未做。
+
 **P3-4 已落地**：右栏「**交付物**」面板 —— 交付物卡从 `ConversationPane` 抽成 `view/DeliverableCard.ets`，
 右栏面板与会话过程流**共用同一份**卡；筛选是**纯模型**（`itemsOfKind` / `deliverablesOf`：保序 +
 **同 id 只留最后一条**——同一条会被流式 merge 多次，"有几件事"不能等于"更新了几次"）。右栏可用面板：详情 / 文件 / 交付物 / 预览。

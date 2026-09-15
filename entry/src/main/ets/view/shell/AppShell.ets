@@ -70,6 +70,10 @@ export interface AppShellFacade {
   rightFiles: FileTreeFacade;
   /** 右栏「交付物」面板的内容（宿主已按种类筛好） */
   rightDeliverables: TrajectoryItem[];
+  /** 右栏「子代理」面板的内容（同上） */
+  rightSubagents: TrajectoryItem[];
+  /** 右栏「工具」面板的内容（同上） */
+  rightTools: TrajectoryItem[];
   /** 当前面板的中文名（页头标题用；由注册表的 label 给） */
   panelLabel: string;
   beginDetailDrag: () => void;
@@ -381,6 +385,8 @@ export struct AppShell {
       preview: this.f.preview,
       files: this.f.rightFiles,
       deliverables: this.f.rightDeliverables,
+      subagents: this.f.rightSubagents,
+      tools: this.f.rightTools,
       onSelectPanel: (panelId: string) => {
         this.f.onSelectRightPanel(panelId);
       },

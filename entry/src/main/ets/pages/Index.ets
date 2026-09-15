@@ -66,6 +66,7 @@ import {
   LayoutMode,
   showsConversation,
   deliverablesOf,
+  itemsOfKind,
   DrawerState,
   enterSession,
   selectRightPanel,
@@ -117,6 +118,7 @@ import {
   SessionHub,
   Sz,
   TrajectoryItem,
+  TrajectoryKind,
   WorkspaceItem,
   WorkspaceRow,
   SkillRow,
@@ -1984,6 +1986,8 @@ struct Index {
       preview: this.preview,
       files: this.buildRightFilesFacade(),
       deliverables: deliverablesOf(this.trajectoryItems),
+      subagents: itemsOfKind(this.trajectoryItems, TrajectoryKind.SUBAGENT),
+      tools: itemsOfKind(this.trajectoryItems, TrajectoryKind.TOOL),
       onSelectPanel: (panelId: string) => {
         this.selectRightPanelById(panelId);
       },
@@ -2018,6 +2022,8 @@ struct Index {
     rightFiles: this.buildRightFilesFacade(),
     // 交付物面板只要『已筛好的那一类条目』——筛选是纯模型（deliverablesOf，有断言），视图不做 for
     rightDeliverables: deliverablesOf(this.trajectoryItems),
+    rightSubagents: itemsOfKind(this.trajectoryItems, TrajectoryKind.SUBAGENT),
+    rightTools: itemsOfKind(this.trajectoryItems, TrajectoryKind.TOOL),
     mobileDrawerOpen: this.nav.mobileDrawer === DrawerState.OPEN,
     onOpenDrawer: () => this.setDrawerOpen(true),
     onCloseDrawer: () => this.setDrawerOpen(false),

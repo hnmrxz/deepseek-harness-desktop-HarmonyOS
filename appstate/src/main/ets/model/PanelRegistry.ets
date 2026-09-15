@@ -275,7 +275,7 @@ export function rightbarPanels(): PanelDescriptor[] {
       label: '详情', order: 5, available: () => true },
     /*
      * 官方右栏的候选里，**内容视图还没做的**（`available: () => false`）：
-     * 轨迹 / 工具 / 子代理（文件、预览、交付物已在 P3-2…P3-4 接上）。
+     * 只剩「轨迹」（它与主区的「轨迹视图」是同一份列表，要先想清楚两者的差别）。
      *
      * 【为什么不先"可选"再补内容】按 E110 的口径：不能填的入口不进选择集。
      * 若让它们可选，用户点进去会看到一个空面板——那比"暂时少一个入口"糟得多。
@@ -286,10 +286,12 @@ export function rightbarPanels(): PanelDescriptor[] {
       label: '文件', order: 10, available: () => true },
     { id: PANEL_RIGHT_TRAJECTORY, location: PanelLocation.RIGHTBAR, owner: 'conversation',
       label: '轨迹', order: 20, available: () => false },
+    // 「工具」在 P3-5 接上：呈现用 `ToolCard`（与会话过程流里那张卡**同一份**）⇒ 可用
     { id: PANEL_RIGHT_TOOL, location: PanelLocation.RIGHTBAR, owner: 'conversation',
-      label: '工具', order: 30, available: () => false },
+      label: '工具', order: 30, available: () => true },
+    // 「子代理」在 P3-5 接上：呈现用 `SubagentCard`（与会话过程流里那张卡**同一份**）⇒ 可用
     { id: PANEL_RIGHT_SUBAGENT, location: PanelLocation.RIGHTBAR, owner: 'conversation',
-      label: '子代理', order: 40, available: () => false },
+      label: '子代理', order: 40, available: () => true },
     // 「交付物」在 P3-4 接上：呈现用 `DeliverableCard`（与会话过程流里那张卡**同一份**）⇒ 可用
     { id: PANEL_RIGHT_DELIVERABLES, location: PanelLocation.RIGHTBAR, owner: 'conversation',
       label: '交付物', order: 50, available: () => true },

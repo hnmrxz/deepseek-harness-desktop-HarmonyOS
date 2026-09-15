@@ -272,7 +272,8 @@ Composer 的官方字段：Model / Reasoning effort / Permission / Plan / @ Refe
 | 「预览」面板 + 面板切换器（P3-2） | ✅ **已落地**：预览呈现从 `WorkspacePane` 的第三列抽成 **`view/FilePreviewPane.ets`**（含空态 / 头部「投喂」/ 代码等宽正文 / 过大与二进制两档空态）——右栏的「预览」面板与工作区页签**共用同一份**（抄一份必然走样）。注册表里 `right.preview` 从此 `available: true`。右栏新增**切换器**（`NativeChip` 行，**只在可用面板 ≥2 时出现**：只有一个面板时它是噪声）|
 | 「文件」面板（P3-3） | ✅ **已落地**：文件树（展开 / 选中 / 交付物标记）从 `WorkspacePane` 抽成 **`view/FileTreePane.ets`**（133 行，带 `FileTreeFacade` 门面），右栏「文件」面板与工作区页签**共用同一份**；`right.files` 从此 `available: true`。空态文案仍由宿主按三种事实分档给（"没选工作区 / 目录下没会话 / 列目录失败"）。`WorkspacePane` **464 → 274 行**（预览 + 文件树两轮搬出）|
 | 「交付物」面板（P3-4） | ✅ **已落地**：交付物卡（图标 / 文件名 / 大小 / 动作行）从 `ConversationPane` 抽成 **`view/DeliverableCard.ets`**（86 行），右栏「交付物」面板与会话过程流里那张卡**共用同一份**；`right.deliverables` 从此可用。筛选是**纯模型**（新增 `itemsOfKind` / `deliverablesOf`：保序 + **同 id 只留最后一条**——过程流里同一条会被流式 merge 多次，「有几件事」不能等于「更新了几次」；4 条断言）|
-| 下一步（P3-5…） | ① 剩余三个候选：**子代理**（`subagentItem` 很小，顺手搬）、**工具**（`toolItem` + 改动对照，素材最多）、**轨迹**（与主区「轨迹视图」是同一份列表，要先想清楚两者的差别）② 侧边面板滑入动画、面板自身拖拽调宽（P0 遗留）③ 单栏 Sheet 里要不要也放切换器（待真机看）|
+| 「工具」+「子代理」面板（P3-5） | ✅ **已落地**：工具卡抽成 **`view/ToolCard.ets`**（163 行，含 `diffOf` / `diffTextLines` / `diffKindLines` / `toolBadge` / `toolIcon` ——**判定与呈现同处一组件**，宿主只给"数据 + 展开态 + 回调"）、子代理卡抽成 **`view/SubagentCard.ets`**（40 行）。两个面板与过程流**共用同一份卡**；`right.tool` / `right.subagent` 从此可用。工具卡展开态是**入参**（主区"展开全部/收起全部"要能一次控制所有卡），右栏面板持自己那一条列表的展开集合 |
+| 下一步（P3-6…） | ① 最后一个候选「**轨迹**」——它与主区「轨迹视图」是同一份列表，**要先想清楚两者的差别**（官方右栏的 trajectory 是「当前回合的过程」，不是全量台账）再动手，否则会把主区那份视图照抄一遍 ② 侧边面板滑入动画、面板自身拖拽调宽（P0 遗留）③ 单栏 Sheet 里要不要也放切换器（待真机看）④ 「设置」域（P4）|
 
 ### P4 Settings 域
 `SettingsShell`（General / Models / Plugins / Plugin Inventory / …）。**不再往 `SettingsPane.ets` 里堆内容。**

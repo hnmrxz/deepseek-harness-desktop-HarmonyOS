@@ -10,13 +10,15 @@
 
 import { Border, CommandCandidate, FeedbackRow, FollowSignal, Fs, HarmonyColor, HarmonyRadius, HarmonySpacing, HarmonyType, JobDot, MenuGesture, ModelOption, ModelSelection, PendingAttachment, PendingItem, QueuedItem, Radius, ReferenceCandidate, SemanticColor, SessionHub, Sp, Speaker, StatsUnit, Sz, TimelineKind, ToolKind, ToolState, TrajectoryItem, TrajectoryKind, cellIdAtRatio, cellIdForListIndex, chatRowOfItemIndex, chatVisibleItems, contextMenuGestures, contextMenuHintLabel, defaultExpanded, followTimerShouldRun, formatClock, formatDuration, groupTurns, hasProcessGroup, hoverEnabled, jobCountLabel, jobDotState, jobDurationText, jobDurationTitle, jobElapsedMs, jobListA11y, jobListVisible, jobRowStatusText, jobTickerNeeded, listIndexForCell, matchConversationIndices, matchCounterText, matchTrajectoryIndices, nextFollowing, orderedJobs, parseMarkdown, plainTextOf, presentDiff, presentTool, previewOutput, processSummary, segmentOrdinalOf, shouldJumpOnNewItems, statsLinesOf, stepMatch, timelineCellsOf, timelineKindLabel, timelineScaleOf, timelineStartedLabel, timelineTotalLabel, toolStateLabel, toolSummaryOf } from 'appstate';
 /** 类型单独 import type（本仓约定：值与类型分开写） */
-import type { ActionNotice, DiffPresentation, InputModality, SessionJob, SessionStatsInput, StatsLine, TimelineCell, TimelineScale, TimelineSegment, ToolPresentation, Turn } from 'appstate';
+import type { ActionNotice, InputModality, SessionJob, SessionStatsInput, StatsLine, TimelineCell, TimelineScale, TimelineSegment, Turn } from 'appstate';
 import type { NativeAction } from './NativePrimitives';
 import { NativeActionBar, NativeCard, NativeChip } from './NativePrimitives';
 import { Composer } from './Composer';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { MessageFeedback } from './MessageFeedback';
 import { DeliverableCard } from './DeliverableCard';
+import { SubagentCard } from './SubagentCard';
+import { ToolCard } from './ToolCard';
 import { PendingPane } from './PendingPane';
 
 @Component
@@ -1029,9 +1031,18 @@ export struct ConversationPane {
     } else if (item.kind === TrajectoryKind.REASONING) {
       this.reasoningItem(item)
     } else if (item.kind === TrajectoryKind.TOOL) {
-      this.toolItem(item)
+      // 工具卡归 ToolCard（右栏「工具」面板用**同一份**）
+      ToolCard({
+        item: item,
+        expanded: this.isExpanded(item.id)
+          || presentTool(item, toolStateLabel(item.toolState)).defaultExpanded,
+        onToggle: () => {
+          this.toggle(item.id);
+        }
+      })
     } else if (item.kind === TrajectoryKind.SUBAGENT) {
-      this.subagentItem(item)
+      // 子代理卡归 SubagentCard（右栏「子代理」面板用**同一份**）
+      SubagentCard({ item: item })
     } else if (item.kind === TrajectoryKind.DELIVERABLE) {
       // 交付物卡归 DeliverableCard（右栏「交付物」面板用**同一份**）
       DeliverableCard({ item: item })
@@ -1407,50 +1418,6 @@ export struct ConversationPane {
     return n.code;
   }
 
-  @Builder
-  toolItem(item: TrajectoryItem) {
-    // 卡片本体走 P1.5 的原语（NativeCard）；**工具类别**由 `ToolPresenter` 判定
-    // （纯模型 + 17 条断言）：图标、语气、展开默认态、无障碍文案都不再由视图各自猜。
-    NativeCard({
-      iconSymbol: this.toolIcon(presentTool(item, toolStateLabel(item.toolState)).kind),
-      title: item.toolName,
-      badge: this.toolBadge(item),
-      tone: presentTool(item, toolStateLabel(item.toolState)).tone,
-      meta: item.elapsedMs > 0
-        ? (this.clockOf(item.at).length > 0
-          ? `${this.clockOf(item.at)} · ${formatDuration(item.elapsedMs)}`
-          : formatDuration(item.elapsedMs))
-        : '',
-      // 参数摘要**按类别提炼**（§11 的 path summary）：终端出命令、读取出路径、搜索出模式+范围；
-      // 提炼不到再退回清理后的原文——不再把整段 JSON 糊在卡片第一行。
-      summary: toolSummaryOf(presentTool(item, toolStateLabel(item.toolState)).kind, item.toolArgs),
-      // 编辑类工具优先显示**改动对照**（有对照时不再显示工具的输出确认）：
-      // 用户要看的是"改了什么"，而不是"改成功了"这句话。
-      diffLines: this.diffTextLines(item),
-      diffKinds: this.diffKindLines(item),
-      bodyText: this.diffTextLines(item).length > 0
-        ? ''
-        : ((this.isExpanded(item.id)
-          || presentTool(item, toolStateLabel(item.toolState)).defaultExpanded)
-          ? previewOutput(item.toolOutput).shown
-          : ''),
-      bodyTruncatedHint: this.diffTextLines(item).length > 0
-        ? (this.diffOf(item) !== null && this.diffOf(item)!.truncated
-          ? '▸ 对照较长，已按上限截断' : '')
-        : (previewOutput(item.toolOutput).truncated
-          ? `▸ 查看完整输出（共 ${previewOutput(item.toolOutput).totalLength} 字符）`
-          : ''),
-      collapsedHint: this.diffOf(item) !== null
-        ? `▸ 查看改动 +${this.diffOf(item)!.added} −${this.diffOf(item)!.removed}`
-        : (item.toolOutput.length > 0 ? '▸ 查看结果' : ''),
-      expanded: this.isExpanded(item.id)
-        || presentTool(item, toolStateLabel(item.toolState)).defaultExpanded,
-      a11y: presentTool(item, toolStateLabel(item.toolState)).a11y,
-      onToggle: () => {
-        this.toggle(item.id);
-      }
-    })
-  }
 
   /**
    * 取这次工具调用的改动对照（没有则 null）。
@@ -1459,57 +1426,12 @@ export struct ConversationPane {
    * 因为失败时参数只是"意图"，真正的结果在输出里；此时把意图画成对照会误导
    * （看起来"改了"，其实没改成）。我们照此：失败/被拒一律走原输出视图。
    */
-  private diffOf(item: TrajectoryItem): DiffPresentation | null {
-    if (item.toolState === ToolState.FAILED || item.toolState === ToolState.REJECTED) {
-      return null;
-    }
-    if (item.toolState !== ToolState.SUCCESS && item.toolState !== ToolState.RUNNING) {
-      return null;
-    }
-    return presentDiff(item.toolName, item.toolArgs);
-  }
 
   /** 对照的行文本（带 +/-/空格前缀——这是 diff 的通用读法） */
-  private diffTextLines(item: TrajectoryItem): string[] {
-    const p: DiffPresentation | null = this.diffOf(item);
-    const out: string[] = [];
-    if (p === null) {
-      return out;
-    }
-    for (let i = 0; i < p.lines.length; i++) {
-      const kind: string = p.lines[i].kind;
-      if (kind === 'added') {
-        out.push('+ ' + p.lines[i].text);
-      } else if (kind === 'removed') {
-        out.push('- ' + p.lines[i].text);
-      } else if (kind === 'skipped') {
-        out.push(`  ⋯ 省略 ${p.lines[i].skipped} 行未改动`);
-      } else {
-        out.push('  ' + p.lines[i].text);
-      }
-    }
-    return out;
-  }
 
   /** 对照每行的性质（与原语里的取色按下标对应） */
-  private diffKindLines(item: TrajectoryItem): string[] {
-    const p: DiffPresentation | null = this.diffOf(item);
-    const out: string[] = [];
-    if (p === null) {
-      return out;
-    }
-    for (let i = 0; i < p.lines.length; i++) {
-      out.push(p.lines[i].kind);
-    }
-    return out;
-  }
 
   /** 徽标：非通用类别时带上类别名（"读取 · 成功"比单说"成功"有用） */
-  private toolBadge(item: TrajectoryItem): string {
-    const p: ToolPresentation = presentTool(item, toolStateLabel(item.toolState));
-    const state: string = toolStateLabel(item.toolState);
-    return p.kind === ToolKind.GENERIC ? state : `${p.kindLabel} · ${state}`;
-  }
 
   /**
    * 类别 → 系统符号。
@@ -1520,51 +1442,8 @@ export struct ConversationPane {
    * 【为什么图标映射留在视图层】`$r(...)` 是 ArkUI 资源引用，模型层（appstate）刻意不认识它——
    * 那条边界让模型可以在本机直接执行。所以"哪一类画哪个图标"是视图的决定，类别判定才是模型的。
    */
-  private toolIcon(kind: ToolKind): Resource {
-    if (kind === ToolKind.TERMINAL) {
-      return $r('sys.symbol.code');
-    }
-    if (kind === ToolKind.READ) {
-      return $r('sys.symbol.doc_text');
-    }
-    if (kind === ToolKind.WRITE) {
-      return $r('sys.symbol.square_and_pencil');
-    }
-    if (kind === ToolKind.EDIT) {
-      return $r('sys.symbol.pencil_line');
-    }
-    if (kind === ToolKind.SEARCH) {
-      return $r('sys.symbol.magnifyingglass');
-    }
-    if (kind === ToolKind.WEB) {
-      return $r('sys.symbol.link');
-    }
-    if (kind === ToolKind.IMAGE) {
-      return $r('sys.symbol.picture');
-    }
-    if (kind === ToolKind.ASK) {
-      return $r('sys.symbol.questionmark_circle');
-    }
-    return $r('sys.symbol.wrench_and_screwdriver');
-  }
 
 
-  @Builder
-  subagentItem(item: TrajectoryItem) {
-    NativeCard({
-      iconSymbol: $r('sys.symbol.person_2'),
-      title: `子代理 ${item.subagentName}`,
-      tone: 'brand',
-      meta: item.elapsedMs > 0
-        ? (this.clockOf(item.at).length > 0
-          ? `${this.clockOf(item.at)} · ${formatDuration(item.elapsedMs)}`
-          : formatDuration(item.elapsedMs))
-        : '',
-      bodyText: item.body,
-      expanded: true,
-      a11y: `子代理 ${item.subagentName}`
-    })
-  }
 
   /**
    * 交付物的动作行（数据化：review 时一眼看得完"这一行有哪些动作"）。
