@@ -40,7 +40,7 @@ AppFrame
 |---|---|
 | 一级导航 | `NavTab` = `WORKSPACES(工作区)` / `CORE(核心)` / `SETTINGS(设置)`；`SESSIONS` 是 `WORKSPACES` 的**别名**，`PENDING` 保留常量但**不占页签**（`Breakpoints.ets`） |
 | 页面装配 | `Index.ets`（约 5000 行）同时负责：页面判断 / 导航判断 / 布局判断 / Pane 装配 / Overlay / Sheet / Back / 会话内容 |
-| 工作区 | `WorkspacePane` + `SessionListPane` **两个并列 Pane**，而不是一个 WorkspaceBrowser |
+| 工作区 | 树（`workspaceHub` + `workspaceGroup`）已抽成 `view/WorkspaceBrowser.ets`（P1-1），但**仍挂在主区的「工作区」页签上**；侧栏还没有它（窄版行未做）。原写的"`WorkspacePane` + `SessionListPane` 两个并列 Pane"是**过期描述**——后者早已没有渲染点，P1-1 已删除 |
 | 右栏 | `LayoutController` 已有可用空间/夹取/拖拽/宽度记忆；但仍是"主页面旁边放一个详情组件"，没有 `PanelRegistry → selectedPanel → PanelOwner` |
 | 设置 | 单一 `SettingsPane.ets`，没有 General / Models / Plugins / Plugin Inventory 的域划分 |
 | 面板体系 | **没有** `PanelId` / `PanelDescriptor` / `PanelOwner` |
@@ -233,6 +233,16 @@ AppFrame
 ### P1 Sidebar
 `Brand` / `NewSession` / `WorkspaceTree`（`WorkspaceRow` + `SessionRow`）/ `GlobalPanelList` / `SettingsEntry`（固定底部）。
 **验收**：`WorkspacePane` 与 `SessionListPane` 合并为 `WorkspaceBrowser`；一级导航不再是"三个页签"。
+
+**进度（2026-09-15，P1-1 已落地）**
+
+| 子项 | 状态 |
+|---|---|
+| `view/WorkspaceBrowser.ets`（工作区→会话树，285 行 / 30 门面成员） | ✅ **已抽出**（`TabContentView` 595 → 319 行）。**本轮的关键事实：一行都不用改名**——这段代码本来就只经 `this.f.<成员>` 访问宿主，新门面就是那些成员的**子集**（名字与形状逐条从 `TabContentFacade` 抄），包装行也从 `buildTabFacade()` 的同类行筛出 ⇒ 与前三束（批量改名 + 造 setter）不同。**门面做到位之后，搬迁成本一路下降** |
+| 死代码清理 | ✅ `view/SessionListPane.ets`（221 行）**删除**：E108 把「会话」页签并进工作区视图后，会话列表改由 `workspaceGroup` 渲染，它只剩 `Index` 里一条死导入。⇒ 顺带把设计令牌棘轮**调紧**（53 → 40 处；`Index` 从 14 → 2 处裸值，AppShell 搬迁的副产物） |
+| 为什么**没有**顺手挂进侧栏 | 侧栏 PANEL 轨道约 `Sz.NAV_PANEL` 宽，而现有工作区行把 `+ 会话` / `文件` / `删除` 三个文字入口摆在名字右边 ⇒ 塞进侧栏会把名字挤没。**先做窄版行（动作进菜单），再挂载**——否则是为了"看起来搬了"而牺牲可用性 |
+| 下一步（P1-2 / P1-3） | ① 窄版行：工作区行 = 符号 + 名字 + 会话数 + `⋯` 菜单（`bindContextMenu`，同一节点只绑一个，正好）② 挂进 `SidebarShell` 的 PANEL 呈现（`AppShell` 门面多一个 `browser` 字段；`WorkspaceBrowser` 已接受 `compact` 入参，宽度由挂载方给）③ 一级导航改造：侧栏条目改由 `PanelRegistry.descriptors` 驱动、Settings 固定底部，主区不再保留「工作区」页签（TRIPLE 下树只在侧栏；文件下钻仍在主区，与官方一致） |
+| 待真机确认 | 窄版行的观感与触控目标；侧栏内滚动与 `⋯` 菜单在触屏/指针两种输入下的行为（沿用 D10 的做法：未过不宣称） |
 
 ### P2 Main 会话框架
 `ConversationShell`（`ConversationHeader` / `Content` / `ProcessGroup` / `Answer` / `Composer`）。

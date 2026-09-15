@@ -160,8 +160,10 @@ hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 现在门户挂在页面根、与形态无关（官方 Web 的 portal 语义）；
 **页面选择已收成唯一真值**（`NavigationState.selectedMainPanel`，`NavTab` 退化为迁移期别名），
 "此刻显示哪个面板"的组合逻辑也已收进纯模型（`activeMainPanelOf`）；
-**P0 到此完成**，下一阶段 **P1（Sidebar 重建）**：`WorkspaceBrowser` 合并 `WorkspacePane` + `SessionListPane`、
-Settings 固定底部、侧栏条目由 `PanelRegistry` 驱动
+**P0 到此完成**，**P1（Sidebar）已开工**：工作区→会话那棵树已抽成 `view/WorkspaceBrowser.ets`
+（285 行 / 30 门面成员，可挂主区、也可挂侧栏；`TabContentView` 595 → 319 行），
+并删掉一个**长期没人渲染的死 Pane**（`SessionListPane`，221 行）——顺带把设计令牌棘轮调紧（53 → 40 处）；
+下一步：窄版行（动作进菜单）→ 挂进侧栏 PANEL 轨道 → 一级导航改由 `PanelRegistry.descriptors` 驱动
 （⚠️ `@Provide/@Consume` 运行时行为须真机确认，见 `docs/device-validation.md` D9）。
 
 理由：功能不少、页面还是不像官方，根因是**信息架构没落地**——框架错则间距、颜色、Markdown 全白做。

@@ -176,6 +176,7 @@ import type { AppShellFacade } from '../view/shell/AppShell';
 import type { MainShellFacade } from '../view/shell/MainShell';
 import { TabContentView } from '../view/TabContentView';
 import type { TabContentFacade } from '../view/TabContentView';
+import type { WorkspaceBrowserFacade } from '../view/WorkspaceBrowser';
 import { HubBanner } from '../view/HubBanner';
 import { SessionModelPicker } from '../view/SessionModelPicker';
 import { MainHeaderShell } from '../view/shell/MainHeaderShell';
@@ -187,7 +188,6 @@ import { DetailPane } from '../view/DetailPane';
 import { DiagnosticsPane } from '../view/DiagnosticsPane';
 import { PendingPane } from '../view/PendingPane';
 import { NodeRuntime } from '../runtime/NodeRuntime';
-import { SessionListPane } from '../view/SessionListPane';
 import { SettingsPane } from '../view/SettingsPane';
 import { WorkspacePane } from '../view/WorkspacePane';
 import { hitOfKeyEvent } from '../view/ShortcutKeys';
@@ -4094,8 +4094,52 @@ struct Index {
   }
 
   /** 标签页内容所需能力的门面（**每次渲染重建**：值型快照、写型 setter、方法型闭包） */
+  /** 工作区浏览器所需能力的门面（由 `buildTabFacade()` 的同类包装行筛出：同源同形状） */
+  private buildBrowserFacade(): WorkspaceBrowserFacade {
+    const facade: WorkspaceBrowserFacade = {
+    answerPending: (item: PendingItem, selected: string[], custom: string) => this.answerPending(item, selected, custom),
+    archiveOpen: this.archiveOpen,
+    archivedSessionIds: this.archivedSessionIds,
+    archivedSessions: () => this.archivedSessions(),
+    confirmingDeletePath: this.confirmingDeletePath,
+    connectBusy: this.connectBusy,
+    connectSettled: this.connectSettled,
+    coreView: this.coreView,
+    createSessionIn: (w: WorkspaceItem) => this.createSessionIn(w),
+    decidePending: (item: PendingItem, choiceId: string, reason: string) => this.decidePending(item, choiceId, reason),
+    deleteWorkspaceByPath: (w: WorkspaceItem) => this.deleteWorkspaceByPath(w),
+    hubAuthority: this.hubAuthority,
+    hubError: this.hubError,
+    hubPhase: this.hubPhase,
+    hubStreams: this.hubStreams,
+    hubTraceTail: () => this.hubTraceTail(),
+    localized: (id: Resource) => this.localized(id),
+    noticeText: (n: ActionNotice) => this.noticeText(n),
+    openDiagnostics: () => this.openDiagnostics(),
+    openFolderPicker: () => this.openFolderPicker(),
+    openSession: (id: string) => this.openSession(id),
+    openWorkspaceFiles: (w: WorkspaceItem) => this.openWorkspaceFiles(w),
+    pending: this.pending,
+    registryIdOf: (w: WorkspaceItem) => this.registryIdOf(w),
+    selectedSessionId: this.selectedSessionId,
+    sessionsOf: (w: WorkspaceItem) => this.sessionsOf(w),
+    setArchiveOpen: (value: boolean) => {
+      this.archiveOpen = value;
+    },
+    setConfirmingDeletePath: (value: string) => {
+      this.confirmingDeletePath = value;
+    },
+    setSettingWriteNote: (value: string) => {
+      this.settingWriteNote = value;
+    },
+    workspaces: this.workspaces,
+    };
+    return facade;
+  }
+
   private buildTabFacade(): TabContentFacade {
     const facade: TabContentFacade = {
+    browser: this.buildBrowserFacade(),
     answerPending: (item: PendingItem, selected: string[], custom: string) => this.answerPending(item, selected, custom),
     applyDefaultModel: (provider: string, model: string, effort: string) => this.applyDefaultModel(provider, model, effort),
     archiveOpen: this.archiveOpen,
