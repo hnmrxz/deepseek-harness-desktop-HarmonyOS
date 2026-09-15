@@ -34,7 +34,16 @@ export enum TrajectoryKind {
   DELIVERABLE = 'deliverable',
   GOAL = 'goal',
   JOB = 'job',
-  ERROR = 'error'
+  ERROR = 'error',
+  /**
+   * 斜杠命令的生命周期（P7-13）。
+   *
+   * 【为什么不是 MESSAGE】命令不是"谁说的话"，而是一次**操作**：
+   * `/compact` 会把上下文压缩、`/permission full` 会改权限 —— 它们的结果是状态变化。
+   * 官方把它们渲染成对话里的**持久过程节点**（不是气泡）。用一个独立的 kind，
+   * 视图才能给出"命令 + 结局"的样子，而不是又一条"助手说：…"。
+   */
+  COMMAND = 'command'
 }
 
 /** 轨迹条目基类（用一个接口承载所有可选字段，避免 ArkTS 联合类型在 UI 中难用） */
@@ -108,6 +117,20 @@ export interface TrajectoryItem {
   /** 是否默认展开（如失败的工具、错误） */
   expanded: boolean;
   /**
+   * 命令配对 id（仅 COMMAND；`command/run` 与 `command/done` 靠它落成同一条）。
+   *
+   * 上游出处：`dsh-commands` 的 `execute()` 先 append `command/run{commandId,…}`，
+   * 兑现后再 append `command/done{commandId, kind, text?}`。
+   */
+  commandId: string;
+  /**
+   * 命令结局（仅 COMMAND）：`''`（还没收到 done）/ `'success'` / `'error'`。
+   *
+   * 【为什么不是布尔】三种状态对界面意义不同：还没结束时不该显示"成功"，
+   * 而失败要红。上游用字符串判别字段（`kind: result.kind`），这里照抄同一个词。
+   */
+  commandKind: string;
+  /**
    * 本条消息携带的**图片**（P0-3；官方 `conversation.message.images` 槽位）。
    *
    * 【为什么必须有】事件里的图片块只给不透明引用（`attachment.attachmentId`），
@@ -144,7 +167,9 @@ export function makeItem(id: string, kind: TrajectoryKind, at: number): Trajecto
     streaming: false,
     expanded: false,
     internal: false,
-    images: []
+    images: [],
+    commandId: '',
+    commandKind: ''
   };
 }
 
@@ -184,6 +209,24 @@ export function mergeTrajectoryItem(previous: TrajectoryItem, next: TrajectoryIt
   merged.percent = next.percent >= 0 ? next.percent : previous.percent;
   merged.streaming = next.streaming;
   merged.expanded = next.expanded || previous.expanded;
+  /*
+   * 命令配对（P7-13）。
+   *
+   * 【结局不能用"谁非空就取谁"】两帧**可能乱序**到达（`command/done` 先、`command/run` 后），
+   * 而 `run` 帧带的是 `'running'`。若按"非空就覆盖"，一次已经成功的命令会被后到的 run 帧
+   * 改回"进行中"——用户会看到一条永远转圈的命令。所以规则是：
+   *   · `'running'` **不能**覆盖已兑现的结局（success / error）；
+   *   · 其余情况新的非空取值优先（`''` → `'running'`、`'running'` → `'success'`/`'error'`）。
+   */
+  merged.commandId = next.commandId.length > 0 ? next.commandId : previous.commandId;
+  const nextKind: string = next.commandKind;
+  let kind: string = previous.commandKind;
+  if (nextKind.length > 0 && nextKind !== 'running') {
+    kind = nextKind;
+  } else if (kind.length === 0 && nextKind.length > 0) {
+    kind = nextKind;
+  }
+  merged.commandKind = kind;
   return merged;
 }
 

@@ -164,6 +164,20 @@ export const AUDIT_EVENT_TYPES: string[] = ['permission/preset', 'sandbox/mode',
 
 /** 呈现家族（中性名；由 appstate 映射到自己的枚举） */
 export enum EventFamily {
+  /**
+   * 斜杠命令的生命周期（P7-13）。
+   *
+   * 【为什么要单独一族，而不是留在 MESSAGE 里】上游把命令的两帧记为
+   * `command/run`（`{commandId, name, args?, source}`）与
+   * `command/done`（`{commandId, kind: 'success'|'error', text?}`），并在**对话里**
+   * 渲染成一个持久的过程节点（`dsh-client-ui-commands` 的注释："the host executor durably
+   * logged the lifecycle (`command/run`/`command/done`) and the outcome renders as a
+   * persistent flow node"）。留在 MESSAGE 族会继承"这是助手说的话"的默认语义
+   * —— 早先正是这个默认把命令执行事件当成回答塞进对话，我们才把它拉黑（P0-1）。
+   * 现在有了自己的族与自己的条目类型（`TrajectoryKind.COMMAND`），
+   * 既能进对话、又不会冒充回答。
+   */
+
   MESSAGE = 'message',
   REASONING = 'reasoning',
   TOOL = 'tool',
@@ -171,7 +185,8 @@ export enum EventFamily {
   GOAL = 'goal',
   JOB = 'job',
   DELIVERABLE = 'deliverable',
-  ERROR = 'error'
+  ERROR = 'error',
+  COMMAND = 'command'
 }
 
 /** 是否为无需进入对话流的审计事件 */
@@ -245,8 +260,8 @@ const SESSION_EVENT_FAMILY: Record<string, EventFamily> = {
   'session/end-seed': EventFamily.MESSAGE,
   'request/context': EventFamily.MESSAGE,
   'request/header': EventFamily.MESSAGE,
-  'command/run': EventFamily.MESSAGE,
-  'command/done': EventFamily.MESSAGE,
+  'command/run': EventFamily.COMMAND,
+  'command/done': EventFamily.COMMAND,
   'agent/inbox/spliced': EventFamily.MESSAGE,
   'web/deepseek-search-llm-request': EventFamily.MESSAGE,
   // 审计类：有记录价值、无对话内容（`isAuditEventType` 另有判定）
@@ -296,9 +311,16 @@ export function isConversationVisibleEvent(name: string): boolean {
     return true;
   }
   const family: EventFamily = classifyEventType(name);
+  /*
+   * 命令（P7-13）**在**白名单里：官方把命令的生命周期渲染成对话里的持久过程节点，
+   * 而我们此前把 `command/run` 当成"内部事件"隐掉 ⇒ 用户执行一条命令后
+   * **界面上什么也不会发生**（回执只在输入区一闪而过）。
+   * 它的条目类型是 `TrajectoryKind.COMMAND`，视图按命令卡渲染，不会冒充助手回答。
+   */
   return family === EventFamily.TOOL || family === EventFamily.SUBAGENT
     || family === EventFamily.GOAL || family === EventFamily.JOB
-    || family === EventFamily.DELIVERABLE || family === EventFamily.ERROR;
+    || family === EventFamily.DELIVERABLE || family === EventFamily.ERROR
+    || family === EventFamily.COMMAND;
 }
 
 /**

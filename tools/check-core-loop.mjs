@@ -439,6 +439,41 @@ async function main() {
       ? `没有（设置命名空间 ${setSnap.settings.length} 组；官方那一项由 Host 的 schema 声明，端侧不造假入口）`
       : `有：${permNs.join(', ')}`);
 
+  /*
+   * M2g：斜杠命令的**真实结局**与生命周期（P7-13）。
+   *
+   * 【为什么必须打真 Host】我们这一轮改了两件与命令有关的事：
+   *   ① 回执不再只看 `result.ok`（此前"没解析出来/处理器报错"都显示「已执行」= 假成功）；
+   *   ② `command/run` + `command/done` 不再被当成内部事件隐掉，而是落成一条命令条目。
+   * 两件事的形状都来自上游源码（`dsh-commands` 的 `execute()`：`{commandId,result:{kind,text}}`
+   * 与两帧生命周期），但**这台 Host 上到底给不给这些字段**只有实测知道。
+   *
+   * 【为什么只挑"只读"命令】这一步会真的执行一条命令。用白名单只跑不会改状态的
+   * （help/status/skill/preset 之类）；一条都不匹配就 SKIP 并列出命令名 —— 不拿用户的会话冒险。
+   */
+  const SAFE_COMMANDS = ['/help', '/status', '/skills', '/skill', '/preset', '/presets', '/feedback', '/goal'];
+  let safeLine = '';
+  for (let i = 0; i < cmdNames.length && safeLine.length === 0; i++) {
+    if (SAFE_COMMANDS.indexOf(cmdNames[i]) >= 0) safeLine = cmdNames[i];
+  }
+  if (safeLine.length === 0) {
+    step('M2 斜杠命令（回执结局 + 生命周期事件）', true,
+      `SKIP：命令表里没有只读命令可选（本来只有 ${cmdNames.join(' ')}）——不拿会话冒险`);
+  } else {
+    const notice = await hub.executeCommand(safeLine);
+    await new Promise((r) => setTimeout(r, 2500));
+    const cmdSnap2 = hub.snapshot();
+    const cmdItems = cmdSnap2.trajectory.filter((it) => it.kind === 'command');
+    const settled = cmdItems.filter((it) => it.commandKind === 'success' || it.commandKind === 'error');
+    step('M2 斜杠命令（回执结局 + 生命周期事件）', notice.code !== 'command.failed',
+      `执行 ${safeLine} ⇒ 回执 ${notice.code}`
+      + (notice.params?.reason !== undefined ? `（${String(notice.params.reason).slice(0, 60)}）` : '')
+      + ` · 命令条目 ${cmdItems.length} 条（已兑现 ${settled.length}）`
+      + (cmdItems.length > 0
+        ? ` · 首条 kind=${cmdItems[0].commandKind} title=${cmdItems[0].title}`
+        : ' · **没有命令条目**（Host 未落 command/run 帧？）'));
+  }
+
   /* M2c：会话搜索（官方 sidebar 的 search）—— 真 Host 上**要么给内容命中，要么明确说不支持** */
   await hub.searchSessions('ping');
   const searchSnap = hub.snapshot();

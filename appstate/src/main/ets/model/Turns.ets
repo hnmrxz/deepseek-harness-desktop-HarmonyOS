@@ -80,6 +80,18 @@ export function conversationAudienceOf(item: TrajectoryItem): ConversationAudien
   if (item.kind === TrajectoryKind.ERROR) {
     return ConversationAudience.NOTICE;
   }
+  /*
+   * 斜杠命令（P7-13）也走 NOTICE 槽位。
+   *
+   * 【为什么与官方不完全一样】官方把命令渲染成一个**独立的过程节点**（在它发生的位置）。
+   * 本仓的回合模型是四槽（用户消息 / 过程分组 / 回答 / 提示），给一种事件类型新开第五槽
+   * 意味着改动分组、渲染与"展开全部"三处；而 NOTICE 槽位已经做到同一件事：
+   * **命令与它的结局在对话里可见、与回答视觉隔离**（渲染见 `CommandRow`）。
+   * 差异只有"位置精度"（同一回合内命令排在回答之后），已登记在矩阵的 `commands` 行。
+   */
+  if (item.kind === TrajectoryKind.COMMAND) {
+    return ConversationAudience.NOTICE;
+  }
   if (isProcessKind(item.kind)) {
     return ConversationAudience.PROCESS;
   }

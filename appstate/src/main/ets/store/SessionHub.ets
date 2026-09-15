@@ -181,6 +181,7 @@ import {
   fileReferencesPayload,
   fileUploadEndpoint,
   fileUploadPayload,
+  projectCommandOutcome,
   projectCommands,
   projectFileReferences,
   projectFileUpload,
@@ -223,6 +224,7 @@ import {
 } from '../model/Wire';
 import type {
   CommandCandidate,
+  CommandOutcome,
   ControlFrame,
   FileUploadValue,
   ImageAttachmentRefValue,
@@ -3326,7 +3328,28 @@ export class SessionHub {
       this.record('commands/execute fail ' + code + ' ' + (f === undefined ? '' : f.message));
       return noticeWith('command.failed', 'reason', why);
     }
-    this.record('commands/execute ok ' + name);
+    /*
+     * 【P7-13：必须读回执里的 `result`，不能只看 `result.ok`】
+     *
+     * 三种"其实没成功"的情况此前**全部显示为「已执行」**（假成功）：
+     *   ① 命令没解析出来 / 名字不存在 ⇒ 上游返回 `undefined`
+     *      （官方把它当 `unknown or malformed command: <line>`，并**保留输入区内容**）；
+     *   ② 处理器报错 ⇒ `result.kind === 'error'` + `text`（官方把 text 显示出来并保留输入）；
+     *   ③ 其余情况才算成功 —— 注意官方判定：**命令一旦被宿主受理就算成功**，
+     *      因为生命周期已经写进会话日志，结局会作为过程节点出现在对话里（我们这条现在也接上了，
+     *      见 `TrajectoryKind.COMMAND`）。所以成功回执只说"已提交/已执行"是诚实的，
+     *      但**不能**把 ①② 也说成成功。
+     */
+    const outcome: CommandOutcome = projectCommandOutcome(result.value);
+    if (!outcome.known) {
+      this.record('commands/execute unknown ' + name);
+      return noticeWith('command.unknown', 'line', name);
+    }
+    if (outcome.kind === 'error') {
+      this.record(`commands/execute rejected ${name} ${outcome.text}`);
+      return noticeWith('command.rejected', 'reason', outcome.text);
+    }
+    this.record(`commands/execute ok ${name} kind=${outcome.kind}`);
     return noticeWith('command.executed', 'name', name);
   }
   /**
@@ -4936,7 +4959,7 @@ export function projectWireRecord(record: Object): TrajectoryItem | undefined {
    * 官方 web 不把系统上下文放进对话视图——这里标对角色，视图层才能在对话里隐去、
    * 在轨迹里可查。
    */
-  item.speaker = isUserAuthoredEvent(eventType) ? Speaker.USER
+  item.speaker = (isUserAuthoredEvent(eventType) || kind === TrajectoryKind.COMMAND) ? Speaker.USER
     : (isSystemAuthoredEvent(eventType) ? Speaker.SYSTEM : Speaker.ASSISTANT);
   /*
    * P0-1：这一条**是不是用户可见的会话内容**，在拿到事件类型名的此刻一次性判定。
@@ -4989,6 +5012,36 @@ export function projectWireRecord(record: Object): TrajectoryItem | undefined {
     const phase: ResolvedSlot = resolveSlot(data, shape, ContentSlot.GOAL_PHASE);
     if (phase.found) {
       item.progress = asText(phase.value);
+    }
+  } else if (kind === TrajectoryKind.COMMAND) {
+    /*
+     * 命令（P7-13）：`command/run` 给 `name`+`args`，`command/done` 给 `kind`+`text`，
+     * 两帧靠 `commandId` 落成**一条**（与工具靠 `callId` 同一套手法）。
+     * `title` 存命令原文（`/name args`），`body` 存结局文本。
+     */
+    const name: ResolvedSlot = resolveSlot(data, shape, ContentSlot.SUMMARY);
+    const args: ResolvedSlot = resolveSlot(data, shape, ContentSlot.COMMAND_TEXT);
+    const cmdId: ResolvedSlot = resolveSlot(data, shape, ContentSlot.COMMAND_ID);
+    const cmdKind: ResolvedSlot = resolveSlot(data, shape, ContentSlot.COMMAND_KIND);
+    if (cmdId.found) {
+      item.commandId = asText(cmdId.value);
+      item.id = `ev-cmd-${item.commandId}`;
+    }
+    if (name.found) {
+      const text: string = asText(args.found ? args.value : '');
+      item.title = `/${asText(name.value)}${text.length > 0 ? ` ${text}` : ''}`;
+    } else if (kind === TrajectoryKind.COMMAND) {
+      // `command/done` 那一帧没有 name：命令原文由前一帧的合并保留（见 mergeTrajectoryItem）
+      item.title = '';
+    }
+    if (cmdKind.found) {
+      item.commandKind = asText(cmdKind.value);
+    } else if (name.found) {
+      // 只有 run 帧 ⇒ 还没兑现
+      item.commandKind = 'running';
+    }
+    if (args.found && !name.found) {
+      item.body = asText(args.value);
     }
   } else if (kind === TrajectoryKind.JOB) {
     applyTodoSlots(item, data, shape);
@@ -5420,6 +5473,9 @@ function familyKind(family: EventFamily): TrajectoryKind {
   }
   if (family === EventFamily.ERROR) {
     return TrajectoryKind.ERROR;
+  }
+  if (family === EventFamily.COMMAND) {
+    return TrajectoryKind.COMMAND;
   }
   if (family === EventFamily.DELIVERABLE) {
     return TrajectoryKind.DELIVERABLE;

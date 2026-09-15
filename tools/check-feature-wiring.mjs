@@ -154,7 +154,15 @@ const FEATURES = [
    * 内容顺序是"图片在前、正文在后"。钉三段接线：图库选择（platform）+ 入列判定（中枢）
    * + 输入区入口（视图按钮与宿主回调）。
    */
-  { name: '输入区图片', patterns: [['pickImage', 2], ['attachLocalImage', 2], ['onAddImage', 2]] }
+  { name: '输入区图片', patterns: [['pickImage', 2], ['attachLocalImage', 2], ['onAddImage', 2]] },
+  /*
+   * 斜杠命令（P7-13）。官方让命令的生命周期在对话里渲染成一个持久过程节点
+   * （`dsh-client-ui-commands`：`command/run`/`command/done`），并且**命令受理即成功**、
+   * 处理器报错才保留输入。我们此前两处都不对：命令帧被当内部事件隐掉（执行后界面无反应）、
+   * 回执只看 `result.ok`（"没解析出来/处理器报错"也显示「已执行」= 假成功）。
+   * 钉三段：回执投影（Wire）+ 执行处读结局（中枢）+ 命令卡（视图）。
+   */
+  { name: '斜杠命令', patterns: [['projectCommandOutcome', 2], ['commandKind', 3], ['CommandRow', 2]] }
 ];
 
 /**

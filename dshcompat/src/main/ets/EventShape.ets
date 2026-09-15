@@ -94,6 +94,21 @@ export enum ContentSlot {
   ORDINAL = 'ordinal',
   /** 命令或其结果的文本 */
   COMMAND_TEXT = 'command-text',
+  /**
+   * 命令生命周期配对 id（`command/run` 与 `command/done` 靠它落成**一条**命令条目）。
+   *
+   * 上游出处（`dsh-commands/lib/index.js` 的 `execute()`）：`commandId` 由 `mintCommandId()`
+   * 铸出（`cmd-<实例令牌>-<序号>`），`command/run` 与 `command/done` 都带它 ——
+   * 与工具的 `callId` 是同一套配对思路（见 `Trajectory.mergeTrajectoryItem`）。
+   */
+  COMMAND_ID = 'command-id',
+  /**
+   * 命令结局（仅 `command/done`）：`'success'` | `'error'`。
+   *
+   * 上游同一处：`kind: result.kind`（`normalizeResult()` 的产物；处理器抛错时
+   * `settleThrown()` 也写 `kind: 'error'` + `text: <错误消息>`）。
+   */
+  COMMAND_KIND = 'command-kind',
   /** 子代理会话 id */
   CHILD_ID = 'child-id',
   /** 交付物文件名 */
@@ -356,13 +371,28 @@ export const SESSION_EVENT_SHAPES: SessionEventShape[] = [
     standalone: true,
     slots: [
       { slot: ContentSlot.SUMMARY, path: 'name' },
-      { slot: ContentSlot.COMMAND_TEXT, path: 'args' }
+      // 上游按 `recordInput === false` **省略** `args`（例如含敏感参数的命令）⇒ 允许缺失
+      { slot: ContentSlot.COMMAND_TEXT, path: 'args' },
+      { slot: ContentSlot.COMMAND_ID, path: 'commandId' }
     ]
   },
   {
+    /*
+     * `command/done` 从 `standalone: false` 改成 **true**（P7-13）。
+     *
+     * 【为什么】`standalone: false` 的语义是"不产生独立条目"，于是这一帧此前被
+     * `projectEvent` 直接丢掉 —— **命令的结局（成功/失败与文本）在界面上完全不存在**。
+     * 上游两条帧靠 `commandId` 配对（`dsh-commands` 的 `execute()`：先 append `command/run`，
+     * 兑现后再 append `command/done`），所以正确的做法与 `tool/call` + `tool/result` 一致：
+     * 两帧都成条目、按配对 id 落到同一条（见 `Trajectory.mergeTrajectoryItem`）。
+     */
     type: 'command/done',
-    standalone: false,
-    slots: [{ slot: ContentSlot.COMMAND_TEXT, path: 'text' }]
+    standalone: true,
+    slots: [
+      { slot: ContentSlot.COMMAND_TEXT, path: 'text' },
+      { slot: ContentSlot.COMMAND_ID, path: 'commandId' },
+      { slot: ContentSlot.COMMAND_KIND, path: 'kind' }
+    ]
   },
   // ── 待发队列 splice ──────────────────────────────────────────────
   {

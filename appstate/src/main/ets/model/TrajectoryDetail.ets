@@ -63,6 +63,9 @@ export function itemKindLabel(item: TrajectoryItem): string {
   if (item.kind === TrajectoryKind.JOB) {
     return '任务';
   }
+  if (item.kind === TrajectoryKind.COMMAND) {
+    return '斜杠命令';
+  }
   return '错误';
 }
 

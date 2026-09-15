@@ -1850,6 +1850,52 @@ export function projectFileUpload(value: Object | undefined): FileUploadValue | 
   return { receiptId: receiptId, file: ref };
 }
 
+/**
+ * `commands/execute` 的回执（P7-13）。
+ *
+ * 上游形状（`dsh-commands` 的 `execute()` 返回值 → `commands/execute` 的 value）：
+ *   `{ commandId: CommandId, result: { kind: 'success' | 'error', text?: string, … } }`
+ * 而**整条命令没解析出来/名字不存在**时，`execute()` 返回 `undefined`
+ * ⇒ 线上 `value === undefined`（官方把它当作 `unknown or malformed command: <line>`，
+ * 并且**保留输入区内容**让用户改）。
+ *
+ * 【为什么必须把它投影出来】我们此前只看 `result.ok`：于是"命令被宿主拒绝/处理器报错/
+ * 名字根本不存在"三种情况**全部显示为「已执行」**。这是最坏的一类缺陷——用户以为生效了，
+ * 而实际什么都没发生（假成功）。
+ */
+export interface CommandOutcome {
+  /** 是否拿到了**可识别的**回执（false = 命令没解析出来或名字不存在） */
+  known: boolean;
+  /** 配对 id（与 `command/run` 的 `commandId` 同源） */
+  commandId: string;
+  /** `'success'` | `'error'`（未知取值原样保留） */
+  kind: string;
+  /** 处理器给出的文本（`error` 时是错误说明；`success` 时可能没有） */
+  text: string;
+}
+
+/**
+ * 投影一次命令执行的结局。
+ *
+ * 收窄策略：**只有 `result.kind === 'error'` 才算失败**，其余（含缺字段）都按"已受理"处理——
+ * 与官方一致（官方只在 `kind === 'error'` 时保留输入区内容，其余都算 success：
+ * 因为宿主已经把生命周期写进会话日志，结局会作为过程节点渲染）。
+ */
+export function projectCommandOutcome(value: Object | undefined): CommandOutcome {
+  if (value === undefined) {
+    return { known: false, commandId: '', kind: '', text: '' };
+  }
+  const result: Object | undefined = getRecord(value, 'result');
+  const kind: string = result === undefined ? '' : (getString(result, 'kind') ?? '');
+  const text: string = result === undefined ? '' : (getString(result, 'text') ?? '');
+  return {
+    known: true,
+    commandId: getString(value, 'commandId') ?? '',
+    kind: kind,
+    text: text
+  };
+}
+
 // ═════════════════════════ 11. 工作区与文件（workspaceFiles/*） ═════════════════════════
 
 /**

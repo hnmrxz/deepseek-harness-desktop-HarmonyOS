@@ -1126,7 +1126,19 @@ console.log('\n## P0-1 对话可见性：内部事件不得进入 Conversation�
   t.eq('**system/message 不可见**（系统提示词）', isConversationVisibleEvent('system/message'), false);
   t.eq('**未识别类型不可见**（正文是原始载荷 JSON）',
     isConversationVisibleEvent('totally/unknown-event'), false);
-  t.eq('**command/run 不可见**（斜杠命令不是回答）', isConversationVisibleEvent('command/run'), false);
+  /*
+   * P7-13 更正：`command/run` / `command/done` **应当可见**。
+   *
+   * 早先把它们当"内部事件"隐掉，是因为它们与助手消息同族、会被当成"助手说的话"。
+   * 读了上游才知道真相：命令的生命周期是**对话里的持久过程节点**
+   * （`dsh-client-ui-commands`），隐掉它的后果是"执行命令后界面上什么也不会发生"。
+   * 现在它们有自己的族（`EventFamily.COMMAND`）与自己的条目类型
+   * （`TrajectoryKind.COMMAND`，渲染成命令卡），既进对话、也不冒充回答。
+   */
+  t.eq('**command/run 可见**（命令的生命周期是对话里的过程节点）',
+    isConversationVisibleEvent('command/run'), true);
+  t.eq('command/done 可见（结局文本必须能看到）', isConversationVisibleEvent('command/done'), true);
+  t.eq('两条命令帧同族', RE.classifyEventType('command/run') === RE.classifyEventType('command/done'), true);
   t.eq('**compaction/summary 不可见**（内部 context）',
     isConversationVisibleEvent('compaction/summary'), false);
   t.eq('request/context 不可见', isConversationVisibleEvent('request/context'), false);
@@ -1145,7 +1157,7 @@ console.log('\n## P0-1 对话可见性：内部事件不得进入 Conversation�
     id, kind, speaker, internal, at: 0, body: '', reasoning: '', model: '', elapsedMs: 0,
     toolName: '', callId: '', toolArgs: '', toolState: 'pending', toolOutput: '',
     subagentName: '', fileName: '', fileSize: 0, title: '', progress: '', percent: -1,
-    streaming: false, expanded: false,
+    streaming: false, expanded: false, commandId: '', commandKind: '',
   });
   const A = ConversationAudience;
   t.eq('用户消息 → USER', conversationAudienceOf(mk('u', TrajectoryKind.MESSAGE, Speaker.USER, false)), A.USER);
@@ -1178,6 +1190,10 @@ console.log('\n## P0-1 对话可见性：内部事件不得进入 Conversation�
   t.eq('内部事件不产生回合（只有一条真实用户消息）', turns.length, 1);
   t.eq('内部事件不占过程分组（过程只有思考+工具）', turns[0].process.length, 2);
   t.eq('内部事件不占 notices（notices 只有错误）', turns[0].notices.length, 1);
+  t.eq('命令条目 → NOTICE 槽位（可见、与回答隔离）',
+    conversationAudienceOf(mk('c', TrajectoryKind.COMMAND, Speaker.USER, false)), A.NOTICE);
+  t.eq('命令不属于过程分组（它不是工具）',
+    conversationAudienceOf(mk('c', TrajectoryKind.COMMAND, Speaker.USER, false)) === A.PROCESS, false);
   t.eq('答案仍是那条真实回答', turns[0].answer.id, 'a1');
   const visible = TM.chatVisibleItems(turns).map((i) => i.id);
   t.eq('**对话里只剩 用户/回答/错误 三类**', visible.join(','), 'u1,a1,e1');
@@ -2306,5 +2322,39 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
     }
   }
 }
+
+// ── P7-13：斜杠命令的投影与回执（真成功 / 真失败 / 没解析出来） ──
+{
+  const { TrajectoryKind } = TJ;
+  const { mergeTrajectoryItem, makeItem } = TJ;
+
+  // ① 条目：`command/run` 与 `command/done` 靠 commandId 落成同一条
+  const run = makeItem('ev-cmd-cmd-1', TrajectoryKind.COMMAND, 1000);
+  run.commandId = 'cmd-1';
+  run.commandKind = 'running';
+  run.title = '/compact';
+  const done = makeItem('ev-cmd-cmd-1', TrajectoryKind.COMMAND, 1200);
+  done.commandId = 'cmd-1';
+  done.commandKind = 'success';
+  done.body = '上下文已压缩：12 条 → 3 条';
+  const mergedOne = mergeTrajectoryItem(run, done);
+  t.eq('合并后仍是命令条目', mergedOne.kind, TrajectoryKind.COMMAND);
+  t.eq('配对 id 保留', mergedOne.commandId, 'cmd-1');
+  t.eq('结局从 running 升级为 success', mergedOne.commandKind, 'success');
+  t.eq('命令原文由 run 帧保留（done 帧没有 name）', mergedOne.title, '/compact');
+  t.eq('结局文本来自 done 帧', mergedOne.body, '上下文已压缩：12 条 → 3 条');
+
+  // ② 反向合并（迟到顺序）：done 先到、run 后到也不能丢结局
+  const late = mergeTrajectoryItem(done, run);
+  t.eq('乱序合并时结局不被 running 覆盖', late.commandKind, 'success');
+
+  // ③ 失败结局原样保留
+  const failed = makeItem('ev-cmd-cmd-2', TrajectoryKind.COMMAND, 1300);
+  failed.commandId = 'cmd-2';
+  failed.commandKind = 'error';
+  failed.body = '/nope: unknown command';
+  t.eq('失败结局保留', failed.commandKind, 'error');
+}
+
 
 t.done();

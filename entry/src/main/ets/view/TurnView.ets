@@ -46,6 +46,7 @@ import { ReasoningRow } from './ReasoningRow';
 import { DeliverableCard } from './DeliverableCard';
 import { SubagentCard } from './SubagentCard';
 import { ToolCard } from './ToolCard';
+import { CommandRow } from './CommandRow';
 
 /**
  * 把"全部展开 / 收起全部"从回合渲染里接出去（E351）。
@@ -291,6 +292,9 @@ export struct TurnView {
       DeliverableCard({ item: item })
     } else if (item.kind === TrajectoryKind.GOAL || item.kind === TrajectoryKind.JOB) {
       this.goalItem(item)
+    } else if (item.kind === TrajectoryKind.COMMAND) {
+      // 斜杠命令归 CommandRow（P7-13）：命令不是"谁说的话"，是一次操作 + 它的结局
+      CommandRow({ item: item })
     } else if (item.kind === TrajectoryKind.ERROR) {
       this.errorItem(item)
     }

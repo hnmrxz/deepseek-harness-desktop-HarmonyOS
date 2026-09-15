@@ -3701,6 +3701,19 @@ struct Index {
     if (n.code === 'command.failed') {
       return `命令执行失败：${n.params.reason}`;
     }
+    /*
+     * P7-13：这两种此前**根本不存在**，于是"命令没解析出来"与"处理器报错"
+     * 都会被当成成功显示「已执行」（假成功）。官方对第一种的原文是
+     * `unknown or malformed command: <line>`，并且**保留输入区内容**让用户改；
+     * 第二种把处理器给的 text 显示出来。我们的文案照同一语义写（中文），
+     * 并把"命令原文"带上，用户才知道是哪一条没成。
+     */
+    if (n.code === 'command.unknown') {
+      return `宿主不认识这条命令：「${n.params.line}」——它可能拼错了，或这个 Host 没有注册它。`;
+    }
+    if (n.code === 'command.rejected') {
+      return `命令被拒绝：${n.params.reason}`;
+    }
     if (n.code === 'command.not-loaded') {
       return '命令目录尚未加载（需要先选中一个会话让宿主报告命令），请稍后重试。';
     }
