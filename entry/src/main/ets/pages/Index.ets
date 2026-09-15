@@ -185,6 +185,8 @@ import { ConnectPane } from '../view/ConnectPane';
 import { ConversationPane } from '../view/ConversationPane';
 import { CommandList } from '../view/CommandList';
 import { GoalBar } from '../view/GoalBar';
+import { MainShell } from '../view/shell/MainShell';
+import type { MainShellFacade } from '../view/shell/MainShell';
 import { TabContentView } from '../view/TabContentView';
 import type { TabContentFacade } from '../view/TabContentView';
 import { HubBanner } from '../view/HubBanner';
@@ -3340,281 +3342,132 @@ struct Index {
 
   @Builder
   mainContent(compact: boolean) {
-    // E190：命令面板（列表来自宿主：CommandCandidate 的 name/args/detail；选中即执行）
-    if (this.paletteOpen) {
-      Column({ space: Sp.XS }) {
-        Row({ space: Sp.S }) {
-          Text('命令面板')
-            .fontSize(Fs.BODY)
-            .fontWeight(FontWeight.Medium)
-            .layoutWeight(1)
-          Text('关闭')
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.brand'))
-            .onClick(() => {
-              this.paletteOpen = false;
-            })
-        }
-        .width('100%')
-        // 长期目标栏归 GoalBar 所有（官方 ui-goal 的目标栏形态）；它自足读中枢快照，无需 props。
-        GoalBar()
-        /*
-         * E195（§13 第 3 项）：**本会话的模型**。
-         *
-         * 官方把它做成会话输入区的选择器（`dsh-client-ui-model-selection`，写 `session/selectModel`）。
-         * 这里放在同一个面板里而不是再造入口：面板本就是"会话操作"的地方、快捷键已绑定
-         * ⇒ **可发现、不新增状态**。选中即调 `hub.selectSessionModel`（E194）；
-         * 未选会话时如实说明（那条端点也要会话）。
-         */
-        // 本会话模型选择归 SessionModelPicker 所有（官方 ui-model-selection）；
-        // 组件只管呈现，选中后的副作用（关面板 / 调中枢 / 写提示）留在宿主。
-        SessionModelPicker({
-          sessionId: this.selectedSessionId,
-          models: this.models,
-          currentModelId: this.selection.modelId,
-          onPick: (m: ModelOption) => {
-            this.paletteOpen = false;
-            SessionHub.shared().selectSessionModel(m.provider, m.modelId, m.defaultEffort)
-              .then((n: ActionNotice) => {
-                this.settingWriteNote = this.noticeText(n);
-              }).catch((e: Object) => {
-                this.settingWriteNote = '切换会话模型失败：' + (e as Error).message;
-              });
-          }
-        })
-        // 命令列表归 CommandList 所有（官方 ui-commands）；执行副作用留在宿主。
-        CommandList({
-          sessionId: this.selectedSessionId,
-          commands: this.commands,
-          onRun: (c: CommandCandidate) => {
-            this.paletteOpen = false;
-            SessionHub.shared().executeCommand(c.name).then((n: ActionNotice) => {
-              this.settingWriteNote = this.noticeText(n);
-            }).catch((e: Object) => {
-              this.settingWriteNote = '命令执行失败：' + (e as Error).message;
-            });
-          }
-        })
-      }
-      .width('100%')
-      .padding(Sp.M)
-      .borderRadius(Radius.M)
-      .backgroundColor($r('sys.color.background_primary'))
-    }
-    if (this.stackPage === StackPage.DIAGNOSTICS) {
-      DiagnosticsPane({
-        report: this.diag,
-        running: this.diagRunning,
-        // 判定项按模式裁剪（D7 §3 第 4 项）：本地核心模式下 TLS / 认证不适用
-        entries: filterDiagEntries(this.diagMode(), this.diag.entries).concat([this.modalityEntry()]),
-        modeTitle: diagTitleOf(this.diagMode()),
-        modeHint: diagHintOf(this.diagMode()),
-        traceEnabled: this.traceEnabled,
-        traceLines: this.traceLines,
-        onRerun: () => {
-          this.runDiagnostics();
-        },
-        onToggleTrace: (on: boolean) => {
-          this.traceEnabled = on;
-          // 打开时显示**中枢的真实旁路日志**，而不是演示行。
-          // 演示行只在未连接时作为布局示例出现（见 `applyHubSnapshot`）。
-          this.traceLines = on
-            ? SessionHub.shared().snapshot().trace
-            : [];
-        },
-        onExportLog: () => {
-          this.exportDiagnostics();
-        },
-        onClearCache: () => {
-          // E130：此前是空实现（点了没反应）。清理的是**我们自己缓存的东西**：
-          // 旁路日志 / 未识别事件清单 / 缓存的会话与轨迹。
-          // **不碰 Host 上的任何数据**——诊断页不该有"顺手删远端东西"的按钮。
-          SessionHub.shared().clearLocalCache();
-          hilog.info(DOMAIN, TAG, 'HDSH-DIAG 已清理本机缓存');
-        },
-        onOpenPoc: () => {
-          this.openPoc();
-        },
-        onBack: () => {
-          this.stackPage = StackPage.MAIN;
-        }
-      })
-    } else if (this.activePanel() === MAIN_CONNECT) {
-      ConnectPane({
-        hosts: this.hosts,
-        address: this.connectAddress,
-        token: this.connectToken,
-        busy: this.connectBusy,
-        resultText: this.connectResult,
-        resultOk: this.connectOk,
-        resultAdvice: this.connectAdvice,
-        discoveryAvailable: false,
-        onAddressChange: (v: string) => {
-          this.connectAddress = v;
-        },
-        onTokenChange: (v: string) => {
-          this.connectToken = v;
-        },
-        onSubmit: () => {
-          this.connectBusy = true;
-          this.connectResult = '';
-          this.connectAdvice = '';
-          const hub: SessionHub = SessionHub.shared();
-          const url: string = composeHostUrl(this.connectAddress, this.connectToken);
-          if (!hub.configure(url, undefined)) {
-            this.connectOk = false;
-            this.connectBusy = false;
-            this.connectResult = '地址无法解析';
-            this.connectAdvice = '请填形如 http://主机:端口 的地址；token 可单独填，也可直接粘贴完整启动链接（含 ?token=…）。';
-            return;
-          }
-          hub.connect().then((ok: boolean) => {
-            this.connectBusy = false;
-            this.connectOk = ok;
-            const snap: HubSnapshot = hub.snapshot();
-            this.connectResult = ok
-              ? `已连接 ${snap.authority}，收到 ${snap.sessions.length} 个会话`
-              : (snap.lastError.length > 0 ? snap.lastError : '连接未建立');
-            this.connectAdvice = ok
-              ? '真实数据已接管会话列表与待决；可在「连接诊断」页查看五项判定。'
-              : '请确认 Host 已启动且令牌有效；模拟器/真机访问宿主回环需先做端口转发（hdc fport）。';
-            if (ok) {
-              // 只报告**成功的**连接：失败的地址/token 不该被记住，
-              // 否则下次启动会拿一个已知无效的 token 去自动重连，用户看到的是
-              // 「自动重连失败」——而正确行为是回到「添加 Host」。
-              //
-              // token 来自**解析后的 URL**，而不是 token 输入框：
-              // 用户用的是「① 粘贴启动 URL」这条路径，token 输入框是空的。
-              // 曾因此把空串当 token 存进去，表现为「保存失败 + 下次读不到 token」。
-              reportConnectedHost(storageBaseUrl(url), extractToken(url) ?? this.connectToken.trim());
-            }
-          });
-        },
-        onStartDiscovery: () => {
-        },
-        onOpenDiagnostics: () => {
-          this.openDiagnostics();
-        },
-        onBack: () => {
-          this.stackPage = StackPage.MAIN;
-        }
-      })
-    } else if (this.activePanel() === MAIN_CONVERSATION) {
-      // E125：会话统计行（官方措辞），贴在会话页头部——数据来自投影，没有就不占位置
-      if (this.statsLine.length > 0) {
-        Text(this.statsLine)
-          .fontSize(Fs.CAPTION)
-          .fontColor(('sys.color.font_tertiary'))
-          .width('100%')
-          .padding({ left: Sp.M, right: Sp.M, top: Sp.XS })
-      }
-      ConversationPane({
-        itemCount: this.trajectoryItems.length,
-        // E115：审批/提问直接弹在会话里（官方 web 的形态），一次点击即可放行
-        pending: this.pending,
-        onDecidePending: (item: PendingItem, choiceId: string, reason: string) => {
-          this.decidePending(item, choiceId, reason);
-        },
-        onAnswerPending: (item: PendingItem, selected: string[], custom: string) => {
-          this.answerPending(item, selected, custom);
-        },
-        sessionId: this.selectedSessionId,
-        items: this.trajectoryItems,
-        running: this.running,
-        offline: this.offline,
-        queuedCount: this.queuedCount,
-        draft: this.draft,
-        attachments: this.attachments,
-        models: this.models,
-        selection: this.selection,
-        references: this.references,
-        commands: this.commands,
-        notice: this.attachNotice,
-        planActive: this.planActive,
-        planPending: this.planPending,
-        permissionLabel: this.permissionCurrent,
-        onDraftChange: (text: string) => {
-          this.draft = text;
-        },
-        onSend: () => {
-          this.sendDraft();
-        },
-        onStop: () => {
-          // 连上后停止 = 真的取消当前轮次；未连接时只熄灭本地指示
-          if (this.hubConnected) {
-            SessionHub.shared().cancelTurn();
-          }
-          this.running = false;
-        },
-        onAddAttachment: () => {
-          this.pickAndAttach();
-        },
-        onRemoveAttachment: (receiptId: string) => {
-          SessionHub.shared().removeAttachment(receiptId);
-        },
-        onPickModel: () => {
-          this.nav = openSettings(this.nav, '', this.panelRegistry);
-        },
-        onTogglePlan: () => {
-          this.togglePlan();
-        },
-        // 输入模态：有指针才启用右键菜单与悬停（策略模型决定，见 appstate/model/InputPolicy）。
-        // 两个事实**分开传**：合成来源见本文件 `recomputeModality()`。
-        hasPointer: this.modality.hasPointer,
-        hasKeyboard: this.modality.hasKeyboard,
-        // 轨迹的时间总览要用的统计（数字，不是拼好的字符串）
-        stats: this.sessionStats,
-        onQuoteMessage: (item: TrajectoryItem) => {
-          this.quoteIntoDraft(item);
-        },
-        onResendMessage: (item: TrajectoryItem) => {
-          this.resendMessage(item);
-        },
-        // 消息操作条的「复制」：剪贴板是平台能力，回调由宿主提供（视图层不依赖 platform）
-        onCopyMessage: (text: string) => {
-          if (text.length === 0) {
-            this.attachNotice = '这条消息没有可复制的正文。';
-            return;
-          }
-          copyText(text).then((ok: boolean) => {
-            this.attachNotice = ok ? '已复制到剪贴板。' : '复制失败：剪贴板不可用。';
-          });
-        },
-        onReferenceQuery: (query: string) => {
-          if (this.hubConnected) {
-            SessionHub.shared().refreshReferences(query);
-          }
-        },
-        onPullQueued: (itemId: string, text: string) => {
-          // 「取回编辑」= 移除该队列项 + 把正文放回草稿。
-          // 移除走 Host（否则用户会在界面上看不到它、而它仍会被发送），
-          // 放回草稿是本地动作。**先放回再移除**：即使移除失败，
-          // 用户也已经拿回了文本，不会丢内容。
-          this.draft = text;
-          SessionHub.shared().removeQueuedItem(itemId).then((ok: boolean) => {
-            if (!ok) {
-              this.attachNotice = '已把内容取回输入框，但队列项移除失败——它仍可能被 Host 发送，请检查诊断页。';
-            }
-          });
-        },
-        onRemoveQueued: (itemId: string) => {
-          SessionHub.shared().removeQueuedItem(itemId);
-        },
-        onSteerQueued: (itemId: string) => {
-          SessionHub.shared().steerQueuedItem(itemId);
-        },
-        onOpenDetail: () => {
-          this.detailOverlayOpen = true;
-        },
-        searchOpen: this.searchOpen,
-        onCloseSearch: () => {
-          this.searchOpen = false;
-        }
-      })
-    } else {
-      this.tabContent(compact)
-    }
+    // 主区内容归 MainShell 所有（P0：主区搬迁第二束）；宿主只给门面（每次渲染重建）。
+    MainShell({ f: this.buildMainFacade(), compact: compact })
   }
+
+  /** 标签页内容所需能力的门面（**每次渲染重建**：值型快照、写型 setter、方法型闭包） */
+  private buildMainFacade(): MainShellFacade {
+    const facade: MainShellFacade = {
+    TAG: TAG,
+    DOMAIN: DOMAIN,
+    composeHostUrl: (address: string, token: string) => composeHostUrl(address, token),
+    storageBaseUrl: (url: string) => storageBaseUrl(url),
+    reportConnectedHost: (baseUrl: string, token: string) => reportConnectedHost(baseUrl, token),
+    activePanel: () => this.activePanel(),
+    answerPending: (item: PendingItem, selected: string[], custom: string) => this.answerPending(item, selected, custom),
+    attachNotice: this.attachNotice,
+    setAttachNotice: (value: string) => {
+      this.attachNotice = value;
+    },
+    attachments: this.attachments,
+    commands: this.commands,
+    connectAddress: this.connectAddress,
+    setConnectAddress: (value: string) => {
+      this.connectAddress = value;
+    },
+    connectAdvice: this.connectAdvice,
+    setConnectAdvice: (value: string) => {
+      this.connectAdvice = value;
+    },
+    connectBusy: this.connectBusy,
+    setConnectBusy: (value: boolean) => {
+      this.connectBusy = value;
+    },
+    connectOk: this.connectOk,
+    setConnectOk: (value: boolean) => {
+      this.connectOk = value;
+    },
+    connectResult: this.connectResult,
+    setConnectResult: (value: string) => {
+      this.connectResult = value;
+    },
+    connectToken: this.connectToken,
+    setConnectToken: (value: string) => {
+      this.connectToken = value;
+    },
+    decidePending: (item: PendingItem, choiceId: string, reason: string) => this.decidePending(item, choiceId, reason),
+    detailOverlayOpen: this.detailOverlayOpen,
+    setDetailOverlayOpen: (value: boolean) => {
+      this.detailOverlayOpen = value;
+    },
+    diag: this.diag,
+    diagMode: () => this.diagMode(),
+    diagRunning: this.diagRunning,
+    draft: this.draft,
+    setDraft: (value: string) => {
+      this.draft = value;
+    },
+    exportDiagnostics: () => this.exportDiagnostics(),
+    hosts: this.hosts,
+    hubAuthority: this.hubAuthority,
+    hubConnected: this.hubConnected,
+    hubError: this.hubError,
+    hubPhase: this.hubPhase,
+    hubStreams: this.hubStreams,
+    hubTraceTail: () => this.hubTraceTail(),
+    modality: this.modality,
+    modalityEntry: () => this.modalityEntry(),
+    models: this.models,
+    nav: this.nav,
+    setNav: (value: NavigationState) => {
+      this.nav = value;
+    },
+    noticeText: (n: ActionNotice) => this.noticeText(n),
+    offline: this.offline,
+    openDiagnostics: () => this.openDiagnostics(),
+    openPoc: () => this.openPoc(),
+    paletteOpen: this.paletteOpen,
+    setPaletteOpen: (value: boolean) => {
+      this.paletteOpen = value;
+    },
+    panelRegistry: this.panelRegistry,
+    pending: this.pending,
+    permissionCurrent: this.permissionCurrent,
+    pickAndAttach: () => this.pickAndAttach(),
+    planActive: this.planActive,
+    planPending: this.planPending,
+    queuedCount: this.queuedCount,
+    quoteIntoDraft: (item: TrajectoryItem) => this.quoteIntoDraft(item),
+    references: this.references,
+    resendMessage: (item: TrajectoryItem) => this.resendMessage(item),
+    runDiagnostics: () => this.runDiagnostics(),
+    running: this.running,
+    setRunning: (value: boolean) => {
+      this.running = value;
+    },
+    searchOpen: this.searchOpen,
+    setSearchOpen: (value: boolean) => {
+      this.searchOpen = value;
+    },
+    selectedSessionId: this.selectedSessionId,
+    selection: this.selection,
+    sendDraft: () => this.sendDraft(),
+    sessionStats: this.sessionStats,
+    settingWriteNote: this.settingWriteNote,
+    setSettingWriteNote: (value: string) => {
+      this.settingWriteNote = value;
+    },
+    stackPage: this.stackPage,
+    setStackPage: (value: StackPage) => {
+      this.stackPage = value;
+    },
+    statsLine: this.statsLine,
+    tabFacade: this.buildTabFacade(),
+    togglePlan: () => this.togglePlan(),
+    traceEnabled: this.traceEnabled,
+    setTraceEnabled: (value: boolean) => {
+      this.traceEnabled = value;
+    },
+    traceLines: this.traceLines,
+    setTraceLines: (value: string[]) => {
+      this.traceLines = value;
+    },
+    trajectoryItems: this.trajectoryItems,
+    };
+    return facade;
+  }
+
 
   /**
    * 答复审批。

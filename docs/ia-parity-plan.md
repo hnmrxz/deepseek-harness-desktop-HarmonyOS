@@ -71,7 +71,9 @@ AppFrame
 | 面板组件清单 | `view/GoalBar.ets`、`view/SessionModelPicker.ets`、`view/CommandList.ets`、`view/shell/{SidebarShell,MainHeaderShell,RightbarShell,TrackResizer}.ets` |
 | `view/shell/TrackResizer.ets` | ✅ 已落地：**轨间把手**（不属于任何一条轨道）；命中区域按输入模态放宽、拖动策略仍在纯模型里。⇒ AppFrame 的 chrome 四位各有其主 |
 | **主区第一束** | ✅ **已搬出**（`view/TabContentView.ets`，459 行 / 86 门面成员 / 29 处 setter 改写；Index 5040 → 4665 行）。关键：`does not meet UI component syntax` 其实是**导入路径错**的伪装 |
-| `AppShell` / `MainShell` | ❌ **下一步，且是 P0 唯一剩下的大块**：主区**内容**（六个 Pane）搬迁，只能走显式 props（E118/D9 约束）|
+| **主区第二束** | ✅ **已搬出**（`view/shell/MainShell.ets`，409 行 / 77 门面成员 / 33 处 setter 改写）。**`Index.ets` 5040 → 4518 行** |
+| **P0 验收：`Index` 不再负责页面级 Pane 选择** | ✅ **达成**：`Index.mainContent(compact)` 现在只是一句 `MainShell({ f: this.buildMainFacade(), compact: compact })`；四个 E分支（诊断/连接/会话/标签页内容）都由 `MainShell` 选择与渲染 |
+| `AppShell`（根容器 + overlay/sheet 宿主 + 返回/快捷键） | ❌ 下一步（P0 的最后一块 chrome）|：主区**内容**（六个 Pane）搬迁，只能走显式 props（E118/D9 约束）|
 
 **AppShell 不能用"注入 Builder"那条路（有真机实证）**
 
