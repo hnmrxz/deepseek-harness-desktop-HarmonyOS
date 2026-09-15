@@ -274,8 +274,3 @@ export function decideLayoutWithDetail(input: LayoutInput, desiredDetailVp: numb
     pointerRich: input.hasKeyboard && input.hasPointer
   };
 }
-
-/** 档位阈值（供 UI 与 fixture 引用，避免各处重写 600/840） */
-export function breakpointThresholds(): number[] {
-  return [Breakpoint.MD, Breakpoint.LG];
-}

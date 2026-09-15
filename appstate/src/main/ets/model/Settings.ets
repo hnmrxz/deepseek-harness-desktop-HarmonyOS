@@ -651,25 +651,10 @@ export function projectSettingsNamespace(view: Object, writable: boolean): Setti
 }
 
 /**
- * 把所有命名空间投影成分组列表（分组标题 = 命名空间名）。
+ * **带上每个命名空间的写状态**（revision 等）；此前还有一个只要 group 的薄包装
+ * （`projectSettingsGroups`），因没有任何调用点已删（E368）。
  *
- * **不硬编码命名空间清单**：实测 Host 上的命名空间集合取决于它装了哪些插件
- * （本机 14 个），硬编码会退化成又一张「猜测表」。
- * 未知命名空间同样展示——只是没有友好标题。
- */
-export function projectSettingsGroups(value: Object | undefined): SettingGroup[] {
-  const entries: SettingsGroupEntry[] = projectSettingsEntries(value);
-  const out: SettingGroup[] = [];
-  for (let i = 0; i < entries.length; i++) {
-    out.push(entries[i].group);
-  }
-  return out;
-}
-
-/**
- * 与 `projectSettingsGroups` 相同，但**带上每个命名空间的写状态**（revision 等）。
- *
- * 中枢用它保存并发令牌；纯展示路径用上面那个（UI 不需要看见 revision）。
+ * 中枢用它保存并发令牌；只要 group 的调用方自己取 `entry.group`（不再留一个薄包装）。
  */
 export function projectSettingsEntries(value: Object | undefined): SettingsGroupEntry[] {
   const out: SettingsGroupEntry[] = [];
@@ -1170,18 +1155,6 @@ export interface HostRecord {
   authorized: boolean;
   /** Host 核心包版本（用于版本矩阵提示） */
   version: string;
-}
-
-/** 连接状态展示（D3 §4 状态与文案规范） */
-export interface ConnectionBanner {
-  /** 是否已连接 */
-  connected: boolean;
-  /** 一行状态（如「已连接 · clientId=…」） */
-  text: string;
-  /** 是否需要用户动作（显示按钮） */
-  actionable: boolean;
-  /** 动作按钮文案 */
-  actionLabel: string;
 }
 
 // ─────────────────────────── 诊断 ───────────────────────────

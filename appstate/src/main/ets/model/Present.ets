@@ -101,13 +101,6 @@ export function toolStateLabel(state: ToolState): string {
   return '被拒';
 }
 
-/** 工具状态是否属于「需要注意」的状态（决定是否默认展开结果） */
-export function toolStateIsProblem(state: ToolState): boolean {
-  return state === ToolState.FAILED || state === ToolState.REJECTED;
-}
-
-/** 大输出阈值（D3 §3.3：> 8 KB 只显示首 2 KB） */
-export const LARGE_OUTPUT_BYTES: number = 8 * 1024;
 export const LARGE_OUTPUT_PREVIEW: number = 2 * 1024;
 
 /** 按 D3 §3.3 截断输出 */
@@ -165,39 +158,4 @@ export function riskLabel(risk: RiskLevel): string {
     return '需留意';
   }
   return '常规';
-}
-
-/** 轨迹条目的无障碍朗读文本（D3 §7） */
-export function speakable(item: TrajectoryItem): string {
-  if (item.kind === TrajectoryKind.MESSAGE) {
-    const who: string = item.speaker === 'user' ? '我说' : '助手回复';
-    const len: number = item.body.length;
-    const head: string = item.body.length > 60 ? `${item.body.substring(0, 60)}…` : item.body;
-    return `${who}：${head}（共 ${len} 字）`;
-  }
-  if (item.kind === TrajectoryKind.TOOL) {
-    return `工具 ${item.toolName}，状态 ${toolStateLabel(item.toolState)}`;
-  }
-  if (item.kind === TrajectoryKind.SUBAGENT) {
-    return `子代理 ${item.subagentName}`;
-  }
-  if (item.kind === TrajectoryKind.DELIVERABLE) {
-    return `交付物 ${item.fileName}`;
-  }
-  if (item.kind === TrajectoryKind.REASONING) {
-    return '思考过程';
-  }
-  if (item.kind === TrajectoryKind.ERROR) {
-    return `错误：${item.body}`;
-  }
-  return item.title.length > 0 ? item.title : '条目';
-}
-
-/** 会话列表项的副信息行（D3 §3.1） */
-export function sessionSubtitle(workspace: string, updatedAt: number, nowMs: number): string {
-  const time: string = relativeTime(updatedAt, nowMs);
-  if (workspace.length === 0) {
-    return time;
-  }
-  return time.length === 0 ? workspace : `${workspace} · ${time}`;
 }

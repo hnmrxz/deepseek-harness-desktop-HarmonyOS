@@ -68,16 +68,6 @@ export interface PanelDescriptor {
   available: () => boolean;
 }
 
-/** 注册表快照（纯数据，便于测试与传递） */
-export interface PanelList {
-  location: PanelLocation;
-  panels: PanelDescriptor[];
-}
-
-export function emptyPanelList(location: PanelLocation): PanelList {
-  return { location: location, panels: [] };
-}
-
 /**
  * 面板注册表。
  *

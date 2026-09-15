@@ -85,9 +85,10 @@ export struct ToolCard {
   }
 
   private diffOf(): DiffPresentation | null {
-    if (this.item.toolState === ToolState.FAILED || this.item.toolState === ToolState.REJECTED) {
-      return null;
-    }
+    // 【为什么只有一条判定】这里曾经先写一遍"失败/被拒 ⇒ 没有对照"，紧接着又要求
+    // "必须是成功或运行中" —— 后一条已经把前一条**完全包含**（FAILED/REJECTED 都不在
+    // SUCCESS/RUNNING 里），那三行是永远走不到的壳。留下"只有成功/运行中才有对照"这一条，
+    // 语义相同且不必维护两个条件的同步。
     if (this.item.toolState !== ToolState.SUCCESS && this.item.toolState !== ToolState.RUNNING) {
       return null;
     }

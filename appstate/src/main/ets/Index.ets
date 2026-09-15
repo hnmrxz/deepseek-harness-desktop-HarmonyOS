@@ -5,7 +5,7 @@
  */
 
 // ── 会话列表 ──
-export { projectSessionList, sessionListEndpoint, sessionListPayload } from './model/SessionList';
+export { projectSessionList, sessionListEndpoint } from './model/SessionList';
 export type { SessionListItem, SessionListPage } from './model/SessionList';
 
 // ── 轨迹与待决的呈现层契约 ──
@@ -24,11 +24,7 @@ export {
   itemsOfKind,
   deliverablesOf
 } from './model/Trajectory';
-export type {
-  PendingChoice,
-  PendingItem,
-  TrajectoryItem
-} from './model/Trajectory';
+export type { PendingChoice, PendingItem, TrajectoryItem } from './model/Trajectory';
 
 // ── 呈现层纯函数 ──
 export {
@@ -36,16 +32,12 @@ export {
   formatClock,
   formatDate,
   formatDuration,
-  LARGE_OUTPUT_BYTES,
   LARGE_OUTPUT_PREVIEW,
   pendingSortKey,
   previewOutput,
   relativeTime,
   riskLabel,
-  sessionSubtitle,
   sortPending,
-  speakable,
-  toolStateIsProblem,
   toolStateLabel
 } from './model/Present';
 export type { OutputPreview } from './model/Present';
@@ -86,7 +78,6 @@ export {
   projectSettingsEntries,
   projectGeneralGroups,
   GENERAL_NAMESPACES,
-  projectSettingsGroups,
   projectSettingsNamespace,
   parseSettingInput,
   parseStructInput,
@@ -94,11 +85,11 @@ export {
   SettingOrigin,
   SettingValueType,
   DEFAULT_MODEL_NS,
-  SettingsWriteOutcome,
   settingsDomainOfNs,
   settingsMutateArgs,
   settingsUnsetArgs,
-  splitSettingKey
+  splitSettingKey,
+  SettingsWriteOutcome
 } from './model/Settings';
 export { sessionContextLine, workspaceNameOf } from './model/SessionContext';
 export { sheetNoteText, sheetNoteVisible } from './model/Sheets';
@@ -106,7 +97,6 @@ export { placeholderOf, structSettingEditorHints, textSettingEditorHints } from 
 export type { EditorHints } from './model/SettingEditors';
 export type {
   AboutInfo,
-  ConnectionBanner,
   CredentialItem,
   CredentialWriteResult,
   DiagEntry,
@@ -133,7 +123,13 @@ export { emptyDiagReport } from './model/Diag';
 export { DiagMode, diagHintOf, diagModeOf, diagTitleOf, filterDiagEntries } from './model/Diag';
 
 // ── 会话内搜索（D3 §5.1 的 Ctrl/Cmd + F） ──
-export { chatRowOfItemIndex, matchConversationIndices, matchCounterText, matchTrajectoryIndices, stepMatch } from './model/Search';
+export {
+  chatRowOfItemIndex,
+  matchConversationIndices,
+  matchCounterText,
+  matchTrajectoryIndices,
+  stepMatch
+} from './model/Search';
 
 // ── 详情栏分区（从真实轨迹派生，D3 §3.6） ──
 export { projectDetailSections } from './model/Detail';
@@ -147,13 +143,21 @@ export {
   classifyPlugin,
   corePhaseLabel,
   corePhaseOfHostState,
-  emptyCoreView,
   fact,
   pluginNativeOf,
   sessionEmptyCopy,
-  unknownFact
+  unknownFact,
+  emptyCoreView
 } from './model/Core';
-export type { CoreActionSpec, CoreFact, CoreVersionRow, CoreViewInput, CoreViewState, EmptyCopy, PluginRow } from './model/Core';
+export type {
+  CoreActionSpec,
+  CoreFact,
+  CoreVersionRow,
+  CoreViewInput,
+  CoreViewState,
+  EmptyCopy,
+  PluginRow
+} from './model/Core';
 
 // ── 核心页投影（宿主报告的结构子集 → 事实与行） ──
 export { pluginInventoryFact, pluginRowOf, rankPluginRows } from './model/CoreProjection';
@@ -169,14 +173,23 @@ export {
   LayoutMode,
   settingsSectionLabelRes,
   sidebarPanelLabelRes,
-  sidebarPanelSymbol,
+  sidebarPanelSymbol
 } from './ui/Breakpoints';
 
 // ── 设计令牌 ──
 export { Border, Breakpoint, Dur, Fs, Lh, Radius, SemanticColor, Sp, Sz } from './ui/Tokens';
 
 // ── 工具呈现（P2 §11：按工具类别区分呈现；纯函数，可本机直接测） ──
-export { presentTool, toolA11y, toolDefaultExpanded, ToolKind, toolKindLabel, toolKindOf, toolSummaryOf, toolToneOf } from './model/ToolPresentation';
+export {
+  presentTool,
+  toolA11y,
+  toolDefaultExpanded,
+  ToolKind,
+  toolKindLabel,
+  toolKindOf,
+  toolSummaryOf,
+  toolToneOf
+} from './model/ToolPresentation';
 export { parseMarkdown, parseInline, plainTextOf, MdBlock, MdBlockKind, MdSpan } from './model/Markdown';
 export type { ToolPresentation } from './model/ToolPresentation';
 
@@ -190,53 +203,112 @@ export type { InputModality } from './model/InputPolicy';
 
 // ── 页面框架：面板注册表与导航状态（P0：官方信息架构对齐；纯逻辑，可本机直接测） ──
 export {
-  createPanelRegistry, PanelLocation, PanelRegistry, rightbarPanels, sidebarPanels,
-  sidebarEntries, sidebarPinnedEntries, SIDEBAR_PINNED_ORDER,
+  createPanelRegistry,
+  PanelLocation,
+  PanelRegistry,
+  rightbarPanels,
+  sidebarPanels,
+  sidebarEntries,
+  sidebarPinnedEntries,
+  SIDEBAR_PINNED_ORDER,
   settingsSections,
-  PANEL_RIGHT_DELIVERABLES, PANEL_RIGHT_DETAIL, PANEL_RIGHT_FILES, PANEL_RIGHT_PREVIEW, PANEL_RIGHT_SUBAGENT,
-  PANEL_RIGHT_TOOL, PANEL_RIGHT_TRAJECTORY, PANEL_SIDEBAR_CORE, PANEL_SIDEBAR_SETTINGS,
-  PANEL_SIDEBAR_WORKSPACES,
+  PANEL_RIGHT_DELIVERABLES,
+  PANEL_RIGHT_DETAIL,
+  PANEL_RIGHT_FILES,
+  PANEL_RIGHT_PREVIEW,
+  PANEL_RIGHT_SUBAGENT,
+  PANEL_RIGHT_TOOL,
+  PANEL_RIGHT_TRAJECTORY,
+  PANEL_SIDEBAR_CORE,
+  PANEL_SIDEBAR_SETTINGS,
+  PANEL_SIDEBAR_WORKSPACES
 } from './model/PanelRegistry';
-export type { PanelDescriptor, PanelList } from './model/PanelRegistry';
+export type { PanelDescriptor } from './model/PanelRegistry';
 export {
   activeMainPanelOf,
   mainPanelOfSidebarPanel,
   sidebarPanelOfMainPanel,
-copyOf, defaultRightPanel, DrawerState, enterSession,
-  initialNavigationState, legacyTabOfMainPanel, mainPanelOfLegacyTab, mainPanels,
-  defaultSidebarPanel, navigateToMain, openSettings, selectRightPanel, setDrawer,
+  copyOf,
+  defaultRightPanel,
+  DrawerState,
+  enterSession,
+  initialNavigationState,
+  legacyTabOfMainPanel,
+  mainPanelOfLegacyTab,
+  mainPanels,
+  navigateToMain,
+  openSettings,
+  selectRightPanel,
+  setDrawer,
   sidebarPanelIdOfTab,
-  MAIN_CONNECT, MAIN_CONVERSATION, MAIN_CORE, MAIN_DIAGNOSTICS, MAIN_SETTINGS, MAIN_WORKSPACES,
-  SETTINGS_CORE, SETTINGS_DEVICE, SETTINGS_GENERAL, SETTINGS_INVENTORY, SETTINGS_MODELS,
-  SETTINGS_PLUGINS, SETTINGS_PRESETS, SETTINGS_SKILLS,
+  MAIN_CONNECT,
+  MAIN_CONVERSATION,
+  MAIN_CORE,
+  MAIN_DIAGNOSTICS,
+  MAIN_SETTINGS,
+  MAIN_WORKSPACES,
+  SETTINGS_GENERAL,
+  SETTINGS_MODELS
 } from './model/NavigationState';
 export type { NavigationState } from './model/NavigationState';
 
 // ── 三条轨道在四形态下的呈现（P0：AppFrame 的几何层） ──
-export { shellTracksOf, sidebarExpandedForMode, sidebarPresentationOf, sidebarTrackWidthOf, TrackPresentation } from './ui/ShellTracks';
+export {
+  shellTracksOf,
+  sidebarExpandedForMode,
+  sidebarPresentationOf,
+  sidebarTrackWidthOf,
+  TrackPresentation
+} from './ui/ShellTracks';
 export type { ShellTracks } from './ui/ShellTracks';
 
 // ── 后台任务（P2：会话头部的任务注册表；纯函数，可本机直接测） ──
 export {
-  jobCountLabel, jobDotState, jobDurationText, jobDurationTitle, jobElapsedMs, jobIsLive,
-  jobListA11y, jobListVisible, jobRowStatusText, jobStatusLabel, jobTickerNeeded,
-  liveJobCount, orderedJobs, JobDot,
+  jobCountLabel,
+  jobDotState,
+  jobDurationText,
+  jobDurationTitle,
+  jobElapsedMs,
+  jobIsLive,
+  jobListA11y,
+  jobListVisible,
+  jobRowStatusText,
+  jobStatusLabel,
+  jobTickerNeeded,
+  liveJobCount,
+  orderedJobs,
+  JobDot
 } from './model/Jobs';
 
 // ── 轨迹时间线（P2 §11：交互式时间总览；纯函数，可本机直接测） ──
 export {
-  cellIdAtRatio, cellIdForListIndex, listIndexForCell, segmentOrdinalOf, statsLinesOf,
-  timelineCellsOf, timelineKindLabel, timelineKindOf, timelineScaleOf,
-  timelineStartedLabel, timelineTotalLabel, TimelineKind, StatsUnit,
+  cellIdAtRatio,
+  cellIdForListIndex,
+  listIndexForCell,
+  segmentOrdinalOf,
+  statsLinesOf,
+  timelineCellsOf,
+  timelineKindLabel,
+  timelineKindOf,
+  timelineScaleOf,
+  timelineStartedLabel,
+  timelineTotalLabel,
+  TimelineKind,
+  StatsUnit
 } from './model/Timeline';
-export type {
-  SessionStatsInput, StatsLine, TimelineCell, TimelineScale, TimelineSegment,
-} from './model/Timeline';
+export type { SessionStatsInput, StatsLine, TimelineCell, TimelineScale, TimelineSegment } from './model/Timeline';
 
 // ── 输入模态事实（P3：形态猜测 / 系统枚举 / 事件证据三者按优先级合成；纯函数，可本机直接测） ──
 export {
-  flattenSources, guessFromKeyboardForm, modalityFromSources, modalityOf, modalityTrace,
-  noModality, sourceIsKeyboard, sourceIsPointer, unionModality,
+  flattenSources,
+  guessFromKeyboardForm,
+  modalityFromSources,
+  modalityOf,
+  modalityTrace,
+  noModality,
+  sourceIsKeyboard,
+  sourceIsPointer,
+  unionModality
 } from './model/InputFacts';
 export type { ModalityEvidence } from './model/InputFacts';
 
@@ -259,12 +331,10 @@ export type { SessionJob } from './model/Jobs';
 
 // ── HarmonyTheme（P1.5：Web 语义 → HarmonyOS 视觉的映射层） ──
 export {
-  harmonyTokenFor,
   HarmonyBorder,
   HarmonyColor,
   HarmonyElevation,
   HarmonyIconSize,
-  HarmonyMaterial,
   HarmonyMotion,
   HarmonyRadius,
   HarmonySpacing,
@@ -276,7 +346,6 @@ export type { ShadowLevel, TypeRole, WebTokenMapping } from './ui/HarmonyTheme';
 
 // ── 布局决策（P1：形态/几何决策的唯一落点，见 LayoutController 的说明） ──
 export {
-  breakpointThresholds,
   clampDetailDesired,
   concedeDetail,
   decideLayout,
@@ -305,7 +374,15 @@ export {
 export type { NavState, OverlayState, TabSelection } from './ui/NavigationController';
 
 // ── 会话中枢（D1 §7.7.5b：全应用单一连接池 + 单一会话状态机 + 单一待发队列） ──
-export { FEEDBACK_CATEGORIES, HubPhase, projectWireRecord, SessionHub, notice, noticeWith, put } from './store/SessionHub';
+export {
+  FEEDBACK_CATEGORIES,
+  HubPhase,
+  projectWireRecord,
+  SessionHub,
+  notice,
+  noticeWith,
+  put
+} from './store/SessionHub';
 export type {
   AttachOutcome,
   HubSnapshot,
@@ -322,13 +399,11 @@ export {
   DEFAULT_DETAIL_LIMIT,
   dedupeKeyOf,
   groupOf,
-  inAppFallbackText,
   looksSensitive,
   NOTIFY_POLICIES,
   NOTIFY_PAGES,
   NotifyKind,
   notificationFor,
-  notifyInputForConnection,
   notifyInputForPending,
   notifyInputForTurn,
   NotifyTarget,
@@ -341,20 +416,16 @@ export {
   scrubCredentials,
   UNTITLED_SESSION,
   withdrawalKeysFor,
-  withdrawalKeysForPending,
-  withdrawalKeysForSession
+  withdrawalKeysForPending
 } from './model/Notify';
-export type { InAppNotice, NotifyInput, NotifyPolicy } from './model/Notify';
+export type { NotifyInput, NotifyPolicy } from './model/Notify';
 
 // ── 2in1 快捷键表（D3 §5.1：规范 11 行 → 13 个规格；数据 + 纯函数） ──
 export {
   findShortcut,
   keyboardShortcutSpecs,
   keyEventSpecs,
-  MODIFIER_LABEL,
-  modifierLabel,
   SHORTCUTS,
-  shortcutBindingLabel,
   ShortcutModifier,
   shortcutsForDesktop
 } from './ui/Shortcuts';
@@ -438,7 +509,6 @@ export {
   textPart,
   TitleSource,
   titleOfSummary,
-  UNTITLED_SESSION as WIRE_UNTITLED_SESSION,
   USER_QUESTIONS_REQUEST_EVENT,
   workspaceListEndpoint,
   workspaceListPayload,
@@ -447,7 +517,8 @@ export {
   projectWorkspaceBytes,
   workspaceReadEndpoint,
   workspaceReadPayload,
-  WORKSPACE_ROOT_REQUEST_PATH
+  WORKSPACE_ROOT_REQUEST_PATH,
+  UNTITLED_SESSION as WIRE_UNTITLED_SESSION
 } from './model/Wire';
 export type {
   AskUserQuestionAnswer,

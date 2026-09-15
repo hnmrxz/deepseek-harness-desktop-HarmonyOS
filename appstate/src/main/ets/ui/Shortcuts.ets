@@ -60,13 +60,6 @@ export interface ShortcutSpec {
   description: string;
 }
 
-/**
- * 键位标签里修饰键的呈现名。
- *
- * 单列成常量是为了让「规范写 `Ctrl/Cmd`、平台只有 `Ctrl`」这个取舍只出现一次：
- * 展示给用户的是 `Ctrl`（鸿蒙真实可用的键），而不是照抄一个按不出效果的 `Cmd`。
- */
-export const MODIFIER_LABEL: string = 'Ctrl';
 
 /**
  * D3 §5.1 快捷键表。
@@ -228,6 +221,7 @@ export const SHORTCUTS: ShortcutSpec[] = [
  * 函数形式（而不是常量过滤结果）是为了让 UI 每次按当前形态取值，
  * 避免模块加载时就把形态固化下来。
  */
+// dead-exempt: 帮助浮层（按形态展示快捷键）尚未做；Index.ets 的快捷键绑定处已写明"不在此假装"
 export function shortcutsForDesktop(): ShortcutSpec[] {
   const out: ShortcutSpec[] = [];
   for (let i = 0; i < SHORTCUTS.length; i++) {
@@ -267,6 +261,7 @@ export function keyboardShortcutSpecs(): ShortcutSpec[] {
  * 键位字符串（`Esc` / `ArrowUp` / `Enter`）到 ArkUI `KeyCode` 的翻译刻意留在 UI 层，
  * 使本文件不含任何 UI 框架符号。
  */
+// dead-exempt: 按键判定走 KeyCode（ShortcutKeys.ets 说明了为什么表里的按键串表达不了），故这份"需要 onKeyEvent 的规格"没有代码读者
 export function keyEventSpecs(): ShortcutSpec[] {
   const out: ShortcutSpec[] = [];
   for (let i = 0; i < SHORTCUTS.length; i++) {
@@ -285,31 +280,4 @@ export function findShortcut(id: string): ShortcutSpec | undefined {
     }
   }
   return undefined;
-}
-
-/**
- * 规格 → 展示用键位串。
- *
- * 与 `ShortcutSpec.label` 的分工：`label` 是规范原文（含 `Ctrl/Cmd` 的历史写法，便于与规范比对），
- * 本函数产出的是**本平台真实可用**的键位串（只有 `Ctrl`），供帮助浮层与设置页显示。
- * 这个取舍必须显式：给用户看一个按不出效果的 `Cmd` 是错误文案（D3 §4 文案纪律）。
- */
-export function shortcutBindingLabel(spec: ShortcutSpec): string {
-  const parts: string[] = [];
-  for (let i = 0; i < spec.modifiers.length; i++) {
-    parts.push(modifierLabel(spec.modifiers[i]));
-  }
-  parts.push(spec.key);
-  return parts.join(' + ');
-}
-
-/** 单个修饰键的展示名。 */
-export function modifierLabel(modifier: ShortcutModifier): string {
-  if (modifier === ShortcutModifier.CTRL) {
-    return MODIFIER_LABEL;
-  }
-  if (modifier === ShortcutModifier.SHIFT) {
-    return 'Shift';
-  }
-  return 'Alt';
 }

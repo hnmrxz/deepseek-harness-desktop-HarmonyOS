@@ -46,17 +46,6 @@ export const MAIN_CONNECT: string = 'main.connect';
 /** 设置域的二级分区 id（P4 会按此拆 `SettingsShell`） */
 export const SETTINGS_GENERAL: string = 'settings.general';
 export const SETTINGS_MODELS: string = 'settings.models';
-export const SETTINGS_PLUGINS: string = 'settings.plugins';
-export const SETTINGS_INVENTORY: string = 'settings.plugin-inventory';
-/*
- * 以下四项是**本仓特有**的设置分区（官方没有对应分区，见 PanelRegistry.settingsSections 的说明）：
- * 核心（E110）、预设（E129）、技能（E135）、设备（本机事实）。
- */
-export const SETTINGS_CORE: string = 'settings.core';
-export const SETTINGS_PRESETS: string = 'settings.presets';
-export const SETTINGS_SKILLS: string = 'settings.skills';
-export const SETTINGS_DEVICE: string = 'settings.device';
-
 /** 手机侧栏抽屉状态 */
 export enum DrawerState {
   CLOSED = 'closed',
@@ -342,10 +331,4 @@ export function defaultRightPanel(registry: PanelRegistry): string {
   const first: string = registry.firstAvailable(PanelLocation.RIGHTBAR);
   // 兜底也指向"详情"：它是当前唯一有内容的面板（见 `PANEL_RIGHT_DETAIL` 的说明）
   return first.length > 0 ? first : PANEL_RIGHT_DETAIL;
-}
-
-/** 默认侧栏面板（用于"侧栏先显示哪个域"） */
-export function defaultSidebarPanel(registry: PanelRegistry): string {
-  const first: string = registry.firstAvailable(PanelLocation.SIDEBAR);
-  return first.length > 0 ? first : PANEL_SIDEBAR_WORKSPACES;
 }

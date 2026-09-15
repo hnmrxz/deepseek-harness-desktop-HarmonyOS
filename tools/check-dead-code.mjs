@@ -14,7 +14,7 @@
  *
  * 三次都是我手工写 Python 扫出来的。手工会漏、会随轮次漂移 ⇒ 固化成门禁。
  *
- * ## 判定规则（四条，都是"零使用"级别的硬事实）
+ * ## 判定规则（五条，都是"零使用"级别的硬事实）
  *
  * 1. **零使用 import**：`import { A, B } from 'x'` 里的名字在**本文件其余部分**一次都没出现；
  * 2. **零使用 `@Builder`**：与 `tools/check-builder-recursion.mjs` 同源的检测——
@@ -23,7 +23,10 @@
  *    / `private` 方法，在本文件里只出现 1 次（= 只有那一行声明）；
  * 4. **门面字段零读点**（跨文件，E367）：`export interface *Facade` 的字段在**整仓**里搜不到一个
  *    `.字段`。前三条只看本文件，而门面通道的写法天生跨文件（**声明与读者在子组件、实现在宿主**）——
- *    只看一个文件既数不到读者也数不到写者。
+ *    只看一个文件既数不到读者也数不到写者；
+ * 5. **零消费者导出**（跨文件，E368）：appstate 的导出在整仓 **+ `tools/`** 里出现 ≤2 次
+ *    （= 只有声明 + barrel 再导出）。语料含 `tools/` 是硬要求：本仓纯逻辑大量**只被 fixture 读**，
+ *    不含 tools 会一次误报 19 个；而 `model/Wire.ets`（上游协议词汇表）整文件排除。
  *
  * ## 三条刻意写下来的边界（避免误报，也避免"把门禁写成噪音"）
  *
@@ -45,7 +48,17 @@ import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = process.cwd();
+/** 逐文件判定（规则①②③）只扫这两棵树 */
 const SCAN_ROOTS = ['entry/src/main/ets', 'appstate/src/main/ets'];
+/**
+ * 跨文件规则（④门面字段 / ⑤零消费者导出）的**语料**。
+ *
+ * 【为什么要比 SCAN_ROOTS 宽】导出的读者可能在别的模块（`platform/` 读 `appstate` 的
+ * 快捷键表就是实例），而纯函数的大量读者是 **fixture**（`tools/**'*.mjs'`）。
+ * 少了它们，规则⑤会一次误报 21 处 —— 实测过，不是推测。
+ */
+const CORPUS_DIRS = ['platform/src/main/ets', 'connection/src/main/ets',
+  'dshcompat/src/main/ets', 'hostruntime/src/main/ets', 'tools'];
 
 /** 框架会自己调的生命周期/入口名：即使"没人调"也不是死代码 */
 const FRAMEWORK_NAMES = new Set([
@@ -246,8 +259,8 @@ export function facadeFields(text) {
  * `.名字`，只能是**没有任何调用点** —— 那正是本门禁要拦的"通道有、没消费者"。
  * 反方向的漏报（同名点读出现在别的对象上）是已知且可接受的：宁可漏，不可吵。
  */
-export function deadFacadeFields(sources) {
-  const corpus = sources.map((x) => stripStringsOnly(x.text)).join('\n');
+export function deadFacadeFields(sources, corpusText) {
+  const corpus = corpusText === undefined ? sources.map((x) => stripStringsOnly(x.text)).join('\n') : corpusText;
   const out = [];
   for (const src of sources) {
     const lines = src.text.split('\n');
@@ -258,6 +271,39 @@ export function deadFacadeFields(sources) {
       const above = f.line >= 2 ? lines[f.line - 2] : '';
       if (lineText.includes('dead-exempt:') || above.includes('dead-exempt:')) continue;
       out.push({ file: src.path, line: f.line, name: f.name, kind: `门面字段零读点（${f.iface}）` });
+    }
+  }
+  return out;
+}
+
+/**
+ * 导出符号的**零消费者**检查（E368，跨文件）：appstate 的导出在整仓 + `tools/` 里出现 ≤2 次
+ * 即为"只有声明 + barrel 再导出"（= 没有任何引用点）。
+ *
+ * ## 两个必须写下来的边界
+ *
+ * · **语料必须包含 `tools/`**：本仓的纯逻辑大量**只被 fixture 读**（`SOURCE_KEYBOARD`、
+ *   `sheetNoteText`、`structSettingEditorHints` …）。不含 tools 时这一条会一次误报 **19 个** ——
+ *   fixture 是**真实读者**，不是噪音。
+ * · **`model/Wire.ets` 整文件排除**：它是**上游协议的词汇表**，形状先按协议写全、投影用到哪几项是后话，
+ *   那里天然躺着一批"暂时没人用"的符号（实测 30 个）。把它们当缺陷会让门禁天天红，
+ *   而协议表的正确性由 `compat-drift` 与 `dshcompat` 的契约测试管——不归这条规则。
+ */
+export function deadExports(sources, corpusText) {
+  const out = [];
+  const skip = new Set(['model/Wire.ets']);
+  for (const src of sources) {
+    if (!src.path.startsWith('appstate/src/main/ets/')) continue;
+    if (skip.has(src.path.slice('appstate/src/main/ets/'.length))) continue;
+    const lines = src.text.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const m = lines[i].match(/^export (?:interface|type|enum|function|class|const) (\w+)/);
+      if (m === null) continue;
+      const re = new RegExp(`(?<![\\w$])${m[1]}(?![\\w])`, 'g');
+      if ((corpusText.match(re) || []).length > 2) continue;
+      const above = i >= 1 ? lines[i - 1] : '';
+      if (lines[i].includes('dead-exempt:') || above.includes('dead-exempt:')) continue;
+      out.push({ file: src.path, line: i + 1, name: m[1], kind: '零消费者导出' });
     }
   }
   return out;
@@ -319,6 +365,21 @@ export function scanText(text) {
   return violations;
 }
 
+/** 语料收集：`.ets` 与 `.mjs`（fixture）都算读者 —— 只收 `.ets` 时规则⑤会误报 27 处 */
+function collectCorpus(dir, out) {
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const e of entries) {
+    const p = join(dir, e.name);
+    if (e.isDirectory()) collectCorpus(p, out);
+    else if (e.name.endsWith('.ets') || e.name.endsWith('.mjs')) out.push(p);
+  }
+}
+
 function collect(dir, out) {
   let entries;
   try {
@@ -335,6 +396,7 @@ function collect(dir, out) {
 
 /** 注入式自检：正例必须命中，五类反例必须不误报 */
 function selfTest() {
+  let bad = 0;
   const cases = [
     {
       what: '零使用 import（E345 的真实形态：搬迁后宿主还留着导入）',
@@ -416,6 +478,36 @@ function selfTest() {
       expect: 0
     }
   ];
+  const exportCases = [
+    {
+      what: '零消费者导出：只有声明 + barrel（E368 的真实形态）',
+      sources: [{ path: 'appstate/src/main/ets/model/A.ets', text: 'export const USED_ONLY_BY_BARREL: number = 1;\n' }],
+      corpus: 'export { USED_ONLY_BY_BARREL } from \'./A\';\n',
+      expect: 1
+    },
+    {
+      what: '只被 fixture 读的导出（不误报：语料含 tools/）',
+      sources: [{ path: 'appstate/src/main/ets/model/A.ets', text: 'export function pureRule(): boolean {\n  return true;\n}\n' }],
+      // 语料 = 声明 + barrel + fixture 的调用（真实门禁的语料就是"所有源文件拼起来"）
+      corpus: 'export function pureRule(): boolean {\n  return true;\n}\n'
+        + 'export { pureRule } from \'./A\';\n'
+        + 'const t = require2(\'./A.js\');\nt.eq(\'x\', pureRule(), true);\n',
+      expect: 0
+    },
+    {
+      what: '`Wire.ets` 的协议词汇表整文件排除（不误报）',
+      sources: [{ path: 'appstate/src/main/ets/model/Wire.ets', text: 'export interface SessionListValue {\n  items: string[];\n}\n' }],
+      corpus: 'export type { SessionListValue } from \'./model/Wire\';\n',
+      expect: 0
+    }
+  ];
+  for (const c of exportCases) {
+    const got = deadExports(c.sources, c.corpus).length;
+    const ok = got === c.expect;
+    if (!ok) bad++;
+    console.log(`${ok ? '✅' : '❌'} ${c.what}：期望 ${c.expect}，实得 ${got}`);
+  }
+
   for (const c of facadeCases) {
     const got = deadFacadeFields(c.sources).length;
     const ok = got === c.expect;
@@ -423,7 +515,6 @@ function selfTest() {
     console.log(`${ok ? '✅' : '❌'} ${c.what}：期望 ${c.expect}，实得 ${got}`);
   }
 
-  let bad = 0;
   for (const c of cases) {
     const got = scanText(c.text).length;
     const ok = got === c.expect;
@@ -459,6 +550,7 @@ function main(argv) {
   const violations = [];
   let checked = 0;
   let facadeChecked = 0;
+  let exportChecked = 0;
   const sources = [];
   for (const f of files) {
     const rel = relative(ROOT, f).replace(/\\/g, '/');
@@ -470,20 +562,29 @@ function main(argv) {
     for (const v of scanText(text)) violations.push({ file: rel, ...v });
   }
   // ④ 门面字段零读点（跨文件）：读者在子组件、写在宿主 —— 必须整仓一起数
-  for (const v of deadFacadeFields(sources)) violations.push(v);
+  // ⑤ 零消费者导出（跨文件）：语料**必须**含 tools/（fixture 是纯逻辑的真实读者）
+  const extraSources = [];
+  for (const dir of CORPUS_DIRS) collectCorpus(join(ROOT, dir), extraSources);
+  const corpusSources = sources.concat(extraSources.map((f) => ({
+    path: relative(ROOT, f).replace(/\\/g, '/'), text: readFileSync(f, 'utf8')
+  })));
+  const corpus = corpusSources.map((x) => stripStringsOnly(x.text)).join('\n');
+  for (const v of deadFacadeFields(sources, corpus)) violations.push(v);
+  for (const v of deadExports(sources, corpus)) violations.push(v);
+  exportChecked = sources.reduce((n, x) => n + (x.text.match(/^export (?:interface|type|enum|function|class|const) /gm) || []).length, 0);
 
   console.log('# 死代码门禁：搬迁留下的壳不许留在原地\n');
-  console.log(`扫描文件 ${files.length} 个 · 判定声明 ${checked} 处 · 门面字段 ${facadeChecked} 个`);
+  console.log(`扫描文件 ${files.length} 个 · 判定声明 ${checked} 处 · 门面字段 ${facadeChecked} 个 · 导出符号 ${exportChecked} 个`);
   if (argv.includes('--list')) {
     console.log('（--list 只打印统计；逐条清单见违规列表）');
   }
 
   if (violations.length === 0) {
-    console.log('✅ 无死代码：没有零使用的 import / @Builder / 组件成员，也没有零读点的门面字段。');
+    console.log('✅ 无死代码：零使用 import / @Builder / 组件成员、零读点门面字段、零消费者导出，四类都没有。');
     process.exit(0);
   }
 
-  console.log(`❌ 检出 ${violations.length} 处零使用声明（E345 / E346 / E346b / E367 都是这一类）：\n`);
+  console.log(`❌ 检出 ${violations.length} 处零使用声明（E345 / E346 / E346b / E367 / E368 都是这一类）：\n`);
   for (const v of violations) {
     console.log(`  ${v.file}:${v.line}  ${v.kind}：${v.name}`);
   }

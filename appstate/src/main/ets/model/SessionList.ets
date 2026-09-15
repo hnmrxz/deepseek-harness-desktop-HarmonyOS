@@ -129,11 +129,6 @@ export function sessionListEndpoint(): string {
   return SESSION_LIST_ENDPOINT;
 }
 
-/** 会话查询的 args 载荷（形状由 dshcompat 的上表决定） */
-export function sessionListPayload(body: Object): Object | undefined {
-  return sessionListArgs(body);
-}
-
 /** 按候选键名取第一个非空字符串 */
 function pickString(source: Object, keys: string[]): string {
   for (let i = 0; i < keys.length; i++) {

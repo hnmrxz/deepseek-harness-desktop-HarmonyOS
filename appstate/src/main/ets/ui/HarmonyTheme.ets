@@ -191,30 +191,6 @@ export class HarmonyElevation {
 
 // ───────────────────────── ③b 材质（Material） ─────────────────────────
 
-/**
- * 材质层：**当前不启用系统沉浸光感**，用系统阴影 + 半透明表面表达层次。
- *
- * 【这是一个已决策项，不是待办】（2026-09-14，项目负责人决定）
- * 官方「沉浸光感」（空间化材质：内容相关毛玻璃、按压弹性光效、滑动透明度渐变，
- * 覆盖 Popup/Menu/BindSheet/Dialog 等浮层）明确要求 **`targetAPIVersion >= 26`**，
- * 而本仓 `build-profile.json5` 固定在 `compatibleSdkVersion: 6.1.1(24)`。
- * 决定是：**API 暂定保持 24，后期再考虑升级** ⇒ 现在**不**引入需要 26 的 API。
- *
- * 【为什么把这条写进代码而不是只写进文档】否则半年后总有人问"为什么不用沉浸光感"，
- * 或者更糟——有人以为可以顺手开一下，写出一个在目标设备上不生效的材质。
- * 这里用常量把事实固定下来，视图层可以据此分支，且**升级时只改这一处**。
- *
- * 升级后要动的地方（一次性列清楚）：① 本常量置 true；② `build-profile.json5` 提 target；
- * ③ 按官方《沉浸光感功耗优化》克制地只用在常驻外壳（Composer / Toolbar / 面板头 / 命令面板 /
- * 模型选择 / 浮动操作区 / 底部导航），**不要全页滥用**（官方明确它耗大量 GPU）。
- */
-export class HarmonyMaterial {
-  /** 是否可用系统沉浸光感（受 targetAPIVersion 限制） */
-  static readonly IMMERSIVE_ENABLED: boolean = false;
-  /** 不可用时的替代：层次由阴影层级表达（见 `HarmonyElevation`） */
-  static readonly FALLBACK_IS_SHADOW: boolean = true;
-}
-
 // ───────────────────────── ④ 动效 ─────────────────────────
 
 /**
@@ -270,6 +246,7 @@ export interface WebTokenMapping {
   note: string;
 }
 
+// dead-exempt: 文档化数据（官方 --dsw-* → 本仓令牌的逐条对照）；parity-matrix 已登记"还没有强制门禁"，给它与人与文档核对用
 export const WEB_TOKEN_MAP: WebTokenMapping[] = [
   { web: '--dsw-color-bg', harmony: 'HarmonyColor.SURFACE', note: '页面底色 → 系统 background_primary（深浅色自动）' },
   { web: '--dsw-color-bg-elevated', harmony: 'HarmonyColor.SURFACE_RAISED', note: '抬起的栏/卡片 → background_secondary' },
@@ -293,13 +270,3 @@ export const WEB_TOKEN_MAP: WebTokenMapping[] = [
   { web: '--dsw-duration-fast', harmony: 'HarmonyMotion.STATE', note: '状态切换时长' },
   { web: '--dsw-duration-normal', harmony: 'HarmonyMotion.TRANSITION', note: '常规过渡时长' }
 ];
-
-/** 查一条 Web token 映射（界面与 fixture 都用它，避免各处字符串比较） */
-export function harmonyTokenFor(webToken: string): string {
-  for (let i = 0; i < WEB_TOKEN_MAP.length; i++) {
-    if (WEB_TOKEN_MAP[i].web === webToken) {
-      return WEB_TOKEN_MAP[i].harmony;
-    }
-  }
-  return '';
-}

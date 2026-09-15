@@ -312,21 +312,6 @@ export function withdrawalKeysFor(kind: NotifyKind, sessionId: string, pendingId
   return [dedupeKeyOf(kind, sessionId, pendingId)];
 }
 
-/**
- * 会话被整体处理掉（归档 / 删除 / 切走并清理）时要撤回的键：该会话的**全部**通知类型。
- *
- * 取舍：撤回是「按已知 key 取消」，所以只能穷举该会话的六种 kind，
- * 而不是「按前缀批量取消」。前者不依赖 platform 提供新能力，且在键结构变化时
- * 会立刻编译期暴露（新增 kind 时本函数必须同步补上）。
- */
-export function withdrawalKeysForSession(sessionId: string): string[] {
-  const out: string[] = [];
-  for (let i = 0; i < NOTIFY_POLICIES.length; i++) {
-    out.push(dedupeKeyOf(NOTIFY_POLICIES[i].kind, sessionId, ''));
-  }
-  return out;
-}
-
 // ───────────────────────── 路由与草稿 ─────────────────────────
 
 /**
@@ -399,39 +384,6 @@ export function notificationFor(input: NotifyInput): NotificationDraft {
 }
 
 // ───────────────────────── 未授权时的应用内降级 ─────────────────────────
-
-/** 应用内降级提示（通知发不出去时 UI 直接渲染这段文字）。 */
-export interface InAppNotice {
-  title: string;
-  body: string;
-  /** 该条是否允许用户点击直达（与通知点击同语义） */
-  route: NotifyRoute;
-}
-
-/**
- * 用户拒绝通知授权时的应用内文案。
- *
- * 存在理由（D3 §6 与 `NotificationCenter.ensureEnabled()` 的契约）：
- *   授权失败**不是错误**，只是降级——「不许因为没通知就丢事件」。
- *   因此策略层必须能产出**同一份信息**的应用内版本，且它必然与通知正文一致
- *   （同一个 `notificationFor()` 产物加一个「需要处理」前缀），
- *   否则两条通道的措辞会各自漂移。
- *
- * 取舍：应用内版本可以比通知更啰嗦（它不在锁屏上，泄露面小得多），
- * 但我们仍复用同一条已脱敏正文，保持「一处脱敏、处处脱敏」的单一实现。
- */
-export function inAppFallbackText(input: NotifyInput): InAppNotice {
-  const draft: NotificationDraft = notificationFor(input);
-  const policy: NotifyPolicy = policyOf(input.kind);
-  const prefix: string = policy.slot === NotifySlot.DECISION ? '需要你处理：' : '';
-  const route: NotifyRoute | undefined = draft.route;
-  return {
-    title: `${prefix}${draft.title}`,
-    body: draft.body,
-    // route 在 notificationFor 里必然被赋值；这里的兜底只为满足类型收窄，不代表可发生。
-    route: route !== undefined ? route : { page: 'sessions' }
-  };
-}
 
 /**
  * 路由里允许出现的页面名。
@@ -548,27 +500,6 @@ export function notifyInputForTurn(sessionId: string, sessionTitle: string, host
     kind: failed ? NotifyKind.FAILURE : NotifyKind.TURN_DONE,
     sessionId: sessionId,
     sessionTitle: sessionTitle,
-    detailText: '',
-    pendingId: '',
-    hostId: hostId
-  };
-}
-
-/**
- * 连接状态变化 → 通知入参。
- *
- * 【为什么目前**不**接线】D3 §6 把「连接断开」定为低优先级且**默认关闭**，
- * 而本客户端尚未实现本机偏好（没有那个开关）。更关键的是实测现实：
- * 这台设备上长连接约 5 秒就断一次（见 D2 §8.7.19），
- * 按默认开启发布会让用户每 5 秒收一条"连接断开"——比不发更糟。
- * 因此这里只保留入参构造，等"本机偏好"落地后再由偏好决定是否发布。
- */
-export function notifyInputForConnection(hostName: string, hostId: string): NotifyInput {
-  return {
-    kind: NotifyKind.DISCONNECTED,
-    sessionId: '',
-    // 连接通知的"标题"位置放 Host 名（D3 §6 该行正文只有 Host 名）
-    sessionTitle: hostName,
     detailText: '',
     pendingId: '',
     hostId: hostId
