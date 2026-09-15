@@ -94,6 +94,8 @@ import {
   DEFAULT_MODEL_NS,
   SettingsWriteOutcome,
   settingsDomainOfNs,
+  sheetNoteText,
+  sheetNoteVisible,
   workspaceNameOf,
   splitSettingKey,
   parseSettingInput,
@@ -517,6 +519,18 @@ struct Index {
    * 每个会盖住内容的界面都必须有自己的结果出口。
    */
   @State credentialNote: string = '';
+  /**
+   * 这条回执**属于哪个浮层**（E353：空串 = 没人认领）。
+   *
+   * 【为什么必须有它】三个浮层（凭据 / 文本设置 / 结构设置）共用 `credentialNote` 与
+   * `credentialBusy` 这一对字段。实测后果：在凭据浮层里写入失败 → 关掉 → 打开「编辑文本设置」，
+   * **那条凭据的失败文案会出现在文本编辑浮层里**；而在文本浮层里提交还会把凭据浮层的
+   * 按钮置忙（`credentialBusy` 被跨浮层读）。这与设置页那条"回执没有归属域"（E347）是同一类缺陷。
+   *
+   * 取值是 `sheetKind()` 的三个返回值之一：`credential` / `text` / `struct`。
+   * 每个浮层只在"这条回执是我的"时显示它；打开浮层时由它认领并清空上一条。
+   */
+  @State sheetNoteOwner: string = '';
   /** 凭据请求进行中（防重复提交；不复用 `connectBusy`，那是连接的状态） */
   @State credentialBusy: boolean = false;
   /**
@@ -1040,11 +1054,14 @@ struct Index {
         this.credentialRef = '';
         this.credentialDraft = '';
         this.credentialNote = '';
+        this.sheetNoteOwner = '';
         hilog.info(DOMAIN, TAG, 'HDSH-BACK 关闭凭据编辑浮层');
         return true;
       case BackAction.CLOSE_SETTING_DRAFT:
         this.textSettingDraft = '';
         this.structSettingDraft = '';
+        this.credentialNote = '';
+        this.sheetNoteOwner = '';
         hilog.info(DOMAIN, TAG, 'HDSH-BACK 关闭设置编辑浮层');
         return true;
       case BackAction.CLOSE_SEARCH:
@@ -2775,8 +2792,8 @@ struct Index {
             })
         }
 
-        if (this.credentialNote.length > 0) {
-          Text(this.credentialNote)
+        if (sheetNoteVisible(this.sheetNoteOwner, 'credential')) {
+          Text(sheetNoteText(this.sheetNoteOwner, 'credential', this.credentialNote))
             .fontSize(Fs.CAPTION)
             .fontColor($r('sys.color.font_secondary'))
             .width('100%')
@@ -2799,6 +2816,7 @@ struct Index {
     // 清掉草稿：明文不该因为「关掉了浮层」而继续留在状态里
     this.credentialDraft = '';
     this.credentialNote = '';
+    this.sheetNoteOwner = '';
     this.credentialBusy = false;
   }
 
@@ -2806,6 +2824,9 @@ struct Index {
   private credentialConfigured: boolean = false;
 
   private openCredentialSheet(ref: string): void {
+    // 认领这条回执（并清掉上一个浮层留下的）：否则失败文案会跟到别的浮层里（E353）
+    this.sheetNoteOwner = 'credential';
+    this.credentialNote = '';
     for (let i = 0; i < this.credentials.length; i++) {
       if (this.credentials[i].ref === ref) {
         this.credentialConfigured = this.credentials[i].configured;
@@ -2906,15 +2927,17 @@ struct Index {
             })
           Button('写入 Host')
             .layoutWeight(1)
-            .enabled(this.textSettingDraft.length > 0 && !this.credentialBusy)
+            // 【只按自己的输入判断】此前这里读的是 `credentialBusy`（凭据浮层的忙标志）——
+            // 两个浮层互相影响：凭据在写时文本浮层的按钮也会变灰（E353）。
+            .enabled(this.textSettingDraft.length > 0)
             .onClick(() => {
               this.submitTextSetting();
             })
         }
         .width('100%')
 
-        if (this.credentialNote.length > 0) {
-          Text(this.credentialNote)
+        if (sheetNoteVisible(this.sheetNoteOwner, 'text')) {
+          Text(sheetNoteText(this.sheetNoteOwner, 'text', this.credentialNote))
             .fontSize(Fs.CAPTION)
             .fontColor($r('sys.color.font_secondary'))
             .width('100%')
@@ -2969,7 +2992,7 @@ struct Index {
     this.textSettingDraft = '';
     this.textSettingItem = undefined;
     this.credentialNote = '';
-    this.credentialBusy = false;
+    this.sheetNoteOwner = '';
   }
 
   private openTextSettingSheet(item: SettingItem): void {
@@ -2978,8 +3001,9 @@ struct Index {
     // 预填当前值：改一个长数字串时，让用户从现值改起比从空开始可靠得多
     this.textSettingDraft = item.textValue;
     this.textSettingItem = item;
+    // 认领回执并清掉上一条（E353）
+    this.sheetNoteOwner = 'text';
     this.credentialNote = '';
-    this.credentialBusy = false;
   }
 
   private async submitTextSetting(): Promise<void> {
@@ -2995,11 +3019,11 @@ struct Index {
       return;
     }
     const key: string = item.key;
-    this.credentialBusy = true;
+    this.textBusy = true;
     this.credentialNote = `正在写入 ${key}…`;
     const hub: SessionHub = SessionHub.shared();
     const result: SettingsWriteResult = await hub.writeSetting(key, parsed.value);
-    this.credentialBusy = false;
+    this.textBusy = false;
     if (result.outcome === SettingsWriteOutcome.OK) {
       this.settingWriteNote = result.message;
       this.closeTextSettingSheet();
@@ -3072,7 +3096,8 @@ struct Index {
 
         Button('写入 Host')
           .width('100%')
-          .enabled(!this.credentialBusy)
+          // 【只按自己的输入判断】此前读的是凭据浮层的忙标志（E353）
+          .enabled(this.structSettingDraft.length > 0 && !this.structBusy)
           .onClick(() => {
             this.submitStructSetting();
           })
@@ -3086,7 +3111,7 @@ struct Index {
         if (this.structSettingItem !== undefined && this.structSettingItem.userSet) {
           Button('恢复默认（移除这里的设置）')
             .width('100%')
-            .enabled(!this.credentialBusy)
+            .enabled(!this.structBusy)
             .backgroundColor($r('sys.color.background_secondary'))
             .fontColor($r('sys.color.warning'))
             .onClick(() => {
@@ -3094,8 +3119,8 @@ struct Index {
             })
         }
 
-        if (this.credentialNote.length > 0) {
-          Text(this.credentialNote)
+        if (sheetNoteVisible(this.sheetNoteOwner, 'struct')) {
+          Text(sheetNoteText(this.sheetNoteOwner, 'struct', this.credentialNote))
             .fontSize(Fs.CAPTION)
             .fontColor($r('sys.color.font_secondary'))
             .width('100%')
@@ -3128,13 +3153,20 @@ struct Index {
     this.credentialBusy = false;
   }
 
+  /** 结构设置写入进行中（**本浮层自己的**忙标志；此前借用了凭据浮层的，见 E353） */
+  @State structBusy: boolean = false;
+  /** 文本设置写入进行中（同上：本浮层自己的） */
+  @State textBusy: boolean = false;
+
   private openStructSettingSheet(item: SettingItem): void {
     this.structSettingKey = item.key;
     this.structSettingLabel = item.label;
     this.structSettingDraft = prettyJson(item.rawJson);
     this.structSettingItem = item;
+    // 认领回执并清掉上一条（E353）
+    this.sheetNoteOwner = 'struct';
     this.credentialNote = '';
-    this.credentialBusy = false;
+    this.structBusy = false;
   }
 
   private async submitStructSetting(): Promise<void> {
@@ -3148,12 +3180,12 @@ struct Index {
       return;
     }
     const key: string = item.key;
-    this.credentialBusy = true;
+    this.structBusy = true;
     this.credentialNote = `正在写入 ${key}…`;
     const hub: SessionHub = SessionHub.shared();
     // 整值写回：`parsed.value` 已经是完整的新值（见 SettingKind.STRUCT 的说明）
     const result: SettingsWriteResult = await hub.writeSetting(key, parsed.value);
-    this.credentialBusy = false;
+    this.structBusy = false;
     if (result.outcome === SettingsWriteOutcome.OK) {
       this.settingWriteNote = result.message;
       this.closeStructSettingSheet();

@@ -101,6 +101,7 @@ export {
   splitSettingKey
 } from './model/Settings';
 export { sessionContextLine, workspaceNameOf } from './model/SessionContext';
+export { sheetNoteText, sheetNoteVisible } from './model/Sheets';
 export type {
   AboutInfo,
   ConnectionBanner,

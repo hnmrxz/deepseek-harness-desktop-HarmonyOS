@@ -49,6 +49,8 @@ const PURE_FILES = [
   'appstate/src/main/ets/model/SettingsDomains.ets',
   // 会话头上下文行（P2-7）：零依赖，故可以被本 fixture 直接执行
   'appstate/src/main/ets/model/SessionContext.ets',
+  // 浮层回执归属（P2-8，E353）：零依赖
+  'appstate/src/main/ets/model/Sheets.ets',
   'appstate/src/main/ets/model/PanelRegistry.ets',
   'appstate/src/main/ets/model/NavigationState.ets',
   'appstate/src/main/ets/model/Follow.ets',
@@ -200,6 +202,7 @@ const NS = require2('./NavigationState.js');
 const MD = require2('./Markdown.js');
 const SD = require2('./SettingsDomains.js');
 const SC = require2('./SessionContext.js');
+const SH = require2('./Sheets.js');
 const t = makeAsserter(selfTest);
 
 console.log('# 布局 fixture 门禁（四形态 + 断点边界 + 让步链）\n');
@@ -1570,6 +1573,34 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
     t.eq('没有时间', sessionContextLine('app', 'm', ''), '工作区 app · 模型 m');
     t.eq('只有工作区', sessionContextLine('app', '', ''), '工作区 app');
     t.eq('一段都没有 ⇒ 空串（界面整行不画）', sessionContextLine('', '', ''), '');
+  }
+
+  // ── P2-8：浮层回执的归属（E353：一个全局回执被三个浮层读 ⇒ 串浮层）──
+  {
+    const { sheetNoteVisible, sheetNoteText, SHEET_NOTE_NONE,
+      SHEET_NOTE_CREDENTIAL, SHEET_NOTE_TEXT, SHEET_NOTE_STRUCT } = SH;
+
+    // 归属相符才显示
+    t.eq('凭据浮层：回执是自己的', sheetNoteVisible(SHEET_NOTE_CREDENTIAL, 'credential'), true);
+    t.eq('文本浮层：回执是凭据的 ⇒ 不显示', sheetNoteVisible(SHEET_NOTE_CREDENTIAL, 'text'), false);
+    t.eq('结构浮层：回执是文本的 ⇒ 不显示', sheetNoteVisible(SHEET_NOTE_TEXT, 'struct'), false);
+    t.eq('结构浮层：回执是自己的', sheetNoteVisible(SHEET_NOTE_STRUCT, 'struct'), true);
+
+    // 没人认领（刚关掉某个浮层 / 还没写过）⇒ 一律不显示
+    t.eq('无人认领 ⇒ 不显示（不知道谁写的错误比不显示更糟）',
+      sheetNoteVisible(SHEET_NOTE_NONE, 'credential'), false);
+    t.eq('无人认领 + 文本浮层 ⇒ 不显示', sheetNoteVisible(SHEET_NOTE_NONE, 'text'), false);
+
+    // 文案出口：归属对且非空才有文本
+    t.eq('文案：归属对且有内容', sheetNoteText('credential', 'credential', '已写入'), '已写入');
+    t.eq('文案：归属不对 ⇒ 空串（界面拿不到文案）',
+      sheetNoteText('credential', 'text', '已写入'), '');
+    t.eq('文案：归属对但内容为空 ⇒ 空串', sheetNoteText('struct', 'struct', ''), '');
+
+    // 三个取值本身要稳定（它们与 sheetKind() 的返回值对齐）
+    t.eq('三个归属取值', [SHEET_NOTE_CREDENTIAL, SHEET_NOTE_TEXT, SHEET_NOTE_STRUCT].join(','),
+      'credential,text,struct');
+    t.eq('未认领是空串', SHEET_NOTE_NONE, '');
   }
 }
 
