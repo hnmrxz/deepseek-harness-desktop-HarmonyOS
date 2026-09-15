@@ -19,7 +19,7 @@
 
 import { HubBanner } from './HubBanner';
 import { PendingPane } from './PendingPane';
-import { CoreViewState, Fs, HarmonyIconSize, HubPhase, PendingItem, Radius, SessionListItem, Sp, Sz, WorkspaceItem, formatClock, relativeTime, sessionEmptyCopy } from 'appstate';
+import { CoreViewState, Fs, HarmonyIconSize, HubPhase, PendingItem, Radius, SessionListItem, SessionSearchRow, Sp, Sz, WorkspaceItem, formatClock, relativeTime, sessionEmptyCopy } from 'appstate';
 
 export interface WorkspaceBrowserFacade {
   answerPending: (item: PendingItem, selected: string[], custom: string) => void;
@@ -51,6 +51,13 @@ export interface WorkspaceBrowserFacade {
   sessionsOf: (w: WorkspaceItem) => SessionListItem[];
   setArchiveOpen: (value: boolean) => void;
   workspaces: WorkspaceItem[];
+  /*
+   * 会话搜索（P7-1，对齐官方 sidebar 的 search）：结果与降级说明由中枢给
+   * （Host 的**内容命中**只有中枢拿得到）；查询经回调交回中枢。
+   */
+  sessionSearchRows: SessionSearchRow[];
+  sessionSearchNote: string;
+  onSearchSessions: (query: string) => void;
 }
 
 @Component
@@ -62,6 +69,71 @@ export struct WorkspaceBrowser {
   /** 是否紧凑（由挂载方按轨道宽度给） */
 
   @Prop compact: boolean = false;
+
+  /** 搜索关键词（**视图自己的状态**：只影响这一页显示；结果由中枢给） */
+  @State query: string = '';
+
+  /**
+   * 搜索结果区（官方 `dsh-client-ui-workspace` 的形态：**扁平的行**，不是树）。
+   *
+   * 每行 = 标题 + 工作区上下文 +（可选）内容片段。有内容命中时片段在最下，
+   * 用较弱的颜色；没有片段（只按标题命中）就只画上面两行 —— 不画空块。
+   */
+  @Builder
+  searchResults() {
+    if (this.f.sessionSearchRows.length === 0) {
+      Text(this.f.sessionSearchNote.length > 0 ? this.f.sessionSearchNote : '没有匹配的会话。')
+        .fontSize(Fs.CAPTION)
+        .fontColor($r('sys.color.font_tertiary'))
+        .width('100%')
+        .padding(Sp.M)
+        .borderRadius(Radius.M)
+        .backgroundColor($r('sys.color.background_secondary'))
+    } else {
+      if (this.f.sessionSearchNote.length > 0) {
+        // 降级说明（老 Host 没有内容搜索）**必须显示**：不说清的话，用户会以为"搜不到就是没有"
+        Text(this.f.sessionSearchNote)
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.warning'))
+          .width('100%')
+      }
+      ForEach(this.f.sessionSearchRows, (row: SessionSearchRow) => {
+        Column({ space: 2 }) {
+          Row({ space: Sp.S }) {
+            Text(row.title)
+              .fontSize(Fs.SECONDARY)
+              .layoutWeight(1)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+            if (row.workspace.length > 0) {
+              Text(row.workspace)
+                .fontSize(Fs.CAPTION)
+                .fontColor($r('sys.color.font_tertiary'))
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+            }
+          }
+          .width('100%')
+          if (row.snippet.length > 0) {
+            Text(row.snippet)
+              .fontSize(Fs.CAPTION)
+              .fontColor($r('sys.color.font_secondary'))
+              .width('100%')
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+        }
+        .width('100%')
+        .padding(Sp.M)
+        .borderRadius(Radius.M)
+        .backgroundColor($r('sys.color.background_secondary'))
+        .accessibilityText(row.workspace.length > 0 ? `${row.title}，工作区 ${row.workspace}` : row.title)
+        .onClick(() => {
+          this.f.openSession(row.sessionId);
+        })
+      }, (row: SessionSearchRow) => row.sessionId)
+    }
+  }
 
   @Builder
   workspaceHub(compact: boolean) {
@@ -109,6 +181,23 @@ export struct WorkspaceBrowser {
         })
       .width('100%')
       .height(Sz.TOUCH_MIN)
+
+      /*
+       * 会话搜索（P7-1）。放在会话区域的正上方：官方 sidebar 的搜索也贴着会话列表。
+       * 输入框的字是**本组件状态**（同 `SettingsPlugins` 的过滤词），只影响这一页显示。
+       */
+      TextInput({ placeholder: '搜索会话（标题或内容）' })
+        .fontSize(Fs.SECONDARY)
+        .height(Sz.TOUCH_MIN)
+        .width('100%')
+        .onChange((value: string) => {
+          this.query = value;
+          this.f.onSearchSessions(value);
+        })
+
+      if (this.query.trim().length > 0) {
+        this.searchResults()
+      }
 
       if (this.f.pending.length > 0) {
         Column({ space: Sp.XS }) {
@@ -194,6 +283,15 @@ export struct WorkspaceBrowser {
         }
       }
 
+      /*
+       * 搜索时**不画树**（官方语义：搜索把"会话区"换成扁平结果列表）。
+       *
+       * 【为什么用 visibility 而不是把整段挪进 if】树这一段的根节点带着 `layoutWeight(1)`
+       * 与列表滚动状态，把它整段包进条件分支要重排上百行（风险远大于收益）。
+       * `Visibility.None` 既不可见也不占位 ⇒ 视觉效果与"不渲染"一致。
+       * 空白态与树一起隐藏：搜索期间用户要的是结果，不是"还没有工作区"的引导。
+       */
+      Column() {
       if (this.f.workspaces.length === 0) {
         // 空态按核心阶段分档（D7 §3 第 7 项）：把"看不到会话"引向正确的排查方向
         Column({ space: Sp.S }) {
@@ -228,6 +326,10 @@ export struct WorkspaceBrowser {
         .layoutWeight(1)
         .scrollBar(BarState.Off)
       }
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .visibility(this.query.trim().length > 0 ? Visibility.None : Visibility.Visible)
     }
     .width('100%')
     .height('100%')

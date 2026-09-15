@@ -160,7 +160,7 @@ import {
  * 原因：`HubSnapshot` / `HubSubscriber` 在 appstate 里是 `export type` 导出的类型，
  * 与值导入分开写更贴近 ArkTS 的类型/值导入区分。
  */
-import type { AttachOutcome, PluginInventoryTotals, CredentialWriteResult, HubSnapshot, HubSubscriber, InputModality, LayoutDecision, LayoutInput, ModalityEvidence, NavState, NavigationState, OverlayState, PluginRow, SessionJob, SessionStatsInput, SettingChoice, SettingInputResult, SettingItem, SettingsKeyParts, SettingsWriteResult, TabSelection } from 'appstate';
+import type { AttachOutcome, PluginInventoryTotals, CredentialWriteResult, HubSnapshot, HubSubscriber, InputModality, LayoutDecision, LayoutInput, ModalityEvidence, NavState, NavigationState, OverlayState, PluginRow, SessionJob, SessionSearchRow, SessionStatsInput, SettingChoice, SettingInputResult, SettingItem, SettingsKeyParts, SettingsWriteResult, TabSelection } from 'appstate';
 import { emitter } from '@kit.BasicServicesKit';
 import { parseJson } from 'connection';
 import { EVENT_HOST_CONNECTED, EVENT_KEY_HOST_TOKEN, EVENT_KEY_HOST_URL } from 'platform';
@@ -718,6 +718,12 @@ struct Index {
   @State hubUnknownEvents: number = 0;
   /** 协议旁路日志（取尾部若干行展示，用于区分「列表为空」与「调用失败」） */
   @State hubTrace: string[] = [];
+  /*
+   * 会话搜索（P7-1）：结果与降级说明都由中枢给（只有它拿得到 Host 的内容命中）。
+   * 输入框里的字是**视图自己的** `@State`（只影响这一页显示），不往宿主搬。
+   */
+  @State sessionSearchRows: SessionSearchRow[] = [];
+  @State sessionSearchNote: string = '';
 
   private widthListener?: (size: window.Size) => void;
   /**
@@ -750,6 +756,8 @@ struct Index {
     this.hubStreams = s.activeStreams;
     this.hubUnknownEvents = s.unknownEventTypes.length;
     this.hubTrace = s.trace;
+    this.sessionSearchRows = s.searchRows;
+    this.sessionSearchNote = s.searchNote;
     this.hubConnected = s.connected;
     // E124：宿主报告的权限组合（真实事实，不是我们写死的默认值）
     this.permissionCurrent = s.permissionsCurrent;
@@ -3871,6 +3879,14 @@ struct Index {
       this.archiveOpen = value;
     },
     workspaces: this.workspaces,
+    // 会话搜索（P7-1）：读中枢合并后的扁平结果；查询交给中枢（只有它能问 Host 要内容命中）
+    sessionSearchRows: this.sessionSearchRows,
+    sessionSearchNote: this.sessionSearchNote,
+    onSearchSessions: (query: string) => {
+      SessionHub.shared().searchSessions(query).catch(() => {
+        // 失败已由中枢写进搜索说明并随快照到达 ⇒ 这里不重复提示
+      });
+    },
     };
     return facade;
   }

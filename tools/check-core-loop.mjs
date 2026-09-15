@@ -15,7 +15,8 @@
  *       → session/list 再看一次（**新会话必须在列表里**）
  *       → session/prompt → 等事件流回帧
  *   **M2（状态机）**：把 `SessionHub`（应用真正的中枢，窗口只是它的视图）接进同一个垫片环境，
- *     再跑「配置 → 连接 → 新建会话 → 自动选中 → 发消息 → 轨迹有内容 → 事件类型全部认识」。
+ *     再跑「配置 → 连接 → 新建会话 → 自动选中 → 发消息 → 轨迹有内容 → 事件类型全部认识
+ *     → 会话搜索（内容命中或如实降级）」。
  *
  * ───────────────────── 它**不**证明什么（写清楚，免得被当验收） ─────────────────────
  *   · 端侧 jitless 下 ArkTS 的 `http`/`webSocket` 与 Node 的实现**有已知差异**
@@ -364,6 +365,16 @@ async function main() {
     `已受理 · 轨迹 ${beforeSnap.trajectory.length} → ${snap.trajectory.length} 条 · outbox=${snap.outbox}`
     + (grew ? '' : '（**本机没有配模型 ⇒ 不会有回答回流**，属预期；有模型的机器上这里应看到轨迹增长）')
     + (snap.lastError.length > 0 ? ` lastError=${snap.lastError}` : ''));
+
+  /* M2c：会话搜索（官方 sidebar 的 search）—— 真 Host 上**要么给内容命中，要么明确说不支持** */
+  await hub.searchSessions('ping');
+  const searchSnap = hub.snapshot();
+  const degraded = searchSnap.searchNote.length > 0;
+  step('M2 会话搜索（session/search + 本地标题合并）', true,
+    degraded
+      ? `Host 未提供内容搜索 ⇒ 已降级为标题匹配：${searchSnap.searchNote}`
+      : `内容命中 → ${searchSnap.searchRows.length} 条扁平结果`
+        + (searchSnap.searchRows.length > 0 ? `（首条 ${searchSnap.searchRows[0].title}）` : ''));
 
   step('M2 会话统计（中枢已记账）', true,
     `turns=${snap.statsTurns} steps=${snap.statsSteps} llm=${snap.statsLlmMs}ms 工具=${snap.statsToolMs}ms`

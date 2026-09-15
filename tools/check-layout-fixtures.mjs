@@ -49,6 +49,10 @@ const PURE_FILES = [
   'appstate/src/main/ets/model/SettingsDomains.ets',
   // 会话头上下文行（P2-7）：零依赖，故可以被本 fixture 直接执行
   'appstate/src/main/ets/model/SessionContext.ets',
+  // 会话搜索（P7-1）：Host 内容命中 + 本地标题命中的合并规则。
+  // 【依赖说明】它 import 了 `SessionList`（行类型）与 `SessionContext`（工作区名），
+  // 两者都在本表里 ⇒ fixture 摊平后能解析（`tsc` 会在缺依赖时直接报出来，这正是我们要的）。
+  'appstate/src/main/ets/model/SessionSearch.ets',
   // 浮层回执归属（P2-8，E353）：零依赖
   'appstate/src/main/ets/model/Sheets.ets',
   // 设置编辑浮层的输入提示（P2-10）：零依赖
@@ -213,6 +217,7 @@ const SH = require2('./Sheets.js');
 const SE2 = require2('./SettingEditors.js');
 const CP = require2('./CoreProjection.js');
 const PRT = require2('./PluginRowsText.js');
+const SS = require2('./SessionSearch.js');
 const t = makeAsserter(selfTest);
 
 console.log('# 布局 fixture 门禁（四形态 + 断点边界 + 让步链）\n');
@@ -1802,6 +1807,63 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
     t.eq('文件名与入口脚本一致', USER_ROWS_FILENAME, '.hdsh-plugin-rows.yml');
     t.eq('路径 = profile 目录 + 文件名', userRowsPath('/data/app/profiles/ondevice'),
       '/data/app/profiles/ondevice/.hdsh-plugin-rows.yml');
+  }
+  // ── P7-1：会话搜索的合并规则（官方 sidebar 的扁平结果 = 标题 + 工作区 + 内容片段）──
+  {
+    const { mergeSessionSearch, SESSION_SEARCH_LIMIT, localOnlySearchNote } = SS;
+    const mk = (id, title, cwd) => ({ id: id, title: title, cwd: cwd, updatedAt: 0, createdAt: 0, running: false });
+
+    const local = [
+      mk('s1', '修 login 的会话', '/home/u/projects/app'),
+      mk('s2', '写文档', '/home/u/notes'),
+      mk('s3', '   ', '/home/u/x'),
+    ];
+
+    // ① Host 内容命中在前、本地标题命中在后
+    const merged = mergeSessionSearch(local, [{ sessionId: 's2', snippet: '…提到了 login 的报错…' }], 'login');
+    t.eq('Host 命中排第一（它已按相关性排过序）', merged[0].sessionId, 's2');
+    t.eq('Host 命中的内容片段原样带上（上游已截到 240 code points，我们不二次截断）',
+      merged[0].snippet, '…提到了 login 的报错…');
+    t.eq('本地标题命中补在后面', merged[1].sessionId, 's1');
+    t.eq('本地命中没有内容片段 ⇒ 空串（界面不画那一段）', merged[1].snippet, '');
+    t.eq('工作区名取会话 cwd 的末两段', merged[1].workspace, 'projects/app');
+
+    // ② 同一会话两路都命中 ⇒ 只留一条，且保留片段
+    const both = mergeSessionSearch(local, [{ sessionId: 's1', snippet: '片段' }], 'login');
+    t.eq('两路都命中时只留一条', both.filter((r) => r.sessionId === 's1').length, 1);
+    t.eq('留下的那条保留内容片段', both[0].snippet, '片段');
+
+    // ③ 标题为空的行**不参与本地匹配**（官方：blank rows are query-excluded）
+    t.eq('空标题不参与本地匹配（否则它能匹配任何查询）',
+      mergeSessionSearch(local, [], 'x').some((r) => r.sessionId === 's3'), false);
+
+    // ④ 大小写不敏感 + 查询去空白
+    t.eq('大小写不敏感', mergeSessionSearch(local, [], 'LOGIN')[0].sessionId, 's1');
+    t.eq('查询两侧空白被忽略', mergeSessionSearch(local, [], '  login  ')[0].sessionId, 's1');
+    t.eq('空查询 ⇒ 空结果（不返回全部）', mergeSessionSearch(local, [], '   ').length, 0);
+
+    // ⑤ Host 命中本地没有的会话 ⇒ **不丢**，标题用兜底、工作区留空
+    const orphan = mergeSessionSearch(local, [{ sessionId: 'unknown', snippet: 'x' }], 'q');
+    t.eq('本地查不到的 Host 命中仍然显示（内容确实命中了）', orphan.length, 1);
+    t.eq('标题用兜底文案（不编造）', orphan[0].title, '未命名会话');
+    t.eq('工作区留空 ⇒ 界面不画那一段', orphan[0].workspace, '');
+
+    // ⑥ 上限与上游一致（20）
+    t.eq('结果上限与上游 SESSION_SEARCH_RESULT_LIMIT 一致', SESSION_SEARCH_LIMIT, 20);
+    const many = [];
+    for (let i = 0; i < 30; i++) {
+      many.push(mk(`m${i}`, `hit ${i}`, '/a/b'));
+    }
+    t.eq('超过上限时截断到 20', mergeSessionSearch(many, [], 'hit').length, 20);
+    const manyHost = [];
+    for (let i = 0; i < 30; i++) {
+      manyHost.push({ sessionId: `h${i}`, snippet: 's' });
+    }
+    t.eq('Host 命中同样受上限约束', mergeSessionSearch([], manyHost, 'q').length, 20);
+
+    // ⑦ 降级说明必须说清"这是按标题匹配"（不是报错、也不能让用户以为搜不到就是没有）
+    t.eq('降级文案点名了原因与范围',
+      localOnlySearchNote().includes('session/search') && localOnlySearchNote().includes('按标题匹配'), true);
   }
 }
 

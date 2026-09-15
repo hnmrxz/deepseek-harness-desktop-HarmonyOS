@@ -82,6 +82,9 @@ export const SESSION_UPDATE_QUEUE_ENDPOINT: string = 'session/updateQueue';
  * （D2 §8.7.19），而一元 HTTP 是好的。实测这条端点能读出**整段历史**
  * （D2 §8.7.23），因此它给"读会话内容"提供了一条不依赖长连接的兜底通路。
  */
+/** 会话**内容**搜索（官方 sidebar 的 search；老 Host 可能没有 ⇒ 必须按能力降级） */
+export const SESSION_SEARCH_ENDPOINT: string = 'session/search';
+
 export const SESSION_PAGE_ENDPOINT: string = 'session/page';
 /** 会话轨迹流（**流式**，必须走 mux 载体） */
 export const SESSION_FOLLOW_ENDPOINT: string = 'session/follow';

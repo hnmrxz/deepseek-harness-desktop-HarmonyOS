@@ -79,6 +79,7 @@ import {
   SESSION_CREATE_ENDPOINT,
   SESSION_FOLLOW_ENDPOINT,
   SESSION_LIST_ENDPOINT,
+  SESSION_SEARCH_ENDPOINT,
   SESSION_PROMPT_ENDPOINT,
   SESSION_UPDATE_QUEUE_ENDPOINT,
   slotBinding,
@@ -104,6 +105,8 @@ import {
 } from 'dshcompat';
 import type { SessionEventShape, SlotBinding } from 'dshcompat';
 import { projectSessionList } from '../model/SessionList';
+import { localOnlySearchNote, mergeSessionSearch } from '../model/SessionSearch';
+import type { SessionSearchHit, SessionSearchLocal, SessionSearchRequest, SessionSearchRow } from '../model/SessionSearch';
 import {
   notifyInputForPending,
   notifyInputForTurn,
@@ -317,6 +320,10 @@ export interface HubSnapshot {
   trace: string[];
   /** 未识别的上游事件类型（自证缺口：设备上跑一次就能看到真实清单） */
   unknownEventTypes: string[];
+  /** 会话搜索：当前输入、合并后的扁平结果、降级说明（空串 = 内容搜索可用） */
+  searchQuery: string;
+  searchRows: SessionSearchRow[];
+  searchNote: string;
   /** 模型目录（来自 `session/modelCatalog`；未连接或能力缺失时为空数组） */
   models: ModelOption[];
   /** Host 为未配置会话准备的默认模型选择（无则 undefined，界面保持当前选择） */
@@ -486,6 +493,15 @@ export class SessionHub {
   private unaryReady: boolean = false;
   private lastError: string = '';
   private traceLines: string[] = [];
+  /*
+   * 会话搜索（P7-1，对齐官方 sidebar 的 search）：
+   *   · `searchQuery` 是**用户当前输入**（由视图交上来，中枢只是记住以便重绘时一致）；
+   *   · `searchRows` 是**合并后的扁平结果**（Host 内容命中 + 本地标题命中）；
+   *   · `searchNote` 是"为什么只有标题匹配"这类如实说明（空串 = 没问题）。
+   */
+  private searchQuery: string = '';
+  private searchRows: SessionSearchRow[] = [];
+  private searchNote: string = '';
   /**
    * 协议旁路日志开关。
    *
@@ -881,6 +897,9 @@ export class SessionHub {
       lastError: this.lastError,
       trace: this.traceLines,
       unknownEventTypes: this.unknownTypes,
+      searchQuery: this.searchQuery,
+      searchRows: this.searchRows,
+      searchNote: this.searchNote,
       models: this.models,
       defaultSelection: this.defaultSelection,
       permissionsCurrent: this.permissionsCurrent,
@@ -1856,6 +1875,65 @@ export class SessionHub {
       await this.selectSession(sessionId);
     }
     return sessionId;
+  }
+
+  /**
+   * 会话搜索（官方 sidebar 的 search）：**Host 按内容搜 + 本地按标题补**，合并成一条扁平结果。
+   *
+   * ## 三条降级路径，都必须说清而不是假装成功
+   *
+   *   1. 兼容面缺这个端点的契约（上表没生成）⇒ 只给标题匹配 + 说明原因；
+   *   2. 老 Host 没挂 `session/search`（上游：`session search is unavailable: this deployment
+   *      does not mount @deepseek-ai/dsh-session-query`）⇒ 同上，**这是能力差异不是错误**；
+   *   3. 空查询 ⇒ 清空结果（不返回全部会话，那会让"搜索"变成"列表"）。
+   *
+   * 本地标题匹配始终可用 ⇒ 即使内容搜索不可用，用户也能按名字找到会话。
+   */
+  async searchSessions(query: string): Promise<void> {
+    this.searchQuery = query;
+    if (query.trim().length === 0) {
+      this.searchRows = [];
+      this.searchNote = '';
+      this.notify();
+      return;
+    }
+    const local: SessionSearchLocal[] = [];
+    for (let i = 0; i < this.sessions.length; i++) {
+      const item: SessionListItem = this.sessions[i];
+      local.push({ id: item.id, title: item.title, cwd: item.cwd });
+    }
+    const body: SessionSearchRequest = { query: query };
+    const args: Object | undefined = argsFor(SESSION_SEARCH_ENDPOINT, body as Object);
+    if (args === undefined) {
+      this.searchRows = mergeSessionSearch(local, [], query);
+      this.searchNote = '兼容面缺少会话搜索端点的参数契约（上表未生成？）——下面是按标题匹配的结果。';
+      this.notify();
+      return;
+    }
+    const result: RpcResult = await this.conn.call(SESSION_SEARCH_ENDPOINT, args);
+    if (!result.ok) {
+      const failure: RemoteFailure | undefined = result.error;
+      const code: string = failure === undefined ? 'unknown' : failure.code;
+      this.searchRows = mergeSessionSearch(local, [], query);
+      this.searchNote = `${localOnlySearchNote()}（原因：${code}）`;
+      this.record(`search 降级 ${code}`);
+      this.notify();
+      return;
+    }
+    const hits: SessionSearchHit[] = [];
+    const raw: Object[] = getArray(result.value, 'items') ?? [];
+    for (let i = 0; i < raw.length; i++) {
+      const row: Object = raw[i];
+      const sessionId: string = getString(row, 'sessionId') ?? '';
+      if (sessionId.length === 0) {
+        continue;
+      }
+      hits.push({ sessionId: sessionId, snippet: getString(row, 'snippet') ?? '' });
+    }
+    this.searchRows = mergeSessionSearch(local, hits, query);
+    this.searchNote = '';
+    this.record(`search ok ${hits.length} 条内容命中 / ${this.searchRows.length} 条结果`);
+    this.notify();
   }
 
   /**

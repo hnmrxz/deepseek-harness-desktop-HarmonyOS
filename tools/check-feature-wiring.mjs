@@ -104,6 +104,14 @@ const FEATURES = [
    * 长期没有任何控制点（侧栏呈现完全由形态决定），于是官方 AppFrame 那个"收起侧栏腾出宽度"
    * 的动作在本仓做不到。现在钉住三段接线：纯函数判定 + 门面开关 + 视图里的控制点。
    */
+  /*
+   * 会话搜索（P7-1）。官方 sidebar 的一等能力（`dsh-client-ui-sidebar` 的包描述就是
+   * "session multi-level tree, search, grouping, state dots"），我们此前**一个入口都没有**。
+   * 钉三段接线：模型合并规则（Host 内容命中 + 本地标题命中）、中枢方法、视图传参。
+   * 注意**降级路径也是这条接线的一部分**：真 Host 未挂 `session/search` 时按标题匹配，
+   * 本机闭环实测走的就是这条（见 tools/check-core-loop.mjs 的 M2 段）。
+   */
+  { name: '会话搜索', patterns: [['mergeSessionSearch', 2], ['searchSessions', 2], ['sessionSearchRows', 2]] },
   { name: '侧栏收起', patterns: [['sidebarPresentationOf', 2], ['onToggleSidebarExpanded', 2], ['showExpandToggle', 2]] }
 ];
 
