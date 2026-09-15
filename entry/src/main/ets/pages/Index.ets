@@ -185,6 +185,7 @@ import { ConversationPane } from '../view/ConversationPane';
 import { MainHeaderShell } from '../view/shell/MainHeaderShell';
 import { RightbarShell } from '../view/shell/RightbarShell';
 import { SidebarShell } from '../view/shell/SidebarShell';
+import { TrackResizer } from '../view/shell/TrackResizer';
 import { CorePane } from '../view/CorePane';
 import { DetailPane } from '../view/DetailPane';
 import { DiagnosticsPane } from '../view/DiagnosticsPane';
@@ -3292,29 +3293,20 @@ struct Index {
    */
   @Builder
   detailResizer() {
-    Column() {
-      Divider()
-        .vertical(true)
-        .color($r('sys.color.comp_divider'))
-    }
-    .width(Sz.DRAG_GRIP)
-    .height('100%')
-    .justifyContent(FlexAlign.Center)
-    .responseRegion({ x: -(this.gripHitWidth() - Sz.DRAG_GRIP) / 2, y: 0,
-      width: this.gripHitWidth(), height: '100%' })
-    .accessibilityText('调整详情栏宽度')
-    .gesture(
-      PanGesture({ direction: PanDirection.Horizontal })
-        .onActionStart(() => {
-          this.beginDetailDrag();
-        })
-        .onActionUpdate((event: GestureEvent) => {
-          this.updateDetailDrag(event.offsetX);
-        })
-        .onActionEnd(() => {
-          this.endDetailDrag();
-        })
-    )
+    // 轨间把手归 TrackResizer 所有（它不属于任何一条轨道）；宿主只把**输入模态决定的目标尺寸**
+    // 与三个拖动回调交出去——拖动策略（起点归一化 / 可用空间夹取 / 左拖变宽）在纯模型里。
+    TrackResizer({
+      hitWidthVp: this.gripHitWidth(),
+      onGripStart: () => {
+        this.beginDetailDrag();
+      },
+      onGripUpdate: (deltaXVp: number) => {
+        this.updateDetailDrag(deltaXVp);
+      },
+      onGripEnd: () => {
+        this.endDetailDrag();
+      }
+    })
   }
 
   @Builder
