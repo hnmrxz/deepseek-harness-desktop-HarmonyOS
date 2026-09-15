@@ -149,27 +149,7 @@ import {
  * 原因：`HubSnapshot` / `HubSubscriber` 在 appstate 里是 `export type` 导出的类型，
  * 与值导入分开写更贴近 ArkTS 的类型/值导入区分。
  */
-import type {
-  AttachOutcome,
-  InputModality,
-  ModalityEvidence,
-  NavigationState,
-  NavState,
-  SessionStatsInput,
-  OverlayState,
-  TabSelection,
-  LayoutDecision,
-  LayoutInput,
-  CredentialWriteResult,
-  HubSnapshot,
-  HubSubscriber,
-  PluginRow,
-  SettingChoice,
-  SettingInputResult,
-  SettingItem,
-  SettingsNamespaceState,
-  SettingsWriteResult
-} from 'appstate';
+import type { AttachOutcome, CredentialWriteResult, HubSnapshot, HubSubscriber, InputModality, LayoutDecision, LayoutInput, ModalityEvidence, NavState, NavigationState, OverlayState, PluginRow, SessionJob, SessionStatsInput, SettingChoice, SettingInputResult, SettingItem, SettingsNamespaceState, SettingsWriteResult, TabSelection } from 'appstate';
 import { emitter } from '@kit.BasicServicesKit';
 import { parseJson } from 'connection';
 import { EVENT_HOST_CONNECTED, EVENT_KEY_HOST_TOKEN, EVENT_KEY_HOST_URL } from 'platform';
@@ -560,6 +540,14 @@ struct Index {
   @State plugins: PluginItem[] = [];
   @State hosts: HostRecord[] = [];
   @State models: ModelOption[] = [];
+  /**
+   * 会话的后台任务（中枢 `jobs` 投影；官方 `conversation.header.jobs`）。
+   *
+   * 【为什么要接这条】`appstate/model/Jobs.ets` 早就写好了一整套判定（live / 状态点语义 /
+   * 五种文案 / 时长三档 / 排序 / 计数 / 是否需要定时器），**40 条断言**，中枢也一直在维护
+   * `jobs` 字段——但**视图里没有任何消费者**（"通道有、没接"）。
+   */
+  @State jobs: SessionJob[] = [];
   @State selection: ModelSelection = { provider: '', modelId: '', effort: '' };
   /** 诊断是否在跑（驱动「重新检测」按钮的忙碌态） */
   @State diagRunning: boolean = false;
@@ -794,6 +782,7 @@ struct Index {
       this.fileTree = [];
       this.detailSections = [];
       this.models = [];
+      this.jobs = [];
       this.plugins = [];
       this.credentials = [];
       // 断连后 Host 设置没了，但**本机偏好仍然有效**（它本来就与 Host 无关）
@@ -813,6 +802,7 @@ struct Index {
     this.sessions = s.sessions;
     this.pending = s.pending;
     this.models = s.models;
+    this.jobs = s.jobs;
     this.plugins = s.plugins;
     this.credentials = s.credentials;
     this.hostSettings = s.settings;
@@ -3192,6 +3182,7 @@ struct Index {
     modality: this.modality,
     modalityEntry: () => this.modalityEntry(),
     models: this.models,
+    jobs: this.jobs,
     nav: this.nav,
     setNav: (value: NavigationState) => {
       this.nav = value;

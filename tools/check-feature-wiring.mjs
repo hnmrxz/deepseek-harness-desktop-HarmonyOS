@@ -84,7 +84,14 @@ const FEATURES = [
   { name: '计划模式', patterns: [['planActive|planPending', 2]] },
   { name: '核心版本切换', patterns: [['switchTo', 2], ['rollbackTo', 2]] },
   { name: '插件启停', patterns: [['plugin', 4]] },
-  { name: '凭据写入', patterns: [['openCredentialSheet', 2]] }
+  { name: '凭据写入', patterns: [['openCredentialSheet', 2]] },
+  /*
+   * 后台任务条（P2-2）。这一条正是**本门禁该拦下的那类缺口**：`Jobs` 模型 40 条断言、
+   * 中枢一直在维护 `jobs` 字段，而视图里一个消费者都没有（"通道有、没接"）——
+   * 编译不报、界面不报，只有肉眼看才发现的缺口。故把它钉成三段接线：
+   * 模型判定（orderedJobs/jobListVisible）+ 中枢投影 + 会话头的传参。
+   */
+  { name: '后台任务条', patterns: [['orderedJobs', 2], ['jobListVisible', 2], ['jobs: this.f.jobs', 1]] }
 ];
 
 const problems = [];

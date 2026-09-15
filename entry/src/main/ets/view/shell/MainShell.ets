@@ -17,7 +17,7 @@
  * 而它**已经是组件 `HubBanner`**，故这里直接渲染组件。
  */
 
-import { ActionNotice, CommandCandidate, DiagEntry, DiagMode, DiagReport, Fs, HostRecord, HubPhase, MAIN_CONNECT, MAIN_CONVERSATION, ModelOption, ModelSelection, PanelRegistry, PendingAttachment, PendingItem, Radius, ReferenceCandidate, SessionHub, Sp, StackPage, TrajectoryItem, aboutInfo, diagHintOf, diagTitleOf, filterDiagEntries, formatClock, openSettings, projectGeneralGroups, relativeTime, sessionEmptyCopy } from 'appstate';
+import { ActionNotice, CommandCandidate, DiagEntry, DiagMode, DiagReport, Fs, HostRecord, HubPhase, MAIN_CONNECT, MAIN_CONVERSATION, ModelOption, ModelSelection, PanelRegistry, PendingAttachment, PendingItem, Radius, ReferenceCandidate, SessionHub, SessionJob, Sp, StackPage, TrajectoryItem, aboutInfo, diagHintOf, diagTitleOf, filterDiagEntries, formatClock, openSettings, projectGeneralGroups, relativeTime, sessionEmptyCopy } from 'appstate';
 import hilog from '@ohos.hilog';
 import { CommandList } from '../CommandList';
 import { ConnectPane } from '../ConnectPane';
@@ -78,6 +78,8 @@ export interface MainShellFacade {
   modality: InputModality;
   modalityEntry: () => DiagEntry;
   models: ModelOption[];
+  /** 后台任务（官方会话头的任务条）；判定全在 `appstate/model/Jobs`，视图只画 */
+  jobs: SessionJob[];
   nav: NavigationState;
   setNav: (value: NavigationState) => void;
   noticeText: (n: ActionNotice) => string;
@@ -306,6 +308,7 @@ export struct MainShell {
           this.f.answerPending(item, selected, custom);
         },
         sessionId: this.f.selectedSessionId,
+        jobs: this.f.jobs,
         items: this.f.trajectoryItems,
         running: this.f.running,
         offline: this.f.offline,

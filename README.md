@@ -178,6 +178,9 @@ hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 渲染是 `entry/view/MarkdownRenderer.ets`（`Text > Span` 行内富文本），
 正文/思考/过程三处已从 `Text(item.body)` 原文照显换成渲染；链接走真实系统能力 `openLink`
 （`platform/system/OpenLink.ets`，只放行 http/https），无障碍文案改为去标记文本。
+**P2-2 已落地**：会话头的**后台任务条** —— `Jobs` 模型 40 条断言与中枢 `jobs` 字段一直都在，
+但视图零消费者（又一次"通道有、没接"）；现已接成 中枢 → `Index` → `MainShell` → 会话头任务条
+（live 任务每秒走字、无障碍整段取自模型），并把这条接线登记进功能接线门禁（第 16 条）。
 下一步：`ConversationShell` 拆分（Header / Content / ProcessGroup / Answer）+ Message Action + Tool Card
 （⚠️ 观感与交互须真机确认：侧栏/抽屉见 D11·D12，**正文渲染与链接见 D13**）。
 

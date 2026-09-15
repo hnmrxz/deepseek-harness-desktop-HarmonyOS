@@ -8,77 +8,9 @@
  * 所有动作通过回调上报宿主，便于接入真实连接时只改宿主。
  */
 
-import {
-  CommandCandidate,
-  formatBytes,
-  formatClock,
-  formatDuration,
-  Fs,
-  matchCounterText,
-  matchTrajectoryIndices,
-  ModelOption,
-  ModelSelection,
-  PendingAttachment,
-  PendingItem,
-  QueuedItem,
-  previewOutput,
-  Radius,
-  ReferenceCandidate,
-  Sp,
-  Speaker,
-  stepMatch,
-  Sz,
-  ToolState,
-  toolStateLabel,
-  TrajectoryItem,
-  TrajectoryKind,
-  SessionHub,
-  chatRowOfItemIndex,
-  chatVisibleItems,
-  matchConversationIndices,
-  FEEDBACK_CATEGORIES,
-  FeedbackRow,
-  groupTurns,
-  Border,
-  defaultExpanded,
-  hasProcessGroup,
-  processSummary,
-  HarmonyColor,
-  HarmonyType,
-  followTimerShouldRun,
-  FollowSignal,
-  nextFollowing,
-  shouldJumpOnNewItems,
-  HarmonyRadius,
-  HarmonySpacing,
-  contextMenuGestures,
-  contextMenuHintLabel,
-  hoverEnabled,
-  MenuGesture,
-  cellIdAtRatio,
-  cellIdForListIndex,
-  listIndexForCell,
-  presentTool,
-  presentDiff,
-  segmentOrdinalOf,
-  statsLinesOf,
-  StatsUnit,
-  timelineCellsOf,
-  timelineKindLabel,
-  timelineScaleOf,
-  timelineStartedLabel,
-  timelineTotalLabel,
-  TimelineKind,
-  ToolKind,
-  toolSummaryOf,
-  parseMarkdown,
-  plainTextOf
-} from 'appstate';
+import { Border, CommandCandidate, FEEDBACK_CATEGORIES, FeedbackRow, FollowSignal, Fs, HarmonyColor, HarmonyRadius, HarmonySpacing, HarmonyType, JobDot, MenuGesture, ModelOption, ModelSelection, PendingAttachment, PendingItem, QueuedItem, Radius, ReferenceCandidate, SemanticColor, SessionHub, Sp, Speaker, StatsUnit, Sz, TimelineKind, ToolKind, ToolState, TrajectoryItem, TrajectoryKind, cellIdAtRatio, cellIdForListIndex, chatRowOfItemIndex, chatVisibleItems, contextMenuGestures, contextMenuHintLabel, defaultExpanded, followTimerShouldRun, formatBytes, formatClock, formatDuration, groupTurns, hasProcessGroup, hoverEnabled, jobCountLabel, jobDotState, jobDurationText, jobDurationTitle, jobElapsedMs, jobListA11y, jobListVisible, jobRowStatusText, jobTickerNeeded, listIndexForCell, matchConversationIndices, matchCounterText, matchTrajectoryIndices, nextFollowing, orderedJobs, parseMarkdown, plainTextOf, presentDiff, presentTool, previewOutput, processSummary, segmentOrdinalOf, shouldJumpOnNewItems, statsLinesOf, stepMatch, timelineCellsOf, timelineKindLabel, timelineScaleOf, timelineStartedLabel, timelineTotalLabel, toolStateLabel, toolSummaryOf } from 'appstate';
 /** 类型单独 import type（本仓约定：值与类型分开写） */
-import type {
-  ActionNotice, DiffPresentation, FeedbackCategory, InputModality, SessionStatsInput, StatsLine,
-  TimelineCell, TimelineScale, TimelineSegment, ToolPresentation, Turn,
-} from 'appstate';
+import type { ActionNotice, DiffPresentation, FeedbackCategory, InputModality, SessionJob, SessionStatsInput, StatsLine, TimelineCell, TimelineScale, TimelineSegment, ToolPresentation, Turn } from 'appstate';
 import type { NativeAction } from './NativePrimitives';
 import { NativeActionBar, NativeCard, NativeChip } from './NativePrimitives';
 import { Composer } from './Composer';
@@ -128,6 +60,13 @@ export struct ConversationPane {
   onPickModel: () => void = () => {
   };
   /** 计划模式（官方 ui-plan 的输入区 chip）与权限模式（只读展示） */
+  /**
+   * 会话的后台任务（官方 `conversation.header.jobs`）。
+   *
+   * 【为什么判定不在这里】live 与否、状态点语义、五种文案、时长三档、排序、计数、
+   * "要不要定时刷新"全在 `appstate/model/Jobs`（40 条断言）；本组件只把结果画出来。
+   */
+  @Prop @Watch('onJobsChanged') jobs: SessionJob[] = [];
   @Prop planActive: boolean = false;
   @Prop planPending: boolean = false;
   @Prop permissionLabel: string = '';
@@ -432,6 +371,23 @@ export struct ConversationPane {
     }
   }
 
+  /** 任务列表变化：只在"有 live 任务"时才开定时器（模型判定），否则白跑 */
+  onJobsChanged(): void {
+    this.syncJobsTimer();
+  }
+
+  private syncJobsTimer(): void {
+    const needed: boolean = jobTickerNeeded(this.jobs);
+    if (needed && this.jobsTimer < 0) {
+      this.jobsTimer = setInterval(() => {
+        this.jobsTick = this.jobsTick + 1;
+      }, 1000);
+    } else if (!needed && this.jobsTimer >= 0) {
+      clearInterval(this.jobsTimer);
+      this.jobsTimer = -1;
+    }
+  }
+
   aboutToAppear(): void {
     // 进入会话先贴到底部（用户要看到的是最新一条，而不是最老一条）
     this.scrollToLatest();
@@ -441,6 +397,10 @@ export struct ConversationPane {
     if (this.followTimer >= 0) {
       clearInterval(this.followTimer);
       this.followTimer = -1;
+    }
+    if (this.jobsTimer >= 0) {
+      clearInterval(this.jobsTimer);
+      this.jobsTimer = -1;
     }
   }
 
@@ -524,6 +484,10 @@ export struct ConversationPane {
    * 默认落在 `chat`：日常是"读答案"，把工具卡默认糊在脸上会淹没对话。
    */
   @State view: string = 'chat';
+  /** 任务条的重绘刻度（live 任务的耗时要走字；模型 `jobTickerNeeded` 决定要不要定时器） */
+  @State jobsTick: number = 0;
+  /** 任务条定时器 id（-1 = 未启动） */
+  private jobsTimer: number = -1;
 
   /**
    * 当前视图下要渲染的条目。
@@ -567,6 +531,75 @@ export struct ConversationPane {
      * 其中"错误必须留在对话视图"是 E134 的教训（它是"为什么没有回答"的唯一说明）。
      */
     return chatVisibleItems(groupTurns(this.items, this.running));
+  }
+
+  /** 状态点 → 语义色（模型给语义 `JobDot`，颜色是视图的事） */
+  private jobDotColor(status: string): Resource {
+    const dot: JobDot = jobDotState(status);
+    if (dot === JobDot.ONGOING) {
+      return SemanticColor.BRAND;
+    }
+    if (dot === JobDot.WARNING) {
+      return SemanticColor.WARNING;
+    }
+    if (dot === JobDot.DONE) {
+      return SemanticColor.CONFIRM;
+    }
+    return SemanticColor.ALERT;
+  }
+
+  /**
+   * 会话头的后台任务条（官方 `conversation.header.jobs`）。
+   *
+   * 【几条口径都取自模型】是否显示（`jobListVisible`）、顺序（`orderedJobs`）、
+   * 计数文案（`jobCountLabel`）、每行状态文案与时长（`jobRowStatusText` / `jobDurationText`
+   * + `jobDurationTitle`）、无障碍整段（`jobListA11y`）。视图只做"点 + 字 + 颜色"。
+   */
+  @Builder
+  jobsStrip() {
+    Column({ space: Sp.XS }) {
+      Row({ space: Sp.S }) {
+        Text(jobCountLabel(this.jobs))
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.font_tertiary'))
+          .layoutWeight(1)
+        Text('展开收起全部任务在「轨迹」')
+          .fontSize(Fs.CAPTION_XS)
+          .fontColor($r('sys.color.font_tertiary'))
+      }
+      .width('100%')
+
+      Flex({ wrap: FlexWrap.Wrap }) {
+        ForEach(orderedJobs(this.jobs), (job: SessionJob) => {
+          Row({ space: Sp.XS }) {
+            SymbolGlyph($r('sys.symbol.circle'))
+              .fontSize(Fs.CAPTION_XS)
+              .fontColor([this.jobDotColor(job.status)])
+            Text(job.label.length > 0 ? job.label : job.kind)
+              .fontSize(Fs.CAPTION)
+              .fontColor($r('sys.color.font_secondary'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+            Text(jobRowStatusText(job))
+              .fontSize(Fs.CAPTION_XS)
+              .fontColor($r('sys.color.font_tertiary'))
+            Text(jobDurationText(jobElapsedMs(job, Date.now())))
+              .fontSize(Fs.CAPTION_XS)
+              .fontColor($r('sys.color.font_tertiary'))
+          }
+          .padding({ left: Sp.S, right: Sp.S, top: Sp.XS, bottom: Sp.XS })
+          .margin({ right: Sp.XS, bottom: Sp.XS })
+          .borderRadius(Radius.S)
+          .backgroundColor($r('sys.color.background_secondary'))
+          .accessibilityText(jobDurationTitle(job, Date.now()))
+          // key 带上"每秒刻度"：live 任务的耗时才会走字（读 `jobsTick` 也让刻度成为本组件的真实依赖）
+        }, (job: SessionJob) => `${job.id}:${this.jobsTick}`)
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding({ left: Sp.M, right: Sp.M, top: Sp.XS })
+    .accessibilityText(jobListA11y(this.jobs))
   }
 
   @Builder
@@ -761,6 +794,11 @@ export struct ConversationPane {
       }
       .width('100%')
       .padding({ left: Sp.M, right: Sp.M, top: Sp.S })
+
+      // 后台任务条（官方在会话头）：有任务才出现，位置在视图切换行下方
+      if (jobListVisible(this.jobs)) {
+        this.jobsStrip()
+      }
 
       // 轨迹视图的时间总览（P2 §11 的 TrajectoryPresenter）
       if (this.view === 'trajectory') {
