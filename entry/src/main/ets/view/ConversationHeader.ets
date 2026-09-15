@@ -33,6 +33,7 @@ import {
 } from 'appstate';
 import type { SessionJob, SessionStatsInput, TrajectoryItem } from 'appstate';
 import { TimelineOverview } from './TimelineOverview';
+import { TrajectoryInspector } from './TrajectoryInspector';
 
 /** 会话头的呈现（视图切换 / 任务条 / 时间总览 / 搜索） */
 @Component
@@ -56,6 +57,9 @@ export struct ConversationHeader {
   @Prop stats: SessionStatsInput;
   /** 时间线当前聚焦的格子（父组件持有：滚动时它也跟着走） */
   @Prop focusedCellId: string = '';
+  /** 清掉聚焦（详情卡上的「关闭」） */
+  onClearFocus: () => void = () => {
+  };
   /** 是否正在拖动时间线（拖动期间关掉"滚动→聚焦"这一路） */
   @Prop dragging: boolean = false;
   /** 搜索条是否打开 */
@@ -201,6 +205,19 @@ export struct ConversationHeader {
         })
       }
 
+      /*
+       * 事件详情（P7-4）：点格子/点条目即聚焦，这里给出那一条的字段明细 ——
+       * 官方点一条事件也会开出「事件详情」面板。空焦点时整卡不出现。
+       */
+      if (this.focusedItem() !== undefined) {
+        TrajectoryInspector({
+          item: this.focusedItem(),
+          onClose: () => {
+            this.onClearFocus();
+          }
+        })
+      }
+
       if (this.searchOpen) {
         this.searchBar()
       }
@@ -277,6 +294,19 @@ export struct ConversationHeader {
    * 判定仍全部在 `Jobs` 模型里（`orderedJobs` / `jobRowStatusText` / `jobElapsedMs` /
    * `jobDurationText` / `jobDurationTitle` / `jobListA11y` / `liveJobCount`），视图只做点+字+色。
    */
+  /** 当前聚焦的条目（格子 id 就是条目 id，见 `TimelineOverview` 的 `cellIdForListIndex`） */
+  private focusedItem(): TrajectoryItem | undefined {
+    if (this.focusedCellId.length === 0) {
+      return undefined;
+    }
+    for (let i = 0; i < this.items.length; i++) {
+      if (this.items[i].id === this.focusedCellId) {
+        return this.items[i];
+      }
+    }
+    return undefined;
+  }
+
   @Builder
   jobsStrip() {
     Column({ space: Sp.XS }) {

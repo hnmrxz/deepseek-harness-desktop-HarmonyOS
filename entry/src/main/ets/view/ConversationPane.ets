@@ -796,6 +796,9 @@ export struct ConversationPane {
         onFocusCell: (cellId: string) => {
           this.focusedCellId = cellId;
         },
+        onClearFocus: () => {
+          this.focusedCellId = '';
+        },
         onCommitTimeline: () => {
           this.scrollToFocusedCell();
         },

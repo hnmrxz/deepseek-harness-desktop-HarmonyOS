@@ -55,6 +55,8 @@ const PURE_FILES = [
   'appstate/src/main/ets/model/SessionSearch.ets',
   // 输入区接管的焦点规则（P7-2）：零依赖（只 import 同为零依赖的 Trajectory 的类型）
   'appstate/src/main/ets/model/PendingFocus.ets',
+  // 轨迹事件详情（P7-4）：零依赖（只 import 同为零依赖的 Trajectory / Present）
+  'appstate/src/main/ets/model/TrajectoryDetail.ets',
   // 浮层回执归属（P2-8，E353）：零依赖
   'appstate/src/main/ets/model/Sheets.ets',
   // 设置编辑浮层的输入提示（P2-10）：零依赖
@@ -221,6 +223,7 @@ const CP = require2('./CoreProjection.js');
 const PRT = require2('./PluginRowsText.js');
 const SS = require2('./SessionSearch.js');
 const PF = require2('./PendingFocus.js');
+const TDT = require2('./TrajectoryDetail.js');
 const t = makeAsserter(selfTest);
 
 console.log('# 布局 fixture 门禁（四形态 + 断点边界 + 让步链）\n');
@@ -1902,6 +1905,61 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
 
     t.eq('等宽原始请求只对审批给', takeoverCommand(items[0]), '{"command":"rm -rf /tmp/x"}');
     t.eq('提问不给等宽原始请求（整组 JSON 摆那一行读不懂）', takeoverCommand(items[1]), '');
+  }
+  // ── P7-4：轨迹条目的事件详情（官方 details.* 的字段对；没有的字段不画）──
+  {
+    const { trajectoryDetailRows, itemKindLabel, TRAJECTORY_DETAIL_TITLE } = TDT;
+    const TJ = require2('./Trajectory.js');
+    const base = (kind, over) => {
+      const it = TJ.makeItem('i1', kind, 0);
+      for (const k of Object.keys(over)) it[k] = over[k];
+      return it;
+    };
+
+    t.eq('标题用官方原文', TRAJECTORY_DETAIL_TITLE, '事件详情');
+    t.eq('类别：用户消息', itemKindLabel(base('message', { speaker: 'user' })), '用户消息');
+    t.eq('类别：助手消息', itemKindLabel(base('message', { speaker: 'assistant' })), '助手消息');
+    t.eq('类别：工具', itemKindLabel(base('tool', {})), '工具');
+    t.eq('类别：任务（本仓多出的一类，官方轨迹没有 job）', itemKindLabel(base('job', {})), '任务');
+
+    // ① 工具条目：状态 / 工具调用 / 参数 / 结果 / 耗时，且**空值不产生行**
+    const tool = base('tool', { toolName: 'bash', toolArgs: '{"command":"ls"}',
+      toolOutput: 'a.ts\nb.ts', toolState: 'success', elapsedMs: 1200 });
+    const labels = trajectoryDetailRows(tool).map((r) => r.label).join(',');
+    t.eq('工具：行序 = 来源/状态/工具调用/参数/结果/耗时', labels, '来源,状态,工具调用,参数,结果,耗时');
+    t.eq('工具：状态走模型的文案', trajectoryDetailRows(tool)[1].value, '成功');
+    t.eq('工具：结果原样（未超阈值不截断）', trajectoryDetailRows(tool)[4].value, 'a.ts\nb.ts');
+
+    const bare = trajectoryDetailRows(base('tool', {}));
+    t.eq('空字段**不产生行**（不画"未知"占位）', bare.map((r) => r.label).join(','), '来源,状态');
+
+    // ② 助手消息：模型 / 思考 / 正文分开（E107 的字段分家）
+    const msg = base('message', { model: 'DeepSeek-V3.2', reasoning: '先想一下', body: '答案在这里' });
+    t.eq('消息：思考与正文分开两行',
+      trajectoryDetailRows(msg).map((r) => r.label).join(','), '来源,模型,思考,正文');
+
+    // ③ 内部事件要标注（轨迹里看得见、对话里看不见的东西）
+    t.eq('内部事件在"来源"里如实标注',
+      trajectoryDetailRows(base('message', { internal: true }))[0].value, '助手消息 · 内部事件');
+
+    // ④ 长文本按工具卡同一套阈值截断（不另定一套）
+    const long = base('tool', { toolOutput: 'x'.repeat(9000), toolName: 'bash' });
+    const out = trajectoryDetailRows(long)[3].value;
+    t.eq('超长结果被截断并写明总长', out.includes('已截断') && out.includes('9000'), true);
+
+    // ⑤ 交付物 / 目标 / 错误各有自己的字段
+    t.eq('交付物：文件 + 大小',
+      trajectoryDetailRows(base('deliverable', { fileName: 'a.zip', fileSize: 2048 }))
+        .map((r) => `${r.label}=${r.value}`).join(','), '来源=交付物,文件=a.zip,大小=2048 字节');
+    t.eq('目标：标题 + 进度 + 完成度',
+      trajectoryDetailRows(base('goal', { title: '收尾', progress: '写文档', percent: 40 }))
+        .map((r) => r.label).join(','), '来源,标题,进度,完成度');
+    t.eq('percent 为负 ⇒ 不出现完成度行（不编百分比）',
+      trajectoryDetailRows(base('goal', { title: '收尾', percent: -1 }))
+        .map((r) => r.label).join(','), '来源,标题');
+    t.eq('错误：错误正文一行',
+      trajectoryDetailRows(base('error', { body: '连不上' })).map((r) => `${r.label}=${r.value}`).join(','),
+      '来源=错误,错误=连不上');
   }
 }
 

@@ -32,6 +32,7 @@ import type { FileNode, FilePreview, PanelDescriptor, SessionStatsInput, Traject
 import { DetailPane } from '../DetailPane';
 import { FilePreviewPane } from '../FilePreviewPane';
 import { DeliverableCard } from '../DeliverableCard';
+import { TrajectoryInspector } from '../TrajectoryInspector';
 import { FileTreePane } from '../FileTreePane';
 import type { FileTreeFacade } from '../FileTreePane';
 import { SubagentCard } from '../SubagentCard';
@@ -320,7 +321,29 @@ export struct RightbarShell {
       }
       .width('100%')
       .padding({ top: Sp.S })
+
+      /*
+       * 事件详情（P7-4）：与主区**共用同一份** `TrajectoryInspector`
+       * （时间线点一下就在这里出字段明细）。右栏的焦点一直有效 ⇒ 不给「关闭」（空实现）。
+       */
+      if (this.focusedTrajectoryItem() !== undefined) {
+        TrajectoryInspector({ item: this.focusedTrajectoryItem() })
+          .margin({ top: Sp.S })
+      }
     }
+  }
+
+  /** 右栏聚焦的那一条（格子 id = 条目 id） */
+  private focusedTrajectoryItem(): TrajectoryItem | undefined {
+    if (this.timelineFocused.length === 0) {
+      return undefined;
+    }
+    for (let i = 0; i < this.f.trajectoryItems.length; i++) {
+      if (this.f.trajectoryItems[i].id === this.timelineFocused) {
+        return this.f.trajectoryItems[i];
+      }
+    }
+    return undefined;
   }
 
   /**
