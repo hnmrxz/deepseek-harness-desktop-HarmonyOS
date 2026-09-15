@@ -64,6 +64,8 @@ const PURE_FILES = [
   // 消息图片的几何判定（P0-3）：零依赖，与官方 ui-attachment 的 singleFit 逐条对齐
   'appstate/src/main/ets/model/ImageAttachment.ets',
   'appstate/src/main/ets/model/MessageImage.ets',
+  // 输入区附件的判定与拼装（P0-4）：零依赖，顺序与类型白名单对齐官方
+  'appstate/src/main/ets/model/InputAttachment.ets',
   // 浮层回执归属（P2-8，E353）：零依赖
   'appstate/src/main/ets/model/Sheets.ets',
   // 设置编辑浮层的输入提示（P2-10）：零依赖
@@ -234,6 +236,7 @@ const TDT = require2('./TrajectoryDetail.js');
 const PM = require2('./Permissions.js');
 const PD = require2('./PrivacyDisclosure.js');
 const MI = require2('./MessageImage.js');
+const IA = require2('./InputAttachment.js');
 const t = makeAsserter(selfTest);
 
 console.log('# 布局 fixture 门禁（四形态 + 断点边界 + 让步链）\n');
@@ -2204,6 +2207,102 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
       console.log('   ↳ 已与官方制品逐字对照（dsh-client-ui-attachment/lib/client.js）');
     } else {
       console.log('   ↳ 官方客户端未安装在本机，跳过制品对照（数值依据为源码手算）');
+    }
+  }
+  // ── P0-4：输入区附件的判定与拼装（图片内联；官方顺序与类型白名单）──
+  {
+    const { AttachmentKind, attachmentPlanFor, hasInlineImage, imageDraftRejection,
+      resolveImageMediaType, sniffImageMediaType, SUPPORTED_IMAGE_TYPES,
+      MAX_INLINE_IMAGE_BYTES, formatBytesOf } = IA;
+
+    // ① 魔数嗅探：四个容器的签名都在前 12 字节内
+    t.eq('PNG 头 89 50 4E 47… 认出 png',
+      sniffImageMediaType([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0]), 'image/png');
+    t.eq('JPEG 头 FF D8 FF 认出 jpeg',
+      sniffImageMediaType([0xFF, 0xD8, 0xFF, 0xE0, 0, 0, 0, 0, 0, 0, 0, 0]), 'image/jpeg');
+    t.eq('GIF 头 GIF8 认出 gif',
+      sniffImageMediaType([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0, 0, 0, 0, 0, 0]), 'image/gif');
+    t.eq('WEBP：RIFF…WEBP 认出 webp（必须看第 9–12 字节，光有 RIFF 不够）',
+      sniffImageMediaType([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]), 'image/webp');
+    t.eq('只有 RIFF（例如 wav）**不**当成图片',
+      sniffImageMediaType([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x41, 0x56, 0x45]), '');
+    t.eq('文本文件认不出（如实返回空串，不猜 jpeg）',
+      sniffImageMediaType([0x7B, 0x22, 0x61, 0x22, 0x3A, 0x31, 0x7D, 0, 0, 0, 0, 0]), '');
+    t.eq('头部不足（<3 字节）认不出', sniffImageMediaType([0xFF, 0xD8]), '');
+    t.eq('空头认不出', sniffImageMediaType([]), '');
+
+    // ② 最终类型：名字命中优先（不看字节）；名字不行才看魔数
+    t.eq('扩展名已在白名单 ⇒ 直接采信（不看字节）',
+      resolveImageMediaType('image/webp', [0x89, 0x50]), 'image/webp');
+    t.eq('扩展名不在白名单（octet-stream）⇒ 用魔数救回',
+      resolveImageMediaType('application/octet-stream',
+        [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0]), 'image/png');
+    t.eq('两条都不认 ⇒ 空串（由调用方拒绝并说明）',
+      resolveImageMediaType('', [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]), '');
+    t.eq('白名单恰好是官方那四条', SUPPORTED_IMAGE_TYPES.join(','),
+      'image/png,image/jpeg,image/webp,image/gif');
+
+    // ③ 拒绝原因：类型 / 大小 / 空内容，三种原因都必须说得出人话
+    const okPng = imageDraftRejection('image/png', 1024, 1368);
+    t.eq('合法图片没有拒绝原因', okPng, '');
+    const badType = imageDraftRejection('image/bmp', 1024, 1368);
+    t.eq('不支持的格式：原因里点名支持哪几种',
+      badType.includes('image/bmp') && badType.includes('image/png'), true);
+    const tooBig = imageDraftRejection('image/png', MAX_INLINE_IMAGE_BYTES + 1, 10);
+    t.eq('超过内联上限：原因里给出实际大小与上限（可执行）',
+      tooBig.includes(formatBytesOf(MAX_INLINE_IMAGE_BYTES)) && tooBig.includes('MiB'), true);
+    t.eq('上限之内不算超限',
+      imageDraftRejection('image/png', MAX_INLINE_IMAGE_BYTES, 10), '');
+    const empty = imageDraftRejection('image/png', 1024, 0);
+    t.eq('空内容（base64 长度为 0）单独成一种原因', empty.includes('内容为空'), true);
+    t.eq('类型未知时按"不支持"拒绝（不按大小拒绝）',
+      imageDraftRejection('', 999999999999, 0).includes('不能内联发送'), true);
+
+    // ④ 拼装顺序（官方 `sendSession()`：图片在前、正文在后）
+    const img = (key, data) => ({
+      key: key, kind: AttachmentKind.IMAGE, name: key + '.png', mediaType: 'image/png',
+      bytes: data.length, data: data, receiptId: ''
+    });
+    const fil = (key, receipt) => ({
+      key: key, kind: AttachmentKind.FILE, name: key + '.txt', mediaType: 'text/plain',
+      bytes: 10, data: '', receiptId: receipt
+    });
+    const plan = attachmentPlanFor([fil('f1', 'r1'), img('i1', 'AAA'), img('i2', 'BBB')], '看看这两张图');
+    t.eq('三段顺序 = 图片 → 正文 → 文件', plan.map((p) => p.type).join(','), 'image,image,text,file');
+    t.eq('图片片段带 mediaType 与 base64',
+      `${plan[0].mediaType}/${plan[0].data}`, 'image/png/AAA');
+    t.eq('图片片段带展示名（官方 `name` 可选但保留）', plan[1].name, 'i2.png');
+    t.eq('正文片段的 text 就是用户输入', plan[2].text, '看看这两张图');
+    t.eq('文件片段的 receiptId 原样带上', plan[3].receiptId, 'r1');
+
+    t.eq("正文为空 ⇒ 不带 text 片段（官方 `text === '' ? [] : [...]`）",
+      attachmentPlanFor([img('i1', 'AAA')], '').map((p) => p.type).join(','), 'image');
+    t.eq('只有正文时行为不变（单 text 片段）',
+      attachmentPlanFor([], '你好').map((p) => p.type).join(','), 'text');
+    t.eq('没有附件也没有正文 ⇒ 空计划（由调用方决定要不要发）',
+      attachmentPlanFor([], '').length, 0);
+    t.eq('图片没有 base64 就被跳过（不产生空 image 片段）',
+      attachmentPlanFor([img('i1', '')], '').length, 0);
+    t.eq('文件没有回执就被跳过（不产生会被 Host 拒的 file 片段）',
+      attachmentPlanFor([fil('f1', '')], '').length, 0);
+
+    // ⑤ "有没有内联图片"决定离线时的文案（图片没有可稍后补发的凭据）
+    t.eq('只有文件 ⇒ 不算内联图片', hasInlineImage([fil('f1', 'r1')]), false);
+    t.eq('有图片 ⇒ 算内联图片', hasInlineImage([fil('f1', 'r1'), img('i1', 'A')]), true);
+    t.eq('空列表 ⇒ 不算', hasInlineImage([]), false);
+
+    // ⑥ 与官方制品对照（非必需：官方客户端不在本机时跳过）
+    const officialConversation = '/opt/dsh/node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/client.js';
+    if (existsSync(officialConversation)) {
+      const src = readFileSync(officialConversation, 'utf8');
+      t.eq('官方制品里确有"图片在前、正文在后"的展开式',
+        src.includes('...await this.serializeImages(') && src.includes('type: "text"'), true);
+      t.eq('官方制品里确有四条图片类型白名单',
+        src.includes('case "image/png"') && src.includes('case "image/jpeg"')
+        && src.includes('case "image/webp"') && src.includes("case \"image/gif\""), true);
+      console.log('   ↳ 已与官方制品逐字对照（dsh-client-ui-conversation/lib/client.js）');
+    } else {
+      console.log('   ↳ 官方客户端未安装在本机，跳过制品对照（依据为源码逐行手抄）');
     }
   }
 }

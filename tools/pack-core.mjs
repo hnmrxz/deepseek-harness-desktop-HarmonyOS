@@ -18,6 +18,7 @@
  *   node tools/pack-core.mjs                    # 全流程
  *   node tools/pack-core.mjs --skip-install     # 复用已有 node_modules（快速重打包）
  *   node tools/pack-core.mjs --work <dir> --out <dir>
+ *   node tools/pack-core.mjs --allow-sharp-stub # 显式接受"这份包没有图片能力"（E384）
  *
  * 注意：不修改任何上游文件；不联网取任何"额外"东西（npm 除外）。
  */
@@ -45,6 +46,15 @@ const RECIPE_PATH = resolve(ROOT, arg('--recipe', 'hostcore/core-recipe.json'));
 const OUT_DIR = resolve(ROOT, arg('--out', 'dist/core'));
 const WORK_ROOT = resolve(ROOT, arg('--work', 'dist/core/work'));
 const SKIP_INSTALL = process.argv.includes('--skip-install');
+/**
+ * 显式允许"这份核心包没有图片能力"（sharp 是桩）。
+ *
+ * 【为什么需要一个开关而不是直接禁止】桩是**有意义**的降级：它让
+ * `dsh-attachment-local` 能挂载、整条附件服务链成立、会话与对话 UI 可用。
+ * 但它必须是一个**有意识的决定**（见 `assertSharpImplIsReal`），而不是像 E384 那样
+ * 悄悄留在包里、直到用户发图片才以"数据损坏"的样子暴露。
+ */
+const ALLOW_SHARP_STUB = process.argv.includes('--allow-sharp-stub');
 
 const recipe = JSON.parse(readFileSync(RECIPE_PATH, 'utf8'));
 const STAGE_NAME = `dsh-core-${recipe.coreVersion}`;
@@ -415,6 +425,34 @@ function allowOriginList() {
 }
 
 /**
+ * 校验 `node_modules/sharp.impl` 是**真件**而不是桩（E384）。
+ *
+ * 判据用"真件该有的文件"（包的 `main` 是 `lib/index.js`，且该文件存在），
+ * 不用"桩的报错文本"——按错误文本判会导致"换个桩就绕过"。
+ *
+ * 【为什么要 die 而不是只警告】桩的表现是**运行期才炸**，而且 Host 会把它包装成
+ * `session/attachment-invalid — "Unsupported or malformed image data."`，
+ * 从客户端看像"用户的图片坏了"。这种"看起来像别的问题"的能力空洞，
+ * 必须在**构建期**拦下：要么物化真件（不带 `--skip-install` 重跑本脚本），
+ * 要么显式声明"我就是要一个没有图片能力的包"（`--allow-sharp-stub`）。
+ */
+function assertSharpImplIsReal(implDir) {
+  const mainJs = join(implDir, 'lib', 'index.js');
+  if (existsSync(mainJs)) {
+    return;
+  }
+  if (ALLOW_SHARP_STUB) {
+    log('[pack-core]   ⚠️ sharp.impl 不是真件，但 --allow-sharp-stub 已显式允许'
+      + '（图片附件在这份包里不可用）');
+    return;
+  }
+  die('sharp.impl 不是真件（缺 lib/index.js）——这份核心包会**在设备上没有图片能力**，'
+    + '而且失败会伪装成"图片数据损坏"。修法：不带 --skip-install 重跑 pack-core.mjs'
+    + '（配方会把 sharp 别名到 @ohos-ports/sharp 并跑它的安装步骤），'
+    + '或显式加 --allow-sharp-stub 声明放弃该能力。');
+}
+
+/**
  * 把 sharp 换成**调度器 + 真件**（E93），取代原来的"纯 stub"（E79）。
  *
  * ─────────────────────────── 为什么不能只有 stub ───────────────────────────
@@ -447,10 +485,25 @@ function wrapSharp() {
     try {
       const pkg = JSON.parse(readFileSync(pkgFile, 'utf8'));
       if (pkg.version === '0.0.0-hdsh-dispatch') {
-        log('[pack-core]   sharp 调度器已存在（跳过）');
+        /*
+         * 【E384：幂等分支必须**校验真件**，否则桩会被当成真件一路发出去】
+         *
+         * 这里原来直接 `return`（"调度器已存在 ⇒ 跳过"）。于是出现过一个**静默的能力空洞**：
+         * 本机树里 `sharp.impl` 是很久以前（E79）留下的 **stub**，而调度器注释写着"真件优先"，
+         * 打包日志也写着"真件在 node_modules/sharp.impl"。真相是：**图片处理在设备上必然报错**，
+         * 而随包发出的 69 MB 核心 zip 里就装着那个 602 字节的 stub（已解包核对）。
+         * 这个空洞直到给 `session/prompt` 加内联图片才暴露 —— 而且 Host 把它报成
+         * "Unsupported or malformed image data."，看起来像"用户的图坏了"。
+         *
+         * 所以幂等分支也要验：**`sharp.impl` 必须是真件**（有 `lib/index.js`），
+         * 否则 die（要说得出原因与修法，见 `assertSharpImplIsReal`）。
+         */
+        log('[pack-core]   sharp 调度器已存在（跳过重写，但校验真件）');
+        assertSharpImplIsReal(implDir);
         return;
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('sharp')) throw error;
       die('sharp 调度器：现有 sharp/package.json 不可解析，拒绝盲目覆盖');
     }
   }
@@ -495,6 +548,7 @@ function wrapSharp() {
     ].join('\n'),
     'utf8',
   );
+  assertSharpImplIsReal(implDir);
   log('[pack-core]   sharp 调度器：真件在 node_modules/sharp.impl（加载失败时如实降级）');
 }
 
@@ -971,6 +1025,24 @@ function writeManifest(extra) {
 log(`[pack-core] 配方 ${RECIPE_PATH}`);
 log(`[pack-core] 核心 ${recipe.coreVersion} @ ${recipe.platform.os}/${recipe.platform.cpu}`);
 log(`[pack-core] 宿主 Node ${process.version} / ${process.platform}`);
+
+/*
+ * `--check-sharp`：只做"这份树里的 sharp 是真件还是桩"的判定，然后退出。
+ *
+ * 【为什么需要一条只读的捷径】E384 的能力空洞正是"桩被当成真件发出去"，而当时唯一的
+ * 发现途径是**在设备上发一张图片**并读懂那句被包装过的 Host 报错。判定本身只要看一个文件，
+ * 却要塞进一次全流程打包（分钟级 + 会动工作树）才能跑到——那不叫能验证。
+ */
+if (process.argv.includes('--check-sharp')) {
+  assertSharpImplIsReal(join(STAGE, 'node_modules', 'sharp.impl'));
+  // 走到这里可能是"确实在真件"，也可能是"--allow-sharp-stub 放行"——分开说，不含糊
+  if (ALLOW_SHARP_STUB && !existsSync(join(STAGE, 'node_modules', 'sharp.impl', 'lib', 'index.js'))) {
+    log('[pack-core] ⚠️ sharp 是桩（已被 --allow-sharp-stub 放行）：这份包在设备上没有图片能力');
+  } else {
+    log(`[pack-core] ✓ sharp 真件在位：${join(STAGE, 'node_modules', 'sharp.impl', 'lib', 'index.js')}`);
+  }
+  process.exit(0);
+}
 
 materialize();
 prune();

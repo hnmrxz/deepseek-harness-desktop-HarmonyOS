@@ -31,6 +31,15 @@
 
 import { Connection } from 'connection';
 import { SessionJob } from '../model/Jobs';
+import {
+  AttachmentDraftInput,
+  AttachmentKind,
+  AttachmentPartPlan,
+  attachmentPlanFor,
+  hasInlineImage,
+  imageDraftRejection,
+  resolveImageMediaType
+} from '../model/InputAttachment';
 import { ConnectionState } from 'connection';
 import { MAX_ATTACHMENT_BYTES } from 'platform';
 import type { DiagnosticReport, EventSink, HostFacts, RemoteFailure, RpcResult, StreamSink } from 'connection';
@@ -63,6 +72,7 @@ import {
   CREDENTIALS_UNSET_ENDPOINT,
   CREDENTIAL_REJECTED,
   SESSION_ATTACHMENT_ENDPOINT,
+  SESSION_ATTACHMENT_INVALID,
   MODEL_CATALOG_ENDPOINT,
   PLUGIN_INVENTORY_ENDPOINT,
   PROJECTION_TITLE,
@@ -166,6 +176,7 @@ import {
   sessionSelectModelPayload,
   ControlFrameType,
   filePart,
+  imagePart,
   fileReferencesEndpoint,
   fileReferencesPayload,
   fileUploadEndpoint,
@@ -248,20 +259,36 @@ export interface OutboxEntry {
 }
 
 /**
- * 已上传、等待随下一条提示词发出的附件。
+ * 等待随下一条提示词发出的附件（两种载体，P0-4）。
  *
- * 只保留**回执**与展示信息：字节内容上传后不再需要留在端侧
- * （Host 已按内容寻址保存），留在内存里只会让大附件长期占内存。
+ * · **文件**：只保留**回执**与展示信息。字节内容上传后不再需要留在端侧
+ *   （Host 已按内容寻址保存），留在内存里只会让大附件长期占内存。
+ * · **图片**：**必须**留在内存里——它不走上传，而是**内联**进那条提示词
+ *   （官方 `serializeImages()` 的做法）。因此图片的行身份只能用**客户端草稿 id**
+ *   （`key`），不能用回执。
+ *
+ * 【为什么两种载体合在一个接口里】它们在界面上是同一条附件条、同一批"待发"语义；
+ * 拆成两个列表会让"发送时按顺序拼装"和"逐条移除"各写两遍。`kind` 是判别字段。
  */
 export interface PendingAttachment {
-  /** 不透明回执（**会话作用域**；只对当前选中会话有效） */
+  /**
+   * 行身份（**移除与去重都按它**）：
+   * 文件 = 上传回执；图片 = 客户端生成的草稿 id（形如 `img-3`）。
+   * 按文件名移除是不行的：同名文件可以加两次（历史上就因此一次删掉两个）。
+   */
+  key: string;
+  /** 种类（`appstate/model/InputAttachment` 的 `AttachmentKind`：`file` / `image`） */
+  kind: string;
+  /** 不透明回执（**会话作用域**；只对当前选中会话有效；仅文件） */
   receiptId: string;
-  /** 展示名（Host 消毒后的名字） */
+  /** 展示名（文件为 Host 消毒后的名字；图片为图库给的名字或"图片 N"） */
   name: string;
   /** 精确字节数 */
   bytes: number;
-  /** 推断出的 MIME（仅展示） */
+  /** MIME（图片用于拼 `data:` 预览与内联片段） */
   mediaType: string;
+  /** 仅图片：规范 base64（不含 `data:` 前缀）——**只留在内存**，发出去即清空 */
+  data: string;
 }
 
 /** 一次添加附件的结果（UI 据此决定提示什么） */
@@ -685,8 +712,17 @@ export class SessionHub {
   private feedbackFor: string = '';
   /** 当前预览的文件（未打开时为 undefined） */
   private filePreview: FilePreview | undefined = undefined;
-  /** 待发附件（回执 + 展示信息；字节不留在端侧） */
+  /**
+   * 待发附件（文件=回执 + 展示信息；**图片=base64 留在内存**，见 `PendingAttachment`）。
+   */
   private attachmentList: PendingAttachment[] = [];
+  /**
+   * 图片草稿的编号（P0-4）。
+   *
+   * 图片没有服务器回执，行身份只能自己造：单调递增、**进程内唯一**即可——
+   * 要求是"移除时能精确命中那一行"，而不是"跨进程可复现"。
+   */
+  private imageDraftSeq: number = 0;
   /** 当前会话的排队项（由 `session/control` 的 baseline 与 queue 帧驱动） */
   private queuedItems: QueuedItem[] = [];
 
@@ -3830,10 +3866,12 @@ export class SessionHub {
     }
     const next: PendingAttachment[] = this.attachmentList.slice();
     next.push({
+      key: uploaded.receiptId, kind: AttachmentKind.FILE,
       receiptId: uploaded.receiptId,
       name: uploaded.file.name.length > 0 ? uploaded.file.name : name,
       bytes: uploaded.file.bytes > 0 ? uploaded.file.bytes : bytes,
-      mediaType: mediaType
+      mediaType: mediaType,
+      data: ''
     });
     this.attachmentList = next;
     this.record(`upload ok ${uploaded.file.name} ${uploaded.file.bytes}B`);
@@ -3886,11 +3924,60 @@ export class SessionHub {
     return await this.attachLocalFile(name, content.data, content.bytes, '');
   }
 
-  /** 移除一个待发附件（只影响本地列表；Host 侧的回执会自然过期） */
-  removeAttachment(receiptId: string): void {
+  /**
+   * 把一张本机图片挂到待发附件上（P0-4：**不走上传**，内联进那条提示词）。
+   *
+   * ───────── 为什么图片与文件走两条路 ─────────
+   * 上游提示词片段有三选一（`text | image | file`）：文件必须先 `fileUploads/upload`
+   * 拿**会话作用域**的回执，再把回执放进 `file` 片段；而图片官方是**直接内联 base64**
+   * （`dsh-client-ui-conversation` 的 `serializeImages()`），Host 侧由
+   * `admitPromptContent()` 按 `imageLimits` 落库并给出持久引用。
+   * 因此这里**没有任何 RPC**：校验 → 入列。它也意味着图片在离线时发不出去
+   * （没有可稍后补发的回执），`sendPrompt` 里对此有明确拒绝。
+   *
+   * ───────── 类型判定按"先名字、再字节" ─────────
+   * 图库给的展示名不一定带扩展名，因此 `resolveImageMediaType(name, head)` 在名字
+   * 命中不了白名单时看**魔数**（`head` 是 platform 顺手带回的开头 12 字节）。
+   * 两条都不认 ⇒ 如实拒绝并说明（不猜成 jpeg）。
+   *
+   * @param name 展示名（可空：空则按"图片 N"编号）
+   * @param base64 规范 base64（platform 读好的）
+   * @param bytes 精确字节数
+   * @param mediaType 按名字推断的 MIME（可能为空/不在白名单）
+   * @param head 文件开头 ≤12 字节（用于魔数判定；空数组表示拿不到）
+   */
+  attachLocalImage(name: string, base64: string, bytes: number, mediaType: string,
+    head: number[]): AttachOutcome {
+    const resolved: string = resolveImageMediaType(mediaType, head);
+    const rejection: string = imageDraftRejection(resolved, bytes, base64.length);
+    const label: string = name.length > 0 ? name : `图片 ${this.imageDraftSeq + 1}`;
+    if (rejection.length > 0) {
+      this.record(`image draft rejected ${resolved} ${bytes}B`);
+      return { ok: false, name: label, reason: rejection };
+    }
+    this.imageDraftSeq = this.imageDraftSeq + 1;
+    const key: string = `img-${this.imageDraftSeq}`;
+    const next: PendingAttachment[] = this.attachmentList.slice();
+    next.push({
+      key: key, kind: AttachmentKind.IMAGE, receiptId: '',
+      name: label, bytes: bytes, mediaType: resolved, data: base64
+    });
+    this.attachmentList = next;
+    this.record(`image draft ok ${resolved} ${bytes}B key=${key}`);
+    this.notify();
+    return { ok: true, name: label, reason: '' };
+  }
+
+  /**
+   * 移除一个待发附件（按 `key`：文件是回执、图片是草稿 id）。
+   *
+   * 【为什么参数从回执改成 key】图片没有回执，只有草稿 id；两种载体共用一个列表，
+   * 就必须有一个都在的**行身份**。按名字移除是不行的（同名文件可以加两次）。
+   */
+  removeAttachment(key: string): void {
     const next: PendingAttachment[] = [];
     for (let i = 0; i < this.attachmentList.length; i++) {
-      if (this.attachmentList[i].receiptId !== receiptId) {
+      if (this.attachmentList[i].key !== key) {
         next.push(this.attachmentList[i]);
       }
     }
@@ -4128,12 +4215,16 @@ export class SessionHub {
     }
     const requestId: string = mintRequestId();
     if (!this.unaryReady) {
-      // 【离线时**不**排队附件】回执是会话作用域的、且有生命周期
+      // 【离线时**不**排队附件】文件回执是会话作用域的、且有生命周期
       // （进入某个 prompt 的收件箱后 Host 就回收它）。排队一条「等会儿再发」的
       // 附件消息，几乎注定在补发时因回执已失效而失败，而用户以为它会发出去。
-      // 因此离线时只排文本，并明确告知附件不会跟着走。
+      // 图片更彻底：它是**内联**在消息里的，端侧**没有**任何"稍后补发"的凭据。
+      // 因此离线时只排文本，并明确告知附件/图片不会跟着走。
       if (this.attachmentList.length > 0) {
-        this.lastError = '当前离线：已加入待发队列，但**附件不会随队列发送**，请恢复连接后重新添加附件。';
+        this.lastError = hasInlineImage(this.draftInputs())
+          ? '当前离线：已加入待发队列，但**图片不会随队列发送**（图片是内联在消息里的，'
+            + '端侧没有可稍后补发的凭据）。请恢复连接后重新选择图片。'
+          : '当前离线：已加入待发队列，但**附件不会随队列发送**，请恢复连接后重新添加附件。';
       } else {
         this.lastError = '当前离线：已加入待发队列，连接恢复后自动发送';
       }
@@ -4144,12 +4235,47 @@ export class SessionHub {
     return await this.sendPromptNow(requestId, sessionId, trimmed);
   }
 
-  private async sendPromptNow(requestId: string, sessionId: string, text: string): Promise<boolean> {
-    // 只把「属于本次会话」的附件带上：会话可能在入队后切换过，
-    // 而回执绑定会话——带上别的会话的回执会被 Host 判为未知回执。
-    const content: PromptContentPart[] = [textPart(text)];
+  /**
+   * 待发附件 → **拼装用的草稿**（逐字段复制）。
+   *
+   * 【为什么不让纯模型直接吃 `PendingAttachment`】ArkTS **禁止结构类型**
+   * （`arkts-no-structural-typing`，E364）：`PendingAttachment` 不是
+   * `AttachmentDraftInput` 的"子类型"，直接传会被编译器拒绝。逐字段复制是这个语言里
+   * 唯一诚实的做法——也顺带让"纯模型只依赖它真正需要的那几个字段"这件事写在明处。
+   */
+  private draftInputs(): AttachmentDraftInput[] {
+    const out: AttachmentDraftInput[] = [];
     for (let i = 0; i < this.attachmentList.length; i++) {
-      content.push(filePart(this.attachmentList[i].receiptId));
+      const a: PendingAttachment = this.attachmentList[i];
+      out.push({
+        key: a.key, kind: a.kind, name: a.name, mediaType: a.mediaType,
+        bytes: a.bytes, data: a.data, receiptId: a.receiptId
+      });
+    }
+    return out;
+  }
+
+  private async sendPromptNow(requestId: string, sessionId: string, text: string): Promise<boolean> {
+    /*
+     * 提示词片段由**纯模型**拼（`attachmentPlanFor`），顺序与官方一致：
+     * 图片在前、正文在后（官方 `sendSession()` 的展开式），文件回执在正文之后
+     * （本仓既有行为，无官方依据可抄 ⇒ 不改，理由写在该模型里）。
+     *
+     * 【附件为什么不需要再过滤会话】切会话时 `clearAttachments()` 会清空——
+     * 这是"附件属于当前会话"的唯一保证点（回执是 Agent 作用域的，带错会话会被
+     * Host 判为 `session/attachment-invalid`）。
+     */
+    const plan: AttachmentPartPlan[] = attachmentPlanFor(this.draftInputs(), text);
+    const content: PromptContentPart[] = [];
+    for (let i = 0; i < plan.length; i++) {
+      const part: AttachmentPartPlan = plan[i];
+      if (part.type === 'image') {
+        content.push(imagePart(part.mediaType, part.data, part.name));
+      } else if (part.type === 'file') {
+        content.push(filePart(part.receiptId));
+      } else {
+        content.push(textPart(part.text));
+      }
     }
     const args: Object | undefined =
       promptPayload(requestId, sessionId, PromptMode.QUEUE, content, '');
@@ -5405,19 +5531,29 @@ function friendlyFailure(code: string, message: string): string {
     return `调用参数与 Host 的契约不符（${message}）。这是客户端兼容面的问题，请提交诊断报告以便修正上表。`;
   }
   /*
-   * 附件被拒（P0-3 修正）。
+   * 附件被拒（P0-3/P0-4）。
    *
-   * 【这个 code 有**两种**用法，文案必须同时说通】
-   *   ① 读历史图片字节（`session/attachment`）——引用不属于这条会话；
-   *   ② 发提示词时解析 `file` 片段的回执（`resolvePromptFileReceipts`）。
-   * 上游原文（`dsh-api-session-controller/lib/index.js`）：
-   *   `throw new RemoteError("session/attachment-invalid",
-   *      "File was not uploaded for this session.", { reason: "FILE_NOT_STAGED" })`
-   * ——两种用法都落在同一句上。上一版这里只写"图片附件"，对**文件回执**那条路是错的
-   * （会把用户引向"图片坏了"，而真实原因是附件跟着会话走）。所以真正的语义是
-   * 「**这个附件不属于这条会话**」：回执与引用**都是会话作用域**的。
+   * 【这个 code 覆盖**三种**情形，文案必须分得开】
+   *   ① 发提示词时解析 `file` 片段的回执（`resolvePromptFileReceipts`）——
+   *      上游原文 `"File was not uploaded for this session."` + `reason: FILE_NOT_STAGED`；
+   *   ② 读历史图片字节（`session/attachment`）——引用不属于这条会话；
+   *   ③ **图片数据本身**不被接纳。本机真 Host 实测（`check-core-loop.mjs` 的 M2f 步）
+   *      拿图片内联发送时，回的正是这个 code 加
+   *      `"Unsupported or malformed image data."`。
+   *      注意这句话**有两种成因**（E384）：图片真的坏了，**或** Host 随包的图像解码器
+   *      不可用（我们的核心里 `sharp.impl` 曾是 E79 留下的桩，`dsh-attachment-local`
+   *      正是用它解码）。两者在线上是同一句话，所以文案必须把两种可能都说了，
+   *      并指向诊断报告——那里有 Host 原生件的真实探测结论（`runtime.natives`）。
+   * 也就是说：**同一个 code，原因要看 `message`**，不能只看 code。
+   * 上一版只写了"图片附件"，对文件那条路是错的；这一版按 message 分支——
+   * 用户拿到的是一句能行动的话，而不是一句听起来合理但方向错了的话。
    */
-  if (code === 'session/attachment-invalid') {
+  if (code === SESSION_ATTACHMENT_INVALID) {
+    if (message.indexOf('image') >= 0) {
+      return 'Host 说这张图无法接纳（格式不支持、数据损坏，**或 Host 侧的图像解码器不可用**）。'
+        + '诊断报告里的「运行时事实」会给出 Host 原生件的真实探测结论，先看那一条再决定是换图还是报缺陷。'
+        + (message.length > 0 ? `（Host 原文：${message}）` : '');
+    }
     return 'Host 拒绝了这个附件：它不属于这条会话（附件回执与图片引用都是**会话作用域**的）。'
       + '常见原因：附件是在另一个会话里选的，或会话切走后又把旧附件发了出去。'
       + '重新选择文件后再发即可。' + (message.length > 0 ? `（Host 原文：${message}）` : '');

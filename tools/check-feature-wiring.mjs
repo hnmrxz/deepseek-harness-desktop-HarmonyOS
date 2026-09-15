@@ -147,7 +147,14 @@ const FEATURES = [
    * 我们此前把图片块降级成正文里的字面 `[image]`（真机上用户看到的就是这五个字符）。
    * 钉三段接线：块→引用（投影）+ 引用→URL（中枢读字节并缓存）+ URL→画面（视图）。
    */
-  { name: '消息图片', patterns: [['projectImageBlock', 2], ['imageUrlOf', 2], ['MessageImages', 2]] }
+  { name: '消息图片', patterns: [['projectImageBlock', 2], ['imageUrlOf', 2], ['MessageImages', 2]] },
+  /*
+   * 输入区发送图片（P0-4）。官方 `conversation.input.attachments` 槽位的图片走**内联**：
+   * `serializeImages()` 直接把 base64 塞进提示词的 `image` 片段（不经过 `fileUploads/upload`），
+   * 内容顺序是"图片在前、正文在后"。钉三段接线：图库选择（platform）+ 入列判定（中枢）
+   * + 输入区入口（视图按钮与宿主回调）。
+   */
+  { name: '输入区图片', patterns: [['pickImage', 2], ['attachLocalImage', 2], ['onAddImage', 2]] }
 ];
 
 /**

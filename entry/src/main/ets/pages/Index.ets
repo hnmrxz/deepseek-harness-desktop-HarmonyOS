@@ -37,6 +37,7 @@ import {
   PickOutcome,
   pickDocument,
   pickFolder,
+  pickImage,
   localizedOr,
   readDeviceFacts,
   runtimeFacts,
@@ -1434,6 +1435,18 @@ struct Index {
     const facts: RuntimeFacts = runtimeFacts();
     lines.push(`窗口: ${facts.windowCount} 个${facts.labels.length > 0 ? `（${facts.labels.join(' / ')}）` : ''}`
       + ` · 运行 ${Math.round(facts.uptimeMs / 1000)} 秒 · runtimeId=${facts.runtimeId}`);
+    /*
+     * 原生件事实（E384）：`sharp` 能不能用直接决定"图片能不能发、能不能看"，
+     * 而这条事实此前只长在核心页上。复制诊断报告是真机验收取证的唯一通道
+     * ⇒ 必须进报告：否则设备上"图片失败"的结论又只能靠猜（`session/attachment-invalid`
+     * 会把解码器不可用与图片损坏说成同一句话）。
+     */
+    for (let i = 0; i < this.coreView.facts.length; i++) {
+      const f: CoreFact = this.coreView.facts[i];
+      if (f.label.indexOf('原生件') >= 0) {
+        lines.push(`${f.label}: ${f.value}${f.hint.length > 0 ? `（${f.hint}）` : ''}`);
+      }
+    }
     lines.push('');
     for (let i = 0; i < this.diag.entries.length; i++) {
       const e: DiagEntry = this.diag.entries[i];
@@ -1882,6 +1895,32 @@ struct Index {
     // 上传结果必须覆盖掉「正在上传」——否则失败时界面会一直停在「正在上传…」，
     // 而用户以为它还在传（实际早就失败了）。
     this.attachNotice = outcome.ok ? '' : `附件「${picked.name}」添加失败：${outcome.reason}`;
+  }
+
+  /**
+   * 抬起**系统图库**，把选中的图片挂成待发图片（P0-4：**内联**发送，不走上传）。
+   *
+   * 【为什么没有"正在上传…"这一段】图片不进 `fileUploads/upload`：它被内联进
+   * 下一条提示词（官方 `serializeImages()` 同一条路），因此这一步是**同步入列**，
+   * 用户立刻能在附件条里看到缩略图。真正的网络代价发生在**发送**那一刻，
+   * 那时的等待由既有的"发送中"指示覆盖。
+   *
+   * 三种非成功结果与文件那条路同样分开提示（取消不提示、可修复的说明原因）。
+   */
+  private async pickAndAttachImage(): Promise<void> {
+    const picked: PickedFile = await pickImage(getContext(this) as common.Context);
+    if (picked.outcome === PickOutcome.CANCELLED) {
+      return;
+    }
+    if (picked.outcome === PickOutcome.TOO_LARGE || picked.outcome === PickOutcome.FAILED) {
+      this.attachNotice = picked.reason;
+      return;
+    }
+    // `head` 是 platform 顺手带回的开头 ≤12 字节：图库给的名字不一定带扩展名，
+    // 这时靠**魔数**判定是不是能内联的图片（见 `InputAttachment.sniffImageMediaType`）。
+    const outcome: AttachOutcome = SessionHub.shared()
+      .attachLocalImage(picked.name, picked.base64, picked.bytes, picked.mediaType, picked.head);
+    this.attachNotice = outcome.ok ? '' : `图片「${outcome.name}」添加失败：${outcome.reason}`;
   }
 
   /**
@@ -2894,6 +2933,7 @@ struct Index {
     permissionHint: permissionUnavailableHint(),
     onPickPermission: () => this.openPermissionPicker(),
     pickAndAttach: () => this.pickAndAttach(),
+    pickAndAttachImage: () => this.pickAndAttachImage(),
     planActive: this.planActive,
     planPending: this.planPending,
     queuedCount: this.queuedCount,

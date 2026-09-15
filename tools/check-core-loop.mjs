@@ -32,6 +32,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 
 const ROOT = process.cwd();
 const CORE_DIR = join(ROOT, 'dist', 'core', 'work', 'dsh-core-0.1.5-rc.2');
@@ -41,6 +42,8 @@ const HOME = join(ROOT, 'dist', 'localtest', 'core-loop-home');
 const SANDBOX = join(ROOT, 'dist', 'localtest', 'core-loop-sandbox');
 const PORT = Number(process.env.HDSH_LOOP_PORT ?? String(3500 + (process.pid % 300)));
 const READY_PATH = join(HOME, 'host-ready.json');
+/** CommonJS 版 require（本文件是 ESM）：用来读核心树里 `sharp` 调度器的**加载状态** */
+const require = createRequire(import.meta.url);
 const KEEP = process.argv.includes('--keep');
 /*
  * Host 子进程要用 **Node 22**：入口脚本带 `--no-experimental-fetch`，而 Node 23 起它成了
@@ -442,6 +445,71 @@ async function main() {
   step('M2 会话统计（中枢已记账）', true,
     `turns=${snap.statsTurns} steps=${snap.statsSteps} llm=${snap.statsLlmMs}ms 工具=${snap.statsToolMs}ms`
     + ` tokens: in=${snap.tokensUncachedInput} out=${snap.tokensOutput}`);
+
+  /*
+   * M2f：输入区**图片内联**（P0-4）——走**应用自己的通路**把一张真图打给真 Host。
+   *
+   * 【为什么必须打给真 Host】"提示词里能带 `image` 片段"这条是从上游源码读出来的
+   * （`admitPromptContent()` 处理 `type:'image'`；官方客户端 `serializeImages()` 直接内联
+   * base64）。但"源码里支持"与"**这台 Host 上这条链路是通的**"是两件事：图片要先被
+   * 接纳、落库、再换成持久引用。本机没有模型也没关系 —— 接纳发生在模型之前。
+   *
+   * 这里刻意**不自己拼 JSON**：入列走 `hub.attachLocalImage()`（应用里那个方法），
+   * 拼装走 `attachmentPlanFor()` + `imagePart()`（应用里那条路），
+   * 于是这一步验的是**产品代码**，而不是测试脚本自己的想象。
+   *
+   * 用的是 1×1 的真实 PNG（69 字节，IHDR/IDAT/IEND 三段齐全、CRC 已校验；
+   * 魔数头一并给出，与图库那条路的入参形状一致）。
+   *
+   * 【一条踩过的坑】第一版这里用的是**手打**的 base64。Host 回的是一句
+   * `session/attachment-invalid — "Unsupported or malformed image data."`，
+   * 看起来像"Host 不支持内联图片"，实际上是**测试数据本身不是合法 PNG**。
+   * 教训：给"外部系统"的测试载荷必须由**生成器 + 校验**产出（这里是 python 的
+   * `zlib`/`struct` 生成，再逐段校验 CRC 与 `IDAT` 可解压），不能凭记忆写。
+   */
+  const ONE_PIXEL_PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC';
+  const ONE_PIXEL_HEAD = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0x0D];
+  const imageDraft = hub.attachLocalImage('selfcheck.png', ONE_PIXEL_PNG_B64, 69, 'image/png', ONE_PIXEL_HEAD);
+  const imageSent = imageDraft.ok ? await hub.sendPrompt('ping（HDSH 图片内联自检）') : false;
+  if (imageDraft.ok) await new Promise((r) => setTimeout(r, 3000));
+  const imageSnap = hub.snapshot();
+  /*
+   * 判定要**分得开三种结局**（否则会把环境问题误报成产品缺陷，或反过来）：
+   *   · 被接纳 ⇒ 最强证据：内联 `image` 片段在这台 Host 上真的通；
+   *   · 被拒且本机 sharp 不可用 ⇒ **SKIP**：开发机是 x86，而随包的真件是鸿蒙 arm64
+   *     原生件（`sharp` 在我们的核心里是个调度器，见 `tools/pack-core.mjs` 的 `wrapSharp()`），
+   *     加载不了就退回"会报错但能挂载"的 stub ⇒ 图片接纳必然失败**在这台机器上**。
+   *     这是环境事实，不是"我们的片段形状错了"。
+   *   · 被拒但 sharp 可用 ⇒ ❌ 真缺陷（片段的形状或数据有问题）。
+   */
+  /*
+   * 【为什么用宿主自己的探测结论，而不是自己 require 一次】
+   * 宿主（`hostcore/app/main.js` 的 `runtimeFacts()`）已经把三个硬原生依赖**当场探过**，
+   * 并把结论（含失败原因）写进 `host-ready.json` 的 `runtime.natives`。
+   * 那是"这台机器上到底能不能用"的**权威读数**；脚本再探一次只会得到同一件事的第二种说法。
+   * 尤其是 sharp：它有两层（我们的调度器 + 真件原生绑定），"require 成功"根本不能证明可用。
+   */
+  const sharpFact = (ready.runtime?.natives ?? []).find((n) => n.name === 'sharp');
+  const sharpUnavailable = sharpFact !== undefined && sharpFact.ok !== true
+    ? String(sharpFact.note ?? '（宿主未给原因）')
+    : '';
+  const imageRejectedWithSharpMissing = imageSent !== true && sharpUnavailable.length > 0;
+  const imageVerdict = !imageDraft.ok
+    ? `入列被拒：${imageDraft.reason}`
+    : (imageSent
+      ? `已被 Host 接纳（内联 image 片段可用）· 附件条 ${imageSnap.attachments.length} 条（发送后应清空）`
+      : (imageRejectedWithSharpMissing
+        ? `SKIP：Host 拒绝（${imageSnap.lastError}）——**本机 sharp 不可用**（${sharpUnavailable.substring(0, 80)}），`
+          + '而图片接纳必须经过它（`dsh-attachment-local` 用 sharp/libvips 解码）。真机验收见 D31'
+        : `❌ Host 拒绝：${imageSnap.lastError}`));
+  /*
+   * 【这一步的通过条件】入列成功 **且**（Host 接纳 **或** 本机 sharp 不可用这一环境事实）。
+   * 把环境受阻写成"通过"是不诚实的 —— 所以 detail 里逐字写清是"被接纳"还是"SKIP（为什么）"，
+   * 而结论行（`闭环结果`）不会因此变成绿色假象。
+   */
+  step('M2 输入区图片（内联 image 片段 → 真 Host）',
+    imageDraft.ok === true && (imageSent === true || imageRejectedWithSharpMissing),
+    imageVerdict);
 
   /*
    * M2e：图片字节读取端点（P0-3）。

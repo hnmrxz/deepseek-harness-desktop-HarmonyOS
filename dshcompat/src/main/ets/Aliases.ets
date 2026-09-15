@@ -124,6 +124,20 @@ export const SETTINGS_REJECTED = 'settings/rejected';
 export const SETTINGS_CONFLICT = 'settings/conflict';
 /** 凭据写入被拒：`{ref}`（详情只给引用名，永不含值） */
 export const CREDENTIAL_REJECTED = 'credential/rejected';
+/**
+ * 附件被拒（**两种用法，同一个 code**）。
+ *
+ * 出处（上游原文，逐字）：
+ *   `dsh-api-session-controller/lib/index.js` 的 `resolvePromptFileReceipts()`
+ *   → `throw new RemoteError("session/attachment-invalid",
+ *        "File was not uploaded for this session.", { reason: "FILE_NOT_STAGED" })`
+ *   同一句也用在 `session/attachment`（读历史图片字节）被拒时。
+ *
+ * 语义：**这个附件不属于这条会话**——上传回执与图片引用都是**会话作用域**的。
+ * 端侧据此给用户一句能行动的话（而不是把 code 甩出来），见
+ * `appstate/store/SessionHub.ts` 的 `friendlyFailure()`。
+ */
+export const SESSION_ATTACHMENT_INVALID = 'session/attachment-invalid';
 /** 模型目录（无参数，只读，适合作连通性探测） */
 export const MODEL_CATALOG_ENDPOINT: string = 'session/modelCatalog';
 /** 插件清单（无参数，只读） */

@@ -113,6 +113,19 @@ export {
   visibleImageCount
 } from './model/MessageImage';
 export type { SingleImageFit } from './model/MessageImage';
+// 输入区附件的判定与拼装（P0-4：图片内联、官方顺序与类型白名单）
+export {
+  AttachmentKind,
+  attachmentPlanFor,
+  formatBytesOf,
+  hasInlineImage,
+  imageDraftRejection,
+  MAX_INLINE_IMAGE_BYTES,
+  resolveImageMediaType,
+  sniffImageMediaType,
+  SUPPORTED_IMAGE_TYPES
+} from './model/InputAttachment';
+export type { AttachmentDraftInput, AttachmentPartPlan } from './model/InputAttachment';
 
 // 权限预设的呈现与切换规则（P7-6，对齐官方 permission-presets）
 export { PERMISSION_UNAVAILABLE, PERMISSION_UNSET, permissionChipLabel, permissionChoices, permissionCommand, permissionSwitchable, permissionUnavailableHint } from './model/Permissions';

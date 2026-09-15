@@ -98,6 +98,8 @@ export interface MainShellFacade {
   /** 点权限 chip（宿主开单选浮层 → `/permission <id>`） */
   onPickPermission: () => void;
   pickAndAttach: () => Promise<void>;
+  /** 加一张图片（P0-4：图库 → **内联**发送，不走上传） */
+  pickAndAttachImage: () => Promise<void>;
   planActive: boolean;
   planPending: boolean;
   queuedCount: number;
@@ -365,8 +367,12 @@ export struct MainShell {
         onAddAttachment: () => {
           this.f.pickAndAttach();
         },
-        onRemoveAttachment: (receiptId: string) => {
-          SessionHub.shared().removeAttachment(receiptId);
+        onAddImage: () => {
+          this.f.pickAndAttachImage();
+        },
+        onRemoveAttachment: (key: string) => {
+          // 参数是**行身份**（文件=回执、图片=草稿 id），见 `Composer.onRemoveAttachment`
+          SessionHub.shared().removeAttachment(key);
         },
         onPickModel: () => {
           this.f.setNav(openSettings(this.f.nav, '', this.f.panelRegistry));

@@ -25,12 +25,19 @@ import { common } from '@kit.AbilityKit';
 import { picker } from '@kit.CoreFileKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { fileUri } from '@kit.CoreFileKit';
+import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { util } from '@kit.ArkTS';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 
 const DOMAIN: number = 0xD5A1;
 const TAG: string = 'platform/filepicker';
+
+/**
+ * 类型嗅探要看的头字节数（12）：PNG(8) / JPEG(3) / GIF(4) / WEBP 的 `RIFF….WEBP`(12)。
+ * 取最大值并写成常量，避免各处再出现 `12` 这种裸魔数。
+ */
+const HEAD_BYTES: number = 12;
 
 /**
  * 端侧单文件上限（字节）。
@@ -69,6 +76,15 @@ export interface PickedFile {
   bytes: number;
   /** 规范 base64（仅 `PICKED` 时有值） */
   base64: string;
+  /**
+   * 文件**开头**的若干字节（最多 12 个；读不到则为空数组）。
+   *
+   * 【为什么要带这一点点字节】判定"这是不是一张能内联的图片"必须看**内容**：
+   * 图库返回的媒体 URI 不一定带扩展名（见 `appstate/model/InputAttachment` 的
+   * `sniffImageMediaType`）。只带 12 个字节是因为四个图片容器的签名都在前 12 字节内——
+   * 为了认类型把整张图（可达数 MB）再复制一份上去是不划算的。
+   */
+  head: number[];
   /** 可直接展示给用户的原因（`CANCELLED` 时为空串） */
   reason: string;
 }
@@ -76,7 +92,7 @@ export interface PickedFile {
 /** 造一个只有结果与原因的结果对象（避免各处重复写字面量）。 */
 function outcomeOf(outcome: PickOutcome, uri: string, reason: string): PickedFile {
   return {
-    outcome: outcome, uri: uri, name: '', mediaType: '', bytes: 0, base64: '', reason: reason
+    outcome: outcome, uri: uri, name: '', mediaType: '', bytes: 0, base64: '', head: [], reason: reason
   };
 }
 
@@ -178,6 +194,56 @@ function isCancelCode(code: number): boolean {
   return code === 13900020 || code === 0;
 }
 
+/** 取开头若干字节（最多 `HEAD_BYTES`）用于类型嗅探；不足则给多少算多少 */
+function headBytesOf(bytes: Uint8Array): number[] {
+  const limit: number = bytes.length < HEAD_BYTES ? bytes.length : HEAD_BYTES;
+  const out: number[] = [];
+  for (let i = 0; i < limit; i++) {
+    out.push(bytes[i]);
+  }
+  return out;
+}
+
+/**
+ * 拉起**系统图库**选择器，选一张图片并读成 base64（P0-4：输入区内联发送图片）。
+ *
+ * ───────── 为什么用图库而不是文件选择器 ─────────
+ * 手机上"发一张照片/截图"是最高频的输入之一，而图库选择器给的是**缩略图界面**，
+ * 比在文件树里翻 `Pictures/` 快得多。两者都是系统选择器，**都不需要任何权限**
+ * （用户选中的那一刻即授权），所以这一步没有新增申请项（上架合规不变）。
+ *
+ * ───────── 与 `pickDocument` 的差别 ─────────
+ * · 只列图片（`PhotoViewMIMETypes.IMAGE_TYPE`）；
+ * · 返回的是**媒体 URI**（`file://media/…`），展示名不一定带扩展名 ⇒ 靠
+ *   `head`（魔数）兜底判断类型，见 `PickedFile.head` 的说明；
+ * · 仍然单选：与 `pickDocument` 同一理由（多选会让"哪几张成功"变成状态机，
+ *   而当前的附件条只能逐条报错）。
+ *
+ * ⚠️ **未真机验收**：媒体 URI 与文档 URI 都由 `fileIo` 支持，但**授权方式不同**，
+ * 这一步在真机上的成败记在 `docs/device-validation.md` 的 D31；在那之前不得宣称可用。
+ */
+export async function pickImage(context: common.Context): Promise<PickedFile> {
+  let uris: string[] = [];
+  try {
+    const options: photoAccessHelper.PhotoSelectOptions = new photoAccessHelper.PhotoSelectOptions();
+    options.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE;
+    options.maxSelectNumber = 1;
+    const view: photoAccessHelper.PhotoViewPicker = new photoAccessHelper.PhotoViewPicker();
+    const result: photoAccessHelper.PhotoSelectResult = await view.select(options);
+    uris = result.photoUris;
+  } catch (err) {
+    const e = err as BusinessError;
+    hilog.info(DOMAIN, TAG, 'photo select rejected: code=%{public}d', e.code);
+    const cancelled: boolean = isCancelCode(e.code);
+    return outcomeOf(cancelled ? PickOutcome.CANCELLED : PickOutcome.FAILED, '',
+      cancelled ? '' : `无法拉起图库：${e.message}（code=${e.code}）`);
+  }
+  if (uris.length === 0) {
+    return outcomeOf(PickOutcome.CANCELLED, '', '');
+  }
+  return await readPickedFile(uris[0]);
+}
+
 /** 读取一个已选中的 URI 并把内容编码成 base64。 */
 async function readPickedFile(uri: string): Promise<PickedFile> {
   const name: string = nameOfUri(uri);
@@ -188,7 +254,7 @@ async function readPickedFile(uri: string): Promise<PickedFile> {
     if (size > MAX_ATTACHMENT_BYTES) {
       return {
         outcome: PickOutcome.TOO_LARGE, uri: uri, name: name,
-        mediaType: mediaTypeOf(name), bytes: size, base64: '',
+        mediaType: mediaTypeOf(name), bytes: size, base64: '', head: [],
         reason: `文件 ${formatBytes(size)} 超过端侧附件上限 ${formatBytes(MAX_ATTACHMENT_BYTES)}`
       };
     }
@@ -201,7 +267,7 @@ async function readPickedFile(uri: string): Promise<PickedFile> {
     const base64: string = helper.encodeToStringSync(bytes);
     return {
       outcome: PickOutcome.PICKED, uri: uri, name: name, mediaType: mediaTypeOf(name),
-      bytes: read, base64: base64, reason: ''
+      bytes: read, base64: base64, head: headBytesOf(bytes), reason: ''
     };
   } catch (err) {
     const e = err as BusinessError;

@@ -25,6 +25,14 @@ import {
 import { NativeButton, NativeChip } from './NativePrimitives';
 
 /**
+ * 附件缩略图边长（vp）。
+ *
+ * 取值与设计令牌里的 `Sz.TOUCH_MIN`（44）无关：这里是**图片预览**，不是命中目标
+ * （删除按钮才是）。32 是"看得清是什么图"与"不把输入区撑高"之间的折中。
+ */
+const THUMB_SIDE: number = 32;
+
+/**
  * 附件条目的展示文本：`名字 · 大小`。
  *
  * 【为什么必须带大小】附件是「先上传、后随消息发出」两步。
@@ -33,6 +41,21 @@ import { NativeButton, NativeChip } from './NativePrimitives';
  */
 function attachmentLabel(item: PendingAttachment): string {
   return item.bytes > 0 ? `${item.name} · ${formatBytes(item.bytes)}` : item.name;
+}
+
+/**
+ * 图片草稿的**预览 URL**（`data:` 形式；空串 = 这条不是图片）。
+ *
+ * 【为什么在视图里现拼】图片草稿的 base64 只在内存里、发出去就清空（见
+ * `PendingAttachment.data`），没有持久 URL 可缓存；ArkUI 的 `Image()` 直接吃
+ * `data:` URL，现拼是零成本的。中枢那套图片缓存（`imageUrlOf`）是给**历史**图片用的
+ * （那些要走 `session/attachment` 读字节）——两者不是一回事，不要混用。
+ */
+function attachmentPreview(item: PendingAttachment): string {
+  if (item.kind !== 'image' || item.data.length === 0 || item.mediaType.length === 0) {
+    return '';
+  }
+  return `data:${item.mediaType};base64,${item.data}`;
 }
 
 /**
@@ -115,16 +138,25 @@ export struct Composer {
   /** 停止当前轮次 */
   onStop: () => void = () => {
   };
-  /** 添加附件（宿主负责拉起相册/文件选择器） */
+  /** 添加**文件**附件（宿主拉起文件选择器 → 上传拿回执） */
   onAddAttachment: () => void = () => {
   };
   /**
-   * 移除附件（参数是**回执 id**，不是文件名）。
+   * 添加**图片**（P0-4：宿主拉起图库 → **内联**进下一条消息，不走上传）。
    *
-   * 为什么用回执而不是文件名：同名文件可以加两次，按名字移除会一次删掉两个，
-   * 而用户只点了一个「×」。回执是这次上传的唯一身份。
+   * 【为什么要与「附件」分成两个入口】两条路的线上语义不同：文件先上传拿**会话作用域**
+   * 的回执，再把回执放进 `file` 片段；图片直接内联 base64（官方 `serializeImages()`）。
+   * 合成一个按钮就意味着"选了图之后才知道走哪条路"，而失败时的原因也说不清。
    */
-  onRemoveAttachment: (receiptId: string) => void = () => {
+  onAddImage: () => void = () => {
+  };
+  /**
+   * 移除附件（参数是**行身份 `key`**，不是文件名）。
+   *
+   * 文件的行身份是上传回执，图片是客户端草稿 id（它没有回执）。按名字移除会
+   * 一次删掉两个同名附件，而用户只点了一个「×」。
+   */
+  onRemoveAttachment: (key: string) => void = () => {
   };
   /** 切换模型（宿主弹出选择器） */
   onPickModel: () => void = () => {
@@ -317,8 +349,24 @@ export struct Composer {
       Row({ space: Sp.S }) {
         ForEach(this.attachments, (item: PendingAttachment) => {
           Row({ space: Sp.XS }) {
-            SymbolGlyph($r('sys.symbol.paperclip')).fontSize(12)
-              .fontColor([$r('sys.color.font_secondary')])
+            /*
+             * 图片给**缩略图**、文件给回形针（P0-4）。
+             *
+             * 【为什么不都用回形针】图片最常见的问题是"选错了一张"——缩略图是唯一
+             * 能在发出前看出来的信息；文件名（`IMG_20240101_120000.jpg`）对人几乎无用。
+             * 官方输入区的附件槽位同样给预览。
+             */
+            if (attachmentPreview(item).length > 0) {
+              Image(attachmentPreview(item))
+                .width(THUMB_SIDE)
+                .height(THUMB_SIDE)
+                .objectFit(ImageFit.Cover)
+                .borderRadius(Radius.XS)
+                .accessibilityText(`图片预览：${item.name}`)
+            } else {
+              SymbolGlyph($r('sys.symbol.paperclip')).fontSize(12)
+                .fontColor([$r('sys.color.font_secondary')])
+            }
             Text(attachmentLabel(item))
               .fontSize(Fs.CAPTION)
               .maxLines(1)
@@ -327,15 +375,16 @@ export struct Composer {
               .fontSize(Fs.CAPTION)
               .fontColor($r('sys.color.alert'))
               .onClick(() => {
-                // 以**回执**为键移除，而不是文件名：同名文件可以加两次，
+                // 以**行身份 `key`** 移除，而不是文件名：同名文件可以加两次，
                 // 按名字移除会一次删掉两个（用户以为只删了一个）。
-                this.onRemoveAttachment(item.receiptId);
+                // 图片没有回执，它的 key 是客户端草稿 id（P0-4）。
+                this.onRemoveAttachment(item.key);
               })
           }
           .padding({ left: Sp.S, right: Sp.S, top: Sp.XS, bottom: Sp.XS })
           .borderRadius(Radius.S)
           .backgroundColor($r('sys.color.background_secondary'))
-        }, (item: PendingAttachment) => item.receiptId)
+        }, (item: PendingAttachment) => item.key)
       }
     }
     .scrollable(ScrollDirection.Horizontal)
@@ -379,6 +428,23 @@ export struct Composer {
       .accessibilityText('添加附件')
       .onClick(() => {
         this.onAddAttachment();
+      })
+
+      /*
+       * ── 图片（P0-4）──
+       *
+       * 【为什么单独一个按钮】两条路的线上语义不同（文件=先上传拿会话作用域回执；
+       * 图片=内联 base64，官方 `serializeImages()`），失败原因也不同 ⇒ 分开才说得清。
+       * 图标用 `sys.symbol.picture`（**已在本机 CLT 的 `sysResource.js` 的 symbol 段里核对过**：
+       * `paperclip` 与 `picture` 都在；猜一个名字会换来一个空白按钮，这是 E-symbol 的教训）。
+       */
+      Button() {
+        SymbolGlyph($r('sys.symbol.picture')).fontSize(Sz.TOUCH_MIN / 2)
+      }
+      .buttonStyle(ButtonStyleMode.TEXTUAL)
+      .accessibilityText('添加图片（随消息一起发送，不需要先上传）')
+      .onClick(() => {
+        this.onAddImage();
       })
 
       // ── 计划模式（官方 ui-plan：输入区的一级 chip；E202 的判据）──

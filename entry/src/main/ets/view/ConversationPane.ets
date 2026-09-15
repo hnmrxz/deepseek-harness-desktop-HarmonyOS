@@ -70,8 +70,11 @@ export struct ConversationPane {
   };
   onAddAttachment: () => void = () => {
   };
-  /** 移除附件（参数是上传回执 id，见 `Composer` 的说明） */
-  onRemoveAttachment: (receiptId: string) => void = () => {
+  /** 添加图片（P0-4：内联发送，不走上传；见 `Composer.onAddImage` 的说明） */
+  onAddImage: () => void = () => {
+  };
+  /** 移除附件（参数是**行身份 key**：文件是回执、图片是草稿 id；见 `Composer` 的说明） */
+  onRemoveAttachment: (key: string) => void = () => {
   };
   onPickModel: () => void = () => {
   };
@@ -983,6 +986,7 @@ export struct ConversationPane {
         },
         onStop: this.onStop,
         onAddAttachment: this.onAddAttachment,
+        onAddImage: this.onAddImage,
         onRemoveAttachment: this.onRemoveAttachment,
         planActive: this.planActive,
         planPending: this.planPending,
