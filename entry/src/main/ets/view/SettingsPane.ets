@@ -346,33 +346,12 @@ export struct SettingsPane {
       })
   }
 
-  /**
-   * 设置项的一行（P4-3：渲染归 `SettingRow` 组件，宿主只把回调转过去）。
-   *
-   * 【为什么留这个薄包装】通用段与预设段有多个调用点，逐个写 5 个回调转接会重复 5 行 × N 处；
-   * 包装一次之后调用点仍是 `this.settingRow(item)`，改动面最小。
+  /*
+   * 【曾经的 `settingRow` 薄包装已删除】P4-3 抽 `SettingRow` 组件时，宿主留了它把 5 个回调转过去
+   * （当时通用段与预设段有多个调用点）。P4-5 把那两段搬进 `SettingsSkills`/`SettingsPresets` 之后，
+   * **它一个调用点都没有了**——而它的文档还写着"多个调用点"，读者会以为这里还在用。
+   * 由 E350 的死代码门禁查出并删除；`SettingRow` 的导入也随之摘掉。
    */
-  @Builder
-  settingRow(item: SettingItem) {
-    SettingRow({
-      item: item,
-      onToggleSetting: (key: string, value: boolean) => {
-        this.onToggleSetting(key, value);
-      },
-      onPickChoice: (key: string, current: string) => {
-        this.onPickChoice(key, current);
-      },
-      onEditText: (it: SettingItem) => {
-        this.onEditText(it);
-      },
-      onEditStruct: (it: SettingItem) => {
-        this.onEditStruct(it);
-      },
-      onResetSetting: (key: string) => {
-        this.onResetSetting(key);
-      }
-    })
-  }
   // ───────────── 通用 ─────────────
 
 

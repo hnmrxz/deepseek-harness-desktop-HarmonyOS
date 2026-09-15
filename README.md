@@ -194,6 +194,7 @@ hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 （`hubBanner` / `coreTabContent` / `tabContent`——内容都已在 AppShell 与两束组件里，只剩宿主这份壳；
 `@Entry` 组件不会渲染它们）与**全仓 22 个零使用 import**（`Index` 12 个、`MainShell` 9 个、其余 6 文件各 1 个）。
 `Index.ets` 4460 → **4384 行**，全仓零使用 import 归零。
+**P2-6 已落地（第一刀：把「搬迁留下死代码」变成门禁）**：前两轮反复出现同一类无感缺陷 —— 编译通过、界面正常、八门禁全绿，而宿主体内躺着一批**零使用**的壳（E345 三个零调用 `@Builder`、E346 拆走两段后宿主那段唯一的读者还活着、E346b `settingsStates` 一条没人读的死链），三次都是我手工扫出来的。现固化成第 **9** 道门禁 `tools/check-dead-code.mjs`：零使用 **import / `@Builder` / 组件成员**三条判定，含 **9 条注入式自检**，并**对修前的 `SettingsPane` 归真命中 5 处**真实死代码。门禁在当轮就查出并删掉 3 处真死代码：`MessageFeedback.itemId`、`MessageRow.menuHint`、`SettingsPane.settingRow`（P4-3 的薄包装，P4-5 之后一个调用点都没有）——删 `menuHint` 的绑定还连带暴露 `ConversationPane.inputModality()` 成了死方法。
 **P2-5 已落地（会话正文第二刀）**：把会话头那四块**不在列表里的** chrome 抽成
 `view/ConversationHeader.ets`（284 行）—— 视图切换 + 轨迹工具栏（展开全部 / 收起全部 / 事件计数）、
 后台任务条（官方 `conversation.header.jobs`，live 任务每秒走字）、时间总览、会话内搜索条。

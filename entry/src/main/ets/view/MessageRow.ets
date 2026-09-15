@@ -50,8 +50,6 @@ export struct MessageRow {
   @Prop item: TrajectoryItem;
   /** 无障碍文案（父组件按"去标记纯文本"生成） */
   @Prop a11yText: string = '';
-  /** 无障碍提示里的手势说明（策略模型给） */
-  @Prop menuHint: string = '';
   /** 两个输入模态事实（策略模型的输入） */
   @Prop hasPointer: boolean = false;
   @Prop hasKeyboard: boolean = false;
@@ -148,7 +146,6 @@ export struct MessageRow {
       // ── 反馈表单（开与关由父组件的 `feedbackOpen` 决定）──
       if (this.feedbackOpen) {
         MessageFeedback({
-          itemId: this.item.id,
           initialCategory: this.storedCategory,
           initialNote: this.storedNote,
           notice: this.feedbackNotice,

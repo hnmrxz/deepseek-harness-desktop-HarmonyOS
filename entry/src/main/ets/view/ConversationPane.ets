@@ -8,9 +8,9 @@
  * 所有动作通过回调上报宿主，便于接入真实连接时只改宿主。
  */
 
-import { Border, CommandCandidate, FeedbackRow, FollowSignal, Fs, HarmonyColor, HarmonyType, ModelOption, ModelSelection, PendingAttachment, PendingItem, QueuedItem, Radius, ReferenceCandidate, SessionHub, Sp, Speaker, TrajectoryItem, TrajectoryKind, cellIdForListIndex, chatRowOfItemIndex, chatVisibleItems, contextMenuGestures, contextMenuHintLabel, defaultExpanded, followTimerShouldRun, formatDuration, groupTurns, hasProcessGroup, jobTickerNeeded, listIndexForCell, matchConversationIndices, matchTrajectoryIndices, nextFollowing, parseMarkdown, plainTextOf, presentTool, processSummary, shouldJumpOnNewItems, stepMatch, toolStateLabel } from 'appstate';
+import { Border, CommandCandidate, FeedbackRow, FollowSignal, Fs, HarmonyColor, HarmonyType, ModelOption, ModelSelection, PendingAttachment, PendingItem, QueuedItem, Radius, ReferenceCandidate, SessionHub, Sp, Speaker, TrajectoryItem, TrajectoryKind, cellIdForListIndex, chatRowOfItemIndex, chatVisibleItems, contextMenuGestures, defaultExpanded, followTimerShouldRun, formatDuration, groupTurns, hasProcessGroup, jobTickerNeeded, listIndexForCell, matchConversationIndices, matchTrajectoryIndices, nextFollowing, parseMarkdown, plainTextOf, presentTool, processSummary, shouldJumpOnNewItems, stepMatch, toolStateLabel } from 'appstate';
 /** 类型单独 import type（本仓约定：值与类型分开写） */
-import type { ActionNotice, InputModality, SessionJob, SessionStatsInput, Turn } from 'appstate';
+import type { ActionNotice, SessionJob, SessionStatsInput, Turn } from 'appstate';
 import type { NativeAction } from './NativePrimitives';
 import { NativeCard, NativeChip } from './NativePrimitives';
 import { Composer } from './Composer';
@@ -828,7 +828,6 @@ export struct ConversationPane {
     MessageRow({
       item: item,
       a11yText: this.speakableText(item),
-      menuHint: contextMenuHintLabel(this.inputModality()),
       hasPointer: this.hasPointer,
       hasKeyboard: this.hasKeyboard,
       feedbackOpen: this.fbFor === item.id,
@@ -917,11 +916,6 @@ export struct ConversationPane {
     return '';
   }
   /** 打开上下文菜单（长按/右键都走这里；手势集合来自输入策略） */
-  /** 输入模态快照（策略模型的输入；本文件只做映射，不做判断） */
-  private inputModality(): InputModality {
-    return { hasKeyboard: this.hasKeyboard, hasPointer: this.hasPointer };
-  }
-
   /**
    * 一条消息的**动作清单**（操作条与上下文菜单**共用这一份**）。
    *

@@ -28,13 +28,11 @@ import { NativeChip } from './NativePrimitives';
 
 @Component
 export struct MessageFeedback {
-  /**
-   * 被评价的消息 id。
-   *
-   * 【为什么只用来做无障碍文案】判定（评价正负、已存内容）都在宿主算好后传入；
-   * 组件里再查一次中枢就会出现"两处各查一次、结果可能不同"的问题。
+  /*
+   * 【曾经有一个 `itemId` prop】它随"反馈面板"从宿主搬进来，但**搬过来之后没有一处读它**
+   * （E350 的死代码门禁查出来的）：判定与回执都在父组件算好传入，这个 id 只是"跟着搬过来"。
+   * 删掉而不是留个 `dead-exempt:`——它连调试价值都没有。
    */
-  @Prop itemId: string = '';
   /** 打开那一刻的已存类别（''=未分类） */
   @Prop initialCategory: string = '';
   /** 打开那一刻的已存说明 */
