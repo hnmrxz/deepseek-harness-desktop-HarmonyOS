@@ -471,6 +471,22 @@ const PAGE_MAX_MESSAGES: number = 200;
  * 超限时整体丢弃（重读一次比维护 LRU 简单，而重读的代价只是一次一元 RPC）。
  */
 const MAX_CACHED_IMAGES: number = 24;
+/**
+ * 文件变更帧 → 重列的合并窗口（毫秒）。
+ *
+ * 一次保存/一次工具写入可能连着推出好几帧；逐帧重列等于把 `workspaceFiles/list`
+ * 打成突发。300 ms 是"人眼还觉得是即时"与"突发被合并成一次"之间的取舍。
+ */
+const FILES_RELIST_THROTTLE_MS: number = 300;
+/**
+ * 一秒内允许的重列次数上限（超过即判定为**自激**：跳过重列并记一次账）。
+ *
+ * 【为什么要有这道闸】E383 实测过一种自激形态（订阅 → 一帧 → 重列并重订阅 → …），
+ * 一秒内打出了 **367 次** `workspaceFiles/list`。结构性修法已经做了（订阅只建一次），
+ * 但"结构性修法"的正确性依赖我们对 Host 行为的**假设**；万一今后换个 Host 又出现别的形态，
+ * 我们希望它退化成"自动刷新停了（有日志可查）"，而不是又一次把 CPU/电量/Host 烧掉。
+ */
+const FILES_RELIST_BURST_MAX: number = 10;
 
 export class SessionHub {
   private static instance: SessionHub | undefined;
@@ -644,6 +660,18 @@ export class SessionHub {
   private fileTreeFor: string = '';
   /** 文件变更流的取消句柄（E226：`workspaceFiles/changes`） */
   private cancelFileChanges: (() => void) | undefined = undefined;
+  /**
+   * 变更流**当前订阅的作用域**（空串 = 没订阅）。
+   *
+   * 【E383：为什么必须记住它，而不是"每次重列都重订阅"】见 `ensureFilesStream` 的说明——
+   * 重订阅会换来 Host 的一帧"初次快照"，那帧又触发重列 ⇒ **自激**（实测 1 秒 367 次 RPC）。
+   */
+  private filesStreamFor: string = '';
+  /** 变更帧合并成一次重列的定时器（-1 = 没有排队的重列） */
+  private filesRelistTimer: number = -1;
+  /** 自激探测窗口起点与窗口内计数（E383） */
+  private filesRelistWindowStart: number = 0;
+  private filesRelistCount: number = 0;
   /**
    * 长期任务目标（E242：官方 `ui-goal` 的目标栏数据源）。
    *
@@ -854,6 +882,12 @@ export class SessionHub {
   /** 断开并释放所有流（仅一个窗口会调用；其他窗口只订阅快照） */
   async disconnect(): Promise<void> {    this.cancelFollow();
     this.cancelControl();
+    // 文件变更流也要显式收掉：订阅标记留着会让重连后的自动刷新永远不再订阅（E383）
+    this.closeFilesStream();
+    if (this.filesRelistTimer !== -1) {
+      clearTimeout(this.filesRelistTimer);
+      this.filesRelistTimer = -1;
+    }
     await this.conn.stop();
     this.phase = HubPhase.IDLE;
     this.eventsReady = false;
@@ -2450,20 +2484,42 @@ export class SessionHub {
    *   作用域是「在浏览哪个目录」，两者可以不同。
    */
   /**
-   * 订阅**文件变更流**（E226：`workspaceFiles/changes`，契约 stream + `workspaceFileScopeId`）。
+   * 确保**文件变更流**已按当前作用域订阅（E226：`workspaceFiles/changes`，
+   * 契约 stream + `workspaceFileScopeId`）。
    *
    * 【为什么要它】文件视图此前只在"进入/切会话"时取一次（`openWorkspace`）——Agent 改了文件后
    * 界面仍显示旧目录，用户会以为"没生效"。官方有这条通道，我们登记了常量却一直没接（§15.8 第 2 条）。
    *
-   * 【取舍：不做增量补丁，收到任何变更帧就重列】目录几十到几百项、`list` 很轻，
-   * 重列比"猜增量语义"稳，也避免"补丁打错导致界面与磁盘不一致"；真机若发现过频再按帧节流。
+   * 【取舍：不做增量补丁，收到变更帧就重列】目录几十到几百项、`list` 很轻，
+   * 重列比"猜增量语义"稳，也避免"补丁打错导致界面与磁盘不一致"。
    * 【失败不静默】只记旁路日志（E164 后 hdc 可见），保留"重进刷新"退路——能力降级要说得出原因。
+   *
+   * ───────────── E383：这条流会**自激**，因此订阅**只建一次** ─────────────
+   *
+   * 原来的写法是"每次重列都先取消、再重订阅"（`openFilesStream` 无条件 cancel+open），
+   * 而变更帧的回调又去重列（`openWorkspace`）⇒ 只要 Host 在**每次订阅**时先推一帧
+   * "初次快照"，就形成闭环：订阅 → 一帧 → 重列并重订阅 → 一帧 → …
+   *
+   * **实测（本机真 Host，`tools/check-core-loop.mjs` 的一次运行，逐行读旁路日志）**：
+   * 同一秒内 `workspaceFiles/list` 被 POST **367 次**、变更流开关 **367 次**，
+   * 而这一秒里用户什么也没做。在设备上这等于把 CPU、电量、Host 一起烧掉，
+   * 还把诊断日志冲成一片噪音（排查别的缺陷时先被它淹没）。
+   *
+   * 修法两条：① `force = true`（用户/会话驱动）才重订阅；由**变更帧**驱动时
+   * （`force = false`）只要同作用域订阅过就不再订阅——哪怕它已经正常结束
+   * （这台 Host 每次订阅恰好推一帧就结束，`workspaceFiles/changes 结束` 紧随其后）；
+   * ② 变更帧先合并（`FILES_RELIST_THROTTLE_MS`）再重列，突发帧只换一次 RPC。
+   * 另加自激探测（`FILES_RELIST_BURST_MAX`）：任何形态的自激都会退化成
+   * "自动刷新停了（有日志）"，而不是一次 RPC 风暴。
+   *
+   * @param sessionId 文件端点的作用域（**就是会话 id**）
+   * @param force 是否允许重订阅（true = 用户/会话驱动的重开）
    */
-  private openFilesStream(sessionId: string): void {
-    if (this.cancelFileChanges !== undefined) {
-      this.cancelFileChanges();
-      this.cancelFileChanges = undefined;
+  private ensureFilesStream(sessionId: string, force: boolean): void {
+    if (!force && this.filesStreamFor === sessionId) {
+      return;
     }
+    this.closeFilesStream();
     const inner: Record<string, Object> = {};
     inner['workspaceFileScopeId'] = sessionId;
     const args: Object | undefined = argsFor(WORKSPACE_FILES_CHANGES_ENDPOINT, inner as Object);
@@ -2473,28 +2529,86 @@ export class SessionHub {
     }
     const sink: StreamSink = {
       onItem: (value: Object) => {
-        // 变更帧的具体形状不重要：**任何**变更都意味着"目录可能变了" ⇒ 重列
-        this.openWorkspace(sessionId).catch((e: Object) => {
-          this.record('workspaceFiles 变更后重列失败 ' + (e as Error).message);
-        });
+        // 变更帧的具体形状不重要：**任何**变更都意味着"目录可能变了" ⇒ 合并后重列
+        this.scheduleFilesRelist(sessionId);
       },
       onError: (code: string, message: string) => {
+        /*
+         * 出错时清掉作用域标记：下次重连/进页面会重新订阅。
+         * 与 `onEnd` 的处理**不同**是刻意的：正常结束（本机 Host 每订阅一帧后即结束）
+         * 不代表通道坏了，重订阅只会重新自激；而传输错误意味着订阅已经死了，
+         * 留着标记会让自动刷新**永久**停摆。
+         */
+        this.filesStreamFor = '';
         this.record('workspaceFiles/changes 失败 ' + code + ' ' + message);
       },
       onEnd: () => {
+        // 【为什么**不**在这里重订阅】见本函数头部 E383：正常结束后的重订阅正是自激的来源
         this.record('workspaceFiles/changes 结束');
       }
     };
-    this.cancelFileChanges = this.conn.openStream(WORKSPACE_FILES_CHANGES_ENDPOINT, args, sink);
-    this.record('files changes opened cancel='
-      + (this.cancelFileChanges === undefined ? 'none' : 'ok'));
+    const cancel: (() => void) | undefined =
+      this.conn.openStream(WORKSPACE_FILES_CHANGES_ENDPOINT, args, sink);
+    if (cancel === undefined) {
+      this.filesStreamFor = '';
+      this.record('files changes open 失败');
+      return;
+    }
+    this.cancelFileChanges = cancel;
+    this.filesStreamFor = sessionId;
+    this.record(`files changes opened scope=${sessionId.substring(0, 12)}`);
   }
 
-  async openWorkspace(sessionId: string): Promise<void> {
-    // E226：文件视图要随变更自动刷新 ⇒ 每次打开/重列时确保订阅存在
-    // （重列由订阅回调触发，回调里再调本函数会重订阅一次——不会自激：重订阅本身不产生变更帧）
+  /** 关掉变更流并忘掉作用域（断开连接时调用：授权没了，订阅标记也不该留下） */
+  private closeFilesStream(): void {
+    const cancel: (() => void) | undefined = this.cancelFileChanges;
+    this.cancelFileChanges = undefined;
+    this.filesStreamFor = '';
+    if (cancel !== undefined) {
+      cancel();
+    }
+  }
+
+  /**
+   * 变更帧 → **合并成一次**重列。
+   *
+   * 两件事：① 尾沿防抖（已有排队就不重复排队）；② 自激探测（窗口内超限就跳过并记账）。
+   * 重列走 `openWorkspace(sessionId, true)`：`fromChange = true` 明确告诉它"别重订阅"。
+   */
+  private scheduleFilesRelist(sessionId: string): void {
+    const now: number = Date.now();
+    if (now - this.filesRelistWindowStart >= 1000) {
+      this.filesRelistWindowStart = now;
+      this.filesRelistCount = 0;
+    }
+    this.filesRelistCount = this.filesRelistCount + 1;
+    if (this.filesRelistCount > FILES_RELIST_BURST_MAX) {
+      if (this.filesRelistCount === FILES_RELIST_BURST_MAX + 1) {
+        this.record(`workspaceFiles/changes 触发过频（>${FILES_RELIST_BURST_MAX} 次/秒）——`
+          + '已暂停自动重列（E383：这类自激过去会打出每秒数百次 RPC）');
+      }
+      return;
+    }
+    if (this.filesRelistTimer !== -1) {
+      return;
+    }
+    this.filesRelistTimer = setTimeout(() => {
+      this.filesRelistTimer = -1;
+      this.openWorkspace(sessionId, true).catch((e: Object) => {
+        this.record('workspaceFiles 变更后重列失败 ' + (e as Error).message);
+      });
+    }, FILES_RELIST_THROTTLE_MS);
+  }
+
+  /**
+   * 打开某个会话的工作区根目录（设置文件浏览的**作用域**），并确保变更流已订阅。
+   *
+   * @param fromChange 本次重列是否**由变更帧**驱动（true ⇒ 不重订阅，见 `ensureFilesStream` 的 E383）
+   */
+  async openWorkspace(sessionId: string, fromChange: boolean = false): Promise<void> {
+    // E226/E383：确保订阅存在（用户/会话驱动才允许重订阅）
     if (sessionId.length > 0) {
-      this.openFilesStream(sessionId);
+      this.ensureFilesStream(sessionId, !fromChange);
     }
     this.filePreview = undefined;
     this.fileTruncated = false;
@@ -5291,15 +5405,22 @@ function friendlyFailure(code: string, message: string): string {
     return `调用参数与 Host 的契约不符（${message}）。这是客户端兼容面的问题，请提交诊断报告以便修正上表。`;
   }
   /*
-   * 图片读取被拒（P0-3）。**这个 code 是实测出来的，不是猜的**：
-   * `tools/check-core-loop.mjs` 的 M2e 步拿一个不存在的附件 id 打真 Host，
-   * 回的就是 `session/attachment-invalid`（本机 Host 上该端点**确实实现着**）。
-   * 它对应的是"这条会话里没有这个附件"——最常见的原因是会话作用域不匹配
-   * （附件 id 是内容寻址的，但读取授权绑在会话上）。
+   * 附件被拒（P0-3 修正）。
+   *
+   * 【这个 code 有**两种**用法，文案必须同时说通】
+   *   ① 读历史图片字节（`session/attachment`）——引用不属于这条会话；
+   *   ② 发提示词时解析 `file` 片段的回执（`resolvePromptFileReceipts`）。
+   * 上游原文（`dsh-api-session-controller/lib/index.js`）：
+   *   `throw new RemoteError("session/attachment-invalid",
+   *      "File was not uploaded for this session.", { reason: "FILE_NOT_STAGED" })`
+   * ——两种用法都落在同一句上。上一版这里只写"图片附件"，对**文件回执**那条路是错的
+   * （会把用户引向"图片坏了"，而真实原因是附件跟着会话走）。所以真正的语义是
+   * 「**这个附件不属于这条会话**」：回执与引用**都是会话作用域**的。
    */
   if (code === 'session/attachment-invalid') {
-    return 'Host 说这条会话里没有这个图片附件——通常是从别的会话带过来的引用，'
-      + '或 Host 侧已经清理了它。' + (message.length > 0 ? `（${message}）` : '');
+    return 'Host 拒绝了这个附件：它不属于这条会话（附件回执与图片引用都是**会话作用域**的）。'
+      + '常见原因：附件是在另一个会话里选的，或会话切走后又把旧附件发了出去。'
+      + '重新选择文件后再发即可。' + (message.length > 0 ? `（Host 原文：${message}）` : '');
   }
   return `${code} ${message}`;
 }

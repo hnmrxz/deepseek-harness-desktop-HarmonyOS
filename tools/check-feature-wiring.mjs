@@ -80,7 +80,13 @@ const FEATURES = [
   { name: '命令面板', patterns: [['refreshCommands', 2], ['executeCommand', 2]] },
   { name: '长期目标', patterns: [['refreshGoal', 2]] },
   { name: '消息反馈', patterns: [['putFeedback', 2], ['refreshFeedback', 2]] },
-  { name: '文件变更流', patterns: [['openFilesStream', 2]] },
+  /*
+   * 文件变更流（E226）。E383 修自激时把 `openFilesStream` 改名为 `ensureFilesStream`
+   * （语义也变了：**只在作用域变化/用户驱动时**才订阅），本门禁当场红了 —— 这正是它该做的事：
+   * 符号没了就是"接线可能被剪断"，改名必须显式改这里，而不是让调用点悄悄消失。
+   * 现在钉两端：「确保订阅」与「关掉订阅」（改名后仍要求 ≥2 处：定义 + 调用）。
+   */
+  { name: '文件变更流', patterns: [['ensureFilesStream', 2], ['closeFilesStream', 2]] },
   { name: '计划模式', patterns: [['planActive|planPending', 2]] },
   { name: '核心版本切换', patterns: [['switchTo', 2], ['rollbackTo', 2]] },
   { name: '插件启停', patterns: [['plugin', 4]] },

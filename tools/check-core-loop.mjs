@@ -236,12 +236,38 @@ async function waitReady() {
 // ─────────────────────────── ③ 跑闭环 ───────────────────────────
 
 const steps = [];
+
+/**
+ * 本次运行里 `workspaceFiles/list` 的真实请求数（E383 回归计数，见 `main()` 的说明）。
+ *
+ * 上限的来历：一次正常运行只需要 1–2 次（选会话时列一次根 + 首个变更帧合并后的重列）。
+ * 8 是"留出重连/换作用域的余量、但任何成规模的自激都必然越界"的取舍——
+ * **修前实测是同一秒 367 次**（旁路日志逐行可见）。
+ */
+let filesListCalls = 0;
+const FILES_LIST_MAX = 8;
+
 function step(name, ok, detail) {
   steps.push({ name, ok, detail });
   console.log(`${ok ? '✅' : '❌'} ${name}${detail === undefined ? '' : ` —— ${detail}`}`);
 }
 
 async function main() {
+  /*
+   * E383 回归计数：把 `console.info` 包一层，数本次运行里真的打出了多少条
+   * `POST …/api/workspaceFiles/list`。
+   *
+   * 【为什么数连接层的 HDSH-REQ 行，而不是数应用里的 trace】应用内 trace 有 300 行上限，
+   * 自激时**会被自己冲掉**（正样本全被覆盖，数出来反而像"没发生"）；而连接层每发一次请求
+   * 就打一行，是最忠实的计数点。计数只加一层包装、不改行为。
+   */
+  const realInfo = console.info.bind(console);
+  console.info = (...args) => {
+    const line = args.map((a) => String(a)).join(' ');
+    if (line.includes('/api/workspaceFiles/list')) filesListCalls += 1;
+    realInfo(...args);
+  };
+
   const out = build();
   startHost();
   const ready = await waitReady();
@@ -450,6 +476,18 @@ async function main() {
   const unknown = snap.unknownEventTypes ?? [];
   step('M2 事件类型全部认识（unknownEventTypes 为空）', unknown.length === 0,
     unknown.length === 0 ? '（本机无模型，事件只到"已受理"层级）' : `未识别：${unknown.join(', ')}`);
+
+  /*
+   * E383 回归：`workspaceFiles/list` 的调用次数必须有界。
+   *
+   * 【这条断言防的是什么】修前这里是"变更帧 → 重列并**重订阅** → 又换一帧 → …"的闭环：
+   * 每次订阅换来一帧"初次快照"，那帧又触发重列与重订阅。实测同一秒内 **367 次**
+   * `workspaceFiles/list` + 367 次流开关，而用户什么也没做 —— 在设备上等于烧 CPU、电量与 Host，
+   * 并把诊断日志冲成噪音。修法见 `SessionHub.ensureFilesStream` 的 E383 注释。
+   * 这条断言把它钉成回归：**任何**形态的自激都会让请求数越界。
+   */
+  step('workspaceFiles/list 调用次数有界（E383 自激回归）', filesListCalls <= FILES_LIST_MAX,
+    `${filesListCalls} 次（上限 ${FILES_LIST_MAX}；修前实测同一秒 367 次）`);
 
   await hub.disconnect();
   await conn.stop();
