@@ -154,7 +154,7 @@ import {
  * 原因：`HubSnapshot` / `HubSubscriber` 在 appstate 里是 `export type` 导出的类型，
  * 与值导入分开写更贴近 ArkTS 的类型/值导入区分。
  */
-import type { AttachOutcome, CredentialWriteResult, HubSnapshot, HubSubscriber, InputModality, LayoutDecision, LayoutInput, ModalityEvidence, NavState, NavigationState, OverlayState, PluginRow, SessionJob, SessionStatsInput, SettingChoice, SettingInputResult, SettingItem, SettingsNamespaceState, SettingsWriteResult, TabSelection } from 'appstate';
+import type { AttachOutcome, CredentialWriteResult, HubSnapshot, HubSubscriber, InputModality, LayoutDecision, LayoutInput, ModalityEvidence, NavState, NavigationState, OverlayState, PluginRow, SessionJob, SessionStatsInput, SettingChoice, SettingInputResult, SettingItem, SettingsWriteResult, TabSelection } from 'appstate';
 import { emitter } from '@kit.BasicServicesKit';
 import { parseJson } from 'connection';
 import { EVENT_HOST_CONNECTED, EVENT_KEY_HOST_TOKEN, EVENT_KEY_HOST_URL } from 'platform';
@@ -474,7 +474,6 @@ struct Index {
    */
   @State hostSettings: SettingGroup[] = [];
   /** 设置命名空间的写状态（含 revision）；用于诊断「界面值与 Host 版本是否一致」 */
-  @State settingsStates: SettingsNamespaceState[] = [];
   /** 设置写入的结果回显（成功/失败/冲突都如实显示，不做乐观更新） */
   @State settingWriteNote: string = '';
   /**
@@ -782,7 +781,6 @@ struct Index {
       // 断连后 Host 设置没了，但**本机偏好仍然有效**（它本来就与 Host 无关）
       this.hostSettings = [];
       this.settings = this.localSettings;
-      this.settingsStates = [];
       this.hosts = [];
       this.commands = [];
       this.references = [];
@@ -801,7 +799,6 @@ struct Index {
     this.credentials = s.credentials;
     this.hostSettings = s.settings;
     this.settings = mergeSettingsGroups(this.hostSettings, this.localSettings);
-    this.settingsStates = s.settingsStates;
     this.commands = s.commands;
     this.planActive = s.planActive;
     this.planPending = s.planPending;
@@ -4286,7 +4283,6 @@ struct Index {
       this.settingWriteNote = value;
     },
     settings: this.settings,
-    settingsStates: this.settingsStates,
     skillNote: this.skillNote,
     skills: this.skills,
     stackPage: this.stackPage,

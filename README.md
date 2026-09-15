@@ -194,7 +194,15 @@ hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 （`hubBanner` / `coreTabContent` / `tabContent`——内容都已在 AppShell 与两束组件里，只剩宿主这份壳；
 `@Entry` 组件不会渲染它们）与**全仓 22 个零使用 import**（`Index` 12 个、`MainShell` 9 个、其余 6 文件各 1 个）。
 `Index.ets` 4460 → **4384 行**，全仓零使用 import 归零。
-下一步接着拆设置页剩下的段（`SettingsCore` / `SettingsPresets` / `SettingsSkills`）。
+**P4-5 已落地**：设置页最后两段大内容拆成域组件 —— `view/SettingsSkills.ets`（95 行：技能清单 + 读取结论，
+只吃两个 prop、无写入动作）与 `view/SettingsPresets.ets`（271 行：官方这一页的两半——预设名单卡片
+（复制 / 查看 / 两步确认删除）与 `agent-*` 分区编辑器，含三个组件内临时态与「查看」的中枢直读）。
+**同时清掉 16 个零消费者成员**：搬走那段唯一的读者（6 个 prop/回调）、已住进域组件的三个临时态、
+只服务于预设段的 `agentGroups()`，以及 `settingsStates` 这条**从头到尾没人读的死链**（中枢快照 →
+`Index.@State` → 主区门面 → 假门面成员 → `SettingsPane.states`）与 `onPickEffort`。
+`SettingsPane` 758 → **497 行**（P4-1…P4-5 合计 **1890 → 497**）。
+设置域的八个组件：`SettingRow` / `SettingsGeneral` / `SettingsModels` / `SettingsPlugins` /
+`SettingsInventory` / `SettingsSkills` / `SettingsPresets` / `SettingsDevice`。
 **P4-4 已落地**：设置页又拆出两个域组件 —— `view/SettingsGeneral.ets`（通用段 + 只读权限事实 + 本地调试入口）
 与 `view/SettingsDevice.ets`（已记住的 Host + 关于本机）。**设置页 1890 → 760 行**（P4-1…P4-4 五轮合计），
 拆分出的域组件：`SettingRow` / `SettingsModels` / `SettingsPlugins` / `SettingsInventory` / `SettingsGeneral` / `SettingsDevice`。

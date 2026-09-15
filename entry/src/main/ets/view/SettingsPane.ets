@@ -12,6 +12,7 @@
 
 import {
   AboutInfo,
+  AgentPresetRow,
   CredentialItem,
   emptyCoreView,
   Fs,
@@ -23,20 +24,19 @@ import {
   SettingGroup,
   SettingItem,
   SkillRow,
-  AgentPresetRow,
-  presetIsBundled,
   Sp,
   Sz,
   settingsSectionLabelRes
 } from 'appstate';
-import type { CoreViewState, PanelDescriptor, SettingsNamespaceState } from 'appstate';
-import { SessionHub } from 'appstate';
+import type { CoreViewState, PanelDescriptor } from 'appstate';
 import { SettingRow } from './SettingRow';
 import { SettingsInventory } from './SettingsInventory';
 import { SettingsGeneral } from './SettingsGeneral';
 import { SettingsDevice } from './SettingsDevice';
 import { SettingsModels } from './SettingsModels';
 import { SettingsPlugins } from './SettingsPlugins';
+import { SettingsPresets } from './SettingsPresets';
+import { SettingsSkills } from './SettingsSkills';
 import { CorePane } from './CorePane';
 
 /** 设置面板（E108/E110/E114/E120） */
@@ -61,7 +61,6 @@ export struct SettingsPane {
   /** 最近一次设置写入的结果回显（由页面注入；空串表示不显示） */
   @Prop writeNote: string = '';
   /** 各命名空间的写状态（仅用于诊断显示 revision） */
-  @Prop states: SettingsNamespaceState[] = [];
 
   onToggleSetting: (key: string, value: boolean) => void = () => {
   };
@@ -80,8 +79,6 @@ export struct SettingsPane {
    * 实现走 `settings/unset`（上游语义：删掉用户层的这一项，值立刻回落到基线/默认）。
    */
   onResetSetting: (key: string) => void = () => {
-  };
-  onPickEffort: (effort: string) => void = () => {
   };
   /**
    * 选择**默认模型**（provider/model/effort 三个字段一起写 `agent-default-model`）。
@@ -138,226 +135,41 @@ export struct SettingsPane {
       Scroll() {
         Column({ space: Sp.L }) {
           if (this.section === 'settings.skills') {
-            /*
-             * E135：技能分区。
-             *
-             * 【读不到就说读不到】`skills/list` 的回复外层键我们没有确证（类型定义只给了单个
-             * 技能摘要的形状）⇒ 数据层容忍三种形状，都不中时把**真实顶层键**记进旁路日志、
-             * 并在这里显示结论。绝不把"没读出来"渲染成"没有技能"——那会让人以为宿主没装技能。
-             */
-            if (this.skillNote.length > 0) {
-              Text(this.skillNote)
-                .fontSize(Fs.CAPTION)
-                .fontColor($r('sys.color.font_secondary'))
-                .width('100%')
-                .padding(Sp.M)
-                .borderRadius(Radius.M)
-                .backgroundColor($r('sys.color.background_secondary'))
-            }
-            if (this.skills.length === 0) {
-              if (this.skillNote.length === 0) {
-                Text('宿主报告没有可用技能。')
-                  .fontSize(Fs.CAPTION)
-                  .fontColor($r('sys.color.font_tertiary'))
-                  .width('100%')
-              }
-            } else {
-              ForEach(this.skills, (s: SkillRow) => {
-                Column({ space: 2 }) {
-                  Row({ space: Sp.S }) {
-                    Text(s.name)
-                      .fontSize(Fs.SECONDARY)
-                      .fontWeight(FontWeight.Medium)
-                      .layoutWeight(1)
-                      .maxLines(1)
-                      .textOverflow({ overflow: TextOverflow.Ellipsis })
-                    if (s.provider.length > 0) {
-                      Text(s.provider)
-                        .fontSize(Fs.CAPTION)
-                        .fontColor($r('sys.color.font_tertiary'))
-                    }
-                  }
-                  .width('100%')
-                  if (s.description.length > 0) {
-                    Text(s.description)
-                      .fontSize(Fs.CAPTION)
-                      .fontColor($r('sys.color.font_secondary'))
-                      .width('100%')
-                  }
-                  if (s.whenToUse.length > 0) {
-                    Text(`适用：${s.whenToUse}`)
-                      .fontSize(Fs.CAPTION)
-                      .fontColor($r('sys.color.font_tertiary'))
-                      .width('100%')
-                  }
-                }
-                .width('100%')
-                .padding(Sp.M)
-                .borderRadius(Radius.M)
-                .backgroundColor($r('sys.color.background_secondary'))
-              }, (s: SkillRow) => `${s.provider}/${s.name}`)
-            }
-            Text('技能由宿主的技能提供方给出（`dsh-skill` / `dsh-skill-filesystem`）；端侧只读展示，不在这里编辑技能正文。')
-              .fontSize(Fs.CAPTION)
-              .fontColor($r('sys.color.font_tertiary'))
-              .width('100%')
+            // 技能段归 SettingsSkills（P4-5 拆出的域组件）：它只吃清单 + 读取结论两个 prop，
+            // 没有任何写入动作与组件内状态——「读不到就说读不到」的判定留在数据层（E135）。
+            SettingsSkills({
+              skills: this.skills,
+              note: this.skillNote
+            })
           } else if (this.section === 'settings.presets') {
-            /*
-             * E161：**预设名单卡片**（官方形态）。
-             *
-             * 预设 = 会话的 Agent 所运行的**插件组装**（工具/提示词/能力），名称与描述**由预设自带**
-             * （真机上就是中文），我们只做展示与动作。官方规则：**复制**是创建自定义预设的**唯一入口**；
-             * **随附预设只读**（`trust === 'system'`）；删除只对自定义项开放。
-             *
-             * 【还没接的动作】复制/删除/打开位置需要 `agentPresets/copy|deletePreset|read`，
-             * 其**参数形状尚未探针确证**（E159 的教训：形状不能推）⇒ 本版只做**名单展示**，
-             * 不摆点不动的按钮；确证后补齐。
-             */
-            if (this.presetNote.length > 0) {
-              Text(this.presetNote)
-                .fontSize(Fs.CAPTION)
-                .fontColor($r('sys.color.font_secondary'))
-                .width('100%')
-                .padding(Sp.M)
-                .borderRadius(Radius.M)
-                .backgroundColor($r('sys.color.background_secondary'))
-            }
-            if (this.presets.length > 0) {
-              Text('Agent 预设')
-                .fontSize(Fs.CAPTION)
-                .fontColor($r('sys.color.font_tertiary'))
-                .width('100%')
-              ForEach(this.presets, (p: AgentPresetRow) => {
-                Column({ space: 2 }) {
-                  Row({ space: Sp.S }) {
-                    Text(p.name.length > 0 ? p.name : p.id)
-                      .fontSize(Fs.BODY)
-                      .fontWeight(FontWeight.Medium)
-                      .layoutWeight(1)
-                      .maxLines(1)
-                      .textOverflow({ overflow: TextOverflow.Ellipsis })
-                    if (p.isDefault) {
-                      Text('默认')
-                        .fontSize(Fs.CAPTION)
-                        .fontColor($r('sys.color.brand'))
-                    }
-                    Text(presetIsBundled(p) ? '随附' : '自定义')
-                      .fontSize(Fs.CAPTION)
-                      .fontColor($r('sys.color.font_tertiary'))
-                  }
-                  .width('100%')
-                  if (p.description.length > 0) {
-                    Text(p.description)
-                      .fontSize(Fs.CAPTION)
-                      .fontColor($r('sys.color.font_secondary'))
-                      .width('100%')
-                  }
-                  Text(p.id)
-                    .fontSize(Fs.CAPTION)
-                    .fontColor($r('sys.color.font_tertiary'))
-                    .width('100%')
-                  /*
-                   * E170：卡片动作。
-                   * · 「复制」**每张都有**——官方只读预设也能被复制来自定义（这就是创建的唯一入口）；
-                   * · 「删除」**只有自定义预设才有**（`trust !== 'system'`）——随附预设删不掉，
-                   *   连入口都不该给（宿主也会拒绝，见 deletePreset 的实测返回）。
-                   * · 删除走**两步确认**：先变成「确认删除 / 取消」。
-                   */
-                  Row({ space: Sp.M }) {
-                    Text('复制')
-                      .fontSize(Fs.CAPTION)
-                      .fontColor($r('sys.color.brand'))
-                      .onClick(() => {
-                        this.onPresetCopy(p.id, p.name);
-                      })
-                    /*
-                     * E173：**查看**（只读）。官方对随附预设就是"在只读查看器里打开"
-                     * ——复制对话框之外的第二个允许动作。参数名 `agentPreset` 由宿主 schema 确证。
-                     */
-                    Text(this.presetViewedId === p.id ? '收起内容' : '查看')
-                      .fontSize(Fs.CAPTION)
-                      .fontColor($r('sys.color.brand'))
-                      .onClick(() => {
-                        if (this.presetViewedId === p.id) {
-                          this.presetViewedId = '';
-                          this.presetContent = '';
-                          return;
-                        }
-                        this.presetViewedId = p.id;
-                        this.presetContent = '正在读取…';
-                        SessionHub.shared().readAgentPreset(p.id).then((text: string) => {
-                          this.presetContent = text.length > 0
-                            ? text
-                            : '宿主没有返回内容（可能该预设没有可读的组装文本，或读取被拒）。';
-                        }).catch((e: Object) => {
-                          this.presetContent = `读取失败：${(e as Error).message}`;
-                        });
-                      })
-                    if (!presetIsBundled(p)) {
-                      Text(this.confirmingPresetId === p.id ? '确认删除' : '删除')
-                        .fontSize(Fs.CAPTION)
-                        .fontColor($r('sys.color.alert'))
-                        .onClick(() => {
-                          if (this.confirmingPresetId === p.id) {
-                            this.confirmingPresetId = '';
-                            this.onPresetDelete(p.id);
-                          } else {
-                            this.confirmingPresetId = p.id;
-                          }
-                        })
-                      if (this.confirmingPresetId === p.id) {
-                        Text('取消')
-                          .fontSize(Fs.CAPTION)
-                          .fontColor($r('sys.color.font_tertiary'))
-                          .onClick(() => {
-                            this.confirmingPresetId = '';
-                          })
-                      }
-                    }
-                  }
-                  .width('100%')
-                }
-                .width('100%')
-                .padding(Sp.M)
-                .borderRadius(Radius.M)
-                .backgroundColor($r('sys.color.background_secondary'))
-              }, (p: AgentPresetRow) => p.id)
-              Text('预设是"这个会话的 Agent 跑哪些插件"的组装；会话创建时固定，改默认只影响此后新建的会话。复制 / 打开位置 / 删除待接线（形状需先探针确证）。')
-                .fontSize(Fs.CAPTION)
-                .fontColor($r('sys.color.font_tertiary'))
-                .width('100%')
-            }
-            /*
-             * E129：Agent 预设分区（对齐官方「设置分区把名单呈现为卡片」的**一半**）。
-             *
-             * 官方那一页管理的是 preset **目录**（复制/删除/定位/只读查看随附项），
-             * 那需要一次 Remote 查询与文件级操作；我们端侧先做**能确证的一半**：
-             * 把宿主真正暴露的 `agent-*` 设置分区（含 `agent-presets.default`）按原有编辑器呈现，
-             * 让"新建会话用哪个预设"这件事真的可改；找不到任何分区时如实说明。
-             */
-            if (this.agentGroups().length === 0) {
-              Text('宿主没有暴露 agent-* 设置分区（端侧只显示它确实报告的东西）。')
-                .fontSize(Fs.CAPTION)
-                .fontColor($r('sys.color.font_tertiary'))
-                .width('100%')
-            } else {
-              ForEach(this.agentGroups(), (group: SettingGroup) => {
-                Column({ space: Sp.XS }) {
-                  Text(group.title)
-                    .fontSize(Fs.CAPTION)
-                    .fontColor($r('sys.color.font_tertiary'))
-                    .width('100%')
-                  ForEach(group.items, (item: SettingItem) => {
-                    this.settingRow(item)
-                  }, (item: SettingItem) => item.key)
-                }
-                .width('100%')
-              }, (group: SettingGroup) => group.title)
-            }
-            Text('预设**在会话创建时固定**（官方原话），所以这里设置的是**此后新建会话**用的默认值；已存在的会话不受影响。')
-              .fontSize(Fs.CAPTION)
-              .fontColor($r('sys.color.font_tertiary'))
-              .width('100%')
+            // 预设段归 SettingsPresets（P4-5 拆出的域组件）：两半（名单卡片 + agent-* 编辑器）、
+            // 三个组件内临时态（两步确认 / 只读查看）与「查看」的中枢直读都随之搬走。
+            SettingsPresets({
+              presets: this.presets,
+              note: this.presetNote,
+              allGroups: this.allGroups,
+              onCopy: (from: string, name: string) => {
+                this.onPresetCopy(from, name);
+              },
+              onDelete: (id: string) => {
+                this.onPresetDelete(id);
+              },
+              onToggleSetting: (key: string, value: boolean) => {
+                this.onToggleSetting(key, value);
+              },
+              onPickChoice: (key: string, current: string) => {
+                this.onPickChoice(key, current);
+              },
+              onEditText: (item: SettingItem) => {
+                this.onEditText(item);
+              },
+              onEditStruct: (item: SettingItem) => {
+                this.onEditStruct(item);
+              },
+              onResetSetting: (key: string) => {
+                this.onResetSetting(key);
+              }
+            })
           } else if (this.section === 'settings.core') {
             // 核心分区：与原来的一级「核心」页内容一致（版本切换/回滚、插件、运行时事实）
             Column({ space: Sp.S }) {
@@ -571,13 +383,12 @@ export struct SettingsPane {
 
   // ───────────── 模型 ─────────────
 
-  /** 模型页「自定义设置」展开到哪个提供方（官方：一次只展开一张卡） */
-  @State expandedProvider: string = '';
   /**
    * **全部**设置分区（含被「通用」策展隐藏的 `llm-*` 等）。
    *
    * 官方 Models 页的编辑卡片直接读写提供方的设置分区（`baseURL`、模型目录…），
    * 所以模型页必须能看到这些分区；「通用」页继续用策展后的 `groups`（见 E114）。
+   * 预设段（`SettingsPresets`）吃的是同一份"全部"——`agent-*` 分区同样不在策展结果里。
    */
   @Prop allGroups: SettingGroup[] = [];
   /** 技能清单（E135）与读取结论：结论非空必须显示，不假装"没有技能" */
@@ -595,25 +406,14 @@ export struct SettingsPane {
   /**
    * 预设动作（E170）。**复制**是官方唯一的创建入口；**删除**只对自定义预设开放，
    * 且"随附预设不可写"由**宿主**强制（我们只是把它的原话转达给用户）。
+   *
+   * 三个临时态（两步确认 / 只读查看的 id 与内容）**不在本组件**：它们随预设段
+   * 一起归 `SettingsPresets`（P4-5）——一次交互内的临时态不该跨段落存活。
    */
   onPresetCopy: (from: string, name: string) => void = () => {
   };
   onPresetDelete: (id: string) => void = () => {
   };
-  /** 已按过一次「删除」、等待确认的预设 id（两步确认；状态留在组件内，不牵动宿主页） */
-  @State confirmingPresetId: string = '';
-  /** 候选提供方的搜索词（E211：对齐官方 `candidateSearch`——候选多时靠它筛） */
-  @State candidateQuery: string = '';
-  /**
-   * 只读查看器当前展示的预设内容（E173）。
-   *
-   * 【为什么视图直接调中枢】查看是**纯读取**、无副作用、也不改变其它页面状态；
-   * 为它再往 Index 穿一层 prop 只会增加耦合。写入类动作（复制/删除）仍走回调，
-   * 因为它们要影响"下一步做什么"（例如提示语落在宿主页上）。
-   */
-  @State presetContent: string = '';
-  /** 正在查看/已查看的预设 id（空=未查看） */
-  @State presetViewedId: string = '';
 
   /** 提供方 → 适配器默认凭据引用（官方派生规则 `<ROUTE>_API_KEY`，见 E106） */
 
@@ -629,18 +429,6 @@ export struct SettingsPane {
    * 密钥状态点的颜色语义（官方：**只有确认已配置才是绿**，**只有确认缺失才是红**，
    * 其余一律"未知"——不把未知渲染成任一种结论）。
    */
-
-  /** `agent-*` 设置分区（E129：Agent 预设相关，官方在设置里有专门分区） */
-  private agentGroups(): SettingGroup[] {
-    const out: SettingGroup[] = [];
-    for (let i = 0; i < this.allGroups.length; i++) {
-      const g: SettingGroup = this.allGroups[i];
-      if (g.title.startsWith('agent-')) {
-        out.push(g);
-      }
-    }
-    return out;
-  }
 
   /** 提供方的设置分区（先试 `llm-<提供方首段>`，再退到通用 pi-ai 分区；找不到就返回 undefined，不猜） */
   /**
@@ -660,58 +448,9 @@ export struct SettingsPane {
 
 
 
-  /**
-   * 提供方卡片（E128：对齐官方 Models 页的形态）。
-   *
-   * 官方规格（`dsh-client-ui-settings-models` 的说明）：**每个已配置的提供方一行**，
-   * 主字段是**单独一个 API 密钥输入框**（只写，页面从不询问环境变量名），
-   * 折叠的「自定义设置」里放 `baseURL` 与**该适配器的模型目录**；
-   * **推理等级刻意不在可编辑之列**（它是按模型的能力，提供方级控件只会被某些模型拒绝）。
-   * 这里照此组织：状态点 + 密钥动作 + 可展开的自定义设置（直接复用设置项编辑器）。
-   */
 
-
-  /**
-   * 适配器**默认读取**的凭据引用（E106）。
-   *
-   * 【为什么必须有这一行】设置里声明的槽位（`apiKey`）不是模型适配器实际查的名字：
-   * 真机上按槽位写完之后，轮次仍然报
-   *   `llm-deepseek: no API key for provider route "deepseek-official"; store DEEPSEEK_API_KEY …`
-   * 即"界面说已配置、模型说没有密钥"。这里按"提供方 id 首段 + `_API_KEY`"给出适配器默认引用
-   * （`deepseek-official` → `DEEPSEEK_API_KEY`），与官方 Models 页派生 `<ROUTE>_API_KEY` 一致；
-   * 写入走同一个 `credentials/set`（真机实测该引用可写且立刻生效）。
-   */
-
-  /** 该函数原先的实现（保留在注释里，便于回退与查阅派生规则） */
-  /* E158 的旧实现（providerKeyRefsLegacy）已删除：它无人调用（E228 自检发现），
-     且 git 历史里查得到，不需要在代码里留一份不调用的副本。 */
-
-  /**
-   * 按提供方把模型目录分组（保持 Host 给的顺序，不重排——顺序本身是 Host 的偏好）。
-   */
-
-  /** 换模型时该带哪个推理强度：沿用当前档位（若新模型支持），否则用它的第一档，都没有则为空串 */
-
-  private currentModelDetail(): string {
-    for (let i = 0; i < this.models.length; i++) {
-      const m: ModelOption = this.models[i];
-      if (m.provider === this.selection.provider && m.modelId === this.selection.modelId) {
-        const provider: string = m.providerName.length > 0 ? m.providerName : m.provider;
-        return `${provider} · ${m.description}`;
-      }
-    }
-    return '未在模型目录中找到该模型';
-  }
-
-  private currentEfforts(): string[] {
-    for (let i = 0; i < this.models.length; i++) {
-      const m: ModelOption = this.models[i];
-      if (m.provider === this.selection.provider && m.modelId === this.selection.modelId) {
-        return m.efforts;
-      }
-    }
-    return [];
-  }
+  // 模型段的判定与呈现（提供方卡片 / 凭据派生 / 模型目录分组 / 推理强度选择）已归
+  // `SettingsModels`（P4-3b）；本组件只留"这一段由谁渲染"的分派。
 
   // ───────────── 凭据 ─────────────
 

@@ -22,7 +22,7 @@
  */
 
 import { ActionNotice, AgentPresetRow, CoreViewState, CredentialItem, FileNode, FilePreview, Fs, HostRecord, HubPhase, LayoutMode, ModelOption, ModelSelection, NavTab, PendingItem, PluginItem, SessionHub, SessionListItem, SettingGroup, SkillRow, Sp, StackPage, WorkspaceItem, aboutInfo, projectGeneralGroups } from 'appstate';
-import type { PanelDescriptor, SettingChoice, SettingItem, SettingsNamespaceState } from 'appstate';
+import type { PanelDescriptor, SettingChoice, SettingItem } from 'appstate';
 import { LocalPrefs } from 'platform';
 import { HubBanner } from './HubBanner';
 import { SettingsPane } from './SettingsPane';
@@ -113,7 +113,6 @@ export interface TabContentFacade {
   settingWriteNote: string;
   setSettingWriteNote: (value: string) => void;
   settings: SettingGroup[];
-  settingsStates: SettingsNamespaceState[];
   skillNote: string;
   skills: SkillRow[];
   stackPage: StackPage;
@@ -277,7 +276,6 @@ export struct TabContentView {
         selection: this.f.selection,
         about: aboutInfo(),
         writeNote: this.f.settingWriteNote,
-        states: this.f.settingsStates,
         onToggleSetting: (key: string, value: boolean) => {
           if (this.f.settingItemOf(key) === undefined) {
             // 本地偏好：本客户端自己的开关，没有上游写路径。
@@ -321,11 +319,6 @@ export struct TabContentView {
         },
         onResetSetting: (key: string) => {
           this.f.resetSetting(key);
-        },
-        onPickEffort: (effort: string) => {
-          this.f.setSelection({
-            provider: this.f.selection.provider, modelId: this.f.selection.modelId, effort: effort
-          });
         },
         onSelectModel: (provider: string, model: string, effort: string) => {
           this.f.applyDefaultModel(provider, model, effort);
