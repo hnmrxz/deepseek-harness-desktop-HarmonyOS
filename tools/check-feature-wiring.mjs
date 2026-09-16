@@ -112,7 +112,9 @@ const FEATURES = [
    * 在会话 A 里写一半、切到 B、顺手发送 ⇒ **那段话发给了 B**。
    * 钉三段接线：纯模型的"取回"与"存回"都要有调用点，宿主里那个切换点必须在。
    */
-  { name: '每会话草稿', patterns: [['switchDraftContext', 2], ['draftOf', 2], ['putDraft', 2], ['dropDraft', 2]] },
+  { name: '每会话草稿', patterns: [['switchDraftContext', 2], ['draftOf', 2], ['putDraft', 2], ['dropDraft', 2],
+    // 落盘那一半：编解码（模型）+ 读写键（平台）+ 宿主两处调用点（读回/保存）
+    ['serializeDrafts', 2], ['parseDrafts', 2], ['saveComposerDrafts', 2], ['loadComposerDrafts', 2]] },
   { name: '内部内容隔离', patterns: [['mayExposeBodyToUser', 2], ['userFacingBodyOf', 2], ['scrubCredentials', 2], ['INTERNAL_BODY_HIDDEN', 1]] },
   /*
    * 文件变更流（E226）。E383 修自激时把 `openFilesStream` 改名为 `ensureFilesStream`

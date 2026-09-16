@@ -26,9 +26,11 @@
  *
  * ## 这一层做什么、不做什么
  *
- * 做：**按会话保存与取回**纯文本草稿，并给一个上限（会话多起来也不能无限长）。
- * 不做：**持久化到磁盘**（官方那句 "survives … reloads" 的后半截）。
- *     应用重启后草稿仍然会丢，这一条如实登记在 `docs/parity-matrix.md` §6，不在这里假装做到了。
+ * 做：**按会话保存与取回**纯文本草稿，并给一个上限（会话多起来也不能无限长）；
+ *     以及**落盘用的编解码**（`serializeDrafts` / `parseDrafts`）——官方那句
+ *     "survives session switches **and reloads**" 的后半截靠它们兑现。
+ * 不做：不碰存储。读写由 `platform/LocalPrefs` 负责（`platform` 不许依赖 `appstate`，
+ *     所以"存成什么形状"必须由这一层决定、以字符串交给平台层）。
  *
  * ## 为什么用两个平行数组而不是 `Record<string, string>`
  *
@@ -110,4 +112,81 @@ export function dropDraft(drafts: ComposerDrafts, sessionId: string): ComposerDr
 /** 袋子里有几个会话留着草稿（诊断/断言用；不做成界面读数，避免多一个没人看的数字） */
 export function draftCount(drafts: ComposerDrafts): number {
   return drafts.sessionIds.length;
+}
+
+/**
+ * 袋子的落盘表示（JSON 字符串）。
+ *
+ * 【为什么用平行数组直接序列化，而不是 `Record<会话 id, 文本>`】顺序就是"最近写过"，
+ * `Record` 会把顺序丢掉（JS 对象键序不是契约）；而平行数组原样可存，解析回来顺序仍在。
+ * 会话 id 是我们自己从 Host 拿的字符串，这里只做 JSON 转义，不猜内容。
+ */
+export function serializeDrafts(drafts: ComposerDrafts): string {
+  const ids: string[] = [];
+  const texts: string[] = [];
+  for (let i = 0; i < drafts.sessionIds.length; i++) {
+    if (i >= COMPOSER_DRAFT_MAX) {
+      break;
+    }
+    if (drafts.sessionIds[i].length === 0 || drafts.texts[i].length === 0) {
+      // 空文本不落盘：落盘只该存"真的有内容"的那些（与 `putDraft` 的规则一致）
+      continue;
+    }
+    ids.push(drafts.sessionIds[i]);
+    texts.push(drafts.texts[i]);
+  }
+  return JSON.stringify({ sessionIds: ids, texts: texts });
+}
+
+/**
+ * 解析落盘的草稿袋。**坏输入一律当空**（而不是抛错、也不是半份数据）。
+ *
+ * 【为什么必须宽容】这段字符串来自上一次运行的磁盘（可能被截断、可能是旧版本写的、
+ * 也可能被用户/系统清理工具改过）。草稿是**便利数据**，为它崩一次启动完全不值得；
+ * 而"半个袋子"比"空袋子"更危险（可能出现 `sessionIds` 与 `texts` 长度不一致的错配，
+ * 把甲的草稿显示在乙的会话里 —— 正是 P8-3 要修的那类错误）。故：**校验长度一致 + 类型正确 + 丢空项**，
+ * 任何一条不满足就退回空袋子。
+ */
+export function parseDrafts(raw: string): ComposerDrafts {
+  if (raw.length === 0) {
+    return emptyComposerDrafts();
+  }
+  let parsed: Object | null = null;
+  try {
+    parsed = JSON.parse(raw) as Object;
+  } catch (err) {
+    return emptyComposerDrafts();
+  }
+  if (parsed === null || typeof parsed !== 'object') {
+    return emptyComposerDrafts();
+  }
+  const record = parsed as Record<string, Object>;
+  const ids: Object = record.sessionIds;
+  const texts: Object = record.texts;
+  if (!Array.isArray(ids) || !Array.isArray(texts)) {
+    return emptyComposerDrafts();
+  }
+  const idList: Object[] = ids as Object[];
+  const textList: Object[] = texts as Object[];
+  if (idList.length !== textList.length) {
+    // 长度不一致 = 错配风险 ⇒ 宁可全部丢掉（见上面的说明）
+    return emptyComposerDrafts();
+  }
+  const out: ComposerDrafts = emptyComposerDrafts();
+  for (let i = 0; i < idList.length; i++) {
+    if (out.sessionIds.length >= COMPOSER_DRAFT_MAX) {
+      break;
+    }
+    if (typeof idList[i] !== 'string' || typeof textList[i] !== 'string') {
+      continue;
+    }
+    const id: string = idList[i] as string;
+    const text: string = textList[i] as string;
+    if (id.length === 0 || text.length === 0) {
+      continue;
+    }
+    out.sessionIds.push(id);
+    out.texts.push(text);
+  }
+  return out;
 }

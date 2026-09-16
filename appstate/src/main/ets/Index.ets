@@ -199,7 +199,9 @@ export {
   draftOf,
   dropDraft,
   emptyComposerDrafts,
-  putDraft
+  parseDrafts,
+  putDraft,
+  serializeDrafts
 } from './model/ComposerDrafts';
 export type { ComposerDrafts } from './model/ComposerDrafts';
 // 诊断模式（D7 §3 第 4 项）：本地核心 / 远程 Host 分流

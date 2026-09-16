@@ -60,10 +60,13 @@ import {
   BackAction,
   ComposerDrafts,
   decideBack,
+  draftCount,
   draftOf,
   dropDraft,
   emptyComposerDrafts,
+  parseDrafts,
   putDraft,
+  serializeDrafts,
   userFacingBodyOf,
   drillAfterPreviewClosed,
   LayoutMode,
@@ -632,6 +635,9 @@ struct Index {
    * （本仓只做"跨会话切换"这一半；"跨重载"需要落盘，已登记在矩阵 §6。）
    */
   @State drafts: ComposerDrafts = emptyComposerDrafts();
+
+  /** 草稿落盘失败只提醒一次（否则每次切会话都要打扰一次） */
+  private draftPersistWarned: boolean = false;
   @State attachments: PendingAttachment[] = [];
   /** Host 侧待发队列（与会话一一对应，由 `session/control` 驱动） */
   @State queued: QueuedItem[] = [];
@@ -966,6 +972,8 @@ struct Index {
     this.loadDetailWidth();
     // 侧栏收起状态记忆：读回用户上次的选择（没有记录 ⇒ 默认展开）
     this.loadSidebarExpanded();
+    // 输入草稿：读回上次运行留下的每会话草稿（P8-3 的第二半："…and reloads"）
+    this.loadComposerDrafts();
     // 初始值 = 空态。所有真实数据都在 `applyHubSnapshot` 到达时落地；
     // 连接建立前界面显示的是各视图自己的空态文案（D3 §4），而不是编造的示例数据。
     this.diag = emptyDiagReport();
@@ -1805,6 +1813,8 @@ struct Index {
     const bag: ComposerDrafts = putDraft(this.drafts, this.selectedSessionId, this.draft);
     this.drafts = bag;
     this.draft = draftOf(bag, nextSessionId);
+    // 每次切换都落一次盘：这是"跨重载还活着"的唯一保证点（消息发出去后也会落一次）
+    this.persistDrafts();
   }
 
   private openSession(id: string): void {
@@ -3202,6 +3212,7 @@ struct Index {
        */
       if (ok || snap.lastSendQueued) {
         this.drafts = dropDraft(this.drafts, this.selectedSessionId);
+        this.persistDrafts();
       }
     });
   }
@@ -3987,6 +3998,50 @@ struct Index {
     const prefs: LocalPrefs = new LocalPrefs();
     await prefs.attach(getContext(this) as common.UIAbilityContext);
     this.sidebarStored = await prefs.loadSidebarExpanded();
+  }
+
+  /**
+   * 读回上次运行留下的**每会话草稿**（P8-3；官方 `views.d.ts`："…survives … reloads"）。
+   *
+   * 【为什么读进"袋子"而不是直接填输入框】启动时还没有会话（选中哪一个是用户的事），
+   * 把草稿填进空的输入框反而会变成"待发送的内容属于谁"这个更难回答的问题。
+   * 读进袋子之后，用户点开哪个会话，那份草稿就在 `switchDraftContext` 里自然回来。
+   *
+   * 【为什么只在内存袋子还空的时候采用读回的值】`prefs.attach` 是异步的，
+   * 这期间用户理论上可能已经敲了字（极短窗口，但真实存在）。以**内存为准**是刻意的：
+   * 覆盖用户刚敲的东西，正是 P7-15 那条纪律要避免的错。
+   */
+  private async loadComposerDrafts(): Promise<void> {
+    const prefs: LocalPrefs = new LocalPrefs();
+    await prefs.attach(getContext(this) as common.UIAbilityContext);
+    const raw: string = await prefs.loadComposerDrafts();
+    const stored: ComposerDrafts = parseDrafts(raw);
+    if (draftCount(stored) === 0) {
+      return;
+    }
+    if (draftCount(this.drafts) > 0 || this.draft.length > 0) {
+      return;
+    }
+    this.drafts = stored;
+  }
+
+  /**
+   * 把草稿袋子落盘（P8-3）。
+   *
+   * 【为什么失败要说一句】丢宽度只是"栏没记住"；丢草稿是**用户敲进去的字没了**，
+   * 而他要等到下次启动才发现。所以这里给一次轻提示（只提示一次，避免每次切换都吵）。
+   */
+  private persistDrafts(): void {
+    const json: string = serializeDrafts(this.drafts);
+    const prefs: LocalPrefs = new LocalPrefs();
+    prefs.attach(getContext(this) as common.UIAbilityContext).then(() => {
+      prefs.saveComposerDrafts(json).then((ok: boolean) => {
+        if (!ok && !this.draftPersistWarned) {
+          this.draftPersistWarned = true;
+          this.attachNotice = '草稿这次没能保存到本机：应用重启后这些未发送的内容会丢。';
+        }
+      });
+    });
   }
 
   private setDrawerOpen(open: boolean): void {

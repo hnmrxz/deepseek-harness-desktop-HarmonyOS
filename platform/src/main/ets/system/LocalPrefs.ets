@@ -48,6 +48,16 @@ const KEY_DETAIL_WIDTH: string = 'detailWidth';
  */
 const KEY_SIDEBAR_EXPANDED: string = 'sidebarExpanded';
 
+/**
+ * 每会话输入草稿的偏好键（P8-3 的第二半：官方 `views.d.ts` 的
+ * "Composer draft (persisted; survives session switches **and reloads**)"）。
+ *
+ * 【为什么由 appstate 决定形状、平台只存字符串】`platform` 不许依赖 `appstate`（编译器守着），
+ * 而"袋子长什么样"是模型的事 ⇒ 这里只存一个不透明字符串（JSON），
+ * 编解码在 `model/ComposerDrafts` 的 `serializeDrafts` / `parseDrafts`，那两处有 fixture 钉着。
+ */
+const KEY_COMPOSER_DRAFTS: string = 'composerDrafts';
+
 /** 主题模式（D3 §8 的三个取值） */
 export enum ThemeMode {
   /** 跟随系统（默认） */
@@ -208,6 +218,52 @@ export class LocalPrefs {
     } catch (err) {
       const e = err as BusinessError;
       hilog.warn(DOMAIN, TAG, 'saveSidebarExpanded failed: %{public}s', e.message);
+      return false;
+    }
+  }
+
+  /**
+   * 读取上次运行留下的输入草稿（**不透明字符串**；没有记录时返回空串）。
+   *
+   * 【为什么不在这里解析】JSON 的宽容规则（坏数据当空、长度不一致当空）是模型的判断，
+   * 已由 fixture 覆盖；平台层只回答"偏好里有没有这段字符串"。
+   */
+  async loadComposerDrafts(): Promise<string> {
+    if (this.store === undefined) {
+      return '';
+    }
+    try {
+      const present: boolean = await this.store.has(KEY_COMPOSER_DRAFTS);
+      if (!present) {
+        return '';
+      }
+      const raw: preferences.ValueType = await this.store.get(KEY_COMPOSER_DRAFTS, '');
+      return typeof raw === 'string' ? raw : '';
+    } catch (err) {
+      const e = err as BusinessError;
+      hilog.warn(DOMAIN, TAG, 'loadComposerDrafts failed: %{public}s', e.message);
+      return '';
+    }
+  }
+
+  /**
+   * 记住输入草稿。
+   *
+   * @returns 是否真的落盘了。**落盘失败要让用户知道一次**（与宽度记忆不同）：
+   *   宽度丢了只是"栏没记住"，草稿丢了是**用户敲进去的字没了**，而他要等到下次启动才发现。
+   *   提示由调用方给（`platform` 不弹 UI）。
+   */
+  async saveComposerDrafts(json: string): Promise<boolean> {
+    if (this.store === undefined) {
+      return false;
+    }
+    try {
+      await this.store.put(KEY_COMPOSER_DRAFTS, json);
+      await this.store.flush();
+      return true;
+    } catch (err) {
+      const e = err as BusinessError;
+      hilog.warn(DOMAIN, TAG, 'saveComposerDrafts failed: %{public}s', e.message);
       return false;
     }
   }

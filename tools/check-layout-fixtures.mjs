@@ -2712,6 +2712,30 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   // ⑥ dropDraft：发送成功后把这条草稿用掉
   bag = dropDraft(after, 'A');
   t.eq('发送成功后该会话的草稿被丢弃', draftOf(bag, 'A'), '');
+
+  /*
+   * ⑦ 落盘编解码（P8-3 的第二半：官方那句 "…survives … reloads"）。
+   *   坏数据必须当空——这段字符串来自上一次运行的磁盘，可能被截断、可能是旧版本写的。
+   */
+  const { serializeDrafts, parseDrafts } = CD;
+  const live = putDraft(putDraft(emptyComposerDrafts(), 'A', '甲的话'), 'B', '乙的话');
+  const round = parseDrafts(serializeDrafts(live));
+  t.eq('落盘再读回：两个会话各自还在', `${draftOf(round, 'A')}|${draftOf(round, 'B')}`, '甲的话|乙的话');
+  t.eq('落盘再读回：**顺序**也保住（最近写过的仍在最前）', round.sessionIds[0], 'B');
+  t.eq('空袋子 → 空串 → 空袋子（不产生垃圾条目）', draftCount(parseDrafts(serializeDrafts(emptyComposerDrafts()))), 0);
+  t.eq('不是 JSON ⇒ 空袋子（不抛、不半份）', draftCount(parseDrafts('{坏数据')), 0);
+  t.eq('空串 ⇒ 空袋子', draftCount(parseDrafts('')), 0);
+  t.eq('JSON 但形状不对 ⇒ 空袋子', draftCount(parseDrafts('{"sessionIds":"A","texts":"B"}')), 0);
+  t.eq('长度不一致 ⇒ **整个丢掉**（错配会把甲的草稿显示在乙的会话里）',
+    draftCount(parseDrafts('{"sessionIds":["A","B"],"texts":["只有一条"]}')), 0);
+  t.eq('元素类型不对 ⇒ 丢掉那一项、其余照收',
+    draftCount(parseDrafts('{"sessionIds":["A",7],"texts":["文本","文本"]}')), 1);
+  t.eq('空文本项不落盘也不读回', draftCount(parseDrafts('{"sessionIds":["A"],"texts":[""]}')), 0);
+  t.eq('超过上限的落盘数据被裁到上限',
+    draftCount(parseDrafts(JSON.stringify({
+      sessionIds: Array.from({ length: COMPOSER_DRAFT_MAX + 5 }, (_, i) => `s${i}`),
+      texts: Array.from({ length: COMPOSER_DRAFT_MAX + 5 }, (_, i) => `t${i}`)
+    }))), COMPOSER_DRAFT_MAX);
 }
 
 // ── P8-6：重试行的文案（官方 `message.retry.status` 一行模板）与「整条链一条」 ──
