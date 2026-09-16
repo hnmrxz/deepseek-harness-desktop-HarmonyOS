@@ -30,17 +30,11 @@
  *    （列表项是它画的，命中集合也在它手里）。
  */
 
-import {
-  ActionNotice, FeedbackRow, Fs, HarmonyColor, HarmonyType, Radius, SessionHub, Sp,
-  Speaker, TrajectoryItem, TrajectoryKind, Turn, defaultExpanded, formatDuration, hasProcessGroup,
-  parseMarkdown, plainTextOf, processSummary, producedFilesOf
-} from 'appstate';
-import type { InputModality, ProducedFile } from 'appstate';
-import { Border } from 'appstate';
+import { ActionNotice, FeedbackRow, Fs, HarmonyColor, HarmonyType, Radius, SessionHub, Sp, Speaker, TrajectoryItem, TrajectoryKind, Turn, defaultExpanded, hasProcessGroup, parseMarkdown, plainTextOf, processSummary, producedFilesOf, userFacingBodyOf } from 'appstate';
+import type { ProducedFile } from 'appstate';
 import { presentTool, toolStateLabel } from 'appstate';
 import { NativeCard, NativeChip } from './NativePrimitives';
 import type { NativeAction } from './NativePrimitives';
-import { MarkdownRenderer } from './MarkdownRenderer';
 import { MessageRow } from './MessageRow';
 import { ReasoningRow } from './ReasoningRow';
 import { DeliverableCard } from './DeliverableCard';
@@ -524,7 +518,7 @@ export struct TurnView {
   /** 动作的统一处理（两个入口都走这里） */
   private onMessageAction(item: TrajectoryItem, id: string): void {
     if (id === 'copy') {
-      this.onCopyMessage(item.body);
+      this.onCopyMessage(userFacingBodyOf(item));
     } else if (id === 'like') {
       this.onOpenFeedback(item.id, 'positive');
     } else if (id === 'dislike') {

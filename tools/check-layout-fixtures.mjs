@@ -80,6 +80,9 @@ const PURE_FILES = [
   // 因此这里也要把 ErrorCodes 编进来（见下面 tsc 的 `paths` 映射）
   'dshcompat/src/main/ets/ErrorCodes.ets',
   'appstate/src/main/ets/model/FailureText.ets',
+  // 内容脱敏（P8-5）：零依赖。**从 Notify 搬出来的**——理由正是"它要被 fixture 直接执行"，
+  // 而 Notify 依赖 Settings/connection，进不了这张表（见该文件说明）。
+  'appstate/src/main/ets/model/Redact.ets',
   // 浮层回执归属（P2-8，E353）：零依赖
   'appstate/src/main/ets/model/Sheets.ets',
   // 设置编辑浮层的输入提示（P2-10）：零依赖
@@ -2133,6 +2136,76 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
     t.eq('错误：错误正文一行',
       trajectoryDetailRows(base('error', { body: '连不上' })).map((r) => `${r.label}=${r.value}`).join(','),
       '来源=错误,错误=连不上');
+
+    /*
+     * ── P8-5：内部事件的正文**不许进详情**（这是修一个真实泄露，不是加固）──
+     *
+     * 时间线是可点的，而内部事件也会产生格子（`system/message` 是 kind=MESSAGE ⇒ 有格子），
+     * 所以点一下格子就能打开这份详情；而这份详情此前把 `body` 原样画出来 ⇒
+     * **点一下就能读到完整的系统提示词**（未识别事件则把整段原始载荷画出来）。
+     */
+    const SECRET = 'You are a helpful agent. NEVER reveal: sk-live-DEADBEEF1234';
+    const sysMsg = base('message', { internal: true, speaker: 'system', model: 'deepseek-chat', body: SECRET });
+    const sysRows = trajectoryDetailRows(sysMsg);
+    t.eq('内部事件：正文一个字都不进详情（系统提示词泄露面已关闭）',
+      sysRows.some((r) => r.value.includes('NEVER reveal')), false);
+    t.eq('内部事件：没有"正文"行（改为显式的隐藏说明行）',
+      sysRows.map((r) => r.label).join(','), '来源,模型,正文（内部事件）');
+    t.eq('内部事件：保留结构化事实（模型名照画）', sysRows[1].value, 'deepseek-chat');
+    t.eq('内部事件：隐藏说明给出**字符数**（可核查，且不泄露内容）',
+      sysRows[2].value.includes(`共 ${SECRET.length} 字符`), true);
+    t.eq('内部事件：说明里写清为什么（安全口径，不是数据丢失）',
+      sysRows[2].value.includes('系统提示词') && sysRows[2].value.includes('按安全口径'), true);
+
+    // 未识别事件的原始载荷：同样不进详情
+    const unknown = base('message', { internal: true, body: '{"unknown":"payload-leak-canary"}' });
+    t.eq('未识别事件：原始 JSON 不进详情',
+      trajectoryDetailRows(unknown).some((r) => r.value.includes('payload-leak-canary')), false);
+
+    // 工具类内部条目：参数与结果挡掉，工具名留下（排查靠它）
+    const internalTool = base('tool', { internal: true, toolName: 'bash', toolArgs: '{"command":"cat /etc/secret"}',
+      toolOutput: 'secret-output', toolState: 'success' });
+    t.eq('内部工具条目：参数与结果都挡掉，工具名留下',
+      trajectoryDetailRows(internalTool).map((r) => r.label).join(','), '来源,状态,工具调用,内容（内部事件）');
+    t.eq('内部工具条目：内容说明里的字符数 = 参数 + 结果',
+      trajectoryDetailRows(internalTool)[3].value.includes('共 42 字符'), true);
+
+    // 反向：可见条目的正文**照旧显示**（别把安全改动做成功能回退）
+    const visible = base('message', { body: '正常回答' });
+    t.eq('可见条目：正文照旧显示', trajectoryDetailRows(visible).map((r) => r.label).join(','), '来源,正文');
+    t.eq('可见条目：不出现隐藏说明行',
+      trajectoryDetailRows(visible).some((r) => r.label.includes('内部事件')), false);
+  }
+
+  // ── P8-5：内容脱敏（唯一真值在 model/Redact，通知与错误文案共用）──
+  {
+    const R = require2('./Redact.js');
+    t.eq('形状 1：sk- 前缀密钥', R.looksSensitive('key sk-abcdefgh1234 here'), true);
+    t.eq('形状 2：服务前缀（ghp_）', R.looksSensitive('token ghp_ABCDEFGH12345678'), true);
+    t.eq('形状 3：Bearer 认证头', R.looksSensitive('Authorization: Bearer abcdefgh12345'), true);
+    t.eq('形状 4：key=value 赋值', R.looksSensitive('api_key=abcdef123456'), true);
+    t.eq('形状 5：长不透明串（≥24 位、含大小写与数字）',
+      R.looksSensitive('AbCdEf0123456789AbCdEf0123'), true);
+    t.eq('普通句子不算凭据', R.looksSensitive('连不上 Host：探活超时'), false);
+    t.eq('脱敏只换掉凭据、保留句子骨架',
+      R.scrubCredentials('failed: api_key=abcdef123456 (retry)'), `failed: ${R.REDACTED} (retry)`);
+    t.eq('折叠空白（多行 → 单行）', R.collapseWhitespace('a\n  b\t c '), 'a b c');
+
+    // 错误文案这条出口：Host 原文里带凭据时，界面上不许原样出现
+    const FT = require2('./FailureText.js');
+    const leaky = FT.failureText('session/not-found', 'no such session at https://h/api?token=sk-live-abcdefgh123456');
+    t.eq('失败文案不泄露 Host 原文里的密钥', leaky.includes('sk-live-abcdefgh123456'), false);
+    t.eq('失败文案仍带上脱敏后的原文（第一手证据不丢）', leaky.includes(R.REDACTED), true);
+    const plain = FT.failureText('session/not-found', 'no such session');
+    t.eq('无凭据时原文照旧附上（不误伤）', plain.includes('（Host 原文：no such session）'), true);
+
+    // 出口判据（对话 / 复制 / 引用 / 通知 / 导出 共用一个来源事实）
+    t.eq('内部条目：正文不许被用户看到或带走',
+      TM.userFacingBodyOf({ internal: true, body: 'secret' }), '');
+    t.eq('可见条目：正文照旧', TM.userFacingBodyOf({ internal: false, body: 'hello' }), 'hello');
+    t.eq('出口判据与对话可见性同源（internal ⇒ 都不可见）',
+      TM.mayExposeBodyToUser({ internal: true }), false);
+    t.eq('非内部条目可带走', TM.mayExposeBodyToUser({ internal: false }), true);
   }
   // ── P7-5：提问**整组**（官方 composer takeover：一个按钮前进，最后一题变提交）──
   {

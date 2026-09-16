@@ -15,7 +15,7 @@
  */
 
 import { getNumber, getRecord, getString, isRecord } from 'connection';
-import { FIELD_ALIASES, SESSION_LIST_ENDPOINT, sessionListArgs, titleFromProjections } from 'dshcompat';
+import { FIELD_ALIASES, SESSION_LIST_ENDPOINT, titleFromProjections } from 'dshcompat';
 
 /**
  * 无标题时的中性兜底文案。

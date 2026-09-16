@@ -20,7 +20,6 @@ import {
   sortPending,
   Border
 } from 'appstate';
-import { NativeButton } from './NativePrimitives';
 import { QuestionGroupCard } from './QuestionGroupCard';
 
 @Component

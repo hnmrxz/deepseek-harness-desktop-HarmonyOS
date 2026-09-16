@@ -4,7 +4,7 @@
  * 这些函数把模型值翻译成界面文字，是 D3 §4「状态与文案规范」与 §3 各表格的实现依据。
  */
 
-import { PendingKind, PendingItem, RiskLevel, ToolState, TrajectoryItem, TrajectoryKind } from './Trajectory';
+import { PendingKind, PendingItem, RiskLevel, ToolState } from './Trajectory';
 
 /** 相对时间（D3 §3.1） */
 export function relativeTime(atMs: number, nowMs: number): string {

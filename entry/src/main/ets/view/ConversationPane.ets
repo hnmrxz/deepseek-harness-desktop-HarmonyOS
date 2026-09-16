@@ -8,15 +8,12 @@
  * 所有动作通过回调上报宿主，便于接入真实连接时只改宿主。
  */
 
-import { pendingElsewhere, pendingForSession, takeoverCommand, takeoverHeadline, takeoverStripText,
-  Border, CommandCandidate, FeedbackRow, FollowSignal, Fs, HarmonyColor, HarmonyType, ModelOption, ModelSelection, PendingAttachment, PendingItem, QueuedItem, Radius, ReferenceCandidate, SessionHub, Sp, Speaker, TrajectoryItem, TrajectoryKind, cellIdForListIndex, chatRowOfItemIndex, chatVisibleItems, contextMenuGestures, defaultExpanded, followTimerShouldRun, formatDuration, groupTurns, hasProcessGroup, jobTickerNeeded, listIndexForCell, matchConversationIndices, matchTrajectoryIndices, modelSelectionLabel, nextFollowing, parseMarkdown, plainTextOf, presentTool, processSummary, shouldJumpOnNewItems, stepMatch, toolStateLabel } from 'appstate';
+import { CommandCandidate, FeedbackRow, FollowSignal, Fs, ModelOption, ModelSelection, PendingAttachment, PendingItem, QueuedItem, Radius, ReferenceCandidate, SessionHub, Sp, Speaker, TrajectoryItem, TrajectoryKind, cellIdForListIndex, chatRowOfItemIndex, chatVisibleItems, defaultExpanded, followTimerShouldRun, groupTurns, jobTickerNeeded, listIndexForCell, matchConversationIndices, matchTrajectoryIndices, modelSelectionLabel, nextFollowing, parseMarkdown, pendingElsewhere, pendingForSession, plainTextOf, presentTool, shouldJumpOnNewItems, stepMatch, takeoverCommand, takeoverHeadline, takeoverStripText, toolStateLabel, userFacingBodyOf } from 'appstate';
 /** 类型单独 import type（本仓约定：值与类型分开写） */
 import type { PendingAnswerDraft, ActionNotice, SessionJob, SessionStatsInput, Turn } from 'appstate';
 import type { NativeAction } from './NativePrimitives';
-import { NativeCard, NativeChip } from './NativePrimitives';
+import { NativeCard } from './NativePrimitives';
 import { Composer } from './Composer';
-import { MarkdownRenderer } from './MarkdownRenderer';
-import { MessageFeedback } from './MessageFeedback';
 import { MessageRow } from './MessageRow';
 import { DeliverableCard } from './DeliverableCard';
 import { SubagentCard } from './SubagentCard';
@@ -588,7 +585,7 @@ export struct ConversationPane {
 
   private onFlatAction(item: TrajectoryItem, id: string): void {
     if (id === 'copy') {
-      this.onCopyMessage(item.body);
+      this.onCopyMessage(userFacingBodyOf(item));
     } else if (id === 'like' || id === 'dislike') {
       this.openFlatFeedback(item, id === 'like' ? 'positive' : 'negative');
     } else if (id === 'quote') {

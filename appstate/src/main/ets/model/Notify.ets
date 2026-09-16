@@ -17,6 +17,7 @@
  *   与 `looksSensitive()` 让这条纪律**可被检查**（可写断言测试）。
  */
 
+import { collapseWhitespace, looksSensitive, scrubCredentials } from './Redact';
 import { NotificationDraft, NotifyPriority, NotifyRoute, NotifySlot } from 'platform';
 import { getString, isRecord, parseJson } from 'connection';
 import { PendingItem, PendingKind } from './Trajectory';
@@ -92,9 +93,6 @@ export const DEFAULT_DETAIL_LIMIT: number = 60;
 
 /** 提问正文的动作摘要上限：D3 §6 明确写「问题前 40 字」，属规范硬值。 */
 export const QUESTION_DETAIL_LIMIT: number = 40;
-
-/** 凭据被脱敏后的替换文本（保留占位，让句子仍读得通）。 */
-export const REDACTED: string = '[已隐藏凭据]';
 
 /**
  * D3 §6 通知表：**规范原表的代码形态**。
@@ -185,72 +183,12 @@ export function groupOf(kind: NotifyKind): string {
 
 // ───────────────────────── 内容纪律：脱敏与截断 ─────────────────────────
 
-/**
- * 疑似凭据的写法表。
- *
- * 只看**形状**，不看语义——我们无法知道用户工作区里哪个词是密钥，但密钥几乎总有可辨认的形状：
- *   1. `sk-` 前缀（本产品自家的 DeepSeek / OpenAI 风格密钥）；
- *   2. 已知服务前缀（`ghp_`/`gho_`/`xox?`/`AKIA`/`AIza`/`glpat-`）；
- *   3. `Bearer <token>` 认证头；
- *   4. `key=value` 形式的赋值（把「名字里带 key/token/secret/password」的值一起吃掉）；
- *   5. 兜底：足够长且混杂大小写/数字的连续串（≥24 位的不透明 token）。
- *
- * 取舍（**刻意宁可多脱敏**）：脱敏会把正常长词误伤成 `[已隐藏凭据]`。
- * 但这条规则服务于安全而非可读性——通知在锁屏可见，
- * 「偶尔少显示一个长词」远好于「偶尔泄露一个真密钥」，因此不追求零误伤。
+/*
+ * 【P8-5 搬迁说明】凭据脱敏的**规则与实现**已搬到零依赖 `model/Redact.ets`
+ * （理由：它不只服务通知——错误行、诊断报告、剪贴板都是出口，见该文件说明）。
+ * 这里保留的是**通知自己的策略**：折叠 → 脱敏 → 按策略表截断（`sanitizeDetail`）
+ * 与"正文只允许「标题：摘要」两段"的校验（`assertNoSensitiveContent`）。
  */
-const SENSITIVE_PATTERNS: RegExp[] = [
-  /sk-[A-Za-z0-9_-]{8,}/g,
-  /\b(?:ghp|gho|ghu|ghs|ghr|glpat|xoxa|xoxb|xoxp|AKIA|AIza)[A-Za-z0-9_-]{8,}/g,
-  /\bBearer\s+[A-Za-z0-9._~+/-]{8,}=*/gi,
-  /\b[A-Za-z0-9_.-]*(?:key|token|secret|password|passwd|credential)[A-Za-z0-9_.-]*\s*[:=]\s*\S+/gi,
-  /(?=[A-Za-z0-9_-]{24,})(?=[A-Za-z0-9_-]*[0-9])(?=[A-Za-z0-9_-]*[A-Z])[A-Za-z0-9_-]{24,}/g
-];
-
-/**
- * 是否包含疑似凭据。
- *
- * 存在理由：把「内容纪律」变成**可断言**的谓词，
- * 让测试/评审能对一条已生成的正文直接判定「违规与否」，
- * 而不是靠人眼审阅文案。返回 true 表示**发现疑似凭据**（即违规）。
- */
-export function looksSensitive(text: string): boolean {
-  for (let i = 0; i < SENSITIVE_PATTERNS.length; i++) {
-    // 每次判定前重置 lastIndex：这些正则带 g 标志，复用同一个对象会留下游标状态。
-    SENSITIVE_PATTERNS[i].lastIndex = 0;
-    if (SENSITIVE_PATTERNS[i].test(text)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/**
- * 把疑似凭据替换成占位符。
- *
- * 为什么需要（而不是「发现疑似就整条丢弃」）：
- *   整条丢弃会让用户看到「什么都没说」的通知；替换占位符仍能传达
- *   「这条摘要里原本有一个凭据，我们替你藏了」，信息量更大且不泄露。
- */
-export function scrubCredentials(text: string): string {
-  let out: string = text;
-  for (let i = 0; i < SENSITIVE_PATTERNS.length; i++) {
-    SENSITIVE_PATTERNS[i].lastIndex = 0;
-    out = out.replace(SENSITIVE_PATTERNS[i], REDACTED);
-  }
-  return out;
-}
-
-/**
- * 折叠空白（换行/制表/连续空格 → 单个空格）。
- *
- * 为什么必须先做这一步：动作摘要来自工具参数或错误信息，天然含换行与缩进；
- * 不折叠的话，截断出来的「前 40 字」可能全是缩进空格——既没信息量，
- * 也容易把多行代码的**第二行**内容带进通知（那正是我们要防的）。
- */
-export function collapseWhitespace(text: string): string {
-  return text.replace(/\s+/g, ' ').trim();
-}
 
 /**
  * 生成可安全放进通知正文的动作摘要。

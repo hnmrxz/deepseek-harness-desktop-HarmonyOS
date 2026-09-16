@@ -26,6 +26,7 @@
  * fixture 用它做**对账**：集合里每一个码都必须在文案表里，且文案不得以原始码开头。
  */
 
+import { scrubCredentials } from './Redact';
 import {
   ERR_SESSION_NOT_FOUND,
   ERR_SESSION_CONFLICT,
@@ -155,6 +156,22 @@ export const CLIENT_FAILURE_TEXT_TABLE: FailureTextEntry[] = [
 ];
 
 /**
+ * 把 Host 原文附到文案后面（**唯一出口**，P8-5）。
+ *
+ * 【为什么要收成一个函数】Host 的原文是排查的第一手证据，必须带出来；但它**也可能含凭据**——
+ * 网关错误里常见 `... https://host/api/x?token=...`，连接层 reason 里可能出现 `Bearer ...`。
+ * 而这条文本会进三个用户可达的出口：会话错误行、诊断报告、剪贴板 ⇒ 一律先过 `scrubCredentials`。
+ * 收成一个函数是因为"三处各写一遍 `（Host 原文：${message}）`"正是漏掉脱敏的原因。
+ */
+function hostDetail(message: string): string {
+  if (message.length === 0) {
+    return '';
+  }
+  const safe: string = scrubCredentials(message);
+  return safe.length > 0 ? `（Host 原文：${safe}）` : '';
+}
+
+/**
  * 附件被拒的文案（**要按 Host 原文分两种成因**，见 `failureText` 的调用处）。
  *
  * `session/attachment-invalid` 这个码同时覆盖三件事（P7-18/E384 的取证）：
@@ -168,11 +185,11 @@ function attachmentInvalidText(message: string): string {
   if (message.indexOf('image') >= 0) {
     return 'Host 说这张图无法接纳（格式不支持、数据损坏，**或 Host 侧的图像解码器不可用**）。'
       + '诊断报告里的「运行时事实」会给出 Host 原生件的真实探测结论，先看那一条再决定是换图还是报缺陷。'
-      + (message.length > 0 ? `（Host 原文：${message}）` : '');
+      + hostDetail(message);
   }
   return 'Host 拒绝了这个附件：它不属于这条会话（附件回执与图片引用都是**会话作用域**的）。'
     + '常见原因：附件是在另一个会话里选的，或会话切走后又把旧附件发了出去。'
-    + '重新选择文件后再发即可。' + (message.length > 0 ? `（Host 原文：${message}）` : '');
+    + '重新选择文件后再发即可。' + hostDetail(message);
 }
 
 /**
@@ -182,7 +199,7 @@ function attachmentInvalidText(message: string): string {
  * 于是"上游多了新码"这件事**在界面上就看得见**，而不是被一句含糊的"操作失败"盖住。
  */
 export function untranslatedFailure(code: string, message: string): string {
-  const detail: string = message.length > 0 ? `（Host 原文：${message}）` : '';
+  const detail: string = hostDetail(message);
   return `Host 报了一个本客户端还没有专门文案的错误：${code}。`
     + `请把这一行连同诊断报告一起提交，我们会补上它的说明${detail}`;
 }
@@ -237,5 +254,5 @@ export function failureText(code: string, message: string): string {
    * 明确的（"探活超时（连接级）" / "send 失败 code=-1"），而固定文案会把它盖掉，
    * 于是排查只能从零猜。其余码的原文同样附上——原文是第一手证据。
    */
-  return entry.text + (message.length > 0 ? `（Host 原文：${message}）` : '');
+  return entry.text + hostDetail(message);
 }

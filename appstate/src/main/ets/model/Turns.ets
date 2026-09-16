@@ -103,6 +103,29 @@ export function needsInternalIsolation(item: TrajectoryItem): boolean {
   return item.internal;
 }
 
+/**
+ * 这条条目的正文**能不能被用户看到 / 带走**（P8-5）。
+ *
+ * 【为什么与 `conversationAudienceOf` 分开一个名字】那个回答"画在哪儿"，这个回答"能不能给用户"。
+ * 今天两者判据相同（`internal` ⇒ 都不行），但**用途不同**：出口有五个——对话、复制、引用、
+ * 通知、导出（见 `docs/09-安全与API错误呈现审计.md` §2.3）。收成一个名字，才不会有人
+ * 在新加出口时忘了判；而判据只有一处：`internal` 是上游给的**来源事实**，不靠正文特征猜。
+ */
+export function mayExposeBodyToUser(item: TrajectoryItem): boolean {
+  return !item.internal;
+}
+
+/**
+ * 可以被用户看到 / 带走的正文。
+ *
+ * 内部事件（系统提示词、命令回显、压缩摘要、**未识别事件的原始载荷**）一律给空串：
+ * 调用方据此走"不显示"的分支，而不是拿到半截被悄悄截断的文本——
+ * 后者最危险的地方在于**看起来一切正常**。
+ */
+export function userFacingBodyOf(item: TrajectoryItem): string {
+  return mayExposeBodyToUser(item) ? item.body : '';
+}
+
 /** 回合 */
 
 export interface Turn {

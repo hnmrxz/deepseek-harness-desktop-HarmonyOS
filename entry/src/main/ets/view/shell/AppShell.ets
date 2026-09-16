@@ -20,16 +20,13 @@
  * 普通属性会让赋值落进门面副本、宿主收不到（静默行为错误）。
  */
 
-import { DetailPresentation, DetailSection, LayoutMode, MAIN_DIAGNOSTICS, StackPage, Sz, TrackPresentation, shellTracksOf, showsConversation, sidebarPresentationOf } from 'appstate';
-import { copyText } from 'platform';
+import { DetailPresentation, DetailSection, LayoutMode, MAIN_DIAGNOSTICS, StackPage, Sz, TrackPresentation, showsConversation, sidebarPresentationOf } from 'appstate';
 
-import type { FileNode, FilePreview, PanelDescriptor, SessionStatsInput, TrajectoryItem } from 'appstate';
 import { MainHeaderShell } from './MainHeaderShell';
 import { MainShell } from './MainShell';
 import type { MainShellFacade } from './MainShell';
 import type { RightbarFacade } from './RightbarShell';
 import type { WorkspaceBrowserFacade } from '../WorkspaceBrowser';
-import type { FileTreeFacade } from '../FileTreePane';
 import { RightbarShell } from './RightbarShell';
 import { SidebarShell } from './SidebarShell';
 import { TrackResizer } from './TrackResizer';

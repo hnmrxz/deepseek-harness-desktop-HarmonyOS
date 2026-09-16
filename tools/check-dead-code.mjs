@@ -74,6 +74,24 @@ function stripCommentsAndStrings(src) {
   let out = '';
   let i = 0;
   const n = src.length;
+  /*
+   * 【为什么要保留换行（P8-5 修的真实门禁缺陷）】剥掉块注释时**必须把里面的换行补回来**：
+   * 本门禁后面用 `strippedLines[k+1] >= imp.line && <= imp.end` 去**跳过 import 块自身**，
+   * 这里 `k` 是剥壳后的行号、`imp.line` 是原文件行号 —— 少一个换行，两套行号就错位一次，
+   * 于是"该被跳过的 import 行"可能落进统计范围（**假阴性**：一个真正没人用的 import 被判合格），
+   * 也可能反过来把别的行算进/漏掉。
+   *
+   * 这一条不是推测：P8-5 往 `entry/Index.ets` 的 import 列表里加一行名字，
+   * 就把长期潜伏的 `HarmonySpacing`（只出现在 import 行、正文一次都没用）从"合格"变成了"违规"。
+   * 行号对不齐的门禁等于**会随机说谎的门禁**，所以先修它，再看它报出来的东西。
+   */
+  const keepNewlines = (text) => {
+    let count = 0;
+    for (let k = 0; k < text.length; k++) {
+      if (text[k] === '\n') count++;
+    }
+    return '\n'.repeat(count);
+  };
   while (i < n) {
     const c = src[i];
     const d = src[i + 1];
@@ -82,20 +100,23 @@ function stripCommentsAndStrings(src) {
       continue;
     }
     if (c === '/' && d === '*') {
+      const start = i;
       i += 2;
       while (i < n && !(src[i] === '*' && src[i + 1] === '/')) i++;
       i += 2;
+      out += keepNewlines(src.slice(start, Math.min(i, n)));
       continue;
     }
     if (c === "'" || c === '"' || c === '`') {
       const q = c;
+      const start = i;
       i++;
       while (i < n && src[i] !== q) {
         if (src[i] === '\\') i++;
         i++;
       }
       i++;
-      out += '""';
+      out += '""' + keepNewlines(src.slice(start, Math.min(i, n)));
       continue;
     }
     out += c;
@@ -314,19 +335,61 @@ export function deadExports(sources, corpusText) {
   return out;
 }
 
+/**
+ * 只剥注释、**保留字符串**（import 使用计数专用）。
+ *
+ * 【为什么不能沿用 `stripCommentsAndStrings`】那个连字符串一起剥，于是
+ * `\`${SURFACE.apiChannel}\`` 里的 `SURFACE` 会被抹掉 —— 一个只在模板串里用到的
+ * import 会被误判成"零使用"（本门禁修好行号对齐后第一次跑就撞上：`SURFACE` / `APP_NAME` 这类
+ * 常量恰恰只出现在模板串里）。
+ *
+ * 反向的风险（名字只出现在普通字符串里 ⇒ 漏报）刻意接受：漏报只是少发现一处死代码，
+ * 误报却会让人去删一个**正在用的** import —— 两种错误的代价不对称。
+ */
+function stripCommentsOnly(src) {
+  let out = '';
+  let i = 0;
+  const n = src.length;
+  while (i < n) {
+    const c = src[i];
+    const d = src[i + 1];
+    if (c === '/' && d === '/') {
+      while (i < n && src[i] !== '\n') i++;
+      continue;
+    }
+    if (c === '/' && d === '*') {
+      const start = i;
+      i += 2;
+      while (i < n && !(src[i] === '*' && src[i + 1] === '/')) i++;
+      i += 2;
+      let nl = 0;
+      for (let k = start; k < Math.min(i, n); k++) {
+        if (src[k] === '\n') nl++;
+      }
+      out += '\n'.repeat(nl);
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
 /** 分析单个文件的文本，返回违规清单 */
 export function scanText(text) {
   const lines = text.split('\n');
   const stripped = stripCommentsAndStrings(text);
   const strippedLines = stripped.split('\n');
+  // import 使用计数用"只剥注释"的版本（模板串里的用法也算用，见 `stripCommentsOnly`）
+  const codeLines = stripCommentsOnly(text).split('\n');
   const violations = [];
 
   // ① 零使用 import
   for (const imp of importedNames(lines)) {
     let count = 0;
-    for (let k = 0; k < strippedLines.length; k++) {
+    for (let k = 0; k < codeLines.length; k++) {
       if (k + 1 >= imp.line && k + 1 <= imp.end) continue;
-      count += countName(strippedLines[k], imp.name);
+      count += countName(codeLines[k], imp.name);
     }
     if (count === 0) {
       violations.push({ line: imp.line, name: imp.name, kind: '零使用 import' });

@@ -384,7 +384,8 @@ export {
   groupTurns,
   hasProcessGroup,
   needsInternalIsolation,
-  processSummary
+  processSummary,
+  userFacingBodyOf
 } from './model/Turns';
 export type { Turn } from './model/Turns';
 export type { SessionJob } from './model/Jobs';
@@ -456,11 +457,9 @@ export type {
 // ── 通知策略（D3 §6：六类通知的标题/正文/优先级/点击目标 + 内容纪律 + 去重键） ──
 export {
   assertNoSensitiveContent,
-  collapseWhitespace,
   DEFAULT_DETAIL_LIMIT,
   dedupeKeyOf,
   groupOf,
-  looksSensitive,
   NOTIFY_POLICIES,
   NOTIFY_PAGES,
   NotifyKind,
@@ -471,15 +470,22 @@ export {
   parseNotifyRoute,
   policyOf,
   QUESTION_DETAIL_LIMIT,
-  REDACTED,
   routeOf,
   sanitizeDetail,
-  scrubCredentials,
   UNTITLED_SESSION,
   withdrawalKeysFor,
   withdrawalKeysForPending
 } from './model/Notify';
 export type { NotifyInput, NotifyPolicy } from './model/Notify';
+
+// ── 内容脱敏（P8-5：所有用户可达出口共用的唯一真值；零依赖，故 fixture 可直接执行） ──
+export {
+  collapseWhitespace,
+  looksSensitive,
+  REDACTED,
+  scrubCredentials,
+  SENSITIVE_PATTERNS
+} from './model/Redact';
 
 // ── 2in1 快捷键表（D3 §5.1：规范 11 行 → 13 个规格；数据 + 纯函数） ──
 export {

@@ -29,7 +29,6 @@
  */
 
 import { Fs, HarmonySpacing, Radius, Sp } from 'appstate';
-import { common } from '@kit.AbilityKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 
 /**

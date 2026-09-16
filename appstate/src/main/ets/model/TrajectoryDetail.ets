@@ -20,10 +20,24 @@
  * 另有一处**我们比官方多**的信息：`internal` 的条目（系统提示词、命令、压缩摘要、
  * 未识别事件）在对话视图不显示，只活在轨迹里 ⇒ 详情里如实标注「内部事件」，
  * 免得有人以为"界面上看不见就是没发生过"。
+ *
+ * ## P8-5：内部事件的**正文不进这里**（这是修一个真实泄露）
+ *
+ * 时间线是可点的，而**内部事件也会产生格子**（`system/message` 是 kind=MESSAGE ⇒ 有格子）
+ * ⇒ 点它就会打开这份详情。而这份详情此前把 `body` 原样画出来，于是
+ * **点一下格子就能读到完整的系统提示词**（未识别事件则把整段原始载荷画出来）。
+ * 这与 `docs/09-安全与API错误呈现审计.md` §2.2 第 1 条直接冲突：
+ * 「轨迹详情：默认不得展示 `internal=true` 的正文」。
+ *
+ * 现在的规则：**正文类字段一律不画**（正文 / 思考 / 工具参数 / 工具结果 / 错误原文），
+ * 只给**结构化事实**（类别、状态、工具名、模型名、字符数、耗时）——
+ * 这正是审计要求的"允许进入开发诊断的数据必须单独定义白名单，并默认脱敏"。
+ * 判据取自 `Turns.mayExposeBodyToUser()`（与对话可见性同一个来源事实），不在这里另判一次。
  */
 
 import { Speaker, TrajectoryItem, TrajectoryKind } from './Trajectory';
 import { formatDuration, previewOutput, toolStateLabel } from './Present';
+import { mayExposeBodyToUser } from './Turns';
 
 /** 详情卡的一行（标签 + 值） */
 export interface DetailRow {
@@ -33,6 +47,17 @@ export interface DetailRow {
 
 /** 详情卡标题（官方 `details.event` 原文） */
 export const TRAJECTORY_DETAIL_TITLE: string = '事件详情';
+
+/**
+ * 内部事件正文被隐藏时的说明（**唯一一处文案**）。
+ *
+ * 【为什么必须说清"为什么"】一句"已隐藏"会被读成"数据丢了"或"这个 App 坏了"。
+ * 这句话要同时回答：① 发生了什么（内部事件正文不显示）；② 为什么（可能含系统提示词，
+ * 按安全口径不进任何用户可达出口）；③ 还能拿到什么（类别/工具名/模型/字符数在下面几行）。
+ */
+const INTERNAL_BODY_HIDDEN_PREFIX: string =
+  '内部事件正文不显示：它可能包含系统提示词或未识别载荷，按安全口径不进界面/复制/引用/通知/导出。'
+  + '下面的类别、工具名、模型与字符数是可核查的结构化事实';
 
 /**
  * 条目类别 → 详情里的「来源」文案。
@@ -85,6 +110,8 @@ function clipped(text: string): string {
  */
 export function trajectoryDetailRows(item: TrajectoryItem): DetailRow[] {
   const rows: DetailRow[] = [];
+  // 正文类字段能不能画：**判据与对话可见性同源**（`internal` 是上游给的来源事实）
+  const expose: boolean = mayExposeBodyToUser(item);
   rows.push({
     label: '来源',
     value: item.internal ? `${itemKindLabel(item)} · 内部事件` : itemKindLabel(item),
@@ -93,31 +120,35 @@ export function trajectoryDetailRows(item: TrajectoryItem): DetailRow[] {
   if (item.kind === TrajectoryKind.TOOL) {
     rows.push({ label: '状态', value: toolStateLabel(item.toolState) });
     if (item.toolName.length > 0) {
+      // 工具**名字**是结构化事实（不是内容）⇒ 内部事件也画，排查时正是靠它
       rows.push({ label: '工具调用', value: item.toolName });
     }
-    if (item.toolArgs.length > 0) {
+    if (expose && item.toolArgs.length > 0) {
       // 【为什么叫「参数」】官方把工具参数放在它自己的工具卡里，详情面板用 `details.toolCalls`
       // （调用数）；我们的投影有**单次调用的参数文本**，如实叫「参数」而不是套用官方的字段名。
       rows.push({ label: '参数', value: clipped(item.toolArgs) });
     }
-    if (item.toolOutput.length > 0) {
+    if (expose && item.toolOutput.length > 0) {
       rows.push({ label: '结果', value: clipped(item.toolOutput) });
     }
   } else if (item.kind === TrajectoryKind.MESSAGE || item.kind === TrajectoryKind.REASONING) {
     if (item.model.length > 0) {
+      // 模型名是结构化事实 ⇒ 内部事件也画
       rows.push({ label: '模型', value: item.model });
     }
-    if (item.reasoning.length > 0) {
+    if (expose && item.reasoning.length > 0) {
       rows.push({ label: '思考', value: clipped(item.reasoning) });
     }
-    if (item.body.length > 0) {
+    if (expose && item.body.length > 0) {
       rows.push({
         label: item.kind === TrajectoryKind.REASONING ? '思考正文' : '正文',
         value: clipped(item.body),
       });
     }
   } else if (item.kind === TrajectoryKind.ERROR) {
-    rows.push({ label: '错误', value: clipped(item.body) });
+    if (expose) {
+      rows.push({ label: '错误', value: clipped(item.body) });
+    }
   } else if (item.kind === TrajectoryKind.SUBAGENT) {
     if (item.subagentName.length > 0) {
       rows.push({ label: '子代理', value: item.subagentName });
@@ -139,6 +170,22 @@ export function trajectoryDetailRows(item: TrajectoryItem): DetailRow[] {
     }
     if (item.percent >= 0) {
       rows.push({ label: '完成度', value: `${item.percent}%` });
+    }
+  }
+
+  /*
+   * 内部事件：正文类字段已被上面的 `expose` 全部挡掉 ⇒ 这里补一行**结构化事实**
+   * （有多少字符被挡），让"看不见"是一个**说明**，而不是一片空白。
+   * 只给长度、不给内容：长度不泄露任何东西，却能让人判断"这条是不是那段很长的系统提示词"。
+   */
+  if (!expose) {
+    const hidden: number = item.body.length + item.reasoning.length
+      + item.toolArgs.length + item.toolOutput.length;
+    if (hidden > 0) {
+      rows.push({
+        label: item.kind === TrajectoryKind.TOOL ? '内容（内部事件）' : '正文（内部事件）',
+        value: `${INTERNAL_BODY_HIDDEN_PREFIX}（共 ${hidden} 字符）`,
+      });
     }
   }
 

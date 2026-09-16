@@ -100,6 +100,14 @@ const FEATURES = [
    */
   { name: '返回层级收口', patterns: [['closeFilePreview', 2], ['drillAfterPreviewClosed', 2], ['consumeBack', 2], ['backOneLayer', 2], ['BACK_TO_LIST', 2]] },
   /*
+   * 内部内容隔离（P8-5）。钉的是"出口自带判据"这条纪律：内部事件（系统提示词、未识别事件载荷）
+   * 不得进入五个用户可达出口——对话 / 复制 / 引用 / 通知 / 导出。
+   * 判据只有一处（`Turns.mayExposeBodyToUser`，来源事实是 `internal`），
+   * 取值只有一处（`userFacingBodyOf`），脱敏只有一处（`Redact.scrubCredentials`）。
+   * 三个都要"有调用点"：只留定义就等于又回到"通道有、没接"。
+   */
+  { name: '内部内容隔离', patterns: [['mayExposeBodyToUser', 2], ['userFacingBodyOf', 2], ['scrubCredentials', 2], ['INTERNAL_BODY_HIDDEN', 1]] },
+  /*
    * 文件变更流（E226）。E383 修自激时把 `openFilesStream` 改名为 `ensureFilesStream`
    * （语义也变了：**只在作用域变化/用户驱动时**才订阅），本门禁当场红了 —— 这正是它该做的事：
    * 符号没了就是"接线可能被剪断"，改名必须显式改这里，而不是让调用点悄悄消失。

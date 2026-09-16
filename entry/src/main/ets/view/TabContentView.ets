@@ -23,8 +23,6 @@
 
 import { ActionNotice, AgentPresetRow, CoreViewState, CredentialItem, FileNode, FilePreview, Fs, HostRecord, HubPhase, LayoutMode, ModelOption, ModelSelection, NavTab, PendingItem, PluginItem, SessionHub, SessionListItem, SettingGroup, SkillRow, Sp, StackPage, WorkspaceItem, aboutInfo, projectGeneralGroups } from 'appstate';
 import type { PendingAnswerDraft, PanelDescriptor, SettingChoice, SettingItem } from 'appstate';
-import { LocalPrefs } from 'platform';
-import { HubBanner } from './HubBanner';
 import { SettingsPane } from './SettingsPane';
 import { WorkspacePane } from './WorkspacePane';
 import { WorkspaceBrowser } from './WorkspaceBrowser';

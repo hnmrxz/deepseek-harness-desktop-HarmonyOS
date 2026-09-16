@@ -29,7 +29,6 @@ import {
   settingsSectionLabelRes
 } from 'appstate';
 import type { CoreViewState, PanelDescriptor } from 'appstate';
-import { SettingRow } from './SettingRow';
 import { SettingsGeneral } from './SettingsGeneral';
 import { SettingsDevice } from './SettingsDevice';
 import { SettingsModels } from './SettingsModels';

@@ -19,7 +19,6 @@
  */
 
 import { display, router, window } from '@kit.ArkUI';
-import { fileIo as fs } from '@kit.CoreFileKit';
 
 import {
   checkVersion,
@@ -56,15 +55,12 @@ import {
   DiagReport,
   FileNode,
   FilePreview,
-  Fs,
   HostRecord,
   HubPhase,
   BackAction,
   decideBack,
+  userFacingBodyOf,
   drillAfterPreviewClosed,
-  HarmonyColor,
-  HarmonyRadius,
-  HarmonySpacing,
   LayoutMode,
   showsConversation,
   deliverablesOf,
@@ -172,7 +168,6 @@ import type { AttachOutcome, PendingAnswerDraft, PermissionChoice, PluginInvento
 import { emitter } from '@kit.BasicServicesKit';
 import { parseJson } from 'connection';
 import { EVENT_HOST_CONNECTED, EVENT_KEY_HOST_TOKEN, EVENT_KEY_HOST_URL } from 'platform';
-import { ConnectPane } from '../view/ConnectPane';
 import { FolderPicker, FolderPickerController } from '../view/FolderPicker';
 import { ChoiceSheet } from '../view/ChoiceSheet';
 import { CredentialSheet } from '../view/CredentialSheet';
@@ -188,12 +183,10 @@ import type { TabContentFacade } from '../view/TabContentView';
 import type { WorkspaceBrowserFacade } from '../view/WorkspaceBrowser';
 import type { FileTreeFacade } from '../view/FileTreePane';
 import { RightbarShell } from '../view/shell/RightbarShell';
-import { DetailPane } from '../view/DetailPane';
 import { NodeRuntime } from '../runtime/NodeRuntime';
-import { WorkspacePane } from '../view/WorkspacePane';
 import { hitOfKeyEvent } from '../view/ShortcutKeys';
 import type { ShortcutHit } from '../view/ShortcutKeys';
-import { harmonySheetOptions, NativeButton } from '../view/NativePrimitives';
+import { harmonySheetOptions } from '../view/NativePrimitives';
 // 端侧核心运行层（D6）：核心版本仓库与激活事务。运行时载体尚未接线，
 // 因此这里现在只用它的"仓库/状态"部分，不声称任何"已启动"。
 import { hilog } from '@kit.PerformanceAnalysisKit';
@@ -2038,11 +2031,20 @@ struct Index {
    * 发送后模型与界面都能正确理解这是引用。
    */
   private quoteIntoDraft(item: TrajectoryItem): void {
-    if (item.body.length === 0) {
-      this.attachNotice = '这条消息没有可引用的正文。';
+    /*
+     * 【P8-5：引用也是"出口"之一】正文一律经 `userFacingBodyOf()` 取——内部事件（系统提示词、
+     * 未识别事件载荷）给的是空串，于是这里自然落进"没有可引用的正文"那条分支。
+     * 今天对话视图只渲染可见条目、这条路走不到内部事件；但按 `docs/09` §2.3，
+     * **出口必须自带判据**，不能靠"上游调用点恰好没传"。
+     */
+    const body: string = userFacingBodyOf(item);
+    if (body.length === 0) {
+      this.attachNotice = item.internal
+        ? '这条是内部事件（可能包含系统提示词），不能引用到输入框。'
+        : '这条消息没有可引用的正文。';
       return;
     }
-    const lines: string[] = item.body.split('\n');
+    const lines: string[] = body.split('\n');
     const quoted: string[] = [];
     for (let i = 0; i < lines.length; i++) {
       quoted.push('> ' + lines[i]);
