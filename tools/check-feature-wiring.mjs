@@ -163,6 +163,15 @@ const FEATURES = [
    * 用户没自己滚过 / 列表已装下那一条。
    * 钉三段：纯模型 + 宿主保管（`Index.scrollSpot`）+ 面板里的记与恢复两个调用点。
    */
+  /*
+   * 交付物「分享」（P9-7）。此前那个「分享」是**可见但禁用**的（理由写着"平台只支持分享文本"），
+   * 而这一轮查清：SDK 的 `SharedRecord` **支持 `uri`**（"Either content or uri must be set"），
+   * 沙箱内的路径可以经 `fileUri.getUriFromPath` 变成系统可授权的 URI ⇒ **文件本体能分享**。
+   * 现在按纯模型分三档：沙箱内 ⇒ 分享文件；沙箱外 ⇒ 降级分享路径文本（并说明原因）；
+   * 定位不到 ⇒ 禁用并写明原因。「保存」仍禁用（平台确实没有"另存为"）。
+   * 钉四段：模型判定 + 平台 `shareFile` + 宿主两个调用点 + 卡片里的动作接线。
+   */
+  { name: '交付物分享', patterns: [['deliverableShareTarget', 2], ['shareFile', 2], ['shareActionLabel', 2], ['onShareDeliverable', 2]] },
   { name: '会话滚动位置', patterns: [['rememberScrollSpot', 2], ['scrollRestoreTarget', 2], ['onRememberSpot', 2], ['scrollSpot', 3]] },
   { name: '引用菜单钻取', patterns: [['referenceDrillQuery', 2], ['referenceCrumbs', 2], ['referenceAgeLine', 2],
     ['referenceFileRowName', 2], ['referenceSessionRowDetail', 2]] },

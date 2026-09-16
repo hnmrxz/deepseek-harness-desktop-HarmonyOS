@@ -9,6 +9,7 @@
  */
 
 import { systemShare } from '@kit.ShareKit';
+import { fileUri } from '@kit.CoreFileKit';
 import { uniformTypeDescriptor as utd } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
@@ -16,6 +17,47 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 
 const DOMAIN: number = 0xD5A1;
 const TAG: string = 'platform/share';
+
+/**
+ * 把**沙箱内的绝对路径**分享成"文件本体"（P9-7）。
+ *
+ * 【为什么必须转 URI】系统分享面板的 `SharedRecord` 要么给 `content`（文本）、要么给 `uri`；
+ * SDK 文档逐字："method to obtain the file URI from the sandbox path. Either **content** or
+ * **uri** must be set." ⇒ 文件只能经 `fileUri.getUriFromPath()` 换成一个系统可授权的 URI，
+ * 接收方才能打开它（直接给沙箱路径字符串对方读不到）。
+ *
+ * 【沙箱外的路径会失败】`getUriFromPath` 只认应用沙箱内的路径；工作区若是用户经系统选择器
+ * 挑的沙箱外目录，调用会抛 —— 调用方据此**降级为分享路径文本**（判定在
+ * `appstate/model/ProducedFiles.deliverableShareTarget`，不是在这里猜）。
+ *
+ * @returns 面板是否成功拉起（失败时调用方要给一句可读的回执）
+ */
+export async function shareFile(context: common.UIAbilityContext, absPath: string,
+  title?: string, anchorId?: string): Promise<boolean> {
+  try {
+    const uri: string = fileUri.getUriFromPath(absPath);
+    const record: systemShare.SharedRecord = {
+      // `general.file`：SDK 的 `UniformDataType.FILE`（没有 GENERAL_FILE 这个名字）
+      utd: utd.UniformDataType.FILE,
+      uri: uri
+    };
+    if (title !== undefined && title.length > 0) {
+      record.title = title;
+    }
+    const data: systemShare.SharedData = new systemShare.SharedData(record);
+    const controller: systemShare.ShareController = new systemShare.ShareController(data);
+    const options: systemShare.ShareControllerOptions = {};
+    if (anchorId !== undefined && anchorId.length > 0) {
+      options.anchor = anchorId;
+    }
+    await controller.show(context, options);
+    return true;
+  } catch (err) {
+    const e = err as BusinessError;
+    hilog.warn(DOMAIN, TAG, 'shareFile failed: %{public}s', e.message);
+    return false;
+  }
+}
 
 /** 一次分享请求的文本内容 */
 export interface ShareText {

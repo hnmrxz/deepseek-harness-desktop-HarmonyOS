@@ -59,7 +59,19 @@ export type { FailureTextEntry } from './model/FailureText';
 export { goalBarStateOf, goalPhaseLabel, GOAL_PHASE_ACTIVE, GOAL_PHASE_BLOCKED, GOAL_PHASE_COMPLETE, GOAL_PHASE_PAUSED } from './model/GoalBar';
 export type { GoalBarState } from './model/GoalBar';
 // 回合产出的文件（P7-21，对齐官方 ui-deliverables 的 turn-tail 规则）
-export { baseNameOf, MENTION_TOKEN_MAX, producedFilesOf, producedRowText, resolveProducedMention } from './model/ProducedFiles';
+export {
+  baseNameOf,
+  deliverableShareTarget,
+  MENTION_TOKEN_MAX,
+  producedFilesOf,
+  producedRowText,
+  resolveProducedMention,
+  SHARE_TARGET_FILE,
+  SHARE_TARGET_NONE,
+  SHARE_TARGET_TEXT,
+  shareActionLabel
+} from './model/ProducedFiles';
+export type { ShareTarget } from './model/ProducedFiles';
 export type { ProducedFile } from './model/ProducedFiles';
 
 // ── 工作区与文件 ──

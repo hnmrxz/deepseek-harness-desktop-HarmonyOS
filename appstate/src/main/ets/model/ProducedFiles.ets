@@ -167,3 +167,93 @@ export function resolveProducedMention(files: ProducedFile[], token: string): st
   }
   return nameCount === 1 ? nameHit : '';
 }
+
+/* ───────────────────────── 交付物的「分享」能分享什么（P9-7） ───────────────────────── */
+
+/** 分享目标：文件本体（系统分享拿到可打开的 URI） */
+export const SHARE_TARGET_FILE: string = 'file';
+/** 分享目标：只有路径文本（文件在应用沙箱外，系统分享拿不到 URI） */
+export const SHARE_TARGET_TEXT: string = 'text';
+/** 分享目标：什么都不能分享（禁用，并把原因写在旁边） */
+export const SHARE_TARGET_NONE: string = 'none';
+
+/** 一次「分享」的目标与理由 */
+export interface ShareTarget {
+  /** `SHARE_TARGET_*` */
+  kind: string;
+  /** `kind === 'file'` 时的**绝对路径**（转 URI 由平台层做，见 `platform/system/ShareBoard`） */
+  absPath: string;
+  /** `kind === 'text'` 时要分享的文本 */
+  text: string;
+  /** `kind === 'none'` 时**必须**写清为什么（假入口是本仓明令禁止的） */
+  reason: string;
+}
+
+/**
+ * 一条交付物能不能分享、以什么形式分享。
+ *
+ * ## 官方契约（逐字）
+ *
+ * `dsh-tool-present` 的 `PresentedFile.path`：
+ * > "**Original absolute path or path relative to the Session working directory.**"
+ *
+ * 也就是路径可能是绝对的、也可能相对会话工作目录 ⇒ 先归一成绝对路径再判断。
+ *
+ * ## 为什么分三档（而不是"能分享/不能分享"）
+ *
+ * 系统分享面板要的是**文件 URI**（`systemShare.SharedRecord.uri`，SDK 文档："Either **content**
+ * or **uri** must be set"，URI 由 `fileUri.getUriFromPath` 从**沙箱路径**得到）。而工作区可能是
+ * 用户经系统选择器挑的**沙箱外**目录 ⇒ 那种路径转不出可用 URI。此时**如实降级**：
+ * 分享路径文本（接收方仍能用它定位文件），而不是给一个点了报错、或干脆假装禁用的按钮。
+ *
+ * @param rawPath 交付物给的路径（绝对或相对会话工作目录）
+ * @param sessionCwd 会话工作目录（绝对路径；不知道传空串）
+ * @param sandboxRoot 应用沙箱根（`context.filesDir`；不知道传空串）
+ */
+export function deliverableShareTarget(rawPath: string, sessionCwd: string,
+  sandboxRoot: string): ShareTarget {
+  const raw: string = rawPath.trim();
+  if (raw.length === 0) {
+    return noneShare('这条交付物没有路径，无法分享。');
+  }
+  const absolute: string = raw.startsWith('/') ? raw : joinPath(sessionCwd, raw);
+  if (absolute.length === 0) {
+    return noneShare('不知道会话的工作目录，没法定位这个文件（相对路径无从解析）。');
+  }
+  if (sandboxRoot.length > 0 && absolute.startsWith(sandboxRoot)) {
+    return { kind: SHARE_TARGET_FILE, absPath: absolute, text: '', reason: '' };
+  }
+  return {
+    kind: SHARE_TARGET_TEXT,
+    absPath: absolute,
+    text: absolute,
+    reason: sandboxRoot.length === 0
+      ? '拿不到应用沙箱路径，只能分享路径文本。'
+      : '这个文件在工作区（应用沙箱外）：系统分享拿不到它的 URI，只能分享路径文本。'
+  };
+}
+
+function noneShare(reason: string): ShareTarget {
+  return { kind: SHARE_TARGET_NONE, absPath: '', text: '', reason: reason };
+}
+
+/** 拼绝对路径（两端各补一个 `/`；工作目录为空 ⇒ 空串表示"不知道"） */
+function joinPath(dir: string, rel: string): string {
+  if (dir.length === 0) {
+    return '';
+  }
+  const left: string = dir.endsWith('/') ? dir.substring(0, dir.length - 1) : dir;
+  const right: string = rel.startsWith('/') ? rel.substring(1) : rel;
+  return `${left}/${right}`;
+}
+
+/** 「分享」按钮的文案（三档各自的说法，不混用） */
+export function shareActionLabel(target: ShareTarget): string {
+  if (target.kind === SHARE_TARGET_FILE) {
+    return '分享文件';
+  }
+  if (target.kind === SHARE_TARGET_TEXT) {
+    return '分享路径';
+  }
+  return '分享';
+}

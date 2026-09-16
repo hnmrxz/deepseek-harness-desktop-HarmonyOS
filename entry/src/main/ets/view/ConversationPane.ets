@@ -8,7 +8,7 @@
  * 所有动作通过回调上报宿主，便于接入真实连接时只改宿主。
  */
 
-import { CommandCandidate, emptyScrollSpot, FeedbackRow, FollowSignal, Fs, ModelOption, ModelSelection, PendingAttachment, PendingItem, QueuedItem, Radius, ReferenceCandidate, scrollRestoreTarget, ScrollSpot, SessionHub, Sp, Speaker, TrajectoryItem, TrajectoryKind, cellIdForListIndex, chatRowOfItemIndex, chatVisibleItems, defaultExpanded, followTimerShouldRun, groupTurns, jobTickerNeeded, listIndexForCell, matchConversationIndices, matchTrajectoryIndices, modelSelectionLabel, nextFollowing, parseMarkdown, pendingElsewhere, pendingForSession, plainTextOf, presentTool, shouldJumpOnNewItems, stepMatch, takeoverCommand, takeoverHeadline, takeoverStripText, toolStateLabel, userFacingBodyOf } from 'appstate';
+import { CommandCandidate, FeedbackRow, FollowSignal, Fs, ModelOption, ModelSelection, PendingAttachment, PendingItem, QueuedItem, Radius, ReferenceCandidate, SHARE_TARGET_NONE, ScrollSpot, SessionHub, ShareTarget, Sp, Speaker, TrajectoryItem, TrajectoryKind, cellIdForListIndex, chatRowOfItemIndex, chatVisibleItems, defaultExpanded, emptyScrollSpot, followTimerShouldRun, groupTurns, jobTickerNeeded, listIndexForCell, matchConversationIndices, matchTrajectoryIndices, modelSelectionLabel, nextFollowing, parseMarkdown, pendingElsewhere, pendingForSession, plainTextOf, presentTool, scrollRestoreTarget, shouldJumpOnNewItems, stepMatch, takeoverCommand, takeoverHeadline, takeoverStripText, toolStateLabel, userFacingBodyOf } from 'appstate';
 /** 类型单独 import type（本仓约定：值与类型分开写） */
 import type { PendingAnswerDraft, ActionNotice, SessionJob, SessionStatsInput, Turn } from 'appstate';
 import type { NativeAction } from './NativePrimitives';
@@ -72,6 +72,13 @@ export struct ConversationPane {
    * 详情见 `TurnView.onOpenProduced` 的说明（只读不切在手机上等于没反应）。
    */
   onOpenProduced: (path: string, name: string) => void = () => {
+  };
+  /** 一条交付物的分享目标（P9-7；由宿主算好，卡片不认识中枢） */
+  deliverableShareTarget: (item: TrajectoryItem) => ShareTarget = (item: TrajectoryItem) => {
+    return { kind: SHARE_TARGET_NONE, absPath: '', text: '', reason: '' };
+  };
+  /** 分享这条交付物（宿主拉起系统分享面板） */
+  onShareDeliverable: (item: TrajectoryItem) => void = () => {
   };
   /** 添加图片（P0-4：内联发送，不走上传；见 `Composer.onAddImage` 的说明） */
   onAddImage: () => void = () => {
@@ -539,7 +546,13 @@ export struct ConversationPane {
     } else if (item.kind === TrajectoryKind.SUBAGENT) {
       SubagentCard({ item: item })
     } else if (item.kind === TrajectoryKind.DELIVERABLE) {
-      DeliverableCard({ item: item })
+      DeliverableCard({
+        item: item,
+        shareTarget: this.deliverableShareTarget(item),
+        onShare: () => {
+          this.onShareDeliverable(item);
+        }
+      })
     } else if (item.kind === TrajectoryKind.GOAL || item.kind === TrajectoryKind.JOB) {
       this.flatGoal(item)
     } else if (item.kind === TrajectoryKind.ERROR) {
@@ -917,6 +930,10 @@ export struct ConversationPane {
                 sessionId: this.sessionId,
                 onOpenProduced: (path: string, name: string) => {
                   this.onOpenProduced(path, name);
+                },
+                deliverableShareTarget: (item: TrajectoryItem) => this.deliverableShareTarget(item),
+                onShareDeliverable: (item: TrajectoryItem) => {
+                  this.onShareDeliverable(item);
                 },
                 expanded: this.expanded,
                 onExpandedChange: (next: string[]) => {

@@ -30,7 +30,7 @@
  *    （列表项是它画的，命中集合也在它手里）。
  */
 
-import { ActionNotice, FeedbackRow, Fs, HarmonyColor, HarmonyType, Radius, SessionHub, Sp, Speaker, TrajectoryItem, TrajectoryKind, Turn, baseNameOf, defaultExpanded, hasProcessGroup, parseMarkdown, plainTextOf, processSummary, producedFilesOf, resolveProducedMention, userFacingBodyOf } from 'appstate';
+import { ActionNotice, FeedbackRow, Fs, HarmonyColor, HarmonyType, Radius, SHARE_TARGET_NONE, SessionHub, ShareTarget, Sp, Speaker, TrajectoryItem, TrajectoryKind, Turn, baseNameOf, defaultExpanded, hasProcessGroup, parseMarkdown, plainTextOf, processSummary, producedFilesOf, resolveProducedMention, userFacingBodyOf } from 'appstate';
 import type { ProducedFile } from 'appstate';
 import { presentTool, toolStateLabel } from 'appstate';
 import { NativeCard, NativeChip } from './NativePrimitives';
@@ -90,6 +90,13 @@ export struct TurnView {
    * 只读不切在手机上等于"点了没反应"（右栏在单栏形态下不在屏幕上）。
    */
   onOpenProduced: (path: string, name: string) => void = () => {
+  };
+  /** 一条交付物的分享目标（P9-7；宿主算好传下来，卡片不认识中枢） */
+  deliverableShareTarget: (item: TrajectoryItem) => ShareTarget = (item: TrajectoryItem) => {
+    return { kind: SHARE_TARGET_NONE, absPath: '', text: '', reason: '' };
+  };
+  /** 分享这条交付物 */
+  onShareDeliverable: (item: TrajectoryItem) => void = () => {
   };
   /**
    * 会话 id（图片读取要用它做**会话作用域**授权）。
@@ -312,7 +319,13 @@ export struct TurnView {
       SubagentCard({ item: item })
     } else if (item.kind === TrajectoryKind.DELIVERABLE) {
       // 交付物卡归 DeliverableCard（右栏「交付物」面板用**同一份**）
-      DeliverableCard({ item: item })
+      DeliverableCard({
+        item: item,
+        shareTarget: this.deliverableShareTarget(item),
+        onShare: () => {
+          this.onShareDeliverable(item);
+        }
+      })
     } else if (item.kind === TrajectoryKind.GOAL || item.kind === TrajectoryKind.JOB) {
       this.goalItem(item)
     } else if (item.kind === TrajectoryKind.COMMAND) {

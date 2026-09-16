@@ -2670,6 +2670,53 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   t.eq('非竞态返回 NONE', queueRaceKind('gateway/internal'), QUEUE_RACE_NONE);
 }
 
+// ── P9-7：交付物的「分享」能分享什么（官方 PresentedFile.path 的两种形态） ──
+{
+  const PF = require2('./ProducedFiles.js');
+  const { deliverableShareTarget, shareActionLabel, SHARE_TARGET_FILE, SHARE_TARGET_TEXT,
+    SHARE_TARGET_NONE } = PF;
+  const SANDBOX = '/data/storage/el2/base/haps/entry/files';
+  const CWD = `${SANDBOX}/workspace/proj`;
+
+  // ① 沙箱内的**绝对路径** ⇒ 分享文件本体（平台可转 fileUri，接收方打得开）
+  const abs = `${CWD}/dist/a.zip`;
+  const file = deliverableShareTarget(abs, CWD, SANDBOX);
+  t.eq('沙箱内绝对路径 ⇒ 文件档', file.kind, SHARE_TARGET_FILE);
+  t.eq('文件档带绝对路径（平台据此转 URI）', file.absPath, abs);
+  t.eq('文件档不需要理由（没有什么要解释的）', file.reason, '');
+  t.eq('文件档按钮文案是「分享文件」', shareActionLabel(file), '分享文件');
+
+  // ② 官方 `PresentedFile.path` 允许**相对会话工作目录** ⇒ 先归一成绝对路径
+  const rel = deliverableShareTarget('dist/a.zip', CWD, SANDBOX);
+  t.eq('相对路径 + 会话工作目录 ⇒ 拼成绝对路径后判定', rel.absPath, abs);
+  t.eq('拼接不产生双斜杠（工作目录以 / 结尾也稳）',
+    deliverableShareTarget('dist/a.zip', `${CWD}/`, SANDBOX).absPath, abs);
+  t.eq('工作目录里的相对路径前缀也能拼对',
+    deliverableShareTarget('/tmp/x.zip', CWD, SANDBOX).absPath, '/tmp/x.zip');
+
+  // ③ 沙箱外（用户经系统选择器挑的工作区）⇒ **降级为路径文本**，并说明为什么
+  const outside = deliverableShareTarget('/storage/Users/currentUser/Docs/a.zip', CWD, SANDBOX);
+  t.eq('沙箱外 ⇒ 路径文本档', outside.kind, SHARE_TARGET_TEXT);
+  t.eq('降级后分享的就是那个路径', outside.text, '/storage/Users/currentUser/Docs/a.zip');
+  t.eq('必须写清为什么降级（不能默默少发一个文件）',
+    outside.reason.includes('沙箱外'), true);
+  t.eq('降级档按钮文案是「分享路径」（写「分享文件」就是在骗人）',
+    shareActionLabel(outside), '分享路径');
+
+  // ④ 连绝对路径都定位不到 ⇒ 禁用 + 原因（假入口是本仓禁止的）
+  const noCwd = deliverableShareTarget('dist/a.zip', '', SANDBOX);
+  t.eq('相对路径但不知道工作目录 ⇒ 禁用', noCwd.kind, SHARE_TARGET_NONE);
+  t.eq('禁用的原因要可读', noCwd.reason.includes('工作目录'), true);
+  const empty = deliverableShareTarget('   ', CWD, SANDBOX);
+  t.eq('没有路径 ⇒ 禁用', empty.kind, SHARE_TARGET_NONE);
+  t.eq('没有路径的原因要可读', empty.reason.includes('没有路径'), true);
+
+  // ⑤ 拿不到沙箱根（context 取不到）⇒ 不能假装能分享文件，降级并说明
+  const noSandbox = deliverableShareTarget(abs, CWD, '');
+  t.eq('没有沙箱根 ⇒ 降级为路径文本（不假装能分享文件本体）', noSandbox.kind, SHARE_TARGET_TEXT);
+  t.eq('降级原因点明"拿不到沙箱路径"', noSandbox.reason.includes('沙箱'), true);
+}
+
 // ── P9-6：离开又回到**同一个**会话时的滚动位置 ──
 {
   const FL = require2('./Follow.js');

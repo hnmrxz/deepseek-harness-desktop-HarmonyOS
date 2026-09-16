@@ -25,7 +25,7 @@ export type { KeepAliveFacts } from './notify/KeepAlive';
 // 剪贴板只导出「写」：readText / clearClipboard 已按 P5-7（E370）删除，理由见 system/Clipboard.ets 顶部
 export { copyText } from './system/Clipboard';
 export { isOpenableUrl, openExternalUrl } from './system/OpenLink';
-export { shareText } from './system/ShareBoard';
+export { shareFile, shareText } from './system/ShareBoard';
 export type { ShareText } from './system/ShareBoard';
 export { SecretLoadState, SecretStore } from './system/SecretStore';
 export type { SecretLoadResult } from './system/SecretStore';

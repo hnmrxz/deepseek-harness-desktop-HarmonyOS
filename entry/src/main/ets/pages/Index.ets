@@ -29,24 +29,10 @@ import {
 import type { VersionCheck } from 'dshcompat';
 import type { DiagnosticItem, DiagnosticReport } from 'connection';
 import type { RuntimeFacts } from 'platform';
-import {
-  applyThemeMode,
-  copyText,
-  LocalPrefs,
-  PickOutcome,
-  pickDocument,
-  pickFolder,
-  pickImage,
-  localizedOr,
-  readDeviceFacts,
-  runtimeFacts,
-  readInputSources,
-  themeModeOf,
-  watchInputSources
-} from 'platform';
+import { LocalPrefs, PickOutcome, applyThemeMode, copyText, localizedOr, pickDocument, pickFolder, pickImage, readDeviceFacts, readInputSources, runtimeFacts, shareFile, shareText, themeModeOf, watchInputSources } from 'platform';
 import type { InputSourceReading, NotifyRoute, PickedFile, PickedFolder } from 'platform';
 import { common } from '@kit.AbilityKit';
-import { APPROVAL_CHOICE_DENY, ActionNotice, AgentPresetRow, BackAction, CommandCandidate, ComposerDrafts, CoreFact, CorePhase, CoreViewState, CredentialItem, DEFAULT_MODEL_NS, DetailPresentation, DetailSection, DiagEntry, DiagMode, DiagReport, DrawerState, FileNode, FilePreview, HostRecord, HubPhase, LayoutMode, MAIN_CONVERSATION, MAIN_WORKSPACES, ModelOption, ModelSelection, NavTab, PanelDescriptor, PanelLocation, PanelRegistry, PendingAttachment, PendingItem, PluginItem, QueuedItem, ReferenceCandidate, SHEET_NOTE_CREDENTIAL, SHEET_NOTE_STRUCT, SHEET_NOTE_TEXT, ScrollSpot, SessionHub, SessionListItem, SettingGroup, SettingKind, SettingOrigin, SettingValueType, SettingsWriteOutcome, SkillRow, StackPage, Sz, TrackPresentation, TrajectoryItem, TrajectoryKind, WorkspaceItem, WorkspaceRow, activeMainPanelOf, buildCoreView, clampDetailDesired, corePhaseOfHostState, createPanelRegistry, decideBack, decideLayoutWithDetail, deliverablesOf, detailRoomOf, detailWidthOf, diagModeOf, draftCount, draftOf, dragDetailWidth, drillAfterPreviewClosed, dropDraft, emptyComposerDrafts, emptyCoreView, emptyDiagReport, emptyScrollSpot, enterSession, fact, flattenSources, guessFromKeyboardForm, initialNavigationState, itemsOfKind, legacyTabOfMainPanel, mainPanelOfLegacyTab, mainPanelOfSidebarPanel, mainPanels, mergeSettingsGroups, modalityFromSources, modalityOf, modalityTrace, navigateToMain, normalizePathKey, openSettings, parseDrafts, parseNotifyRoute, parseSettingInput, parseStructInput, permissionChipLabel, permissionChoices, permissionSwitchable, permissionUnavailableHint, pluginInventoryFact, pluginRowOf, projectDetailSections, projectHosts, projectWorkspaces, putDraft, rankPluginRows, rememberScrollSpot, selectRightPanel, selectTab as decideTabSelection, serializeDrafts, setDrawer, settingsDomainOfNs, sheetDiscardNotice, sheetNoteVisible, shellTracksOf, shouldRestoreDraft, showsConversation, sidebarExpandedForMode, sidebarPanelOfMainPanel, sidebarTrackWidthOf, splitSettingKey, unionModality, unknownFact, userFacingBodyOf, workspaceNameOf } from 'appstate';
+import { APPROVAL_CHOICE_DENY, ActionNotice, AgentPresetRow, BackAction, CommandCandidate, ComposerDrafts, CoreFact, CorePhase, CoreViewState, CredentialItem, DEFAULT_MODEL_NS, DetailPresentation, DetailSection, DiagEntry, DiagMode, DiagReport, DrawerState, FileNode, FilePreview, HostRecord, HubPhase, LayoutMode, MAIN_CONVERSATION, MAIN_WORKSPACES, ModelOption, ModelSelection, NavTab, PanelDescriptor, PanelLocation, PanelRegistry, PendingAttachment, PendingItem, PluginItem, QueuedItem, ReferenceCandidate, SHARE_TARGET_FILE, SHARE_TARGET_NONE, SHEET_NOTE_CREDENTIAL, SHEET_NOTE_STRUCT, SHEET_NOTE_TEXT, ScrollSpot, SessionHub, SessionListItem, SettingGroup, SettingKind, SettingOrigin, SettingValueType, SettingsWriteOutcome, ShareTarget, SkillRow, StackPage, Sz, TrackPresentation, TrajectoryItem, TrajectoryKind, WorkspaceItem, WorkspaceRow, activeMainPanelOf, buildCoreView, clampDetailDesired, corePhaseOfHostState, createPanelRegistry, decideBack, decideLayoutWithDetail, deliverableShareTarget, deliverablesOf, detailRoomOf, detailWidthOf, diagModeOf, draftCount, draftOf, dragDetailWidth, drillAfterPreviewClosed, dropDraft, emptyComposerDrafts, emptyCoreView, emptyDiagReport, emptyScrollSpot, enterSession, fact, flattenSources, guessFromKeyboardForm, initialNavigationState, itemsOfKind, legacyTabOfMainPanel, mainPanelOfLegacyTab, mainPanelOfSidebarPanel, mainPanels, mergeSettingsGroups, modalityFromSources, modalityOf, modalityTrace, navigateToMain, normalizePathKey, openSettings, parseDrafts, parseNotifyRoute, parseSettingInput, parseStructInput, permissionChipLabel, permissionChoices, permissionSwitchable, permissionUnavailableHint, pluginInventoryFact, pluginRowOf, projectDetailSections, projectHosts, projectWorkspaces, putDraft, rankPluginRows, rememberScrollSpot, selectRightPanel, selectTab as decideTabSelection, serializeDrafts, setDrawer, settingsDomainOfNs, sheetDiscardNotice, sheetNoteVisible, shellTracksOf, shouldRestoreDraft, showsConversation, sidebarExpandedForMode, sidebarPanelOfMainPanel, sidebarTrackWidthOf, splitSettingKey, unionModality, unknownFact, userFacingBodyOf, workspaceNameOf } from 'appstate';
 /**
  * 类型单独用 `import type` 引入。
  *
@@ -2997,6 +2983,8 @@ struct Index {
     selection: this.selection,
     sendDraft: () => this.sendDraft(),
     scrollSpot: this.scrollSpot,
+    deliverableShareTarget: (item: TrajectoryItem) => this.deliverableShareTarget(item),
+    onShareDeliverable: (item: TrajectoryItem) => this.shareDeliverable(item),
     onRememberSpot: (sessionId: string, top: number, following: boolean) => {
       // 记位置：贴底跟随时记"空"（回到底部是默认动作，不需要记录）
       this.scrollSpot = rememberScrollSpot(sessionId, top, following);
@@ -3963,6 +3951,63 @@ struct Index {
    * 【为什么失败要说一句】丢宽度只是"栏没记住"；丢草稿是**用户敲进去的字没了**，
    * 而他要等到下次启动才发现。所以这里给一次轻提示（只提示一次，避免每次切换都吵）。
    */
+  /**
+   * 一条交付物的分享目标（P9-7）：纯模型判档，宿主只补两个事实。
+   *
+   * 官方 `PresentedFile.path` 逐字："Original absolute path or path relative to the Session
+   * working directory." ⇒ 相对路径要配**会话工作目录**才是绝对路径；而沙箱根（`filesDir`）
+   * 决定系统分享能不能拿到文件 URI。两个事实都在这里取得，判定本身在模型里（有 fixture）。
+   */
+  private deliverableShareTarget(item: TrajectoryItem): ShareTarget {
+    let cwd: string = '';
+    for (let i = 0; i < this.sessions.length; i++) {
+      if (this.sessions[i].id === this.selectedSessionId) {
+        cwd = this.sessions[i].cwd;
+      }
+    }
+    const sandbox: string = this.sandboxRoot();
+    return deliverableShareTarget(item.fileName, cwd, sandbox);
+  }
+
+  /** 应用沙箱根（`context.filesDir`）；取不到给空串 ⇒ 模型会走"降级为路径文本"那一档 */
+  private sandboxRoot(): string {
+    try {
+      const context = getContext(this) as common.UIAbilityContext;
+      return context.filesDir === undefined ? '' : context.filesDir;
+    } catch (err) {
+      return '';
+    }
+  }
+
+  /**
+   * 拉起系统分享面板（P9-7）：文件档给 URI、路径档给文本。
+   *
+   * 【失败要说话】分享面板拉不起来（沙箱外路径 / 系统拒绝）时给一句可读回执，
+   * 而不是"点了没反应"。
+   */
+  private shareDeliverable(item: TrajectoryItem): void {
+    const target: ShareTarget = this.deliverableShareTarget(item);
+    if (target.kind === SHARE_TARGET_NONE) {
+      this.attachNotice = target.reason.length > 0 ? target.reason : '这条交付物暂时无法分享。';
+      return;
+    }
+    const context = getContext(this) as common.UIAbilityContext;
+    if (target.kind === SHARE_TARGET_FILE) {
+      shareFile(context, target.absPath, item.fileName).then((ok: boolean) => {
+        if (!ok) {
+          this.attachNotice = '分享文件失败：系统没拉起分享面板（工作区可能在应用沙箱外）。';
+        }
+      });
+      return;
+    }
+    // 沙箱外：如实分享路径文本（文案里已经写明是"分享路径"，不冒充文件）
+    shareText(context, { content: target.text, title: item.fileName }).then((ok: boolean) => {
+      if (!ok) {
+        this.attachNotice = '分享失败：系统没拉起分享面板。';
+      }
+    });
+  }
+
   private persistDrafts(): void {
     const json: string = serializeDrafts(this.drafts);
     const prefs: LocalPrefs = new LocalPrefs();
