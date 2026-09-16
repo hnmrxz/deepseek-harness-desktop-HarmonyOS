@@ -31,6 +31,8 @@ import type { DiagnosticItem, DiagnosticReport } from 'connection';
 import type { RuntimeFacts } from 'platform';
 import { LocalPrefs, PickOutcome, applyThemeMode, copyText, localizedOr, pickDocument, pickFolder, pickImage, readDeviceFacts, readInputSources, runtimeFacts, shareFile, shareText, themeModeOf, watchInputSources } from 'platform';
 import type { InputSourceReading, NotifyRoute, PickedFile, PickedFolder } from 'platform';
+import type { TriggerToken } from 'appstate';
+import { detectTrigger } from 'appstate';
 import { common } from '@kit.AbilityKit';
 import { APPROVAL_CHOICE_DENY, ActionNotice, AgentPresetRow, BackAction, CommandCandidate, ComposerDrafts, CoreFact, CorePhase, CoreViewState, CredentialItem, DEFAULT_MODEL_NS, DetailPresentation, DetailSection, DiagEntry, DiagMode, DiagReport, DrawerState, FileNode, FilePreview, HostRecord, HubPhase, LayoutMode, MAIN_CONVERSATION, MAIN_WORKSPACES, ModelOption, ModelSelection, NavTab, PanelDescriptor, PanelLocation, PanelRegistry, PendingAttachment, PendingItem, PluginItem, QueuedItem, ReferenceCandidate, SHARE_TARGET_FILE, SHARE_TARGET_NONE, SHEET_NOTE_CREDENTIAL, SHEET_NOTE_STRUCT, SHEET_NOTE_TEXT, ScrollSpot, SessionHub, SessionListItem, SettingGroup, SettingKind, SettingOrigin, SettingValueType, SettingsWriteOutcome, ShareTarget, SkillRow, StackPage, Sz, TrackPresentation, TrajectoryItem, TrajectoryKind, WorkspaceItem, WorkspaceRow, activeMainPanelOf, buildCoreView, clampDetailDesired, corePhaseOfHostState, createPanelRegistry, decideBack, decideLayoutWithDetail, deliverableShareTarget, deliverablesOf, detailRoomOf, detailWidthOf, diagModeOf, draftCount, draftOf, dragDetailWidth, drillAfterPreviewClosed, dropDraft, emptyComposerDrafts, emptyCoreView, emptyDiagReport, emptyScrollSpot, enterSession, fact, flattenSources, guessFromKeyboardForm, initialNavigationState, itemsOfKind, legacyTabOfMainPanel, mainPanelOfLegacyTab, mainPanelOfSidebarPanel, mainPanels, mergeSettingsGroups, modalityFromSources, modalityOf, modalityTrace, navigateToMain, normalizePathKey, openSettings, parseDrafts, parseNotifyRoute, parseSettingInput, parseStructInput, permissionChipLabel, permissionChoices, permissionSwitchable, permissionUnavailableHint, pluginInventoryFact, pluginRowOf, projectDetailSections, projectHosts, projectWorkspaces, putDraft, rankPluginRows, rememberScrollSpot, selectRightPanel, selectTab as decideTabSelection, serializeDrafts, setDrawer, settingsDomainOfNs, sheetDiscardNotice, sheetNoteVisible, shellTracksOf, shouldRestoreDraft, showsConversation, sidebarExpandedForMode, sidebarPanelOfMainPanel, sidebarTrackWidthOf, splitSettingKey, unionModality, unknownFact, userFacingBodyOf, workspaceNameOf } from 'appstate';
 /**
@@ -1204,6 +1206,16 @@ struct Index {
         const changed: boolean = key !== this.lastConnectKey;
         const stale: boolean = !this.hubConnected && (waited - this.lastAttemptWaited) >= retryStep;
         if ((changed || stale) && this.connectAttempts < maxAttempts) {
+          /*
+           * 【F19 的第二形态（2026-09-17 真机取证）】兜底重试确实按 5 秒跑起来了（日志里连着 3 次），
+           * 但每一次用的都是**旧 token**，Host 一律回「拒绝了本次访问（未认证）」——
+           * 也就是说"重试"如果不换凭据，只是把同一个失败重复三遍。
+           *
+           * 凭据的真值在 `host-ready.json`（每次起 Host 都会重写）。所以**每次重试前先去看一眼**：
+           * 读到的 token 与手里这份不同就换掉（同时写回 AppStorage，让 `@StorageProp` 跟着变）。
+           * 这一步只做"读文件 + 比对 + 换"，不猜、不编造。
+           */
+          this.adoptFreshLocalCredentialIfAny();
           this.lastConnectKey = key;
           this.lastAttemptWaited = waited;
           this.connectAttempts += 1;
@@ -1231,8 +1243,45 @@ struct Index {
    *   - `unavailable`：**记录还在但这次读不到**（设备锁屏策略变化、存储系统故障）。
    *     让用户重新粘贴 token 是错的建议——token 并没有丢。
    */
-  private applyRememberedHostOutcome(state: string): void {
-    if (this.rememberedUrl.length === 0) {
+  /**
+   * 重试前刷新本机凭据（F19 的第二形态）。
+   *
+   * 本机 Host 每次起来都会重写 `host-ready.json` 里的 token，而客户端手里那份可能是上一轮的。
+   * 只有"重试"而没有"换凭据"，表现就是连着三次 401（真机实测）。
+   * 这里读一次新地址，token 变了就换掉并写回 AppStorage（`@StorageProp` 会跟着更新）。
+   * 读不到、或形状不合法 ⇒ **什么都不做**（不猜、不编造），下一轮照旧按老凭据试。
+   */
+  private adoptFreshLocalCredentialIfAny(): void {
+    const host: DshHost | null = this.host;
+    if (host === null) {
+      return;
+    }
+    let url: string = '';
+    try {
+      url = host.localHostReadyUrl();
+    } catch (e) {
+      return;
+    }
+    const cut: number = url.indexOf('token=');
+    if (url.length === 0 || cut < 0) {
+      return;
+    }
+    const fresh: string = url.substring(cut + 'token='.length);
+    if (fresh.length === 0 || fresh === this.rememberedToken) {
+      return;
+    }
+    let base: string = url.substring(0, url.indexOf('?') >= 0 ? url.indexOf('?') : cut);
+    while (base.endsWith('/')) {
+      base = base.substring(0, base.length - 1);
+    }
+    AppStorage.setOrCreate<string>('dshLastHostUrl', base);
+    AppStorage.setOrCreate<string>('dshLastHostToken', fresh);
+    AppStorage.setOrCreate<string>('dshLastHostTokenState', 'found');
+    hilog.info(DOMAIN, TAG, 'HDSH-CONN 重试前换用新凭据：url=%{public}s tokenLen=%{public}d',
+      base, fresh.length);
+  }
+
+  private applyRememberedHostOutcome(state: string): void {    if (this.rememberedUrl.length === 0) {
       hilog.info(DOMAIN, TAG, 'HDSH-CONN 无记住的地址：不自动连接（等待本端 Host 或用户添加）');
       return;
     }
@@ -3135,6 +3184,45 @@ struct Index {
   private sendDraft(): void {
     const text: string = this.draft.trim();
     if (text.length === 0) {
+      return;
+    }
+    /*
+     * 【F24：整条草稿就是一条斜杠命令 ⇒ 走命令通道，不要当成提示词发出去】
+     *
+     * 真机取证（2026-09-16）：在输入区敲 `/export` 再按发送，Host 收到的是普通用户消息
+     * `user/message {"content":[{"type":"text","text":"/export"}]}`，模型于是回
+     * "I don't have a built-in /export command." —— 这正是 D32 §2 明令禁止的结局。
+     *
+     * 判据用**已有的事实**，不新造一套词法：
+     *   · `detectTrigger()` 说"整条草稿是一个命令 token"（`InputTrigger` 的既有判定），且
+     *   · 这条命令**在宿主给的目录里**（`this.commands`，来自 `commands/list`）。
+     * 两者都成立才改道；否则照旧走提示词——**不猜**（猜错会把用户正常想发的一句话吞掉）。
+     *
+     * 走的是 `SessionHub.executeCommand(line)`，它的回执/失败文案与命令面板完全同一条路
+     * （D51 §5 要求的"两者共用同一套判定"，这里才真的成立）。
+     */
+    const commandToken: TriggerToken | undefined = detectTrigger(this.draft);
+    if (commandToken !== undefined && commandToken.kind === 'command') {
+      const line: string = text;
+      const name: string = line.startsWith('/') ? line.substring(1).split(' ')[0] : '';
+      let known: boolean = false;
+      for (let i = 0; i < this.commands.length; i++) {
+        if (this.commands[i].name === name) {
+          known = true;
+          break;
+        }
+      }
+      if (known) {
+        this.draft = '';
+        SessionHub.shared().executeCommand(line).then((n: ActionNotice) => {
+          this.attachNotice = this.noticeText(n);
+        }).catch(() => {
+          this.attachNotice = '命令执行失败：请在诊断页查看原因。';
+        });
+        return;
+      }
+      // 宿主不认识这条命令：**保留输入**让用户改（官方语义），并说清为什么没发出去
+      this.attachNotice = `宿主不认识这条命令：/${name}`;
       return;
     }
     // 恢复时用**原文**（用户敲的空行也是他的输入，官方恢复的也是原文而不是 trim 版本）
