@@ -1493,10 +1493,26 @@ export class SessionHub {
     return await this.sendEventResult(eventId, outcome as Object);
   }
 
+  /**
+   * 答复审批（F7 修正：`value` 必须是**裸字符串**）。
+   *
+   * 【真机取证】2026-09-16 真机上点「允许一次」，客户端拿到 `result ok`，而 Host 仍记
+   * `approval/decided {"outcome":"unavailable"}`。根因是这里**多包了一层**：
+   * 旧实现先 `value['value'] = outcomeValue`，再交给 `answerWithResultValue()` 包成
+   * `{kind:'result', value:{value:'allowed-once'}}`，而上游只认裸字符串——
+   * `dsh-user-approval/lib/index.js:179`
+   *   `waterfall(…).then((outcome) => OUTCOMES.includes(outcome) ? outcome : "unavailable")`。
+   * 官方客户端传的也正是字符串（`dsh-client-ui-approval/lib/client.js:93` 的 `answer("allowed-once")`，
+   * 由 `dsh-api-gateway/lib/client.js` 的 `dispatchWaterfall` 原样放进 `value`）。
+   *
+   * **不要**把提问那条路一起改：提问的 `value` 本来就是对象 `{answers:[…]}`，形状是对的
+   * （对照 `dsh-tool-ask-user/lib/index.js:97` 的 `.answers.map`）。
+   */
   private async answerWaterfall(pendingId: string, outcomeValue: string): Promise<boolean> {
-    const value: Record<string, Object> = {};
-    value['value'] = outcomeValue;
-    return await this.answerWithResultValue(pendingId, value as Object);
+    const outcome: Record<string, Object> = {};
+    outcome['kind'] = 'result';
+    outcome['value'] = outcomeValue;
+    return await this.sendEventResult(pendingId, outcome as Object);
   }
 
   /**
