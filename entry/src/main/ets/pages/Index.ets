@@ -105,7 +105,11 @@ import {
   sidebarExpandedForMode,
   sidebarTrackWidthOf,
   settingsDomainOfNs,
+  sheetDiscardNotice,
   sheetNoteVisible,
+  SHEET_NOTE_CREDENTIAL,
+  SHEET_NOTE_STRUCT,
+  SHEET_NOTE_TEXT,
   workspaceNameOf,
   splitSettingKey,
   parseSettingInput,
@@ -635,6 +639,11 @@ struct Index {
    * （本仓只做"跨会话切换"这一半；"跨重载"需要落盘，已登记在矩阵 §6。）
    */
   @State drafts: ComposerDrafts = emptyComposerDrafts();
+
+  /** 文本设置浮层打开时的**种子值**（判"用户改过没有"；P8-4） */
+  private textSettingSeed: string = '';
+  /** 结构设置浮层打开时的种子值（同上） */
+  private structSettingSeed: string = '';
 
   /** 草稿落盘失败只提醒一次（否则每次切会话都要打扰一次） */
   private draftPersistWarned: boolean = false;
@@ -2171,6 +2180,35 @@ struct Index {
    * 所以现在**只有这一处**复位：Sheet 自己关、返回键关、浮层内的关闭按钮关，都调用它。
    * 各类浮层自己的 `closeXSheet()` 也只剩一行委托。
    */
+  /**
+   * 用户**主动**关掉浮层时走这条（`harmonySheetOptions` 的 `shouldDismiss`）——P8-4。
+   *
+   * 与 `closeSheet()` 的区别只有一个：**要不要说一句**。拖拽关闭太容易误触，
+   * 而"改了一半的值被丢掉"如果不说，用户会以为改动生效了（假成功）。
+   * 程序化关闭（保存成功后、切换浮层）不走这里 ⇒ 不会出现"保存成功了还说已放弃"的胡说。
+   */
+  private dismissSheetByUser(): void {
+    // 种类常量取自 `model/Sheets`（与 `sheetKind()` 的取值同形）——不在这里另写字符串字面量
+    const kind: string = this.sheetKind();
+    const isCredential: boolean = kind === SHEET_NOTE_CREDENTIAL;
+    const isText: boolean = kind === SHEET_NOTE_TEXT;
+    const isStruct: boolean = kind === SHEET_NOTE_STRUCT;
+    const label: string = isCredential ? this.credentialRef
+      : (isText ? this.textSettingLabel : this.structSettingLabel);
+    const draft: string = isCredential ? this.credentialDraft
+      : (isText ? this.textSettingDraft : this.structSettingDraft);
+    const seed: string = isCredential ? ''
+      : (isText ? this.textSettingSeed : this.structSettingSeed);
+    const notice: string = sheetDiscardNotice(kind, label, draft, seed);
+    // 先取好"回执该落到哪个域"的 key，再复位浮层（复位会把草稿与 key 一起清掉）
+    const key: string = isText ? this.textSettingKey
+      : (isStruct ? this.structSettingKey : '');
+    this.closeSheet();
+    if (notice.length > 0 && key.length > 0) {
+      this.noteSettingWrite(key, notice);
+    }
+  }
+
   private closeSheet(): void {
     this.detailOverlayOpen = false;
     this.choosing = undefined;
@@ -2445,7 +2483,8 @@ struct Index {
     })
     .bindSheet(this.sheetKind().length > 0, this.sheetContent(),
       harmonySheetOptions(() => {
-        this.closeSheet();
+        // 拖拽/遮罩/关闭按钮都走这里：先判"有没有未保存的修改"，再复位（P8-4）
+        this.dismissSheetByUser();
       }, this.sheetHeight()))
   }
 
@@ -2824,6 +2863,8 @@ struct Index {
     this.textSettingLabel = item.label;
     // 预填当前值：改一个长数字串时，让用户从现值改起比从空开始可靠得多
     this.textSettingDraft = item.textValue;
+    // 种子值：用户没改过就不该在关闭时弹"已放弃修改"（P8-4）
+    this.textSettingSeed = item.textValue;
     this.textSettingItem = item;
     // 认领回执并清掉上一条（E353）
     this.sheetNoteOwner = 'text';
@@ -2890,6 +2931,7 @@ struct Index {
     this.structSettingKey = item.key;
     this.structSettingLabel = item.label;
     this.structSettingDraft = prettyJson(item.rawJson);
+    this.structSettingSeed = this.structSettingDraft;
     this.structSettingItem = item;
     // 认领回执并清掉上一条（E353）
     this.sheetNoteOwner = 'struct';

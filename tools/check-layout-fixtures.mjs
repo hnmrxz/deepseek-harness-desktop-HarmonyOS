@@ -277,7 +277,6 @@ const NS = require2('./NavigationState.js');
 const MD = require2('./Markdown.js');
 const SD = require2('./SettingsDomains.js');
 const SC = require2('./SessionContext.js');
-const SH = require2('./Sheets.js');
 const SE2 = require2('./SettingEditors.js');
 const CP = require2('./CoreProjection.js');
 const PRT = require2('./PluginRowsText.js');
@@ -285,6 +284,7 @@ const SS = require2('./SessionSearch.js');
 const PF = require2('./PendingFocus.js');
 const TDT = require2('./TrajectoryDetail.js');
 const CD = require2('./ComposerDrafts.js');
+const SH = require2('./Sheets.js');
 const PM = require2('./Permissions.js');
 const PD = require2('./PrivacyDisclosure.js');
 const MI = require2('./MessageImage.js');
@@ -2666,6 +2666,39 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   t.eq('大小写变体不命中', isBenignQueueRace('SESSION/QUEUE-ITEM-NOT-FOUND'), false);
   t.eq('前缀相同但不同的码不命中', isBenignQueueRace('session/steer-unavailable-x'), false);
   t.eq('非竞态返回 NONE', queueRaceKind('gateway/internal'), QUEUE_RACE_NONE);
+}
+
+// ── P8-4：用户主动关掉编辑浮层时的"放弃了什么" ──
+{
+  const SHT = require2('./Sheets.js');
+  const { sheetDiscardNotice, SHEET_NOTE_CREDENTIAL, SHEET_NOTE_TEXT, SHEET_NOTE_STRUCT } = SHT;
+
+  // ① 改过 ⇒ 必须说一句（拖拽关闭太容易误触，不说用户会以为保存了）
+  const textNotice = sheetDiscardNotice(SHEET_NOTE_TEXT, '每轮最大步数', '17', '12');
+  t.eq('文本设置改过，拖拽关闭 ⇒ 明确说出已放弃',
+    textNotice.startsWith('已放弃未保存的修改：'), true);
+  t.eq('文案里带上**是哪一项**（否则用户不知道该重开哪个）', textNotice.includes('「每轮最大步数」'), true);
+  t.eq('文案说清**没有写入 Host**（这才是他要知道的事实）', textNotice.includes('没有写入 Host'), true);
+  t.eq('文案给出下一步（重开并提交），而不是只报个状态', textNotice.includes('重新打开并提交'), true);
+
+  // ② 没改过 ⇒ 一个字都不说（每次关闭都弹一句废话，用户会开始无视所有提示）
+  t.eq('没改过 ⇒ 空串', sheetDiscardNotice(SHEET_NOTE_TEXT, '每轮最大步数', '12', '12'), '');
+  t.eq('结构设置打开后原样关闭 ⇒ 空串',
+    sheetDiscardNotice(SHEET_NOTE_STRUCT, '工具白名单', '{\n  "a": 1\n}', '{\n  "a": 1\n}'), '');
+  t.eq('结构设置改过 ⇒ 有话说',
+    sheetDiscardNotice(SHEET_NOTE_STRUCT, '工具白名单', '{"a":2}', '{"a":1}').length > 0, true);
+
+  // ③ 凭据：只写不回显，种子恒为空 ⇒ 非空即未保存
+  t.eq('凭据写了没提交 ⇒ 明确说"没有写入 Host，也没有留在本机"',
+    sheetDiscardNotice(SHEET_NOTE_CREDENTIAL, 'provider.apiKey', 'sk-abc', ''),
+    '已放弃未保存的密钥输入：它没有写入 Host，也没有留在本机。');
+  t.eq('凭据没写 ⇒ 空串', sheetDiscardNotice(SHEET_NOTE_CREDENTIAL, 'provider.apiKey', '', ''), '');
+
+  // ④ 没有"未保存内容"的浮层不参与（枚举选择 / 目录选择：选就是选，关就是关）
+  t.eq('枚举选择浮层 ⇒ 空串（哪怕传了参数）',
+    sheetDiscardNotice('choice', '主题', 'dark', 'light'), '');
+  t.eq('目录选择浮层 ⇒ 空串', sheetDiscardNotice('folder', '/x', '/y', '/z'), '');
+  t.eq('详情浮层 ⇒ 空串（它没有编辑态）', sheetDiscardNotice('detail', '详情', 'a', 'b'), '');
 }
 
 // ── P8-3：每会话草稿（官方 `views.d.ts`："Composer draft (persisted; survives session switches)") ──

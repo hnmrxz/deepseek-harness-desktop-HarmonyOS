@@ -115,6 +115,13 @@ const FEATURES = [
   { name: '每会话草稿', patterns: [['switchDraftContext', 2], ['draftOf', 2], ['putDraft', 2], ['dropDraft', 2],
     // 落盘那一半：编解码（模型）+ 读写键（平台）+ 宿主两处调用点（读回/保存）
     ['serializeDrafts', 2], ['parseDrafts', 2], ['saveComposerDrafts', 2], ['loadComposerDrafts', 2]] },
+  /*
+   * 关闭语义（P8-4）。官方审计（`docs/08` 的 Sheet 一节）要求"关闭原因必须可区分"
+   * 与"编辑态关闭前要有明确的取消/保存策略"。我们的修法是**说出来**：
+   * 用户主动关掉一个改过但没提交的浮层时，明确告诉他"已放弃、没有写入 Host"。
+   * 钉三段：判定（纯模型）+ 唯一执行点（`dismissSheetByUser`）+ 拖拽关闭那条路必须真的接上。
+   */
+  { name: '浮层关闭语义', patterns: [['sheetDiscardNotice', 2], ['dismissSheetByUser', 2], ['textSettingSeed', 2]] },
   { name: '内部内容隔离', patterns: [['mayExposeBodyToUser', 2], ['userFacingBodyOf', 2], ['scrubCredentials', 2], ['INTERNAL_BODY_HIDDEN', 1]] },
   /*
    * 文件变更流（E226）。E383 修自激时把 `openFilesStream` 改名为 `ensureFilesStream`

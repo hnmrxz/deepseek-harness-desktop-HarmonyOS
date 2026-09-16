@@ -48,3 +48,48 @@ export function sheetNoteVisible(owner: string, sheetKind: string): boolean {
 export function sheetNoteText(owner: string, sheetKind: string, note: string): string {
   return sheetNoteVisible(owner, sheetKind) ? note : '';
 }
+
+/* ───────────────────────── 关闭语义：未保存的修改不能说没就没（P8-4） ───────────────────────── */
+
+/**
+ * 用户**主动**关掉一个可编辑浮层（拖拽下拉 / 点遮罩 / 关闭按钮 / 系统返回）时，
+ * 那里面还没提交的内容该怎么办 —— 以及要不要说一句。
+ *
+ * ## 为什么这是一条规则，而不是"顺手清掉"
+ *
+ * 三个浮层都是"改一改就写进 Host"的编辑态，而**拖拽关闭极其容易误触**（`dragBar: true`）。
+ * 此前用户改完一个数字或一段 JSON、手一滑把浮层拖没了，界面**一句话都不说**：
+ *   · 他会以为改动生效了（**假成功**，而真相是根本没写）；
+ *   · 或者过一会儿发现值没变，再回来重改一遍（而原因无从得知）。
+ * 本仓的纪律是"界面不撒谎"：**放弃了什么，就要说出来**。
+ *
+ * ## 判据：草稿与"打开时的值"不一致
+ *
+ * 每个可编辑浮层在打开时都有一个**种子值**（文本/数字设置 = 当前值；结构设置 = 当前 JSON 的
+ * 美化形式；凭据 = 空，因为它是只写不回的）。用户改过 ⇒ 草稿 ≠ 种子 ⇒ 关掉就是放弃。
+ *
+ * 【为什么凭据只看"非空"】密钥是写进去就看不见的（只写不回显），种子恒为空串，
+ * 于是"非空即未保存"天然成立，不需要另存一个种子。
+ *
+ * @param kind 浮层种类（`SHEET_NOTE_CREDENTIAL` / `_TEXT` / `_STRUCT`）
+ * @param label 这一项的标题（写进文案，用户才知道放弃的是哪一项）
+ * @param draft 当前草稿
+ * @param seed 打开时的种子值（凭据固定给空串）
+ * @returns 要说的一句话；**没有未保存修改时给空串**（不能每次都弹一句废话）
+ */
+export function sheetDiscardNotice(kind: string, label: string, draft: string, seed: string): string {
+  if (kind === SHEET_NOTE_CREDENTIAL) {
+    return draft.length > 0
+      ? '已放弃未保存的密钥输入：它没有写入 Host，也没有留在本机。'
+      : '';
+  }
+  if (kind !== SHEET_NOTE_TEXT && kind !== SHEET_NOTE_STRUCT) {
+    // 枚举选择 / 目录选择这类浮层没有"未保存内容"可言：选就是选，关就是关
+    return '';
+  }
+  if (draft === seed) {
+    return '';
+  }
+  const what: string = label.length > 0 ? `「${label}」` : '这一项';
+  return `已放弃未保存的修改：${what}没有写入 Host（若要保存，请重新打开并提交）。`;
+}

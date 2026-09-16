@@ -164,7 +164,15 @@ export { pendingElsewhere, pendingForSession, takeoverCommand, takeoverHeadline,
 
 export { SESSION_SEARCH_LIMIT, localOnlySearchNote, mergeSessionSearch } from './model/SessionSearch';
 export type { SessionSearchHit, SessionSearchLocal, SessionSearchRow } from './model/SessionSearch';
-export { sheetNoteText, sheetNoteVisible } from './model/Sheets';
+export {
+  SHEET_NOTE_CREDENTIAL,
+  SHEET_NOTE_NONE,
+  SHEET_NOTE_STRUCT,
+  SHEET_NOTE_TEXT,
+  sheetDiscardNotice,
+  sheetNoteText,
+  sheetNoteVisible
+} from './model/Sheets';
 export { placeholderOf, structSettingEditorHints, textSettingEditorHints } from './model/SettingEditors';
 export type { EditorHints } from './model/SettingEditors';
 export type {
