@@ -3829,6 +3829,21 @@ export class SessionHub {
       this.record('messageFeedback/put fail ' + code + ' ' + (f === undefined ? '' : f.message));
       return noticeWith('feedback.failed', 'reason', why);
     }
+    /*
+     * 【F28②：判成功要看**内层** `ok`】真机取证：这条端点的成功与失败**都是双层包装**——
+     *   · 成功：`{ok:true, value:{ok:true, value:{messageId,…}}}`
+     *   · 失败：`{ok:true, value:{ok:false, error:{code:'version-conflict',…}}}`
+     * 只判外层 `ok` 会把 `version-conflict` 当成"保存成功"——那是最糟的一种错：
+     * 界面说存下了，实际什么都没发生，而用户已经不再怀疑。
+     */
+    const innerBag: Object | undefined = getRecord(result.value, 'value');
+    if (innerBag !== undefined && getBoolean(innerBag, 'ok') === false) {
+      const innerErr: Object | undefined = getRecord(innerBag, 'error');
+      const innerCode: string = innerErr === undefined ? 'unknown' : (getString(innerErr, 'code') ?? 'unknown');
+      const innerMsg: string = innerErr === undefined ? '' : (getString(innerErr, 'message') ?? '');
+      this.record('messageFeedback/put inner fail ' + innerCode + ' ' + innerMsg);
+      return noticeWith('feedback.failed', 'reason', friendlyFailure(innerCode, innerMsg));
+    }
     this.record('messageFeedback/put ok ' + messageId.substring(0, 12) + ' ' + rating);
     await this.refreshFeedback();
     return noticeWith('feedback.saved', 'rating', rating);
@@ -5229,7 +5244,20 @@ function feedbackFromReply(value: Object | undefined): FeedbackRow[] | undefined
   if (value === undefined) {
     return undefined;
   }
-  const raw: Object[] | undefined = getArray(value, 'items');
+  /*
+   * 【F28①：回包是**双层包装**】真机取证（2026-09-16）：
+   * `messageFeedback/list` 实际返回 `{ok:true, value:{items:[…]}}`，而这里只按 `value.items` 读
+   * ⇒ 永远走 `shape unknown`，已存反馈**一条都读不到**（面板初值恒空，连"撤回评价"都没了入口）。
+   *
+   * 这里**同时接受两种形状**（双层优先、单层兜底），而不是把单层删掉：
+   * ① 老 Host / 将来收紧成单层时不能因此变哑；② 这条形状差异本身是上游行为，
+   * 我们的规矩是"按实测收紧解析"，但收紧到只认一种会把兼容面变成单点。
+   */
+  const inner: Object | undefined = getRecord(value, 'value');
+  let raw: Object[] | undefined = getArray(value, 'items');
+  if (raw === undefined && inner !== undefined) {
+    raw = getArray(inner, 'items');
+  }
   if (raw === undefined) {
     return undefined;
   }

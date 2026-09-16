@@ -508,7 +508,6 @@ export struct ConversationPane {
         hasKeyboard: this.hasKeyboard,
         feedbackOpen: this.fbFor === item.id,
         feedbackNotice: this.fbNote2,
-        storedRating: this.storedRatingOf(item.id),
         storedCategory: this.storedCategoryOf(item.id),
         storedNote: this.storedNoteOf(item.id),
         actions: this.flatActionsOf(item),

@@ -30,10 +30,10 @@
  *    （列表项是它画的，命中集合也在它手里）。
  */
 
-import { ActionNotice, FeedbackRow, Fs, HarmonyColor, HarmonyType, Radius, SHARE_TARGET_NONE, SessionHub, ShareTarget, Sp, Speaker, TrajectoryItem, TrajectoryKind, Turn, baseNameOf, defaultExpanded, hasProcessGroup, parseMarkdown, plainTextOf, processSummary, producedFilesOf, resolveProducedMention, userFacingBodyOf } from 'appstate';
+import { ActionNotice, FeedbackRow, Fs, Radius, SHARE_TARGET_NONE, SessionHub, ShareTarget, Sp, Speaker, TrajectoryItem, TrajectoryKind, Turn, baseNameOf, defaultExpanded, parseMarkdown, plainTextOf, producedFilesOf, resolveProducedMention, userFacingBodyOf } from 'appstate';
 import type { ProducedFile } from 'appstate';
 import { presentTool, toolStateLabel } from 'appstate';
-import { NativeCard, NativeChip } from './NativePrimitives';
+import { NativeCard } from './NativePrimitives';
 import type { NativeAction } from './NativePrimitives';
 import { MessageRow } from './MessageRow';
 import { ReasoningRow } from './ReasoningRow';
@@ -117,6 +117,8 @@ export struct TurnView {
   @Prop hasKeyboard: boolean = false;
   /** 哪个消息的反馈面板开着（空串 = 都没开） */
   @Prop fbFor: string = '';
+  /** F28④：用户这次点的取向（打开面板时记下；提交时用它，而不是"已存行的取向"） */
+  @State private fbRating: string = '';
   /** 反馈回执（提交结果由父组件显示） */
   @Prop fbNote: string = '';
   /** 动作的副作用在父组件：复制 / 引用 / 重发 */
@@ -171,10 +173,10 @@ export struct TurnView {
     this.onExpandedChange(next);
   }
 
-  /** 过程分组是否展开（模型给默认态，用户点击覆盖） */
-  private processExpanded(): boolean {
-    return defaultExpanded(this.turn, this.isExpanded(this.turn.id));
-  }
+  /*
+   * 【2026-09-17：`processExpanded()` 已删】它只服务那个已被删掉的过程分组头。
+   * `defaultExpanded` 仍然在用——工具卡/思考块的折叠默认态走的就是它（见 `trajectoryItem`）。
+   */
 
   private isExpanded(id: string): boolean {
     return this.expanded.indexOf(id) >= 0;
@@ -222,9 +224,20 @@ export struct TurnView {
       if (turn.user !== undefined) {
         this.trajectoryItem(turn.user)
       }
-      if (hasProcessGroup(turn)) {
-        this.processGroup(turn)
-      }
+      /*
+       * 【2026-09-17 用户决定：**工具调用全部单栏，不再分组折叠**】
+       *
+       * 此前这个过程是"一整组折成 `▸ 工具 3 · 其他 1` 一行，点开才看条目"。
+       * 用户明确要求按官方来：**工具调用全部单栏**——即每条过程条目自己占一行
+       * （思考/工具/子代理/进度各自一行），不再套一层分组壳。
+       * 这与官方会话页的形态一致（官方的过程时间线就是一条条平铺，没有分组头）。
+       *
+       * 省空间的责任移交给了**每一条自己**：`ToolCard` / `ReasoningRow` 的折叠态都是一行，
+       * 所以平铺之后竖向占用与"分组折叠"是一个量级，但可读性与官方一致。
+       */
+      ForEach(turn.process, (it: TrajectoryItem) => {
+        this.trajectoryItem(it)
+      }, (it: TrajectoryItem) => `proc-${it.id}`)
       // ArkTS 规定：`@Builder` 内只能写 UI 语法，循环必须用 `ForEach`
       ForEach(turn.answers, (it: TrajectoryItem) => {
         this.trajectoryItem(it)
@@ -261,36 +274,13 @@ export struct TurnView {
    * 折叠默认态由**模型**决定（`defaultExpanded`：进行中展开、已完成折叠），
    * 用户点开才覆盖——而不是"记着用户上次点过什么"当作初值。
    */
-  @Builder
-  processGroup(turn: Turn) {
-    Column({ space: Sp.XS }) {
-      Row({ space: Sp.XS }) {
-        NativeChip({
-          label: `${this.processExpanded() ? '▾' : '▸'} ${processSummary(turn)}`,
-          active: this.processExpanded(),
-          a11y: `${processSummary(turn)}，${this.processExpanded() ? '点击收起' : '点击展开'}`,
-          onTap: () => {
-            this.toggle(this.turn.id);
-          }
-        })
-        if (turn.running) {
-          Text('进行中')
-            .fontSize(HarmonyType.LABEL.size)
-            .fontColor(HarmonyColor.BRAND)
-        }
-        Blank()
-      }
-      .width('100%')
-
-      if (this.processExpanded()) {
-        ForEach(turn.process, (it: TrajectoryItem) => {
-          this.trajectoryItem(it)
-        }, (it: TrajectoryItem) => `proc-${it.id}`)
-      }
-    }
-    .width('100%')
-  }
-
+  /*
+   * 【2026-09-17：`processGroup` 这个 Builder 已删除】用户要求"工具调用全部单栏"（与官方一致），
+   * 于是过程条目直接平铺——见 `turnBlock` 里的 `ForEach(turn.process, …)`，
+   * 不再有这一层分组壳。`processSummary` / `hasProcessGroup` 随之失去调用点，
+   * 已从 import 里移除。`turn.running` 的"进行中"提示改由每条自己的状态呈现
+   * （工具卡自带状态徽标）。
+   */
   @Builder
   trajectoryItem(item: TrajectoryItem) {
     if (item.kind === TrajectoryKind.MESSAGE) {
@@ -369,7 +359,17 @@ export struct TurnView {
       hasKeyboard: this.hasKeyboard,
       feedbackOpen: this.fbFor === item.id,
       feedbackNotice: this.fbNote,
-      storedRating: this.myRating(item.id),
+      /*
+       * 【F28④：提交要用**用户这次点的取向**，不是"已存行的取向"】
+       *
+       * 真机取证：点「有帮助」→ 面板打开 → 点「提交」，**一个请求都没发出去**。
+       * 原因是这里传的是 `myRating(item.id)`（已存行的 rating，首评时恒为空串），
+       * 而 `putFeedback()` 在 `rating.length === 0` 处直接 return（`feedback.incomplete`）——
+       * 静默失败。用户点的那个取向由父组件记着（`onOpenFeedback(it.id, rating)` 的第二个参数），
+       * 这里把它取回来交给面板，提交时就有值了。
+       * 已存行仍要保留（面板初值要用它做预填），所以两个字段并存、用途不同。
+       */
+      activeRating: this.activeRatingOf(item.id),
       storedCategory: this.storedCategoryOf(item.id),
       storedNote: this.storedNoteOf(item.id),
       actions: this.messageActionsOf(item),
@@ -378,6 +378,8 @@ export struct TurnView {
       },
       onOpenFeedback: (it: TrajectoryItem, rating: string) => {
         // 打开反馈要记"哪条开着、什么取向" ⇒ 那两份状态在父组件
+        // F28④：这里同时**就地**记下取向——提交要用它（父组件那份不保证在提交时还拿得到）
+        this.fbRating = rating;
         this.onOpenFeedback(it.id, rating);
       },
       onSubmitFeedback: (it: TrajectoryItem, rating: string, category: string, note: string) => {
@@ -404,6 +406,16 @@ export struct TurnView {
   private storedNoteOf(messageId: string): string {
     const row: FeedbackRow | undefined = SessionHub.shared().feedbackOf(messageId);
     return row === undefined ? '' : row.note;
+  }
+
+  /**
+   * F28④：提交时用的取向——优先"用户这次点的"，退化到"已存行的"。
+   *
+   * 退化那一支是给"已评过、再打开面板改说明"的情形：那种情况下用户不会再点一次
+   * 有帮助/没帮助，取向只能从已存行取。
+   */
+  private activeRatingOf(messageId: string): string {
+    return this.fbRating.length > 0 ? this.fbRating : this.myRating(messageId);
   }
 
   private submitFeedback(item: TrajectoryItem, rating: string, category: string, note: string): void {

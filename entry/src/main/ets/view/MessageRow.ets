@@ -35,8 +35,7 @@
 import {
   Fs, HarmonyColor, HarmonyRadius, HarmonySpacing, HarmonyType, INTERNAL_BODY_HIDDEN_PREFIX, MenuGesture,
   Radius, Sp, Speaker,
-  TrajectoryItem, contextMenuGestures, formatClock, formatDuration, hoverEnabled, parseMarkdown,
-  plainTextOf, userFacingBodyOf
+  TrajectoryItem, contextMenuGestures, formatClock, formatDuration, hoverEnabled, userFacingBodyOf
 } from 'appstate';
 /** 类型单独 import type（本仓约定：值与类型分开写） */
 import type { InputModality } from 'appstate';
@@ -81,8 +80,14 @@ export struct MessageRow {
   @Prop feedbackOpen: boolean = false;
   /** 父组件侧的反馈回执（提交结果由父组件决定，这里只显示） */
   @Prop feedbackNotice: string = '';
-  /** 该条消息**宿主记录的**评价（决定菜单里要不要给"撤回评价"） */
-  @Prop storedRating: string = '';
+  /**
+   * F28④：**用户这次点的**取向（父组件在打开面板时记下）。
+   *
+   * 提交必须用它，而不是"已存行的取向"——首评时已存行不存在，
+   * 那个值恒为空串，`putFeedback()` 会在 `rating.length === 0` 处直接 return，
+   * 于是"点了提交、一个请求都没发出去"（2026-09-16 真机取证）。
+   */
+  @Prop activeRating: string = '';
   /** 该条消息**已存**的反馈类别 / 说明（反馈面板的初值） */
   @Prop storedCategory: string = '';
   @Prop storedNote: string = '';
@@ -106,16 +111,6 @@ export struct MessageRow {
   @State hovered: boolean = false;
   /** 上下文菜单是否已打开 */
   @State menuShown: boolean = false;
-  /** 超长正文是否已展开（默认折叠成一行；见 build 里的长文折叠说明） */
-  @State bodyExpanded: boolean = false;
-  /**
-   * 当前档位（`Index` 发布；见那边 `AppStorage.setOrCreate('dshLayoutMode', …)` 的说明）。
-   *
-   * **折叠只在单栏（手机）生效**：官方客户端不做消息正文折叠，这条是本仓为手机屏幕空间
-   * 做的"适度优化"——口径是"手机端适度调整，其他端与官方 100% 一致"，
-   * 所以平板/折叠展开/2in1 上必须原样显示全文。
-   */
-  @StorageProp('dshLayoutMode') layoutMode: string = 'single';
 
   /** 输入模态快照（策略模型的输入；本组件只做映射，不做判断） */
   private modality(): InputModality {
@@ -130,43 +125,6 @@ export struct MessageRow {
   /** 这条消息的**可见正文**（内部条目为空串，见 F22） */
   private bodyFull(): string {
     return userFacingBodyOf(this.item);
-  }
-
-  /** 折叠态要显示的那一行：**纯文本**（不是 Markdown 源文），否则标记会把字数算进去 */
-  private bodyPlain(): string {
-    return plainTextOf(parseMarkdown(this.bodyFull()));
-  }
-
-  /**
-   * 是否算"超长"（用户口径：超长的才折，短消息原样）。
-   *
-   * 阈值：纯文本 **> 200 字** 或 **> 4 个换行**。
-   *
-   * 【为什么是 200 而不是 500】第一版取 500，真机上立刻看出问题：那条
-   * `Current runtime context …`（约 520 字、**分 5 段**）刚好卡在门槛下，
-   * 于是它**整屏**铺开——而这正是用户说"信息密度太低"时看的那一条。
-   * 手机一行大约放得下 30~35 个汉字 ⇒ **6 行 ≈ 200 字**，
-   * 所以"约 6 行"该翻译成 200 字，而不是 500。
-   * 换行那一侧同理收紧到 4：段落本来就比行更长，4 段就已经"超长"了。
-   */
-  private bodyIsLong(): boolean {
-    const plain: string = this.bodyPlain();
-    if (plain.length > 200) {
-      return true;
-    }
-    let lines: number = 1;
-    for (let i = 0; i < plain.length; i++) {
-      if (plain.charCodeAt(i) === 10) {
-        lines += 1;
-      }
-    }
-    return lines > 4;
-  }
-
-  /** 折叠态成立？流式进行中不折（正文还在长，折了会看到"越写越短"）；**只在单栏生效** */
-  private bodyCollapsed(): boolean {
-    return this.layoutMode === 'single'
-      && !this.bodyExpanded && !this.item.streaming && this.bodyIsLong();
   }
 
   /** 是否支持右键唤起菜单（手势集合来自策略模型，不在视图里散落判断） */
@@ -249,51 +207,20 @@ export struct MessageRow {
        * 不在这里新造第二份），而不是留一片空白让人以为"这条没有内容"。
        */
       /*
-       * 【超长正文默认折叠成一行，点击展开】用户要求（2026-09-17）：
-       * "对话里超长的应当只显示一行，点击再展开全部内容"。
+       * 【2026-09-17 用户决定：**正文一律不折叠**】
        *
-       * 判据放在**纯文本**上（不是 Markdown 源文）：`plainTextOf(parseMarkdown(…))` 才是用户
-       * 真正会看到的字数，用源文长度会把一堆标记算进去、把不该折的折了。
-       * 阈值：纯文本 > 500 字 **或** 超过 6 行 ⇒ 视为"超长"。
-       * 短消息**原样渲染**——把每一条都折成一行会让整段对话没法读（这是刻意的选择）。
-       *
-       * 折叠态渲染的是**纯文本单行**（省略号），所以它不可能出现 Markdown 的块级结构；
-       * 展开后仍是原来那套 `MarkdownRenderer`（行内强调/代码块/链接提及都在）。
-       * 流式进行中不折：正文还在长，折了会看到"越写越短"的怪相。
+       * 此前做过"超长正文折成一行 + 展开"；用户明确要求改回：
+       * **正文输出不折叠**（与官方一致——官方本来就不折正文，这条早已在其 bundle 里核对过）。
+       * 于是这里只留一条路：正文一律走 `MarkdownRenderer` 完整渲染。
+       * 为手机省空间的办法改在**工具调用**那一侧（全部单栏、一条一行），不动正文。
        */
       if (this.bodyFull().length > 0) {
-        if (this.bodyCollapsed()) {
-          Row({ space: Sp.S }) {
-            Text(this.bodyPlain())
-              .fontSize(Fs.BODY)
-              .fontColor($r('sys.color.font_primary'))
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .layoutWeight(1)
-            Text('展开')
-              .fontSize(Fs.CAPTION)
-              .fontColor($r('sys.color.brand'))
-          }
-          .width('100%')
-          .onClick(() => {
-            this.bodyExpanded = true;
-          })
-        } else {
-          MarkdownRenderer({
-            text: this.item.streaming ? this.bodyFull() + ' ▌' : this.bodyFull(),
-            // 文件提及的词汇表由**回合**给（见 TurnView），这里只透传
-            mentionPath: this.mentionPath,
-            onOpenMention: this.onOpenMention
-          })
-          if (this.bodyIsLong()) {
-            Text('收起')
-              .fontSize(Fs.CAPTION)
-              .fontColor($r('sys.color.brand'))
-              .onClick(() => {
-                this.bodyExpanded = false;
-              })
-          }
-        }
+        MarkdownRenderer({
+          text: this.item.streaming ? this.bodyFull() + ' ▌' : this.bodyFull(),
+          // 文件提及的词汇表由**回合**给（见 TurnView），这里只透传
+          mentionPath: this.mentionPath,
+          onOpenMention: this.onOpenMention
+        })
       } else if (this.item.internal === true) {
         Text(INTERNAL_BODY_HIDDEN_PREFIX)
           .fontSize(Fs.CAPTION)
@@ -324,7 +251,7 @@ export struct MessageRow {
           initialNote: this.storedNote,
           notice: this.feedbackNotice,
           onSubmit: (category: string, note: string) => {
-            this.onSubmitFeedback(this.item, this.storedRating, category, note);
+            this.onSubmitFeedback(this.item, this.activeRating, category, note);
           },
           onCancel: () => {
             this.onCloseFeedback();
