@@ -26,6 +26,7 @@
 import {
   ActionNotice, Border, Fs, GoalBarState, HarmonyColor, Radius, SessionHub, Sp, goalBarStateOf
 } from 'appstate';
+import type { HubSnapshot, HubSubscriber } from 'appstate';
 import { NativeChip } from './NativePrimitives';
 
 /** 长期目标栏：相位 + 正文 + 暂停/继续/编辑/清除 */
@@ -43,6 +44,40 @@ export struct GoalBar {
   private state(): GoalBarState {
     const s = SessionHub.shared().snapshot();
     return goalBarStateOf(s.goalText.length > 0, s.goalText, s.goalPhase, '', s.goalNote);
+  }
+
+  /**
+   * 【为什么要自己订阅中枢（2026-09-17 真机取证）】
+   *
+   * 这个组件**没有任何 props**（它自足读快照），于是被放进会话页之后，ArkUI 在父组件重绘时
+   * **不会因为它没有变化而重新执行它的 build()** —— 真机表现就是：Host 侧明明有目标
+   * （旁路日志 `goals/get ok present=true phase=active rev=1`），栏却一行都不出现。
+   *
+   * 修法：像 `Index` 那样**自己订阅中枢**，把快照的版本号放进一个 `@State`，
+   * 目标一变就重绘自己。这与"视图只读快照"的既有纪律不冲突——订阅的仍然是同一个快照。
+   */
+  @State private goalRev: number = 0;
+  private hubListener?: HubSubscriber;
+
+  aboutToAppear(): void {
+    const listener: HubSubscriber = (s: HubSnapshot) => {
+      // 只用一个会变的标量驱动重绘：目标正文 / 相位 / 长度的组合
+      const next: number = (s.goalText.length * 31) + s.goalPhase.length + (s.goalText.length > 0 ? 100000 : 0);
+      if (next !== this.goalRev) {
+        this.goalRev = next;
+      }
+    };
+    this.hubListener = listener;
+    SessionHub.shared().subscribe(listener);
+    listener(SessionHub.shared().snapshot());
+  }
+
+  aboutToDisappear(): void {
+    const listener: HubSubscriber | undefined = this.hubListener;
+    if (listener !== undefined) {
+      SessionHub.shared().unsubscribe(listener);
+      this.hubListener = undefined;
+    }
   }
 
   /**
