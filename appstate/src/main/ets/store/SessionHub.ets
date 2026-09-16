@@ -3092,7 +3092,25 @@ export class SessionHub {
      */
     const goal: Object | undefined = typed[PROJECTION_GOAL];
     if (goal !== undefined) {
-      this.applyGoalView(goal, 'goal projection');
+      /*
+       * 【2026-09-17：follow **快照**里的目标投影不得"倒着覆盖"已知的目标】
+       *
+       * 真机取证：旁路日志里两行紧挨着——
+       *   `goals/get ok present=true phase=active rev=1`（`refreshGoal()` 的权威读）
+       *   `goal projection ok present=false phase= rev=0`（随后一条 follow 快照的投影）
+       * 第二条把 `goalText` 清成空串 ⇒ 目标栏"时有时无"。
+       *
+       * 根因：follow 快照是**当时算出来的**投影，可能早于目标的创建/暂停；
+       * 而 `goals/get` 与 `goal/change`（事件）才是实时真值。这里对"快照说没有、
+       * 我们手里却有"的情形**不采纳**——真被清掉时，`goal/change` 的 `operation:'clear'`
+       * 会带着它自己的权威来落状态（那条路不受这里影响）。
+       */
+      const snapshotSaysAbsent: boolean = getRecord(goal, 'goal') === undefined
+        && getString(goal, 'objective') === undefined
+        && getString(goal, 'phase') === undefined;
+      if (!(snapshotSaysAbsent && this.goalId.length > 0)) {
+        this.applyGoalView(goal, 'goal projection');
+      }
     }
     const preset: Object | undefined = typed[PROJECTION_AGENT_PRESET];
     if (typeof preset === 'string') {
