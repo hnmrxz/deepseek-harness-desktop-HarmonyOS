@@ -127,6 +127,13 @@ const FEATURES = [
    * ⇒ 一次"发送被拒"之后成功跑完一整轮，那条红字还挂着，用户会问"我到底发出去没有"。
    * 钉三段：纯模型判定 + 连接级写入口 + 清理调用点（连上 / 发送成功 / 一轮成功跑完）。
    */
+  /*
+   * 原图预览（灯箱，P9-2）。官方 `ImageLightbox` 的契约：点缩略图打开**文档级**全屏预览
+   * （遮罩 + contain 原图 + 右上角关闭），Esc/点遮罩/关闭按钮都能关，关闭后焦点回到缩略图。
+   * 我们此前是"点一下就地放大"，且**单图压根点不动**（官方此时开灯箱）。
+   * 钉三段：几何判定（纯模型）+ 文案（官方中文字典逐字）+ 模态挂载点。
+   */
+  { name: '原图预览（灯箱）', patterns: [['lightboxFit', 2], ['bindContentCover', 1], ['IMAGE_PREVIEW_DIALOG', 2]] },
   { name: '错误生命周期', patterns: [['errorClearedBy', 2], ['clearErrorOn', 2], ['setConnectionError', 2]] },
   { name: '浮层关闭语义', patterns: [['sheetDiscardNotice', 2], ['dismissSheetByUser', 2], ['textSettingSeed', 2]] },
   { name: '内部内容隔离', patterns: [['mayExposeBodyToUser', 2], ['userFacingBodyOf', 2], ['scrubCredentials', 2], ['INTERNAL_BODY_HIDDEN', 1]] },

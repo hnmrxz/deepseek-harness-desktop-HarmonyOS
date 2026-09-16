@@ -123,3 +123,62 @@ export function visibleImageCount(total: number): number {
 export function hiddenImageCount(total: number): number {
   return total > IMAGE_GALLERY_MAX ? total - IMAGE_GALLERY_MAX : 0;
 }
+
+/* ───────────────────────── 原图预览（灯箱，P9-2） ───────────────────────── */
+
+/**
+ * 灯箱内距（官方 CSS `.backdrop{padding:40px}`，四边各 40）。
+ *
+ * 它与下一行的上限一起构成官方那句 `max-height: calc(100vh - 80px)`（上下各 40）。
+ */
+export const LIGHTBOX_PADDING: number = 40;
+/** 灯箱里图片的最大宽度（官方 CSS `max-width:min(100%,1600px)`） */
+export const LIGHTBOX_MAX_WIDTH: number = 1600;
+
+/**
+ * 灯箱的三个无障碍文案（**逐字取官方** `dsh-client-ui-conversation` 的中文字典）。
+ *
+ * 出处（同一段字典）：
+ *   `image.preview` = 原图预览        `image.closePreview` = 关闭原图预览
+ *   `image.openOriginal` = 查看原图   `image.openOriginalLabel` = `{label}，点击查看原图`
+ */
+export const IMAGE_PREVIEW_DIALOG: string = '原图预览';
+export const IMAGE_CLOSE_PREVIEW: string = '关闭原图预览';
+export const IMAGE_OPEN_ORIGINAL: string = '查看原图';
+
+/** 缩略图的无障碍文案（官方 `image.openOriginalLabel` 的模板：`{label}，点击查看原图`） */
+export function imageOpenOriginalLabel(label: string): string {
+  return label.length > 0 ? `${label}，点击查看原图` : IMAGE_OPEN_ORIGINAL;
+}
+
+/**
+ * 灯箱里这张图该画多大（官方 CSS 的等价实现）。
+ *
+ * 官方的规则是三条 CSS 叠出来的：
+ *   · `object-fit: contain` —— 等比缩放装进框内；
+ *   · `max-width: min(100%, 1600px)` 与 `max-height: calc(100vh - 80px)` —— **只封顶、不放大**：
+ *     小图按**原始尺寸**显示（例如 100×50 的图标不会被拉成满屏）；
+ *   · 内距 40 —— 上下左右各留 40，所以可用空间是视口减 80。
+ *
+ * 尺寸未知（宽或高 ≤ 0）时**填满可用空间**：CSS 会等图片加载出自然尺寸再算，
+ * 而 ArkUI 这边拿不到"加载完成后的自然尺寸"回调，填满可用空间正好等价于 `contain` 的表现。
+ *
+ * @param viewportW / viewportH 灯箱可用视口（vp，已减安全区由系统负责）
+ * @param imageW / imageH 原图尺寸（像素；未知传 0）
+ */
+export function lightboxFit(viewportW: number, viewportH: number,
+  imageW: number, imageH: number): SingleImageFit {
+  const boxWidth: number = Math.max(1, Math.min(viewportW - LIGHTBOX_PADDING * 2, LIGHTBOX_MAX_WIDTH));
+  const boxHeight: number = Math.max(1, viewportH - LIGHTBOX_PADDING * 2);
+  if (imageW <= 0 || imageH <= 0) {
+    // 未知尺寸：填满可用空间（见上面的说明）
+    return { width: Math.round(boxWidth), height: Math.round(boxHeight), anchor: 'center' };
+  }
+  // 只缩不放（`scale` 上限为 1），与官方的 max-width/max-height 语义一致
+  const scale: number = Math.min(1, boxWidth / imageW, boxHeight / imageH);
+  return {
+    width: Math.max(1, Math.round(imageW * scale)),
+    height: Math.max(1, Math.round(imageH * scale)),
+    anchor: 'center'
+  };
+}

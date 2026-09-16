@@ -130,7 +130,14 @@ export {
   SINGLE_IMAGE_BOX,
   singleImageFit,
   TILE_IMAGE_SIDE,
-  visibleImageCount
+  visibleImageCount,
+  IMAGE_CLOSE_PREVIEW,
+  IMAGE_OPEN_ORIGINAL,
+  IMAGE_PREVIEW_DIALOG,
+  imageOpenOriginalLabel,
+  LIGHTBOX_MAX_WIDTH,
+  LIGHTBOX_PADDING,
+  lightboxFit
 } from './model/MessageImage';
 export type { SingleImageFit } from './model/MessageImage';
 // 输入区附件的判定与拼装（P0-4：图片内联、官方顺序与类型白名单）

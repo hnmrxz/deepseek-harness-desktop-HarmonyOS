@@ -2670,6 +2670,46 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   t.eq('非竞态返回 NONE', queueRaceKind('gateway/internal'), QUEUE_RACE_NONE);
 }
 
+// ── P9-2：原图预览（灯箱）的几何与文案（官方 ImageLightbox） ──
+{
+  const MI = require2('./MessageImage.js');
+  const { lightboxFit, LIGHTBOX_PADDING, LIGHTBOX_MAX_WIDTH, IMAGE_PREVIEW_DIALOG,
+    IMAGE_CLOSE_PREVIEW, IMAGE_OPEN_ORIGINAL, imageOpenOriginalLabel } = MI;
+
+  // ① 几何：官方的三条 CSS（contain + max-width:min(100%,1600) + max-height:calc(100vh-80px)）⇒ 只缩不放
+  const phone = lightboxFit(360, 780, 4000, 3000);
+  t.eq('手机：可用宽 = 360 - 80', phone.width, 280);
+  t.eq('手机：按比例缩（4000×3000 ⇒ 3:4）', phone.height, 210);
+  /*
+   * 竖向长图（4000×8000）：**先撞到的是宽度**（280/4000 = 0.07 < 700/8000 = 0.0875）
+   * ⇒ 结果 280×560。这条不是在测"高图就顶到高度"，而是在测
+   * "取两个方向里更紧的那个约束"——灯箱最常见的错法就是只按一个方向缩、另一个方向溢出。
+   */
+  const tall = lightboxFit(360, 780, 4000, 8000);
+  t.eq('手机：竖向长图按更紧的宽度约束缩（280×560，不溢出）', `${tall.width}×${tall.height}`, '280×560');
+  const small = lightboxFit(360, 780, 100, 50);
+  t.eq('**小图不放大**（官方只封顶，max-width/max-height 不拉伸）', `${small.width}×${small.height}`, '100×50');
+  const wide = lightboxFit(2400, 1400, 3000, 1000);
+  t.eq('2in1 宽窗：宽度被封到 1600（官方 max-width:min(100%,1600px)）', wide.width, 1600);
+  t.eq('2in1：高度仍按比例（1600/3）', wide.height, 533);
+  const unknown = lightboxFit(360, 780, 0, 0);
+  t.eq('尺寸未知 ⇒ 填满可用空间（含说明见模型注释）', `${unknown.width}×${unknown.height}`, '280×700');
+  t.eq('极端窄视口不会算出 0 或负数', lightboxFit(50, 50, 100, 100).width >= 1, true);
+
+  // ② 文案：逐字取官方中文字典（image.preview / image.closePreview / image.openOriginal）
+  t.eq('对话框无障碍名逐字取官方', IMAGE_PREVIEW_DIALOG, '原图预览');
+  t.eq('关闭按钮无障碍名逐字取官方', IMAGE_CLOSE_PREVIEW, '关闭原图预览');
+  t.eq('打开动作的无障碍名逐字取官方', IMAGE_OPEN_ORIGINAL, '查看原图');
+  t.eq('模板逐字取官方：{label}，点击查看原图',
+    imageOpenOriginalLabel('第 1 张图片，1024×768'), '第 1 张图片，1024×768，点击查看原图');
+  t.eq('没有标签时退回动作名（不拼出「，点击查看原图」这种残句）',
+    imageOpenOriginalLabel(''), IMAGE_OPEN_ORIGINAL);
+
+  // ③ 内距常量与官方 CSS 一致（`.backdrop{padding:40px}`）
+  t.eq('灯箱内距 = 40（官方 CSS）', LIGHTBOX_PADDING, 40);
+  t.eq('灯箱最大宽度 = 1600（官方 CSS）', LIGHTBOX_MAX_WIDTH, 1600);
+}
+
 // ── P8-6c：错误状态的生命周期（连上了才清连接级；动作成了就清动作级） ──
 {
   const EL = require2('./ErrorLifecycle.js');
