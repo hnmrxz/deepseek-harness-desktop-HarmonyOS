@@ -192,27 +192,33 @@ export struct MarkdownRenderer {
     .alignItems(VerticalAlign.Top)
   }
 
-  /** 引用：左侧一条品牌色竖条 + 内容降一级语气 */
+  /**
+   * 引用：左侧一条品牌色竖条 + 内容降一级语气。
+   *
+   * 【F20：竖条改用**左边框**，不再用一个 `height('100%')` 的兄弟 `Column`】
+   *
+   * 真机读数：一行引用文字高 **57px**，而左侧竖条从 y≈908 拉到 y≈2126——
+   * 约 **1230px（≈350vp）**，是文字高度的 **21 倍**；它后面的正文被顶到很远的下方。
+   *
+   * 机理与 F12/F18 是**同一个**：`height('100%')` 在"高度由内容决定"的父容器里解析不出正确值
+   * （`Row` 的高度本来是内容撑出来的，而百分比要去父链上找一个确定高度），
+   * 结果竖条不但自己错，还把 `Row` 撑高、把后面的内容一起推下去。
+   *
+   * 正确做法是**别用百分比**：把竖条画成内容块自己的**左边框**——
+   * 边框天然跟着内容高度走，既不多一行兄弟节点，也不可能被"父高度不定"影响。
+   * （`Row` 也没有 `Stretch` 对齐可用，所以"让兄弟撑满"这条路在 ArkUI 里本来就不通。）
+   */
   @Builder
   quoteBlock(b: MdBlock) {
-    Row({ space: Sp.S }) {
-      Column()
-        .width(Border.HAIRLINE * 3)
-        .height('100%')
-        .backgroundColor(SemanticColor.BRAND)
-      Column() {
-        Text(this.spansText(b.spans))
-          .fontSize(Fs.SECONDARY)
-          .fontColor(SemanticColor.TEXT_SECONDARY)
-          .width('100%')
-          .textAlign(TextAlign.Start)
-          .copyOption(CopyOptions.LocalDevice)
-      }
-      .layoutWeight(1)
-    }
-    .width('100%')
-    .alignItems(VerticalAlign.Top)
-    .padding({ left: Sp.S })
+    Text(this.spansText(b.spans))
+      .fontSize(Fs.SECONDARY)
+      .fontColor(SemanticColor.TEXT_SECONDARY)
+      .width('100%')
+      .textAlign(TextAlign.Start)
+      .copyOption(CopyOptions.LocalDevice)
+      .padding({ left: Sp.S })
+      .borderWidth({ left: Border.HAIRLINE * 3 })
+      .borderColor({ left: SemanticColor.BRAND })
   }
 
   /** 片段拼成纯文本（引用块按整段渲染：引用里再分行会显得碎） */

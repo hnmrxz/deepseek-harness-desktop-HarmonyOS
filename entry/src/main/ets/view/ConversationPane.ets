@@ -8,7 +8,7 @@
  * 所有动作通过回调上报宿主，便于接入真实连接时只改宿主。
  */
 
-import { CommandCandidate, FeedbackRow, FollowSignal, Fs, ModelOption, ModelSelection, PendingAttachment, PendingItem, QueuedItem, Radius, ReferenceCandidate, SHARE_TARGET_NONE, ScrollSpot, SessionHub, ShareTarget, Sp, Speaker, TrajectoryItem, TrajectoryKind, cellIdForListIndex, chatRowOfItemIndex, chatVisibleItems, defaultExpanded, emptyScrollSpot, followTimerShouldRun, groupTurns, jobTickerNeeded, listIndexForCell, matchConversationIndices, matchTrajectoryIndices, modelSelectionLabel, nextFollowing, parseMarkdown, pendingElsewhere, pendingForSession, plainTextOf, presentTool, scrollRestoreTarget, shouldJumpOnNewItems, stepMatch, takeoverCommand, takeoverHeadline, takeoverStripText, toolStateLabel, userFacingBodyOf } from 'appstate';
+import { Border, CommandCandidate, FeedbackRow, FollowSignal, Fs, ModelOption, ModelSelection, PendingAttachment, PendingItem, QueuedItem, Radius, ReferenceCandidate, SHARE_TARGET_NONE, ScrollSpot, SessionHub, ShareTarget, Sp, Speaker, TrajectoryItem, TrajectoryKind, cellIdForListIndex, chatRowOfItemIndex, chatVisibleItems, defaultExpanded, emptyScrollSpot, followTimerShouldRun, groupTurns, jobTickerNeeded, listIndexForCell, matchConversationIndices, matchTrajectoryIndices, modelSelectionLabel, nextFollowing, parseMarkdown, pendingElsewhere, pendingForSession, plainTextOf, presentTool, scrollRestoreTarget, shouldJumpOnNewItems, stepMatch, takeoverCommand, takeoverHeadline, takeoverStripText, toolStateLabel, userFacingBodyOf } from 'appstate';
 /** 类型单独 import type（本仓约定：值与类型分开写） */
 import type { PendingAnswerDraft, ActionNotice, SessionJob, SessionStatsInput, Turn } from 'appstate';
 import type { NativeAction } from './NativePrimitives';
@@ -584,18 +584,28 @@ export struct ConversationPane {
   /** 错误块（轨迹视图；对话视图那份在 `TurnView` 里） */
   @Builder
   flatError(item: TrajectoryItem) {
-    Row({ space: Sp.S }) {
-      Divider().vertical(true).color($r('sys.color.alert')).height('100%')
-      Text(`出错了：${item.body}`)
-        .fontSize(Fs.CAPTION)
-        .fontColor($r('sys.color.alert'))
-        .layoutWeight(1)
-    }
-    .width('100%')
-    .padding(Sp.S)
-    .borderRadius(Radius.S)
-    .backgroundColor($r('sys.color.background_secondary'))
-    .accessibilityText(`错误：${item.body}`)
+    /*
+     * 【F20 的同类：竖条不要用 `height('100%')`】
+     *
+     * 这里原来是 `Divider().vertical(true)…height('100%')` —— 与 F20 那条引用竖条
+     * **同一个机理**：`Row` 的高度本来是文字撑出来的（内容决定），
+     * 而 `height('100%')` 要去父链上找一个确定高度；找错了就会把行拉高、
+     * 把后面的内容一起推下去（F20 真机读数就是 21 倍高）。
+     *
+     * 改用**左边框**：边框天然跟着内容高度走，不依赖父高度。
+     * 这是本轮扫出的唯一一处同类（其余 40 多处 `height('100%')` 都是页面根节点，
+     * 父高度确定，属于正常用法）。
+     */
+    Text(`出错了：${item.body}`)
+      .fontSize(Fs.CAPTION)
+      .fontColor($r('sys.color.alert'))
+      .width('100%')
+      .padding({ left: Sp.S })
+      .borderWidth({ left: Border.HAIRLINE * 3 })
+      .borderColor({ left: $r('sys.color.alert') })
+      .borderRadius(Radius.S)
+      .backgroundColor($r('sys.color.background_secondary'))
+      .accessibilityText(`错误：${item.body}`)
   }
 
   /** 某条目是否已展开（轨迹视图的展开集合也在这里：轨迹是条目级台账，没有回合外壳） */
