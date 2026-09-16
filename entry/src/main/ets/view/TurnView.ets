@@ -30,7 +30,7 @@
  *    （列表项是它画的，命中集合也在它手里）。
  */
 
-import { ActionNotice, FeedbackRow, Fs, Radius, SHARE_TARGET_NONE, SessionHub, ShareTarget, Sp, Speaker, TrajectoryItem, TrajectoryKind, Turn, baseNameOf, defaultExpanded, parseMarkdown, plainTextOf, producedFilesOf, resolveProducedMention, userFacingBodyOf } from 'appstate';
+import { ActionNotice, FeedbackRow, Fs, Radius, SHARE_TARGET_NONE, SessionHub, ShareTarget, Sp, Speaker, TrajectoryItem, TrajectoryKind, Turn, baseNameOf, defaultExpanded, parseMarkdown, plainTextOf, changeStatText, producedFilesOf, turnChangeStatOf, resolveProducedMention, userFacingBodyOf } from 'appstate';
 import type { ProducedFile } from 'appstate';
 import { presentTool, toolStateLabel } from 'appstate';
 import { NativeCard } from './NativePrimitives';
@@ -261,6 +261,8 @@ export struct TurnView {
       if (this.produced().length > 0) {
         ProducedFilesRow({
           files: this.produced(),
+          // 官方那张卡上的 `+86 -9`（判据在纯模型里；视图只负责摆位置）
+          changeText: changeStatText(turnChangeStatOf(this.turn.process)),
           onOpen: (path: string, name: string) => {
             this.onOpenProduced(path, name);
           }

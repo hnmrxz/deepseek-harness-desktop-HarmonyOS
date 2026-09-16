@@ -37,6 +37,15 @@ const PRODUCED_MAX_CHIPS: number = 6;
 export struct ProducedFilesRow {
   /** 该回合产出的文件（顺序即首次出现顺序） */
   @Prop files: ProducedFile[] = [];
+  /**
+   * 本回合改动量（官方那张卡上的 `+86 -9`）。
+   *
+   * 官方把它和"已编辑 N 个文件"放在同一行；我们此前只有文件数。
+   * 传空串表示"没有可说的行数"（没有写类调用，或增删都是 0）⇒ 这一格不渲染。
+   * **由父组件算好传进来**（判据在纯模型 `turnChangeStatOf/changeStatText`），
+   * 视图不自己扫一遍过程条目。
+   */
+  @Prop changeText: string = '';
   /** 点一枚 chip：宿主负责打开预览并切到能看见它的页面 */
   onOpen: (path: string, name: string) => void = () => {
   };
@@ -51,10 +60,19 @@ export struct ProducedFilesRow {
   build() {
     if (this.files.length > 0) {
       Column({ space: Sp.XS }) {
-        Text(producedRowText(this.files.length, PRODUCED_MAX_CHIPS))
-          .fontSize(Fs.CAPTION_XS)
-          .fontColor(HarmonyColor.TEXT_TERTIARY)
-          .width('100%')
+        Row({ space: Sp.S }) {
+          Text(producedRowText(this.files.length, PRODUCED_MAX_CHIPS))
+            .fontSize(Fs.CAPTION_XS)
+            .fontColor(HarmonyColor.TEXT_TERTIARY)
+            .layoutWeight(1)
+          // 官方把 `+86 -9` 与文件数放在同一行的右端
+          if (this.changeText.length > 0) {
+            Text(this.changeText)
+              .fontSize(Fs.CAPTION_XS)
+              .fontColor(HarmonyColor.TEXT_TERTIARY)
+          }
+        }
+        .width('100%')
         Scroll() {
           Row({ space: Sp.XS }) {
             ForEach(this.shown(), (file: ProducedFile) => {

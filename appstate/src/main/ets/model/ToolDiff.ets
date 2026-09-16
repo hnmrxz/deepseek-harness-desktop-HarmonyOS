@@ -288,7 +288,7 @@ export function intendedDiffOf(toolName: string, rawArgs: string): ToolDiff | nu
  */
 const MAX_DIFF_PRODUCT: number = 250 * 250;
 /** 返回的行数上限（超出则截断并置 `truncated`） */
-const MAX_DIFF_LINES: number = 400;
+export const MAX_DIFF_LINES: number = 400;
 
 function splitLines(text: string): string[] {
   if (text.length === 0) {

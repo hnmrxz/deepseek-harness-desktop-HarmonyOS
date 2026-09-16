@@ -29,7 +29,7 @@
  * 纯逻辑：只依赖 `ToolDiff` 与 `Trajectory`（都是零依赖），可被 fixture 钉住。
  */
 
-import { intendedDiffOf, ToolDiff } from './ToolDiff';
+import { DiffStat, MAX_DIFF_LINES, diffLines, diffStatOf, intendedDiffOf, ToolDiff } from './ToolDiff';
 import { ToolState, TrajectoryItem, TrajectoryKind } from './Trajectory';
 
 /** 一枚产出文件（视图只用这两个字段） */
@@ -94,6 +94,58 @@ export function producedRowText(count: number, maxShown: number): string {
     return `本回合写入 ${count} 个文件`;
   }
   return `本回合写入 ${count} 个文件（显示前 ${maxShown} 个）`;
+}
+
+/**
+ * 一回合的**改动量**（官方那张"已编辑 N 个文件 · `+86 -9`"卡片要的两个数）。
+ *
+ * 【为什么不复用 `producedFilesOf` 的结果】那个函数只收**成功**的写类调用
+ * （官方语义："successful … calls"），而这里的行数是给用户看"这一轮改了多少"——
+ * 同一批调用，只是取值口径不同。所以两个函数各自扫一遍 `process`，
+ * **共用 `intendedDiffOf` 这一份判据**（谁是写类工具、参数里哪两个是前后文），不另写一套。
+ *
+ * `truncated` 表示**至少**这么多：有工具的 diff 触到篇幅上限时真实改动只会更大，
+ * 视图据此说"至少"，不说"就是这么多"——这是本仓对被截断数据的一贯口径。
+ */
+export interface TurnChangeStat {
+  added: number;
+  removed: number;
+  files: number;
+  truncated: boolean;
+}
+
+export function turnChangeStatOf(items: TrajectoryItem[]): TurnChangeStat {
+  let added: number = 0;
+  let removed: number = 0;
+  let files: number = 0;
+  let truncated: boolean = false;
+  for (let i = 0; i < items.length; i++) {
+    const item: TrajectoryItem = items[i];
+    if (item.kind !== TrajectoryKind.TOOL) {
+      continue;
+    }
+    const diff: ToolDiff | null = intendedDiffOf(item.toolName, item.toolArgs);
+    if (diff === null) {
+      continue;
+    }
+    const stat: DiffStat = diffStatOf(diffLines(diff.oldText, diff.newText));
+    added += stat.added;
+    removed += stat.removed;
+    files += 1;
+    if (stat.added + stat.removed >= MAX_DIFF_LINES) {
+      truncated = true;
+    }
+  }
+  return { added: added, removed: removed, files: files, truncated: truncated };
+}
+
+/** 改动量的显示文案（`+86 −9`；两个都是 0 时返回空串 ⇒ 视图不渲染这一格） */
+export function changeStatText(stat: TurnChangeStat): string {
+  if (stat.added === 0 && stat.removed === 0) {
+    return '';
+  }
+  const sign: string = stat.truncated ? '至少 ' : '';
+  return `${sign}+${stat.added} −${stat.removed}`;
 }
 
 /* ───────────────────────── 正文里的文件提及（P9-3） ───────────────────────── */

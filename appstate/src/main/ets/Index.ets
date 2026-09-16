@@ -63,7 +63,9 @@ export {
   baseNameOf,
   deliverableShareTarget,
   MENTION_TOKEN_MAX,
+  changeStatText,
   producedFilesOf,
+  turnChangeStatOf,
   producedRowText,
   resolveProducedMention,
   SHARE_TARGET_FILE,
@@ -72,7 +74,7 @@ export {
   shareActionLabel
 } from './model/ProducedFiles';
 export type { ShareTarget } from './model/ProducedFiles';
-export type { ProducedFile } from './model/ProducedFiles';
+export type { ProducedFile, TurnChangeStat } from './model/ProducedFiles';
 
 // ── 工作区与文件 ──
 export {
