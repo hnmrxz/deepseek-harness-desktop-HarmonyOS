@@ -78,7 +78,12 @@ const FEATURES = [
   { name: '技能清单', patterns: [['refreshSkills', 2], ['skills/list', 1]] },
   { name: '提供方目录', patterns: [['refreshProviderCatalog', 2]] },
   { name: '命令面板', patterns: [['refreshCommands', 2], ['executeCommand', 2]] },
-  { name: '长期目标', patterns: [['refreshGoal', 2]] },
+  /*
+   * 长期目标（P7-20 起**可操作**）。官方 `dsh-client-ui-goal` 的目标栏给"暂停/继续/编辑/清除"
+   * （相位决定给哪个），创建走 `/goal` 命令；没有目标/加载中/已完成时整条不渲染。
+   * 我们此前只有 `refreshGoal`（读），四个动词一个都没有。
+   */
+  { name: '长期目标', patterns: [['refreshGoal', 2], ['goalBarStateOf', 2], ['pauseGoal', 2], ['goal/change', 1]] },
   { name: '消息反馈', patterns: [['putFeedback', 2], ['refreshFeedback', 2]] },
   /*
    * 文件变更流（E226）。E383 修自激时把 `openFilesStream` 改名为 `ensureFilesStream`

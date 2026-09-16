@@ -35,6 +35,7 @@ import {
   SESSION_SELECT_MODEL_ENDPOINT,
   FILE_REFERENCES_LIST_ENDPOINT,
   FILE_UPLOAD_ENDPOINT,
+  GOALS_EDIT_ENDPOINT,
   SESSION_ATTACHMENT_ENDPOINT,
   SESSION_CANCEL_ENDPOINT,
   SESSION_CREATE_ENDPOINT,
@@ -1846,6 +1847,103 @@ export function projectCommandOutcome(value: Object | undefined): CommandOutcome
     kind: kind,
     text: text
   };
+}
+
+// ═════════════════════════ 10b. 长期目标（goals/*） ═════════════════════════
+
+/**
+ * 目标的**权威形状**（`dsh-goal/lib/types/types.d.ts` 的 `GoalSnapshot` + `GoalView`，逐字）：
+ *
+ * ```
+ * interface GoalRef   { id: GoalId; revision: number }
+ * interface GoalSnapshot extends GoalRef {
+ *   objective: string;
+ *   phase: 'active' | 'paused' | 'blocked' | 'complete';
+ *   blockedReason?: { code: string; message: string };   // 恰好 phase==='blocked' 时才有
+ *   maxGoalRounds: number;
+ * }
+ * ```
+ *
+ * 【为什么此前是"形状未确证"】我们最早只读到一个 `goalText`（靠一串候选键名去猜），
+ * 因为当时手上没有类型声明。现在有声明了 ⇒ 按字段**逐字**投影，
+ * 并把它变成可判定的三态：`present`（有目标）/ 没有目标 / 认不出（由调用方记账）。
+ */
+export interface GoalViewValue {
+  /** 是否**有**当前目标（false = Host 明确说没有；调用方据此不渲染那一栏） */
+  present: boolean;
+  /** 目标 id（写动词的 `ref` 需要它） */
+  id: string;
+  /** 版本号（写动词的 `ref` 需要它；每次改动都会 +1） */
+  revision: number;
+  /** 目标正文 */
+  objective: string;
+  /** `'active' | 'paused' | 'blocked' | 'complete'`（'' = 没给） */
+  phase: string;
+  /** 受阻原因码（仅 `phase === 'blocked'`） */
+  blockedCode: string;
+  /** 受阻原因说明（仅 `phase === 'blocked'`） */
+  blockedMessage: string;
+  /** 轮次上限（0 = 没给） */
+  maxGoalRounds: number;
+}
+
+/**
+ * 投影目标快照。
+ *
+ * 三态判定：
+ *   · **有目标**：对象里 `objective` 是字符串（Host 的 `GoalSnapshot` 必带它）；
+ *   · **没有目标**：对象里没有可识别的目标字段（老 Host 回 `{}`、或显式 `{goal: null}`）；
+ *   · **认不出**：返回 `undefined` —— 调用方把真实顶层键记账（不猜）。
+ */
+export function projectGoalView(value: Object | undefined): GoalViewValue | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const nested: Object | undefined = getRecord(value, 'goal');
+  const bag: Object = nested !== undefined ? nested : value;
+  const objective: string | undefined = getString(bag, 'objective');
+  if (objective === undefined) {
+    // 没有 objective ⇒ 当作"没有目标"（而不是"认不出"）：Host 的完整快照必带它
+    return {
+      present: false, id: '', revision: 0, objective: '', phase: '',
+      blockedCode: '', blockedMessage: '', maxGoalRounds: 0
+    };
+  }
+  const blocked: Object | undefined = getRecord(bag, 'blockedReason');
+  return {
+    present: true,
+    id: getString(bag, 'id') ?? '',
+    revision: getNumber(bag, 'revision') ?? 0,
+    objective: objective,
+    phase: getString(bag, 'phase') ?? '',
+    blockedCode: blocked === undefined ? '' : (getString(blocked, 'code') ?? ''),
+    blockedMessage: blocked === undefined ? '' : (getString(blocked, 'message') ?? ''),
+    maxGoalRounds: getNumber(bag, 'maxGoalRounds') ?? 0
+  };
+}
+
+/** `GoalRef`（写动词的 `ref` 参数） */
+export interface GoalRefWire {
+  id: string;
+  revision: number;
+}
+
+/**
+ * 构造目标**写动词**的 args 载荷。
+ *
+ * 线上参数名取自本仓生成表：`goals/pause|resume|clear` 是 `['agentId','ref']`，
+ * `goals/edit` 是 `['agentId','ref','request']`（`dshcompat/Endpoints.ets`）。
+ * `ref` 必须带上**读到的 revision**：Host 用它做乐观并发控制，写旧版本会被拒。
+ */
+export function goalWritePayload(endpoint: string, agentId: string, ref: GoalRefWire,
+  objective: string): Object | undefined {
+  const refBag: Record<string, Object> = { 'id': ref.id, 'revision': ref.revision };
+  const body: Record<string, Object> = { 'agentId': agentId, 'ref': refBag as Object };
+  if (endpoint === GOALS_EDIT_ENDPOINT) {
+    const request: Record<string, Object> = { 'objective': objective };
+    body['request'] = request as Object;
+  }
+  return argsFor(endpoint, body as Object);
 }
 
 // ═════════════════════════ 11. 工作区与文件（workspaceFiles/*） ═════════════════════════

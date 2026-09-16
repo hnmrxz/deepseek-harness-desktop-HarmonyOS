@@ -43,6 +43,9 @@ export type { OutputPreview } from './model/Present';
 // 失败码 → 用户文案（P7-19：把散在中枢里的特例与兜底收成一张可对账的表）
 export { failureText, hasFailureText, untranslatedFailure, CLIENT_FAILURE_TEXT_TABLE, FAILURE_TEXT_TABLE, REACHABLE_FAILURE_CODES } from './model/FailureText';
 export type { FailureTextEntry } from './model/FailureText';
+// 目标栏的可判定状态（P7-20，对齐官方 ui-goal 的 GoalBar）
+export { goalBarStateOf, goalPhaseLabel, GOAL_PHASE_ACTIVE, GOAL_PHASE_BLOCKED, GOAL_PHASE_COMPLETE, GOAL_PHASE_PAUSED } from './model/GoalBar';
+export type { GoalBarState } from './model/GoalBar';
 
 // ── 工作区与文件 ──
 export {

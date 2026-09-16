@@ -1,43 +1,161 @@
 /**
- * 长期目标栏（官方 `ui-goal` 的目标栏形态）。
+ * 长期目标栏（P7-20，对齐官方 `dsh-client-ui-goal` 的 `GoalBar`）。
  *
- * ## 为什么它没有 props
+ * ## 它现在能做什么（此前只能看）
  *
- * 它直接读中枢快照（`SessionHub.shared().snapshot()`）——与"可添加提供方"是同一先例：
- * 打开面板时会重新渲染，届时读到最新值；少穿两层状态，也**不会出现"状态与中枢不一致"**。
- * 抽成组件之后这条性质不变：它自足，宿主只决定"放在哪"。
+ * 官方的目标栏是**可操作的**：`phase` 决定给哪个动词（`active` → 暂停；`paused` → 继续），
+ * 外加**编辑**（同一行内的内联表单）与**清除**；**创建**刻意不在这条栏里（走 `/goal` 命令）。
+ * 我们此前只把目标正文读出来显示，四个动词一个都没有 —— 用户能在网页上暂停/改目标，
+ * 在这里只能干看着。
  *
- * ## 三种情况分得很清（不把"没读到"说成"没有目标"）
+ * ## 什么时候**不**渲染（官方规则，逐字）
  *
- * | 中枢给的 | 显示 |
- * |---|---|
- * | 有目标文本 | 目标文本（次要色） |
- * | 中枢说没有（`goalNote` 非空，例如"该会话当前没有长期目标"） | 如实显示那句话 |
- * | 形状未识别/失败 | `未读取`（三级色）——**这是最要紧的一条**：把"读不到"说成"没有"会让用户以为目标丢了 |
+ *   > "loading (undefined), **no goal (null)**, and **complete goals render nothing**."
+ *
+ * 也就是说：没有目标、加载中、已完成 —— 整条栏不出现。我们此前不管有没有目标都画一行
+ * （空态写"该会话当前没有长期目标"），在手机上就是白占一行。
+ * **唯一保留的空态**是"读不到"（形状未识别/读失败）：那时显示一句说明，
+ * 因为把"读不到"说成"没有目标"会让用户以为目标丢了（本仓踩过这条）。
+ *
+ * ## 判定全在 `appstate/model/GoalBar.ets`
+ *
+ * 相位文案、给哪几个动词、可不可见，都由那个纯模型给出（被 fixture 钉住）；
+ * 本组件只负责画与转发动作 —— 与 `ToolCard` / `DeliverableCard` 同一条规矩。
  */
 
-import { Fs, SessionHub, Sp } from 'appstate';
+import {
+  ActionNotice, Border, Fs, GoalBarState, HarmonyColor, Radius, SessionHub, Sp, goalBarStateOf
+} from 'appstate';
+import { NativeChip } from './NativePrimitives';
 
+/** 长期目标栏：相位 + 正文 + 暂停/继续/编辑/清除 */
 @Component
 export struct GoalBar {
+  /** 正在编辑（内联表单） */
+  @State editing: boolean = false;
+  /** 编辑中的草稿 */
+  @State draft: string = '';
+  /** 动作回执（失败原因写在这里，成功则清空） */
+  @State notice: string = '';
+  /** 每敲一个字就重画整个会话列表不值得 —— 用本地草稿 + 提交时一次性写 */
+
+  /** 从快照算出的状态（唯一真值在纯模型里） */
+  private state(): GoalBarState {
+    const s = SessionHub.shared().snapshot();
+    return goalBarStateOf(s.goalText.length > 0, s.goalText, s.goalPhase, '', s.goalNote);
+  }
+
+  /** 跑一个动作并把回执变成一句人话 */
+  private run(action: Promise<ActionNotice>): void {
+    action.then((n: ActionNotice) => {
+      this.notice = n.code === 'command.executed' ? '' : `未生效：${n.code}`;
+    });
+  }
+
   build() {
-    Row({ space: Sp.S }) {
-      Text('长期目标')
-        .fontSize(Fs.CAPTION)
-        .layoutWeight(1)
-      Text(SessionHub.shared().snapshot().goalText.length > 0
-        ? SessionHub.shared().snapshot().goalText
-        : (SessionHub.shared().snapshot().goalNote.length > 0
-          ? SessionHub.shared().snapshot().goalNote
-          : '未读取'))
-        .fontSize(Fs.CAPTION)
-        .fontColor(SessionHub.shared().snapshot().goalText.length > 0
-          ? $r('sys.color.font_secondary')
-          : $r('sys.color.font_tertiary'))
-        .layoutWeight(2)
-        .maxLines(3)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    Column({ space: Sp.XS }) {
+      if (this.state().visible) {
+        if (this.editing) {
+          this.editRow()
+        } else {
+          this.stripRow()
+        }
+        if (this.notice.length > 0) {
+          Text(this.notice)
+            .fontSize(Fs.CAPTION_XS)
+            .fontColor(HarmonyColor.ALERT)
+            .width('100%')
+        }
+      }
     }
     .width('100%')
+  }
+
+  /** 常态：相位 + 正文 + 动作 */
+  @Builder
+  stripRow() {
+    Row({ space: Sp.S }) {
+      Text('目标')
+        .fontSize(Fs.CAPTION_XS)
+        .fontColor(HarmonyColor.TEXT_TERTIARY)
+      if (this.state().phaseLabel.length > 0) {
+        Text(this.state().phaseLabel)
+          .fontSize(Fs.CAPTION_XS)
+          .fontColor(this.state().canResume ? HarmonyColor.WARNING : HarmonyColor.BRAND)
+      }
+      Text(this.state().objective)
+        .fontSize(Fs.CAPTION)
+        .fontColor(HarmonyColor.TEXT_SECONDARY)
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+      // 只有 `active` 才给「暂停」、只有 `paused` 才给「继续」（相位未知时一个都不给）
+      if (this.state().canPause) {
+        this.actionChip('暂停', () => {
+          this.run(SessionHub.shared().pauseGoal());
+        })
+      }
+      if (this.state().canResume) {
+        this.actionChip('继续', () => {
+          this.run(SessionHub.shared().resumeGoal());
+        })
+      }
+      if (this.state().canEdit) {
+        this.actionChip('编辑', () => {
+          this.draft = SessionHub.shared().snapshot().goalText;
+          this.editing = true;
+        })
+      }
+      if (this.state().canClear) {
+        this.actionChip('清除', () => {
+          this.run(SessionHub.shared().clearGoal());
+        })
+      }
+    }
+    .width('100%')
+    .padding({ left: Sp.M, right: Sp.M, top: Sp.XS, bottom: Sp.XS })
+    .borderRadius(Radius.S)
+    .backgroundColor(HarmonyColor.SURFACE_TERTIARY)
+    .borderWidth(Border.HAIRLINE)
+    .borderColor(HarmonyColor.DIVIDER)
+    .accessibilityText(`长期目标：${this.state().phaseLabel}${this.state().objective}`)
+  }
+
+  /** 编辑态：同一行内的内联表单（官方也是"inline form in the same strip"） */
+  @Builder
+  editRow() {
+    Row({ space: Sp.S }) {
+      TextInput({ text: this.draft })
+        .fontSize(Fs.CAPTION)
+        .layoutWeight(1)
+        .onChange((value: string) => {
+          this.draft = value;
+        })
+        .accessibilityText('目标正文')
+      this.actionChip('保存', () => {
+        this.run(SessionHub.shared().editGoal(this.draft));
+        this.editing = false;
+      })
+      this.actionChip('取消', () => {
+        this.editing = false;
+      })
+    }
+    .width('100%')
+    .padding({ left: Sp.M, right: Sp.M, top: Sp.XS, bottom: Sp.XS })
+    .borderRadius(Radius.S)
+    .backgroundColor(HarmonyColor.SURFACE_TERTIARY)
+    .borderWidth(Border.HAIRLINE)
+    .borderColor(HarmonyColor.DIVIDER)
+  }
+
+  /** 一个文字动作（小目标：用既有 chip 原语，不新造按钮样式） */
+  @Builder
+  actionChip(label: string, onTap: () => void) {
+    NativeChip({
+      label: label,
+      active: false,
+      a11y: label,
+      onTap: onTap
+    })
   }
 }

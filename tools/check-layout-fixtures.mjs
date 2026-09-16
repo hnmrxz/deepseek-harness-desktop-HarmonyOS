@@ -72,6 +72,8 @@ const PURE_FILES = [
   'dshcompat/src/main/ets/QueueCodes.ets',
   // 提交失败后的草稿恢复规则（P7-15）：零依赖
   'appstate/src/main/ets/model/ComposerSend.ets',
+  // 目标栏的可判定状态（P7-20）：零依赖
+  'appstate/src/main/ets/model/GoalBar.ets',
   // 失败码 → 用户文案（P7-19）：表的**键**来自 dshcompat（上游事实只许住那层），
   // 因此这里也要把 ErrorCodes 编进来（见下面 tsc 的 `paths` 映射）
   'dshcompat/src/main/ets/ErrorCodes.ets',
@@ -282,6 +284,7 @@ const IA = require2('./InputAttachment.js');
 const IT = require2('./InputTrigger.js');
 const CS = require2('./ComposerSend.js');
 const FT = require2('./FailureText.js');
+const GB = require2('./GoalBar.js');
 const QR = require2('./QueueCodes.js');
 const t = makeAsserter(selfTest);
 
@@ -2577,6 +2580,54 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   t.eq('文件那条说"不属于这条会话"', file.includes('不属于这条会话'), true);
   t.eq('两条文案必须不同（否则等于没分流）', img !== file, true);
   t.eq('文件那条不把用户引向"图片坏了"', file.includes('这张图'), false);
+}
+
+
+// ── P7-20：目标栏（可见性 / 相位动词 / 读不到与没有目标必须分开） ──
+{
+  const { goalBarStateOf, goalPhaseLabel } = GB;
+
+  // ① 没有目标 / 已完成 ⇒ 整条不渲染（官方："no goal (null) … complete goals render nothing"）
+  t.eq('没有目标 ⇒ 不渲染', goalBarStateOf(false, '', '', '', '').visible, false);
+  t.eq('已完成 ⇒ 不渲染',
+    goalBarStateOf(true, '把 X 做完', 'complete', '', '').visible, false);
+  t.eq('有目标但正文为空 ⇒ 不渲染（不画一条空栏）',
+    goalBarStateOf(true, '', 'active', '', '').visible, false);
+
+  // ② 读不到 ⇒ **要**渲染一行说明（与"没有目标"是两件事）
+  const unread = goalBarStateOf(false, '', '', '', '宿主返回的目标形状未识别（顶层键：a,b）');
+  t.eq('读不到 ⇒ 可见', unread.visible, true);
+  t.eq('读不到 ⇒ 说明就是那一行', unread.objective.includes('形状未识别'), true);
+  t.eq('读不到 ⇒ 不给任何动词（没有目标可操作）',
+    unread.canPause || unread.canResume || unread.canEdit || unread.canClear, false);
+
+  // ③ 相位决定给哪个动词
+  const active = goalBarStateOf(true, '把 X 做完', 'active', '', '');
+  const paused = goalBarStateOf(true, '把 X 做完', 'paused', '', '');
+  t.eq('active ⇒ 给暂停', active.canPause, true);
+  t.eq('active ⇒ **不**给继续（给了就是误导）', active.canResume, false);
+  t.eq('paused ⇒ 给继续', paused.canResume, true);
+  t.eq('paused ⇒ 不给暂停', paused.canPause, false);
+  t.eq('两者都给编辑与清除', active.canEdit && active.canClear && paused.canEdit && paused.canClear, true);
+
+  // ④ 相位未知（Host 没给）⇒ 一个相位动词都不给，但编辑/清除仍在（那是无条件合法的）
+  const unknown = goalBarStateOf(true, '把 X 做完', '', '', '');
+  t.eq('相位未知 ⇒ 不给暂停/继续', unknown.canPause || unknown.canResume, false);
+  t.eq('相位未知 ⇒ 编辑与清除仍给', unknown.canEdit && unknown.canClear, true);
+  t.eq('相位未知 ⇒ 不编一个相位标签', unknown.phaseLabel, '');
+
+  // ⑤ 受阻：正文要带上原因（用户得知道为什么停住了）
+  const blocked = goalBarStateOf(true, '把 X 做完', 'blocked', '需要你确认破坏性操作', '');
+  t.eq('受阻 ⇒ 可见且标签是「受阻」', blocked.visible && blocked.phaseLabel, '受阻');
+  t.eq('受阻 ⇒ 正文里带上原因', blocked.objective.includes('需要你确认'), true);
+  t.eq('受阻 ⇒ 不给继续（受阻不是用户暂停的）', blocked.canResume, false);
+
+  // ⑥ 相位文案（官方 PHASE_LABELS 三个键 + complete）
+  t.eq('active 文案', goalPhaseLabel('active'), '进行中');
+  t.eq('paused 文案', goalPhaseLabel('paused'), '已暂停');
+  t.eq('blocked 文案', goalPhaseLabel('blocked'), '受阻');
+  t.eq('complete 文案', goalPhaseLabel('complete'), '已完成');
+  t.eq('未知相位不给文案', goalPhaseLabel('weird'), '');
 }
 
 

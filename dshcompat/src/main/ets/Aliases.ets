@@ -270,6 +270,19 @@ export const WORKSPACE_FILES_CHANGES_ENDPOINT: string = 'workspaceFiles/changes'
 export const FILE_UPLOAD_ENDPOINT: string = 'fileUploads/upload';
 /** 读取单个目标 */
 export const GOALS_GET_ENDPOINT: string = 'goals/get';
+/*
+ * 目标的**写动词**（P7-20）。参数形状取自本仓的生成表（`Endpoints.ets`）：
+ *   `goals/pause|resume|complete|clear`: `params: ['agentId', 'ref']`
+ *   `goals/edit`:                        `params: ['agentId', 'ref', 'request']`
+ *   `goals/create`:                      `params: ['agentId', 'request']`
+ * `ref` 的线形就是 `GoalRef = {id, revision}`（`dsh-goal/lib/types/types.d.ts`）。
+ * 官方界面（`dsh-client-ui-goal` 的 `GoalBar`）把这几个动词做成：暂停 / 继续 / 编辑 / 清除；
+ * **创建**刻意不在那条栏里（它走 `/goal` 命令）。
+ */
+export const GOALS_PAUSE_ENDPOINT: string = 'goals/pause';
+export const GOALS_RESUME_ENDPOINT: string = 'goals/resume';
+export const GOALS_EDIT_ENDPOINT: string = 'goals/edit';
+export const GOALS_CLEAR_ENDPOINT: string = 'goals/clear';
 /** 记录会话反馈 */
 export const SESSION_FEEDBACK_RECORD_ENDPOINT: string = 'sessionFeedback/record';
 

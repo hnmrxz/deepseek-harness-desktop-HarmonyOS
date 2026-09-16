@@ -81,6 +81,7 @@ import {
   MODEL_CATALOG_ENDPOINT,
   PLUGIN_INVENTORY_ENDPOINT,
   PROJECTION_TITLE,
+  PROJECTION_GOAL,
   PROJECTION_PERMISSIONS,
   PROJECTION_SESSION_STATS,
   PROJECTION_TOKEN_USAGE,
@@ -109,6 +110,11 @@ import {
   SKILLS_LIST_ENDPOINT,
   WORKSPACE_FILES_CHANGES_ENDPOINT,
   GOALS_GET_ENDPOINT,
+  GOALS_PAUSE_ENDPOINT,
+  GOALS_RESUME_ENDPOINT,
+  GOALS_EDIT_ENDPOINT,
+  GOALS_CLEAR_ENDPOINT,
+  EVENT_GOAL_CHANGE,
   MESSAGE_FEEDBACK_DELETE_ENDPOINT,
   MESSAGE_FEEDBACK_LIST_ENDPOINT,
   MESSAGE_FEEDBACK_PUT_ENDPOINT,
@@ -187,6 +193,8 @@ import {
   fileUploadPayload,
   projectCommandOutcome,
   projectApprovalRequest,
+  projectGoalView,
+  goalWritePayload,
   projectCommands,
   projectFileReferences,
   projectFileUpload,
@@ -231,6 +239,8 @@ import type {
   CommandCandidate,
   CommandOutcome,
   ApprovalRequestPayload,
+  GoalViewValue,
+  GoalRefWire,
   ControlFrame,
   FileUploadValue,
   ImageAttachmentRefValue,
@@ -436,6 +446,16 @@ export interface HubSnapshot {
   commands: CommandCandidate[];
   /** 长期任务目标（E242：`goals/get`；空串=该会话没有目标） */
   goalText: string;
+  /**
+   * 目标相位（P7-20）：`'active' | 'paused' | 'blocked' | 'complete'`（'' = 没读到）。
+   *
+   * 【为什么必须带上它】写动词要给对：`active` 给「暂停」、`paused` 给「继续」，
+   * 而"不知道相位"时**一个都不给**（猜错就是一次误导性的操作）。
+   */
+  goalPhase: string;
+  /** 目标 id 与版本（写动词的 `ref` 需要它们；Host 用 revision 做乐观并发控制） */
+  goalId: string;
+  goalRevision: number;
   goalNote: string;
   /** 计划模式（E201：`plan` 投影的 active/pending） */
   planActive: boolean;
@@ -723,6 +743,9 @@ export class SessionHub {
    */
   private goalText: string = '';
   private goalNote: string = '';
+  private goalPhase: string = '';
+  private goalId: string = '';
+  private goalRevision: number = 0;
   /** 消息级反馈（E253：`messageFeedback/list`；按 messageId 查） */
   private feedbackRows: FeedbackRow[] = [];
   private feedbackFor: string = '';
@@ -1043,6 +1066,9 @@ export class SessionHub {
       settingsStates: this.namespaceStates,
       commands: this.commands,
       goalText: this.goalText,
+      goalPhase: this.goalPhase,
+      goalId: this.goalId,
+      goalRevision: this.goalRevision,
       goalNote: this.goalNote,
       planActive: this.planActive,
       planPending: this.planPending,
@@ -2880,6 +2906,23 @@ export class SessionHub {
           this.running = false;
           this.publishTurnNotice(event);
         }
+        /*
+         * 目标变更事件（P7-20）。载荷是 `GoalChangeMeta` 的可辨识联合
+         * （`dsh-goal/lib/types/domain.d.ts`）：
+         *   `{operation:<非 clear>, goal: GoalSnapshot}`（带**整份快照**）
+         *   `{operation:'clear', cleared: GoalRef}`
+         * ⇒ 前者直接落状态、后者清空，两者都不需要额外一次 RPC。
+         * 没有这条，agent 把目标标成完成/受阻后，界面上那条栏会一直显示旧相位。
+         */
+        if (eventType === EVENT_GOAL_CHANGE) {
+          const data: Object | undefined = getRecord(event, 'data');
+          const operation: string = data === undefined ? '' : (getString(data, 'operation') ?? '');
+          if (operation === 'clear') {
+            this.applyGoalView(emptyGoalBag(), EVENT_GOAL_CHANGE + ' clear');
+          } else {
+            this.applyGoalView(data === undefined ? undefined : getRecord(data, 'goal'), EVENT_GOAL_CHANGE);
+          }
+        }
       }
       this.notify();
       return;
@@ -2966,6 +3009,16 @@ export class SessionHub {
       this.tokensCacheWrite = getNumber(usage, 'cacheWriteTokens') ?? 0;
     }
     // E129：会话的 Agent 预设（官方显示在会话标题上；预设创建后固定，所以只读）
+    /*
+     * 目标投影（P7-20）。官方目标栏读的就是**宿主算好的 `goal` 投影**
+     * （`dsh-client-ui-goal` 的 `GoalDock`：absent 或 null 就什么都不渲染），
+     * 因此这里把它当作一条**实时**来源——否则"agent 把目标标成完成/受阻"之后，
+     * 用户界面上那条栏会一直显示旧相位，直到切走再切回来。
+     */
+    const goal: Object | undefined = typed[PROJECTION_GOAL];
+    if (goal !== undefined) {
+      this.applyGoalView(goal, 'goal projection');
+    }
     const preset: Object | undefined = typed[PROJECTION_AGENT_PRESET];
     if (typeof preset === 'string') {
       this.agentPresetId = preset as string;
@@ -3461,20 +3514,104 @@ export class SessionHub {
       return;
     }
     const value: Object | undefined = result.value;
-    const parsed: string | undefined = goalTextFromReply(value);
-    if (parsed === undefined) {
+    this.applyGoalView(value, GOALS_GET_ENDPOINT);
+  }
+
+  /**
+   * 把一份目标快照（来自 `goals/get` 或 `goal/change` 事件）落进状态（P7-20）。
+   *
+   * 【为什么两个来源共用一个函数】官方的目标是**投影**：既可以从 `goals/get` 读到，
+   * 也会随 `goal/change` 事件**实时**推送（事件里带整份 `GoalSnapshot`）。
+   * 两条路的落点必须完全一致，否则"刚暂停又跳回进行中"这类自相矛盾会出现。
+   *
+   * @param value 快照（`GoalSnapshot` / `{goal: …}` / `null` / `{}`）
+   * @param origin 记账用的来源名
+   */
+  private applyGoalView(value: Object | undefined, origin: string): void {
+    const view: GoalViewValue | undefined = projectGoalView(value);
+    if (view === undefined) {
       const keys: string = value === undefined ? '(空回复)' : Object.keys(value as Record<string, Object>).join(', ');
       this.goalText = '';
+      this.goalPhase = '';
+      this.goalId = '';
+      this.goalRevision = 0;
       this.goalNote = '宿主返回的目标形状未识别（顶层键：' + keys + '）；已记账，待按真实形状收紧解析。';
-      this.record('goals/get shape unknown keys=' + keys);
+      this.record(origin + ' shape unknown keys=' + keys);
       this.notify();
       return;
     }
-    this.goalText = parsed;
-    // 空串是**合法结果**（该会话没有设定目标），不是错误——如实说明，别让用户以为坏了
-    this.goalNote = parsed.length === 0 ? '该会话当前没有长期目标。' : '';
-    this.record('goals/get ok len=' + parsed.length);
+    this.goalText = view.present ? view.objective : '';
+    this.goalPhase = view.present ? view.phase : '';
+    this.goalId = view.present ? view.id : '';
+    this.goalRevision = view.present ? view.revision : 0;
+    /*
+     * `goalNote` 只在**读不到**时非空（"确实没有目标"由 `present=false` 表达，
+     * 界面据此整条不渲染——官方语义："no goal (null) … render nothing"）。
+     * 把"没有"写成一句提示，正是我们此前那行白占位面的来源。
+     */
+    this.goalNote = '';
+    this.record(`${origin} ok present=${view.present} phase=${view.phase} rev=${view.revision}`);
     this.notify();
+  }
+
+  /** 目标写动词的共同入口（暂停 / 继续 / 编辑 / 清除；创建走 `/goal` 命令，不在这里） */
+  private async goalWrite(endpoint: string, objective: string, what: string): Promise<ActionNotice> {
+    if (!this.unaryReady) {
+      return noticeWith('offline', 'action', what);
+    }
+    const agent: string = this.commandsFor.length > 0 ? this.commandsFor : this.selectedSessionId;
+    if (agent.length === 0 || this.goalId.length === 0) {
+      return notice('command.not-loaded');
+    }
+    const ref: GoalRefWire = { id: this.goalId, revision: this.goalRevision };
+    const payload: Object | undefined = goalWritePayload(endpoint, agent, ref, objective);
+    if (payload === undefined) {
+      return noticeWith('contract.missing', 'endpoint', endpoint);
+    }
+    const result: RpcResult = await this.conn.call(endpoint, payload);
+    if (!result.ok) {
+      const f = result.error;
+      const code: string = f === undefined ? 'unknown' : f.code;
+      this.record(`goals ${what} fail ${code}`);
+      return noticeWith('command.failed', 'reason', friendlyFailure(code, f === undefined ? '' : f.message));
+    }
+    /*
+     * 写完**不乐观改本地状态**：Host 会随之推 `goal/change`（带整份快照），
+     * 那才是事实。乐观改会让"暂停失败但界面显示已暂停"这种事发生。
+     * 但返回值里的快照（若 Host 给了）立刻用上，免得用户等一个事件往返。
+     */
+    const view: GoalViewValue | undefined = projectGoalView(result.value);
+    if (view !== undefined) {
+      this.applyGoalView(result.value, `goals/${what}`);
+    } else {
+      this.record(`goals ${what} ok（回复无快照，等 goal/change 事件）`);
+      this.notify();
+    }
+    return noticeWith('command.executed', 'name', `/goal ${what}`);
+  }
+
+  /** 暂停当前目标（官方目标栏在 `active` 时给的动作） */
+  async pauseGoal(): Promise<ActionNotice> {
+    return await this.goalWrite(GOALS_PAUSE_ENDPOINT, '', 'pause');
+  }
+
+  /** 继续当前目标（官方目标栏在 `paused` 时给的动作） */
+  async resumeGoal(): Promise<ActionNotice> {
+    return await this.goalWrite(GOALS_RESUME_ENDPOINT, '', 'resume');
+  }
+
+  /** 改写目标正文（官方目标栏的"编辑"：同一行内联表单） */
+  async editGoal(objective: string): Promise<ActionNotice> {
+    const text: string = objective.trim();
+    if (text.length === 0) {
+      return notice('command.no-name');
+    }
+    return await this.goalWrite(GOALS_EDIT_ENDPOINT, text, 'edit');
+  }
+
+  /** 清除当前目标（官方目标栏的"清除"） */
+  async clearGoal(): Promise<ActionNotice> {
+    return await this.goalWrite(GOALS_CLEAR_ENDPOINT, '', 'clear');
   }
 
   /**
@@ -5264,6 +5401,12 @@ function collapseNode(node: FileNode): FileNode {
  */
 function friendlyWorkspaceFailure(code: string, message: string): string {
   return failureText(code, message);
+}
+
+/** 一个"没有目标"的空包（`goal/change clear` 用它把状态清干净）。 */
+function emptyGoalBag(): Object {
+  const bag: Record<string, Object> = {};
+  return bag as Object;
 }
 
 /** 空的排队项数组（规避无类型数组字面量）。 */

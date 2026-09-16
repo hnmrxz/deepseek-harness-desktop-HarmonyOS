@@ -104,6 +104,15 @@ export const EVENT_LLM_ADAPTERS_UPDATED: string = 'llm/adapters-updated';
 export const EVENT_COMMANDS_CHANGE: string = 'commands/change';
 /** 目标激活状态变化 */
 export const EVENT_GOAL_ACTIVATION_CHANGED: string = 'goal/activation-changed';
+/**
+ * 目标变更事件（P7-20）。
+ *
+ * 载荷是 `GoalChangeMeta`（`dsh-goal/lib/types/domain.d.ts`）的可辨识联合：
+ *   `{kind:'goal/change', version:1, operation:<非 clear>, goal: GoalSnapshot, roundsStarted, …}`
+ *   `{kind:'goal/change', version:1, operation:'clear', cleared: GoalRef, clearedAt}`
+ * ⇒ 事件里带**整份快照**，所以目标栏可以靠它**实时**更新，不必轮询。
+ */
+export const EVENT_GOAL_CHANGE: string = 'goal/change';
 
 // ── 会话轨迹事件的**命名空间前缀** ──
 //
@@ -422,6 +431,14 @@ export const APPROVAL_UNAVAILABLE: string = 'unavailable';
 
 /** 会话标题所在的**投影键** */
 export const PROJECTION_TITLE: string = 'title';
+/**
+ * 目标投影键（P7-20）。
+ *
+ * 官方目标栏读的是**宿主算好的 `goal` 投影**（`dsh-client-ui-goal` 的 `GoalDock`：
+ * "reads the host-computed 'goal' projection (whole value; absent or null renders nothing)"），
+ * 不是轮询 `goals/get` —— 后者只在"刚进会话、投影还没到"时用。
+ */
+export const PROJECTION_GOAL: string = 'goal';
 /**
  * 权限组合所在的**投影键**（E124）。
  *
