@@ -20,6 +20,7 @@ import { SubagentCard } from './SubagentCard';
 import { ToolCard } from './ToolCard';
 import { ReasoningRow } from './ReasoningRow';
 import { ConversationHeader } from './ConversationHeader';
+import { GoalBar } from './GoalBar';
 import { TurnView, TurnViewController } from './TurnView';
 import { PendingPane } from './PendingPane';
 
@@ -1062,6 +1063,19 @@ export struct ConversationPane {
         .constraintSize({ maxHeight: 300 })
         .padding({ left: Sp.M, right: Sp.M, bottom: Sp.S })
       }
+
+      /*
+       * 【目标栏搬到输入区上方（2026-09-17，对齐官方 + 解锁 D38）】
+       *
+       * 官方会话页里「进行中的目标」就常驻在输入区上方一行（可编辑/清除）。
+       * 我们此前把它放在 `MainShell` 的**命令面板**里，而那个面板**只能靠快捷键打开**
+       * （`paletteOpen` 只由 `command-palette` 动作置位）⇒ 手机上根本看不到目标栏，
+       * D38 §1–§4/§6/§7 那几条判据在真机上"不可达"而不是"不通过"。
+       *
+       * `GoalBar` 自足读中枢快照（没有 props），所以搬过来只需要挂一行；
+       * 没有目标时它自己整段不占位（D38 §5 已验过通过）。
+       */
+      GoalBar()
 
       Composer({
         draft: this.draft,

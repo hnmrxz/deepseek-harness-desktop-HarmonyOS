@@ -258,8 +258,18 @@ export const SIDEBAR_PINNED_ORDER: number = 900;
  */
 export function sidebarPanels(): PanelDescriptor[] {
   return [
-    { id: PANEL_SIDEBAR_WORKSPACES, location: PanelLocation.SIDEBAR, owner: 'workspace',
-      label: '工作区', order: 10, available: () => true },
+    /*
+     * 【2026-09-17：去掉「工作区」这个侧栏入口 —— 它不再是一个"页面"】
+     *
+     * 用户原话：「其实不需要单独的工作区页面，工作区只需要在侧栏展示即可。
+     * 点击具体的工作区内会话打开会话页面即可。」
+     *
+     * 侧栏本来就已经把**工作区树连同会话**画在里面了（`SidebarShell.panelBody` 里的
+     * `WorkspaceBrowser`），点一条会话就直接进会话页。再留一个「工作区」入口，
+     * 它唯一的作用是把主区换成"第二份工作区列表"——同一批数据出现两次，且手机上一次只看得到一份。
+     *
+     * 与「核心」那条同一个口径：**产品语义写在模型里**，而不是靠视图恰好没遍历到它。
+     */
     { id: PANEL_SIDEBAR_CORE, location: PanelLocation.SIDEBAR, owner: 'core',
       label: '核心', order: 20, available: () => false },
     // order 很大 ⇒ 始终排在末尾（官方把 Settings 固定在底部）
