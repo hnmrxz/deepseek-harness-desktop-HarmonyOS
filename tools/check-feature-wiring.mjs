@@ -121,6 +121,13 @@ const FEATURES = [
    * 用户主动关掉一个改过但没提交的浮层时，明确告诉他"已放弃、没有写入 Host"。
    * 钉三段：判定（纯模型）+ 唯一执行点（`dismissSheetByUser`）+ 拖拽关闭那条路必须真的接上。
    */
+  /*
+   * 错误生命周期（P8-6c）。`docs/09` §3.4 的硬要求：**新一轮成功后清除旧的 transient error**、
+   * 持久连接问题只有真正恢复连接后才清除。此前只有一个 `lastError` 槽位而界面无条件渲染它
+   * ⇒ 一次"发送被拒"之后成功跑完一整轮，那条红字还挂着，用户会问"我到底发出去没有"。
+   * 钉三段：纯模型判定 + 连接级写入口 + 清理调用点（连上 / 发送成功 / 一轮成功跑完）。
+   */
+  { name: '错误生命周期', patterns: [['errorClearedBy', 2], ['clearErrorOn', 2], ['setConnectionError', 2]] },
   { name: '浮层关闭语义', patterns: [['sheetDiscardNotice', 2], ['dismissSheetByUser', 2], ['textSettingSeed', 2]] },
   { name: '内部内容隔离', patterns: [['mayExposeBodyToUser', 2], ['userFacingBodyOf', 2], ['scrubCredentials', 2], ['INTERNAL_BODY_HIDDEN', 1]] },
   /*

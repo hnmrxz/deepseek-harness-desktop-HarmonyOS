@@ -200,6 +200,17 @@ export type {
 export { aboutInfo } from './model/StubData2';
 export { emptyDiagReport } from './model/Diag';
 
+// ── 错误状态的生命周期（P8-6c：连上了才清连接级，动作成了就清动作级） ──
+export {
+  ERROR_SCOPE_ACTION,
+  ERROR_SCOPE_CONNECTION,
+  ERROR_TRIGGER_CONNECTED,
+  ERROR_TRIGGER_PROMPT_ACCEPTED,
+  ERROR_TRIGGER_TURN_ENDED_OK,
+  errorClearedBy,
+  errorIsConnectionLevel
+} from './model/ErrorLifecycle';
+
 // ── 每会话输入草稿（P8-3：草稿是**会话视图状态的一部分**，官方 views.d.ts 逐字） ──
 export {
   COMPOSER_DRAFT_MAX,

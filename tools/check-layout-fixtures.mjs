@@ -72,6 +72,8 @@ const PURE_FILES = [
   'dshcompat/src/main/ets/QueueCodes.ets',
   // 提交失败后的草稿恢复规则（P7-15）：零依赖
   'appstate/src/main/ets/model/ComposerSend.ets',
+  // 错误生命周期（P8-6c）：零依赖，判"一条错误什么时候该消失"
+  'appstate/src/main/ets/model/ErrorLifecycle.ets',
   // 每会话草稿（P8-3）：零依赖，纯数组操作
   'appstate/src/main/ets/model/ComposerDrafts.ets',
   // 目标栏的可判定状态（P7-20）：零依赖
@@ -2666,6 +2668,34 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   t.eq('大小写变体不命中', isBenignQueueRace('SESSION/QUEUE-ITEM-NOT-FOUND'), false);
   t.eq('前缀相同但不同的码不命中', isBenignQueueRace('session/steer-unavailable-x'), false);
   t.eq('非竞态返回 NONE', queueRaceKind('gateway/internal'), QUEUE_RACE_NONE);
+}
+
+// ── P8-6c：错误状态的生命周期（连上了才清连接级；动作成了就清动作级） ──
+{
+  const EL = require2('./ErrorLifecycle.js');
+  const { errorClearedBy, errorIsConnectionLevel, ERROR_SCOPE_CONNECTION, ERROR_SCOPE_ACTION,
+    ERROR_TRIGGER_CONNECTED, ERROR_TRIGGER_PROMPT_ACCEPTED, ERROR_TRIGGER_TURN_ENDED_OK } = EL;
+
+  // ① 连接级：只有真正连上才消失（docs/09 §3.4 的第二条）
+  t.eq('连接级 + 连上了 ⇒ 清', errorClearedBy(ERROR_SCOPE_CONNECTION, ERROR_TRIGGER_CONNECTED), true);
+  t.eq('连接级 + 发送成功 ⇒ **不清**（发送成功证明不了连接问题解决了）',
+    errorClearedBy(ERROR_SCOPE_CONNECTION, ERROR_TRIGGER_PROMPT_ACCEPTED), false);
+  t.eq('连接级 + 一轮跑完 ⇒ 也不清',
+    errorClearedBy(ERROR_SCOPE_CONNECTION, ERROR_TRIGGER_TURN_ENDED_OK), false);
+
+  // ② 动作级：同类动作成功后就该消失（否则界面上挂着一条过期提示，用户以为现在还是坏的）
+  t.eq('动作级 + 发送成功 ⇒ 清', errorClearedBy(ERROR_SCOPE_ACTION, ERROR_TRIGGER_PROMPT_ACCEPTED), true);
+  t.eq('动作级 + 一轮成功跑完 ⇒ 清', errorClearedBy(ERROR_SCOPE_ACTION, ERROR_TRIGGER_TURN_ENDED_OK), true);
+  t.eq('动作级 + 连上了 ⇒ 也清（连上了说明环境变了）',
+    errorClearedBy(ERROR_SCOPE_ACTION, ERROR_TRIGGER_CONNECTED), true);
+
+  // ③ 未知作用域按动作级处理（宁可多清一次，也不要让过期提示长期挂着）
+  t.eq('作用域缺失/未知 ⇒ 按动作级（清）', errorClearedBy('', ERROR_TRIGGER_PROMPT_ACCEPTED), true);
+  t.eq('空触发事件 ⇒ 什么都不清', errorClearedBy(ERROR_SCOPE_ACTION, ''), false);
+
+  // ④ 界面/诊断据此解释"它为什么还在"
+  t.eq('连接级判定', errorIsConnectionLevel(ERROR_SCOPE_CONNECTION), true);
+  t.eq('动作级不是连接级', errorIsConnectionLevel(ERROR_SCOPE_ACTION), false);
 }
 
 // ── P8-4：用户主动关掉编辑浮层时的"放弃了什么" ──

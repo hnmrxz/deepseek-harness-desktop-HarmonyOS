@@ -34,6 +34,14 @@ import { SessionJob } from '../model/Jobs';
 import { retryStatusLine } from '../model/Present';
 import { failureText } from '../model/FailureText';
 import {
+  ERROR_SCOPE_ACTION,
+  ERROR_SCOPE_CONNECTION,
+  ERROR_TRIGGER_CONNECTED,
+  ERROR_TRIGGER_PROMPT_ACCEPTED,
+  ERROR_TRIGGER_TURN_ENDED_OK,
+  errorClearedBy
+} from '../model/ErrorLifecycle';
+import {
   AttachmentDraftInput,
   AttachmentKind,
   AttachmentPartPlan,
@@ -594,6 +602,14 @@ export class SessionHub {
    */
   private unaryReady: boolean = false;
   private lastError: string = '';
+  /**
+   * 当前这条错误的作用域（P8-6c，见 `model/ErrorLifecycle.ets`）。
+   *
+   * 【为什么按"谁写的"分而不是按文案猜】同一句话可能两种来源都有（"未连接：无法…"既是动作被拒
+   * 也是连接事实）；猜文案是本仓反复禁止的做法。默认**动作级**（更保守：会随下一次成功消失），
+   * 只有连接层那几处显式标成连接级。
+   */
+  private lastErrorScope: string = ERROR_SCOPE_ACTION;
   private traceLines: string[] = [];
   /*
    * 会话搜索（P7-1，对齐官方 sidebar 的 search）：
@@ -815,7 +831,7 @@ export class SessionHub {
   configure(address: string, name?: string): boolean {
     const cfg = this.conn.configure(address, name);
     if (cfg === undefined) {
-      this.lastError = '地址无法解析：请检查形如 http://主机:端口 的写法';
+      this.setConnectionError('地址无法解析：请检查形如 http://主机:端口 的写法');
       this.notify();
       return false;
     }
@@ -847,7 +863,7 @@ export class SessionHub {
     const auth = await this.conn.authenticate();
     if (!auth.ok) {
       this.phase = HubPhase.DEGRADED;
-      this.lastError = authAdvice(auth.status, auth.reason === undefined ? '未提供原因' : auth.reason);
+      this.setConnectionError(authAdvice(auth.status, auth.reason === undefined ? '未提供原因' : auth.reason));
       this.notify();
       return false;
     }
@@ -864,7 +880,7 @@ export class SessionHub {
       onEnd: (error?: string) => {
         this.eventsReady = false;
         if (error !== undefined && error.length > 0) {
-          this.lastError = `事件流终止：${error}`;
+          this.setConnectionError(`事件流终止：${error}`);
           this.record(`events end ${error}`);
         }
         this.phase = this.phase === HubPhase.LIVE ? HubPhase.DEGRADED : this.phase;
@@ -875,7 +891,7 @@ export class SessionHub {
     const started = await this.conn.start(sink);
     if (!started) {
       this.phase = HubPhase.DEGRADED;
-      this.lastError = this.conn.getLastError() ?? '连接未建立：请检查 Host 是否在运行、令牌是否有效';
+      this.setConnectionError(this.conn.getLastError() ?? '连接未建立：请检查 Host 是否在运行、令牌是否有效');
       this.notify();
       return false;
     }
@@ -906,6 +922,11 @@ export class SessionHub {
    */
   private handleConnectionState(state: ConnectionState, detail: string): void {
     if (state === ConnectionState.CONNECTED) {
+      /*
+       * 真的连上了：按规则清掉旧错误（P8-6c）。
+       * 这一步必须发生在**开流之前**——否则 `refreshSessions` 失败会把新错误又写成旧的。
+       */
+      this.clearErrorOn(ERROR_TRIGGER_CONNECTED);
       this.record('connection connected');
       /**
        * 【必须在载体恢复后重新开流】这里曾经直接 `return`，于是**一次断线之后
@@ -925,7 +946,7 @@ export class SessionHub {
     if (state === ConnectionState.DISCONNECTED) {
       this.phase = HubPhase.DEGRADED;
       if (this.lastError.length === 0) {
-        this.lastError = detail;
+        this.setConnectionError(detail);
       }
       this.record(`connection disconnected: ${detail}`);
       this.notify();
@@ -1105,6 +1126,34 @@ export class SessionHub {
       n++;
     }
     return n;
+  }
+
+  /**
+   * 写一条**连接级**错误（P8-6c）：它只有"真正连上"才该消失。
+   *
+   * 用方法而不是逐处 `this.lastError = …` 的原因是**作用域必须跟着文案一起写**：
+   * 分成两步（先写文案、再记得设作用域）迟早会漏一处，而漏掉的那处会表现为
+   * "一条早就过期的连接错误一直挂在界面上"。
+   */
+  private setConnectionError(text: string): void {
+    this.lastError = text;
+    this.lastErrorScope = ERROR_SCOPE_CONNECTION;
+  }
+
+  /**
+   * 按规则清理错误（P8-6c）：连上了清全部；动作成功只清动作级的那些。
+   *
+   * 判据在零依赖 `model/ErrorLifecycle.errorClearedBy()`（有 fixture）。
+   */
+  private clearErrorOn(trigger: string): void {
+    if (this.lastError.length === 0) {
+      return;
+    }
+    if (errorClearedBy(this.lastErrorScope, trigger)) {
+      this.record(`error cleared on ${trigger}（scope=${this.lastErrorScope}）`);
+      this.lastError = '';
+      this.lastErrorScope = ERROR_SCOPE_ACTION;
+    }
   }
 
   setTraceEnabled(on: boolean): void {
@@ -2907,6 +2956,13 @@ export class SessionHub {
            * 因为把一次正常完成误报成失败会让用户白查一场。
            */
           this.running = false;
+          // 成功收场才算"这一轮没问题了"；失败收场时那条错误正好解释了为什么失败 ⇒ 留着
+          const reason: Object | undefined = getRecord(event, 'data');
+          const reasonKind: string = reason === undefined ? ''
+            : (getString(getRecord(reason, 'reason') ?? reason, 'kind') ?? '');
+          if (reasonKind !== 'error') {
+            this.clearErrorOn(ERROR_TRIGGER_TURN_ENDED_OK);
+          }
           this.publishTurnNotice(event);
         }
         /*
@@ -4511,6 +4567,8 @@ export class SessionHub {
       // 回执「成功进入收件箱」后即被 Host 回收，因此本地列表必须同时清空：
       // 留着它下次再发会被判为未知回执，而用户以为附件还在。
       this.attachmentList = [];
+      // 这次发送成了 ⇒ 之前那条"发送被拒/队列失败"的提示已经过期（P8-6c）
+      this.clearErrorOn(ERROR_TRIGGER_PROMPT_ACCEPTED);
       this.record(`prompt accepted ${requestId.substring(0, 8)}`);
       this.notify();
       return true;
