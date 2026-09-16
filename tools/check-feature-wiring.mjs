@@ -156,6 +156,14 @@ const FEATURES = [
    * （同工作区不写位置、没有 cwd 写「（无工作目录）」），时间措辞用官方引用命名空间那套 `{n}分钟`。
    * 钉三段：纯模型 + 钻孔那条分支 + 行信息那两处调用。
    */
+  /*
+   * 会话滚动位置（P9-6）。此前一律"进会话贴底" ⇒ 去设置页/看文件预览再回来，
+   * 正在读的那段历史就没了（长会话要重新翻很久）。现在：离开时记位置、回到**同一个**会话时恢复；
+   * 换会话仍然"看最新"（本仓既有决定，不动）。四条判据都在纯模型里：同会话 / 下标在范围内 /
+   * 用户没自己滚过 / 列表已装下那一条。
+   * 钉三段：纯模型 + 宿主保管（`Index.scrollSpot`）+ 面板里的记与恢复两个调用点。
+   */
+  { name: '会话滚动位置', patterns: [['rememberScrollSpot', 2], ['scrollRestoreTarget', 2], ['onRememberSpot', 2], ['scrollSpot', 3]] },
   { name: '引用菜单钻取', patterns: [['referenceDrillQuery', 2], ['referenceCrumbs', 2], ['referenceAgeLine', 2],
     ['referenceFileRowName', 2], ['referenceSessionRowDetail', 2]] },
   { name: '命令参数分流', patterns: [['commandPickAction', 2], ['commandDraftText', 2], ['commandInputNotice', 2]] },

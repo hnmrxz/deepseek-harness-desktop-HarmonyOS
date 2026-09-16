@@ -446,7 +446,16 @@ export {
 export type { ModalityEvidence } from './model/InputFacts';
 
 // ── 贴底跟随模型（P1 §8：sticky-follow 独立管理；纯函数，可本机直接测） ──
-export { followTimerShouldRun, FollowSignal, nextFollowing, shouldJumpOnNewItems } from './model/Follow';
+export {
+  emptyScrollSpot,
+  followTimerShouldRun,
+  FollowSignal,
+  nextFollowing,
+  rememberScrollSpot,
+  scrollRestoreTarget,
+  shouldJumpOnNewItems
+} from './model/Follow';
+export type { ScrollSpot } from './model/Follow';
 
 // ── 回合模型（P1 §8：Turn → ProcessGroup + Answer；纯函数，可本机直接测） ──
 export {

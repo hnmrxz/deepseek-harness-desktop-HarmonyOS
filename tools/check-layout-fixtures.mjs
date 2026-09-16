@@ -2670,6 +2670,36 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   t.eq('非竞态返回 NONE', queueRaceKind('gateway/internal'), QUEUE_RACE_NONE);
 }
 
+// ── P9-6：离开又回到**同一个**会话时的滚动位置 ──
+{
+  const FL = require2('./Follow.js');
+  const { emptyScrollSpot, rememberScrollSpot, scrollRestoreTarget } = FL;
+
+  // ① 记录：贴底跟随时不记（"回到底部"是默认动作，记了会与 follow 打架）
+  t.eq('翻过历史后离开 ⇒ 记下（会话 + 顶部下标）',
+    JSON.stringify(rememberScrollSpot('s1', 12, false)), '{"sessionId":"s1","top":12}');
+  t.eq('贴底跟随时离开 ⇒ 空记录', rememberScrollSpot('s1', 12, true).top, -1);
+  t.eq('没有会话 id ⇒ 空记录（不记一个"谁的"都不知道的位置）', rememberScrollSpot('', 12, false).top, -1);
+  t.eq('顶部下标无效（-1，列表还没量过）⇒ 空记录', rememberScrollSpot('s1', -1, false).top, -1);
+  t.eq('空记录的两个字段', `${emptyScrollSpot().sessionId}|${emptyScrollSpot().top}`, '|-1');
+
+  // ② 恢复判据：四条缺一不可（换了会话 / 越界 / 用户自己滚过 / 列表还没装下）
+  const spot = rememberScrollSpot('s1', 12, false);
+  t.eq('同一个会话 + 下标在范围内 + 没自己滚过 + 列表已装下 ⇒ 恢复',
+    scrollRestoreTarget(spot, 's1', 20, false), 12);
+  t.eq('**换了会话 ⇒ 不恢复**（既有决定：切会话的意图是"看最新"）',
+    scrollRestoreTarget(spot, 's2', 20, false), -1);
+  t.eq('用户自己滚过 ⇒ 不把他拽回去', scrollRestoreTarget(spot, 's1', 20, true), -1);
+  t.eq('列表还没装下那一条（数据异步到）⇒ 先等，不恢复',
+    scrollRestoreTarget(spot, 's1', 5, false), -1);
+  t.eq('下标刚好等于条目数 ⇒ 还不算装下（越界会让 scrollToIndex 抛）',
+    scrollRestoreTarget(spot, 's1', 12, false), -1);
+  t.eq('没有记录 ⇒ 不恢复', scrollRestoreTarget(emptyScrollSpot(), 's1', 20, false), -1);
+  t.eq('空会话 id ⇒ 不恢复', scrollRestoreTarget(spot, '', 20, false), -1);
+  t.eq('恢复到第 0 条也成立（`0` 是合法下标，不能与 -1 混为一谈）',
+    scrollRestoreTarget(rememberScrollSpot('s1', 0, false), 's1', 3, false), 0);
+}
+
 // ── P9-5：`@` 引用菜单的钻取、面包屑与行信息（官方 ui-reference） ──
 {
   const IT = require2('./InputTrigger.js');

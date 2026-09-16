@@ -8,7 +8,7 @@
  * 所有动作通过回调上报宿主，便于接入真实连接时只改宿主。
  */
 
-import { CommandCandidate, FeedbackRow, FollowSignal, Fs, ModelOption, ModelSelection, PendingAttachment, PendingItem, QueuedItem, Radius, ReferenceCandidate, SessionHub, Sp, Speaker, TrajectoryItem, TrajectoryKind, cellIdForListIndex, chatRowOfItemIndex, chatVisibleItems, defaultExpanded, followTimerShouldRun, groupTurns, jobTickerNeeded, listIndexForCell, matchConversationIndices, matchTrajectoryIndices, modelSelectionLabel, nextFollowing, parseMarkdown, pendingElsewhere, pendingForSession, plainTextOf, presentTool, shouldJumpOnNewItems, stepMatch, takeoverCommand, takeoverHeadline, takeoverStripText, toolStateLabel, userFacingBodyOf } from 'appstate';
+import { CommandCandidate, emptyScrollSpot, FeedbackRow, FollowSignal, Fs, ModelOption, ModelSelection, PendingAttachment, PendingItem, QueuedItem, Radius, ReferenceCandidate, scrollRestoreTarget, ScrollSpot, SessionHub, Sp, Speaker, TrajectoryItem, TrajectoryKind, cellIdForListIndex, chatRowOfItemIndex, chatVisibleItems, defaultExpanded, followTimerShouldRun, groupTurns, jobTickerNeeded, listIndexForCell, matchConversationIndices, matchTrajectoryIndices, modelSelectionLabel, nextFollowing, parseMarkdown, pendingElsewhere, pendingForSession, plainTextOf, presentTool, shouldJumpOnNewItems, stepMatch, takeoverCommand, takeoverHeadline, takeoverStripText, toolStateLabel, userFacingBodyOf } from 'appstate';
 /** 类型单独 import type（本仓约定：值与类型分开写） */
 import type { PendingAnswerDraft, ActionNotice, SessionJob, SessionStatsInput, Turn } from 'appstate';
 import type { NativeAction } from './NativePrimitives';
@@ -273,8 +273,26 @@ export struct ConversationPane {
    * 这种情况也稳：只要最后一条重新可见，就认为用户回到了底部。
    */
   @State stickToBottom: boolean = true;
+  /**
+   * 顶部可见条目的下标（用来在离开时记位置）。
+   *
+   * 【为什么要自己记一份】`onScrollIndex` 给的 `start` 只在滚动时到达；
+   * 离开那一刻需要的是"最后一次已知的顶部"，所以留一个字段。
+   */
+  private topVisible: number = -1;
+  /** 用户自己滚动过（自己滚了就别在回来时把他拽回去） */
+  private userScrolled: boolean = false;
   /** 渲染条数（宿主传入；@Watch 用于"有新条目就贴底"） */
   @Prop @Watch('onItemsChanged') itemCount: number = 0;
+  /**
+   * 上次离开会话时的位置（**由宿主持有**：本组件在页面切换时会被销毁重建，存不住）。
+   * 只服务"离开又回到**同一个**会话"这一种情形，见 `model/Follow.rememberScrollSpot`。
+   */
+  @Prop scrollSpot: ScrollSpot = emptyScrollSpot();
+  /** 记下离开时的位置（宿主写回它的那份记录） */
+  onRememberSpot: (sessionId: string, top: number, following: boolean) => void =
+    (sessionId: string, top: number, following: boolean) => {
+    };
   private followTimer: number = -1;
 
   /** 可见区间变化：最后一条可见 ⇔ 用户在底部 ⇒ 恢复跟随；否则解除跟随 */
@@ -298,9 +316,42 @@ export struct ConversationPane {
   }
 
   private onItemsChanged(): void {
+    /*
+     * 恢复优先：`aboutToAppear` 时列表往往还没装下那一条（数据异步到），
+     * 于是这里在每次条目变化时再试一次——直到用户自己动手（`userScrolled`）为止。
+     */
+    const target: number = scrollRestoreTarget(this.scrollSpot, this.sessionId, this.itemCount,
+      this.userScrolled);
+    if (target >= 0) {
+      this.restoreTo(target);
+      return;
+    }
     if (shouldJumpOnNewItems(this.stickToBottom)) {
       this.scrollToLatest();
     }
+  }
+
+  /**
+   * 恢复到指定下标（列表还没装下那一条时**不动**，等下一次条目变化再试）。
+   *
+   * 【为什么不能"失败就贴底"】用户离开前在翻历史，回来时被甩到底部，比停在原处更糟；
+   * 而"列表还没就绪"是**暂时**的（数据是异步到的）⇒ 保持现状、下一次内容变化再试。
+   */
+  private restoreTo(index: number): void {
+    try {
+      this.scroller.scrollToIndex(index, false, ScrollAlign.START);
+    } catch (err) {
+      // 列表未就绪/越界：忽略，下一次条目变化会再试（`onItemsChanged`）
+    }
+  }
+
+  /**
+   * 记下离开时的位置（`aboutToDisappear` 与页面切换时都会走到）。
+   *
+   * 贴底跟随时记的是"空"（见 `rememberScrollSpot` 的说明：回到底部是默认动作，不需要记录）。
+   */
+  private rememberOnLeave(): void {
+    this.onRememberSpot(this.sessionId, this.topVisible, this.stickToBottom);
   }
 
   /** 贴到底部；失败不该让页面崩（列表未就绪/尺寸为 0 时会抛） */
@@ -346,11 +397,25 @@ export struct ConversationPane {
   }
 
   aboutToAppear(): void {
-    // 进入会话先贴到底部（用户要看到的是最新一条，而不是最老一条）
+    /*
+     * 【P9-6：回到**同一个**会话时回到原处】此前一律贴底 ⇒ 去设置页看两眼再回来、
+     * 或去看一眼产出文件再回来，正在读的那段历史就没了（长会话里要重新翻很久）。
+     * 判据在纯模型 `Follow.scrollRestoreTarget`：记录里是这个会话 + 下标在范围内 +
+     * 用户没自己滚过 + 列表已经装下那一条。任一条不满足 ⇒ 照旧贴底（既有行为不变）。
+     */
+    const target: number = scrollRestoreTarget(this.scrollSpot, this.sessionId, this.itemCount,
+      this.userScrolled);
+    if (target >= 0) {
+      this.restoreTo(target);
+      return;
+    }
+    // 进入**新**会话先贴到底部（用户要看到的是最新一条，而不是最老一条）
     this.scrollToLatest();
   }
 
   aboutToDisappear(): void {
+    // 离开前记下位置：回到同一个会话时用它把用户放回原处（P9-6）
+    this.rememberOnLeave();
     if (this.followTimer >= 0) {
       clearInterval(this.followTimer);
       this.followTimer = -1;
@@ -902,6 +967,16 @@ export struct ConversationPane {
       .padding({ left: Sp.M, right: Sp.M, top: Sp.M })
       // E113：可见区间决定"是否跟随最新"；贴底跟随由 `stickToBottom` + 定时器实现
       .onScrollIndex((start: number, end: number) => {
+        this.topVisible = start;
+        /*
+         * 【怎么区分"用户滚的"与"程序滚的"】程序滚动只有两种：贴底（`scrollEdge`）与恢复
+         * （`scrollToIndex`）。两者都会触发本回调，但**贴底时 `stickToBottom` 为真**，
+         * 而恢复时我们刚刚按记录滚到位、`start` 恰好等于目标 ⇒ 用"当前是否跟随"就能分辨：
+         * 不跟随时收到的可见区间变化 = 用户在翻。
+         */
+        if (!this.stickToBottom) {
+          this.userScrolled = true;
+        }
         this.onVisibleRange(start, end);
         this.syncFollowTimer();
       })

@@ -17,7 +17,7 @@
  * 而它**已经是组件 `HubBanner`**，故这里直接渲染组件。
  */
 
-import { ActionNotice, CommandCandidate, DiagEntry, DiagMode, DiagReport, Fs, HostRecord, HubPhase, MAIN_CONNECT, MAIN_CONVERSATION, ModelOption, ModelSelection, PanelRegistry, PendingAttachment, PendingItem, Radius, ReferenceCandidate, SessionHub, SessionJob, Sp, StackPage, TrajectoryItem, COMMAND_PICK_DRAFT, commandDraftText, commandInputNotice, commandPickAction, diagHintOf, diagTitleOf, filterDiagEntries, openSettings } from 'appstate';
+import { ActionNotice, COMMAND_PICK_DRAFT, CommandCandidate, DiagEntry, DiagMode, DiagReport, Fs, HostRecord, HubPhase, MAIN_CONNECT, MAIN_CONVERSATION, ModelOption, ModelSelection, PanelRegistry, PendingAttachment, PendingItem, Radius, ReferenceCandidate, ScrollSpot, SessionHub, SessionJob, Sp, StackPage, TrajectoryItem, commandDraftText, commandInputNotice, commandPickAction, diagHintOf, diagTitleOf, filterDiagEntries, openSettings } from 'appstate';
 import hilog from '@ohos.hilog';
 import { CommandList } from '../CommandList';
 import { ConnectPane } from '../ConnectPane';
@@ -65,6 +65,10 @@ export interface MainShellFacade {
   diagRunning: boolean;
   draft: string;
   setDraft: (value: string) => void;
+  /** 上次离开会话时的滚动位置（P9-6；由宿主保管，见 `Index.scrollSpot`） */
+  scrollSpot: ScrollSpot;
+  /** 记下离开时的位置（`sessionId` + 顶部下标 + 当时是否贴底跟随） */
+  onRememberSpot: (sessionId: string, top: number, following: boolean) => void;
   exportDiagnostics: () => void;
   hosts: HostRecord[];
   hubAuthority: string;
@@ -355,6 +359,10 @@ export struct MainShell {
         offline: this.f.offline,
         queuedCount: this.f.queuedCount,
         draft: this.f.draft,
+        scrollSpot: this.f.scrollSpot,
+        onRememberSpot: (sessionId: string, top: number, following: boolean) => {
+          this.f.onRememberSpot(sessionId, top, following);
+        },
         attachments: this.f.attachments,
         models: this.f.models,
         selection: this.f.selection,

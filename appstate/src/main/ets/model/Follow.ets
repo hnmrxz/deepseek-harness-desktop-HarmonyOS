@@ -64,3 +64,66 @@ export function followTimerShouldRun(following: boolean, running: boolean): bool
 export function shouldJumpOnNewItems(following: boolean): boolean {
   return following;
 }
+
+/* ───────────────────────── 离开/回到同一个会话时的滚动位置（P9-6） ───────────────────────── */
+
+/**
+ * 上次离开某个会话时，列表顶部那一条的下标。
+ *
+ * 【为什么是"一个位置"而不是每个会话各记一份】"切到别的会话要不要回到它自己上次的位置"
+ * 与本仓既有的明确决定冲突：会话切换的意图是**看最新**（P1 定的，见
+ * `ConversationPane.onSessionChanged` 的注释）。所以这一层只服务一种情形——
+ * **你离开了这个会话（去设置页、去看文件预览、去别处转一圈），又回到同一个会话**：
+ * 那时把你放回原处，比把你甩到底部再让你重新翻一遍要合理得多。
+ *
+ * `top < 0` 表示"没有记录"（或记录无效），调用方据此走原来的"贴到底部"。
+ */
+export interface ScrollSpot {
+  /** 会话 id（空串 = 没有记录） */
+  sessionId: string;
+  /** 列表顶部可见条目的下标（`-1` = 没有记录） */
+  top: number;
+}
+
+/** 空记录 */
+export function emptyScrollSpot(): ScrollSpot {
+  return { sessionId: '', top: -1 };
+}
+
+/**
+ * 记下离开时的位置。
+ *
+ * 【为什么"在底部"不记】贴底跟随是默认行为（新会话、发消息、切会话都回到底部）：
+ * 把"我在底部"也记下来的话，回来时那次 restore 与随后的 follow 会互相打架
+ * （先滚到底、又被新条目挤走），而"回到底部"本来就是默认动作，不需要记录。
+ *
+ * @param following 离开时是否处于贴底跟随（true ⇒ 记录被清空）
+ */
+export function rememberScrollSpot(sessionId: string, top: number, following: boolean): ScrollSpot {
+  if (sessionId.length === 0 || top < 0 || following) {
+    return emptyScrollSpot();
+  }
+  return { sessionId: sessionId, top: top };
+}
+
+/**
+ * 进会话时要不要恢复上次的位置，以及恢复到哪一条。
+ *
+ * 四条判据缺一不可：
+ *   ① 记录里就是这个会话（换了会话 ⇒ 走"看最新"，见上面的说明）；
+ *   ② 记的下标还在列表范围内（会话里的条目会随投影变化，越界的下标 `scrollToIndex` 会抛）；
+ *   ③ 用户还没有自己滚动过（他自己滚了，就别把他拽回去）；
+ *   ④ 列表已经装下了那一条（`itemCount > top`；数据是异步到的，没到就先等）。
+ *
+ * @returns 要滚到的下标；`-1` = 不恢复（调用方按既有逻辑贴底）
+ */
+export function scrollRestoreTarget(spot: ScrollSpot, sessionId: string, itemCount: number,
+  userScrolled: boolean): number {
+  if (userScrolled || spot.top < 0 || spot.sessionId !== sessionId || sessionId.length === 0) {
+    return -1;
+  }
+  if (itemCount <= spot.top) {
+    return -1;
+  }
+  return spot.top;
+}
