@@ -48,9 +48,25 @@
 import { Speaker, TrajectoryItem, TrajectoryKind } from './Trajectory';
 import { formatDuration } from './Present';
 
+/**
+ * token 量的显示折算（官方底部状态行里的 `292M tok`）。
+ *
+ * 只做**量级**折算，不做有效数字美化：≥ 1e6 取整到 M、≥ 1e3 取整到 K，其余原样。
+ * 依据是官方截图上的写法（`292M tok` 没有小数）——**不自己发明精度**：
+ * 这一行是状态提示，多一位小数只会让人多看一眼却不获得任何信息。
+ */
+export function formatTokenVolume(tokens: number): string {
+  if (tokens >= 1000000) {
+    return `${Math.round(tokens / 1000000)}M`;
+  }
+  if (tokens >= 1000) {
+    return `${Math.round(tokens / 1000)}K`;
+  }
+  return `${tokens}`;
+}
+
 /** 时间线的格子种类（与官方 `timelineKindLabel` 的 7 个分支一一对应） */
-export enum TimelineKind {
-  SYSTEM = 'system',
+export enum TimelineKind {  SYSTEM = 'system',
   USER = 'user',
   CONTEXT = 'context',
   COMPACTED = 'compacted',
@@ -290,8 +306,7 @@ export function timelineStartedLabel(cell: TimelineCell, clockOf: (at: number) =
  * 【为什么字段缺失一律按 0 处理】投影里缺失的含义是"没有"，而不是"未探测"——
  * 于是判断规则很简单：**为 0 就不显示那一项**，而不是显示一个 0。
  */
-export interface SessionStatsInput {
-  turns: number;
+export interface SessionStatsInput {  turns: number;
   steps: number;
   llmMs: number;
   toolMs: number;

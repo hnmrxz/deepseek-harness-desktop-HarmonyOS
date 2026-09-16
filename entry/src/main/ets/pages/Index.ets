@@ -34,7 +34,7 @@ import type { InputSourceReading, NotifyRoute, PickedFile, PickedFolder } from '
 import type { TriggerToken } from 'appstate';
 import { detectTrigger } from 'appstate';
 import { common } from '@kit.AbilityKit';
-import { APPROVAL_CHOICE_DENY, ActionNotice, AgentPresetRow, BackAction, CommandCandidate, ComposerDrafts, CoreFact, CorePhase, CoreViewState, CredentialItem, DEFAULT_MODEL_NS, DetailPresentation, DetailSection, DiagEntry, DiagMode, DiagReport, DrawerState, FileNode, FilePreview, HostRecord, HubPhase, LayoutMode, MAIN_CONVERSATION, MAIN_WORKSPACES, ModelOption, ModelSelection, NavTab, PanelDescriptor, PanelLocation, PanelRegistry, PendingAttachment, PendingItem, PluginItem, QueuedItem, ReferenceCandidate, SHARE_TARGET_FILE, SHARE_TARGET_NONE, SHEET_NOTE_CREDENTIAL, SHEET_NOTE_STRUCT, SHEET_NOTE_TEXT, ScrollSpot, SessionHub, SessionListItem, SettingGroup, SettingKind, SettingOrigin, SettingValueType, SettingsWriteOutcome, ShareTarget, SkillRow, StackPage, Sz, TrackPresentation, TrajectoryItem, TrajectoryKind, WorkspaceItem, WorkspaceRow, activeMainPanelOf, buildCoreView, clampDetailDesired, corePhaseOfHostState, createPanelRegistry, decideBack, decideLayoutWithDetail, deliverableShareTarget, deliverablesOf, detailRoomOf, detailWidthOf, diagModeOf, draftCount, draftOf, dragDetailWidth, drillAfterPreviewClosed, dropDraft, emptyComposerDrafts, emptyCoreView, emptyDiagReport, emptyScrollSpot, enterSession, fact, flattenSources, guessFromKeyboardForm, initialNavigationState, itemsOfKind, legacyTabOfMainPanel, mainPanelOfLegacyTab, mainPanelOfSidebarPanel, mainPanels, mergeSettingsGroups, modalityFromSources, modalityOf, modalityTrace, navigateToMain, normalizePathKey, openSettings, parseDrafts, parseNotifyRoute, parseSettingInput, parseStructInput, permissionChipLabel, permissionChoices, permissionSwitchable, permissionUnavailableHint, pluginInventoryFact, pluginRowOf, projectDetailSections, projectHosts, projectWorkspaces, putDraft, rankPluginRows, rememberScrollSpot, selectRightPanel, selectTab as decideTabSelection, serializeDrafts, setDrawer, settingsDomainOfNs, sheetDiscardNotice, sheetNoteVisible, shellTracksOf, shouldRestoreDraft, showsConversation, sidebarExpandedForMode, sidebarPanelOfMainPanel, sidebarTrackWidthOf, splitSettingKey, unionModality, unknownFact, userFacingBodyOf, workspaceNameOf } from 'appstate';
+import { APPROVAL_CHOICE_DENY, ActionNotice, AgentPresetRow, BackAction, CommandCandidate, ComposerDrafts, CoreFact, CorePhase, CoreViewState, CredentialItem, DEFAULT_MODEL_NS, DetailPresentation, DetailSection, DiagEntry, DiagMode, DiagReport, DrawerState, FileNode, FilePreview, HostRecord, HubPhase, LayoutMode, MAIN_CONVERSATION, MAIN_WORKSPACES, ModelOption, ModelSelection, NavTab, PanelDescriptor, PanelLocation, PanelRegistry, PendingAttachment, PendingItem, PluginItem, QueuedItem, ReferenceCandidate, SHARE_TARGET_FILE, SHARE_TARGET_NONE, SHEET_NOTE_CREDENTIAL, SHEET_NOTE_STRUCT, SHEET_NOTE_TEXT, ScrollSpot, SessionHub, SessionListItem, SettingGroup, SettingKind, SettingOrigin, SettingValueType, SettingsWriteOutcome, ShareTarget, SkillRow, StackPage, Sz, TrackPresentation, TrajectoryItem, TrajectoryKind, WorkspaceItem, WorkspaceRow, activeMainPanelOf, buildCoreView, clampDetailDesired, corePhaseOfHostState, createPanelRegistry, decideBack, decideLayoutWithDetail, deliverableShareTarget, deliverablesOf, detailRoomOf, detailWidthOf, diagModeOf, draftCount, draftOf, dragDetailWidth, drillAfterPreviewClosed, dropDraft, emptyComposerDrafts, emptyCoreView, emptyDiagReport, emptyScrollSpot, enterSession, fact, flattenSources, formatTokenVolume, guessFromKeyboardForm, initialNavigationState, itemsOfKind, legacyTabOfMainPanel, mainPanelOfLegacyTab, mainPanelOfSidebarPanel, mainPanels, mergeSettingsGroups, modalityFromSources, modalityOf, modalityTrace, navigateToMain, normalizePathKey, openSettings, parseDrafts, parseNotifyRoute, parseSettingInput, parseStructInput, permissionChipLabel, permissionChoices, permissionSwitchable, permissionUnavailableHint, pluginInventoryFact, pluginRowOf, projectDetailSections, projectHosts, projectWorkspaces, putDraft, rankPluginRows, rememberScrollSpot, selectRightPanel, selectTab as decideTabSelection, serializeDrafts, setDrawer, settingsDomainOfNs, sheetDiscardNotice, sheetNoteVisible, shellTracksOf, shouldRestoreDraft, showsConversation, sidebarExpandedForMode, sidebarPanelOfMainPanel, sidebarTrackWidthOf, splitSettingKey, unionModality, unknownFact, userFacingBodyOf, workspaceNameOf } from 'appstate';
 /**
  * 类型单独用 `import type` 引入。
  *
@@ -689,9 +689,32 @@ struct Index {
        * 预设**在会话创建时即固定**，所以它是状态而不是控件——只显示，不给"改当前会话"的入口。
        */
       const preset: string = s.agentPreset.length > 0 ? `预设 ${s.agentPreset}` : '';
+      /*
+       * 【2026-09-17 补两项：官方底部状态行里的 `259 tok/s` 与 `292M tok`】
+       *
+       * 官方那一行是 `14 轮 754 步 · 259 tok/s · 292M tok · 缓存命中 99.9%`，
+       * 我们此前只有轮次与缓存命中——**解码速度与累计 token 一直没显示**，
+       * 而这两个数不需要任何新端点：`decodeTokens` / `decodeMs` 本来就在快照里
+       * （`sessionStats` 的 TPS 项用的就是它们，只是从来没被摆到这一行上）。
+       *
+       * 口径与官方一致：速度按**解码段**算（`tokens / (ms/1000)`），不是按整轮墙钟，
+       * 否则一次长工具调用就会把速度摊平成一个没有意义的数；
+       * 累计 token 用 `decodeTokens`（输出侧），单位按量级折算 K/M。
+       */
+      const tps: number = s.statsDecodeMs > 0
+        ? Math.round(s.statsDecodeTokens / (s.statsDecodeMs / 1000))
+        : 0;
+      const speed: string = tps > 0 ? `${tps} tok/s` : '';
+      const tokens: string = s.statsDecodeTokens > 0 ? `${formatTokenVolume(s.statsDecodeTokens)} tok` : '';
       const parts: string[] = [];
       if (counts.length > 0) {
         parts.push(counts);
+      }
+      if (speed.length > 0) {
+        parts.push(speed);
+      }
+      if (tokens.length > 0) {
+        parts.push(tokens);
       }
       if (hit.length > 0) {
         parts.push(hit);

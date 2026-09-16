@@ -441,7 +441,8 @@ export {
   timelineStartedLabel,
   timelineTotalLabel,
   TimelineKind,
-  StatsUnit
+  StatsUnit,
+  formatTokenVolume
 } from './model/Timeline';
 export type { SessionStatsInput, StatsLine, TimelineCell, TimelineScale, TimelineSegment } from './model/Timeline';
 
