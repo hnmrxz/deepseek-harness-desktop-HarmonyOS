@@ -154,7 +154,29 @@ export {
 } from './model/InputAttachment';
 export type { AttachmentDraftInput, AttachmentPartPlan } from './model/InputAttachment';
 // 输入触发管线（P7-14：`@` 引用与 `/` 命令的词法——识别 token、替换而不是追加）
-export { COMMAND_PICK_DRAFT, COMMAND_PICK_RUN, TriggerKind, appendPick, applyPick, commandDraftText, commandInputNotice, commandNeedsInput, commandPickAction, detectTrigger, needsTrailingSpace } from './model/InputTrigger';
+export {
+  COMMAND_PICK_DRAFT,
+  COMMAND_PICK_RUN,
+  REFERENCE_CRUMB_ROOT,
+  REFERENCE_NO_CWD,
+  referenceAgeLine,
+  referenceAgeText,
+  referenceCrumbs,
+  referenceDrillQuery,
+  referenceFileRowDetail,
+  referenceFileRowName,
+  referenceQueryOf,
+  referenceSessionRowDetail,
+  TriggerKind,
+  appendPick,
+  applyPick,
+  commandDraftText,
+  commandInputNotice,
+  commandNeedsInput,
+  commandPickAction,
+  detectTrigger,
+  needsTrailingSpace
+} from './model/InputTrigger';
 export type { TriggerToken } from './model/InputTrigger';
 // 提交失败后的草稿恢复规则（P7-15，对齐官方 sink 的 "restored only while untouched"）
 export { shouldRestoreDraft } from './model/ComposerSend';

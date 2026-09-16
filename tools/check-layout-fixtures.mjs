@@ -2670,6 +2670,82 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   t.eq('非竞态返回 NONE', queueRaceKind('gateway/internal'), QUEUE_RACE_NONE);
 }
 
+// ── P9-5：`@` 引用菜单的钻取、面包屑与行信息（官方 ui-reference） ──
+{
+  const IT = require2('./InputTrigger.js');
+  const { referenceDrillQuery, referenceCrumbs, referenceAgeText, referenceAgeLine,
+    referenceFileRowName, referenceFileRowDetail, referenceSessionRowDetail, referenceQueryOf,
+    REFERENCE_CRUMB_ROOT, REFERENCE_NO_CWD } = IT;
+
+  // ⓪ 引号形态（官方语法只为"含空格的路径"存在）：引号里的空白不是"停止输入"
+  const DT = require2('./InputTrigger.js');
+  const quotedOpen = DT.detectTrigger('@"my dir/');
+  t.eq('`@"my dir/` 认得出是引用（引号里的空格不算结束）', quotedOpen !== undefined, true);
+  t.eq('`@"my dir/` 的查询词不含引号', quotedOpen === undefined ? '' : quotedOpen.query, 'my dir/');
+  t.eq('`@"my dir/` 标记为 quoted', quotedOpen === undefined ? false : quotedOpen.quoted, true);
+  const quotedClosed = DT.detectTrigger('@"a b.ts"');
+  t.eq('闭合引号：查询词不含引号', quotedClosed === undefined ? '' : quotedClosed.query, 'a b.ts');
+  t.eq('闭合引号：token 在引号后结束（替换时不会留下尾巴）',
+    quotedClosed === undefined ? -1 : quotedClosed.end, 9);
+  t.eq('不带引号时，空格仍然表示"写完了"（面板该收）', DT.detectTrigger('@src/a b'), undefined);
+  t.eq('不带引号的普通引用照旧', DT.detectTrigger('@src/a') === undefined ? '' : DT.detectTrigger('@src/a').query, 'src/a');
+
+  // ① 钻孔查询词：从草稿里取当前 `@` token 的查询词（选中目录后就靠它继续列下一层）
+  t.eq('草稿 `@src/` ⇒ 查询词 `src/`', referenceDrillQuery('@src/'), 'src/');
+  t.eq('带引号的目录引用 `@"src/comp` ⇒ 查询词**不含引号**（官方的 quoted 是单独标志）',
+    referenceDrillQuery('@"src/comp'), 'src/comp');
+  t.eq('已闭合的引号也剥掉', referenceDrillQuery('@"a b.ts"'), 'a b.ts');
+  t.eq('含空格的引号路径也能给出正确的查询词', referenceDrillQuery('@"my dir/sub'), 'my dir/sub');
+  t.eq('规范化函数：前引号 / 前+后引号 / 无引号', referenceQueryOf('"a/b'), 'a/b');
+  t.eq('规范化函数：闭合引号', referenceQueryOf('"a b.ts"'), 'a b.ts');
+  t.eq('规范化函数：原样返回', referenceQueryOf('a/b'), 'a/b');
+  t.eq('前面还有正文也认得出来', referenceDrillQuery('看一下 @src/comp'), 'src/comp');
+  t.eq('不在引用 token 里 ⇒ 空串（不要拿整段正文当查询词）', referenceDrillQuery('普通正文'), '');
+  t.eq('斜杠命令 token 不算引用', referenceDrillQuery('/goal 收尾'), '');
+
+  // ② 面包屑：只有钻孔才有（官方 crumbsFor 的注释：钻孔要"还用户一条回得去的路"）
+  t.eq('不是钻孔 ⇒ 空数组（自己敲的路径上下文在草稿里）', referenceCrumbs('src/comp', false).length, 0);
+  t.eq('钻孔 + 一级 ⇒ 工作区 › src', referenceCrumbs('src/', true).join(' › '), '工作区 › src');
+  t.eq('钻孔 + 两级 ⇒ 工作区 › src › components',
+    referenceCrumbs('src/components/', true).join(' › '), '工作区 › src › components');
+  t.eq('查询词里没有 `/` ⇒ 不给面包屑（官方同）', referenceCrumbs('src', true).length, 0);
+  t.eq('根标签逐字取官方 `crumb.root`', REFERENCE_CRUMB_ROOT, '工作区');
+
+  // ③ 时间措辞：官方引用命名空间自己那一套（`{n}分钟`，没有"前"、没有空格）
+  t.eq('刚刚', referenceAgeText('now', 0), '刚刚');
+  t.eq('3 分钟', referenceAgeText('minutes', 3), '3分钟');
+  t.eq('2 小时', referenceAgeText('hours', 2), '2小时');
+  t.eq('5 天', referenceAgeText('days', 5), '5天');
+  t.eq('3 个月', referenceAgeText('months', 3), '3个月');
+  t.eq('2 年', referenceAgeText('years', 2), '2年');
+  t.eq('时间戳 ⇒ 按桶换算（40 秒 ⇒ 刚刚）', referenceAgeLine(60 * 1000 - 40000, 60 * 1000), '刚刚');
+  t.eq('时间戳 ⇒ 相差 90 分钟 ⇒ 1小时',
+    referenceAgeLine(10 * 60 * 1000, 100 * 60 * 1000), '1小时');
+  t.eq('时间戳为 0（没有记录）⇒ 空串（不编"刚刚"）', referenceAgeLine(0, 1000), '');
+  t.eq('**与 `Present.relativeTime` 同桶不同措辞**（官方就是这么分的）',
+    referenceAgeLine(60 * 1000 - 30000, 2 * 60 * 1000), '1分钟');
+
+  // ④ 文件行：名字（目录带尾斜杠）+ 父目录（未钻孔才显示）
+  t.eq('文件行名字取末段', referenceFileRowName('src/util/format.ts', false), 'format.ts');
+  t.eq('目录行名字带尾斜杠（官方 `${name}/`）', referenceFileRowName('src/components', true), 'components/');
+  t.eq('未钻孔 ⇒ 显示父目录', referenceFileRowDetail('src/util/format.ts', true), 'src/util');
+  t.eq('钻孔之后 ⇒ 不显示父目录（用户已经在里面了）',
+    referenceFileRowDetail('src/util/format.ts', false), '');
+  t.eq('根目录下的文件 ⇒ 没有父目录可显示', referenceFileRowDetail('README.md', true), '');
+
+  // ⑤ 会话行：同工作区不写位置；没有 cwd 写官方那句「（无工作目录）」；位置与时间用 ` · ` 连接
+  t.eq('同工作区 ⇒ 只剩时间（位置是噪声）',
+    referenceSessionRowDetail('/w/proj', true, '3分钟'), '3分钟');
+  t.eq('不同工作区 ⇒ 位置 · 时间',
+    referenceSessionRowDetail('/w/other', false, '3分钟'), '/w/other · 3分钟');
+  t.eq('没有 cwd ⇒ 写官方的「（无工作目录）」',
+    referenceSessionRowDetail('', false, '2小时'), `${REFERENCE_NO_CWD} · 2小时`);
+  t.eq('没有 cwd 且同工作区 ⇒ 只剩时间（不写残句）',
+    referenceSessionRowDetail('', true, '刚刚'), '刚刚');
+  t.eq('时间是空串（没有记录）⇒ 不留「位置 · 」这种残句',
+    referenceSessionRowDetail('/w/other', false, ''), '/w/other');
+}
+
 // ── P9-4：选中一条斜杠命令之后（要参数的命令不许"直接执行"） ──
 {
   const IT = require2('./InputTrigger.js');

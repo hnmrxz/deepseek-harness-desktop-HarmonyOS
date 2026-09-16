@@ -8,21 +8,11 @@
  * 本组件不直接调用协议层：所有动作通过回调上报给宿主，便于接入真实连接时只改宿主。
  */
 
+import { CommandCandidate, Fs, ModelOption, ModelSelection, PendingAttachment, QueuedItem, Radius, ReferenceCandidate, Sp, Sz, formatBytes, modelSelectionLabel, referenceQueryOf } from 'appstate';
 import {
-  CommandCandidate,
-  Fs,
-  formatBytes,
-  ModelSelection,
-  modelSelectionLabel,
-  ModelOption,
-  PendingAttachment,
-  QueuedItem,
-  Radius,
-  ReferenceCandidate,
-  Sp,
-  Sz
+  appendPick, applyPick, detectTrigger, referenceAgeLine, referenceCrumbs, referenceDrillQuery,
+  referenceFileRowDetail, referenceFileRowName, referenceSessionRowDetail, TriggerToken
 } from 'appstate';
-import { appendPick, applyPick, detectTrigger, TriggerToken } from 'appstate';
 import { NativeButton, NativeChip } from './NativePrimitives';
 
 /**
@@ -198,6 +188,13 @@ export struct Composer {
   @State panel: string = '';
   /** 弹层过滤词 */
   @State filter: string = '';
+  /**
+   * 当前这份引用列表是**钻孔钻出来的**还是用户自己敲出来的（P9-5）。
+   *
+   * 官方 `crumbsFor` 的注释写明了这个区别的用途：钻孔是界面替用户换了路径，
+   * 所以要给面包屑"还他一条回得去的路"；自己敲的路径上下文就在草稿里，不需要面包屑。
+   */
+  @State drilled: boolean = false;
 
   build() {
     Column({ space: Sp.S }) {
@@ -234,6 +231,8 @@ export struct Composer {
         })
           .onChange((value: string) => {
             this.onDraftChange(value);
+            // 自己敲的字 ⇒ 不是钻孔（面包屑只服务"界面替你换了路径"那种情况）
+            this.drilled = false;
             this.updateOverlay(value);
           })
           .layoutWeight(1)
@@ -547,10 +546,16 @@ export struct Composer {
   @Builder
   overlayPanel() {
     Column() {
-      Text(this.panel === 'ref' ? '插入引用' : '运行命令')
+      /*
+       * 面板标题：钻孔时显示**面包屑**（官方 `header()` 只对钻孔列表给 crumbs，
+       * 根标签逐字取官方字典的 `crumb.root` = 工作区），否则显示原来的动作名。
+       */
+      Text(this.panelTitle())
         .fontSize(Fs.CAPTION)
         .fontColor($r('sys.color.font_tertiary'))
         .width('100%')
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
         .padding({ bottom: Sp.XS })
 
       List({ space: Sp.XS }) {
@@ -562,18 +567,20 @@ export struct Composer {
                   Text(`@${c.kind}`)
                     .fontSize(Fs.CAPTION)
                     .fontColor($r('sys.color.brand'))
-                  Text(c.label)
+                  Text(this.refRowName(c))
                     .fontSize(Fs.SECONDARY)
                     .layoutWeight(1)
                     .maxLines(1)
                     .textOverflow({ overflow: TextOverflow.Ellipsis })
                 }
                 .width('100%')
-                if (c.detail.length > 0) {
-                  Text(c.detail)
+                if (this.refRowDetail(c).length > 0) {
+                  Text(this.refRowDetail(c))
                     .fontSize(Fs.CAPTION)
                     .fontColor($r('sys.color.font_tertiary'))
                     .width('100%')
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
                 }
               }
               .width('100%')
@@ -581,8 +588,23 @@ export struct Composer {
               .borderRadius(Radius.S)
               .onClick(() => {
                 // 替换触发词区间（不是追加）；目录引用的未闭合引号不补空格，见 InputTrigger 的说明
-                this.onDraftChange(this.draftAfterPick(c.insert));
+                const next: string = this.draftAfterPick(c.insert);
+                this.onDraftChange(next);
+                /*
+                 * 【P9-5：选中目录 = **钻孔**，菜单不关】官方 `onPick` 对目录返回
+                 * `{text, continue: true}`：菜单接着列这个目录的内容。我们此前一律 `panel = ''`
+                 * ⇒ 选一个文件夹之后菜单就关了，"目录可钻取"在界面上等于没有。
+                 */
+                if (c.kind === 'directory') {
+                  this.panel = 'ref';
+                  this.drilled = true;
+                  const query: string = referenceDrillQuery(next);
+                  this.filter = query;
+                  this.onReferenceQuery(query);
+                  return;
+                }
                 this.panel = '';
+                this.drilled = false;
               })
             }
           }, (c: ReferenceCandidate) => `${c.kind}:${c.label}`)
@@ -666,8 +688,15 @@ export struct Composer {
     }
     if (token !== undefined && token.kind === 'reference') {
       this.panel = 'ref';
-      const changed: boolean = token.query !== this.filter;
-      this.filter = token.query;
+      /*
+       * 查询词要**规范化**（剥掉 `@"` 的引号，见 `referenceQueryOf` 的说明）：
+       * 官方把"带不带引号"作为单独标志传给候选源，query 里没有引号；
+       * 而我们的词法把引号留在了 query 里 ⇒ 直接发给 Host 会匹配不上（带空格的路径必须用引号写法，
+       * 于是菜单恰好在那最需要它的场景下空着）。
+       */
+      const query: string = referenceQueryOf(token.query);
+      const changed: boolean = query !== this.filter;
+      this.filter = query;
       // 只有查询词真的变了才去问 Host：每次按键都发一次会在长查询上打出成串 RPC，
       // 而 Host 的候选端点本身就是**按 query 过滤**的（服务端筛选），本地不再二次筛。
       if (changed) {
@@ -689,6 +718,37 @@ export struct Composer {
   private draftAfterPick(insert: string): string {
     const token: TriggerToken | undefined = detectTrigger(this.draft);
     return token === undefined ? appendPick(this.draft, insert) : applyPick(this.draft, token, insert);
+  }
+
+  /** 面板标题：钻孔时是面包屑（官方 `crumb.root`），否则是动作名 */
+  private panelTitle(): string {
+    if (this.panel !== 'ref') {
+      return '运行命令';
+    }
+    const crumbs: string[] = referenceCrumbs(this.filter, this.drilled);
+    return crumbs.length > 0 ? crumbs.join(' › ') : '插入引用';
+  }
+
+  /** 引用行的主文案（官方 `fileCandidate` 的 `name`：目录名带尾斜杠） */
+  private refRowName(c: ReferenceCandidate): string {
+    if (c.kind === 'session') {
+      return c.label;
+    }
+    return referenceFileRowName(c.label, c.kind === 'directory');
+  }
+
+  /**
+   * 引用行的次要文案（官方 `fileCandidate` 的父目录 / `sessionCandidate` 的「位置 · 时间」）。
+   *
+   * 文件：**只有未钻孔时**显示父目录（钻孔之后用户已经在那个目录里，再写一遍是噪声）。
+   * 会话：位置（同工作区不显示、没有 cwd 写「无工作目录」）+ 相对时间（官方 `{n}分钟` 那套措辞）。
+   */
+  private refRowDetail(c: ReferenceCandidate): string {
+    if (c.kind === 'session') {
+      const age: string = referenceAgeLine(c.createdAt, Date.now());
+      return referenceSessionRowDetail(c.detail, c.sameWorkspace, age);
+    }
+    return referenceFileRowDetail(c.label, !this.drilled);
   }
 
   /**

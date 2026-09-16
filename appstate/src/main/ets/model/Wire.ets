@@ -2361,6 +2361,19 @@ export interface ReferenceCandidate {
   insert: string;
   /** 次要说明 */
   detail: string;
+  /**
+   * 会话候选的创建时间（官方 `SessionReferenceCandidate.createdAt`；非会话候选为 0）。
+   *
+   * 【为什么读它】官方给会话候选显示相对时间（`listed[sessionId]?.updatedAt ?? candidate.createdAt`），
+   * 也就是"这条对话多久以前"。我们此前那一行只写 cwd，用户看不出新旧。
+   */
+  createdAt: number;
+  /**
+   * 会话候选是否与当前工作区**同一处**（官方 `SessionReferenceCandidate.sameWorkspace`）。
+   *
+   * 官方据此**不显示位置**（同一处写了是噪声，而不同处必须让用户看见）。
+   */
+  sameWorkspace: boolean;
 }
 
 /** `commands/list` 的 args 载荷（具名参数 `agentId`）。 */
@@ -2528,7 +2541,9 @@ export function projectFileReferences(value: Object | undefined): ReferenceCandi
       kind: isDir ? 'directory' : 'file',
       label: path,
       insert: isDir ? `@${path}/` : `@${path}`,
-      detail: '工作区文件'
+      detail: '工作区文件',
+      createdAt: 0,
+      sameWorkspace: false
     });
   }
   return out;
@@ -2560,7 +2575,9 @@ export function projectSessionReferences(value: Object | undefined): ReferenceCa
       kind: 'session',
       label: readString(item, 'label'),
       insert: mention,
-      detail: readString(item, 'cwd')
+      detail: readString(item, 'cwd'),
+      createdAt: readNumber(item, 'createdAt'),
+      sameWorkspace: readBoolean(item, 'sameWorkspace')
     });
   }
   return out;

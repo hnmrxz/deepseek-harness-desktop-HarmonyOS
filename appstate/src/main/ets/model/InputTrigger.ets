@@ -40,8 +40,17 @@ export interface TriggerToken {
   start: number;
   /** 结束下标（**不含**；即草稿末尾或 token 末尾） */
   end: number;
-  /** 查询词（`@` 或 `/` 之后的部分；可能为空串） */
+  /** 查询词（`@` 或 `/` 之后的部分；可能为空串；**引号已剥掉**，见下面的 `quoted`） */
   query: string;
+  /**
+   * 是不是**带引号的引用写法**（`@"…"`，官方给候选源的那个 `quoted` 标志）。
+   *
+   * 【为什么需要这个标志】引号写法存在的唯一理由是**路径里有空格**：
+   * 官方 `formatFileMention` 就是"路径含空白 ⇒ 写 `@"path"`（目录故意不闭合引号）"。
+   * 而引号里的空格**不是**"停止输入"的信号——不带引号时，空白表示这段话写完了（面板该收），
+   * 带引号时它只是路径的一部分。两者混为一谈会让**含空格的路径永远补全不了**（P9-5 修的正是这条）。
+   */
+  quoted: boolean;
 }
 
 /** 草稿是否"以命令开头且还没敲参数"（命令面板的条件） */
@@ -55,7 +64,7 @@ function commandTokenOf(text: string): TriggerToken | undefined {
   if (rest.indexOf(' ') >= 0 || rest.indexOf('\n') >= 0) {
     return undefined;
   }
-  return { kind: TriggerKind.COMMAND, start: lead, end: text.length, query: rest };
+  return { kind: TriggerKind.COMMAND, start: lead, end: text.length, query: rest, quoted: false };
 }
 
 /**
@@ -74,16 +83,44 @@ export function detectTrigger(text: string): TriggerToken | undefined {
   if (at < 0) {
     return undefined;
   }
-  const after: string = text.substring(at + 1);
-  if (after.indexOf(' ') >= 0 || after.indexOf('\n') >= 0) {
-    return undefined;
-  }
-  // `@` 出现在行首之外也没关系：只有"它之后没有空白"才说明它正在被输入
   if (at > 0 && text.charAt(at - 1) === '\\') {
     // 转义过的 `@` 不是触发词（用户就是要打一个 @ 字符）
     return undefined;
   }
-  return { kind: TriggerKind.REFERENCE, start: at, end: text.length, query: after };
+  const after: string = text.substring(at + 1);
+  if (after.startsWith('"')) {
+    /*
+     * ── 引号形态（`@"…"`）：官方语法里存在，而且**只为含空格的路径存在** ──
+     *
+     * 官方的 `formatFileMention` 逐字：路径没有空白 ⇒ `@path`；**含空白** ⇒
+     * 文件写 `@"path"`、**目录写 `@"path/`（故意不闭合引号，留给下一次补全继续钻）**。
+     * 所以 `"` 之后的空白是路径的一部分，不该像不带引号那样"一敲空格就收面板"。
+     *
+     * 闭合的引号（用户自己敲完了）算 token 的结尾，这样"选中即替换"不会把尾巴剩下。
+     */
+    const close: number = after.indexOf('"', 1);
+    if (close >= 0) {
+      return {
+        kind: TriggerKind.REFERENCE,
+        start: at,
+        end: at + 1 + close + 1,
+        query: after.substring(1, close),
+        quoted: true
+      };
+    }
+    return {
+      kind: TriggerKind.REFERENCE,
+      start: at,
+      end: text.length,
+      query: after.substring(1),
+      quoted: true
+    };
+  }
+  if (after.indexOf(' ') >= 0 || after.indexOf('\n') >= 0) {
+    return undefined;
+  }
+  // `@` 出现在行首之外也没关系：只有"它之后没有空白"才说明它正在被输入
+  return { kind: TriggerKind.REFERENCE, start: at, end: text.length, query: after, quoted: false };
 }
 
 /**
@@ -195,4 +232,186 @@ export function commandInputNotice(name: string, hint: string): string {
   const detail: string = expected.length > 0 ? `参数是「${expected}」。` : '';
   return `${what} 需要参数，没有执行（直接发出去只会被 Host 拒绝）。`
     + `${detail}已经填进输入框，补齐后按发送即可。`;
+}
+
+/* ───────────────────────── `@` 引用菜单：钻取、面包屑与行信息（P9-5） ───────────────────────── */
+
+/**
+ * 面包屑根（**逐字取官方** `dsh-client-ui-reference` 中文字典的 `crumb.root`）。
+ *
+ * 官方还有 `time.*` 的六个桶词（`{n}分钟` / `{n}小时` / `{n}天` / `{n}个月` / `{n}年` / `刚刚`）
+ * 与 `candidate.noCwd`（`（无工作目录）`），下面的函数用的就是它们。
+ */
+export const REFERENCE_CRUMB_ROOT: string = '工作区';
+/** 候选没有工作目录时显示什么（官方 `candidate.noCwd` 逐字） */
+export const REFERENCE_NO_CWD: string = '（无工作目录）';
+
+/**
+ * 一次"钻取"之后用于继续补全的查询词（官方 `onPick` 的 `{text, continue: true}` 那一支）。
+ *
+ * 【为什么要有这个函数】官方选中**目录**时**不关菜单**：把更深一层的路径写进草稿并
+ * `continue: true`，菜单接着列那个目录的内容。我们此前一律 `panel = ''` ⇒
+ * 选一个文件夹之后菜单就关了，用户要再点一次 `@`（而那时查询词已经不在补全状态）——
+ * "目录可钻取"这件事在界面上等于没有。
+ *
+ * @returns 当前草稿里 `@`/`@"` token 的查询词；不在引用 token 里时给空串
+ */
+export function referenceDrillQuery(draft: string): string {
+  const token: TriggerToken | undefined = detectTrigger(draft);
+  if (token === undefined || token.kind !== TriggerKind.REFERENCE) {
+    return '';
+  }
+  return referenceQueryOf(token.query);
+}
+
+/**
+ * 查询词的**规范化**：剥掉 `@"` 那个引号。
+ *
+ * 【官方把引号当成单独的标志】它的候选源签名是 `candidates(session, {query, quoted, drilled, signal})`
+ * —— `quoted` 是布尔标志，**`query` 里不含引号**。而本仓的 `detectTrigger` 按词法把引号留在了
+ * `query` 里（`@"src/comp` ⇒ query = `"src/comp`）。不剥掉会在两处出错：
+ *   ① **发给 Host 的查询词带着引号** ⇒ 路径匹配不上，菜单空着（而带空格的路径**必须**用引号写法，
+ *      所以这条正好卡在最需要它的场景上）；
+ *   ② 面包屑里会出现 `"src` 这种带引号的段。
+ * 已闭合的引号（用户自己敲完了 `@"a b.ts"`）一并剥掉尾部那一个。
+ */
+export function referenceQueryOf(rawQuery: string): string {
+  let out: string = rawQuery;
+  if (out.startsWith('"')) {
+    out = out.substring(1);
+  }
+  if (out.endsWith('"') && out.length > 0) {
+    out = out.substring(0, out.length - 1);
+  }
+  return out;
+}
+
+/**
+ * 钻取列表的面包屑（官方 `crumbsFor` 的等价实现）。
+ *
+ * 官方注释写明了**为什么只有钻取才有面包屑**：
+ * > "Only a drill produces one: a path the user typed carries its own context in the draft,
+ * > while a drill **replaced the text they were reading with a deeper one and owes them the way back**."
+ * 也就是：用户自己敲出来的路径，草稿里看得见上下文；而钻孔是界面替他换了路径，所以要还他"回得去"的感觉。
+ *
+ * 切法也照官方：取最后一个 `/` 之前的部分按 `/` 分段（空段丢掉），前面补上 `工作区`。
+ *
+ * @returns 面包屑段（`['工作区', 'src', 'components']`）；不是钻取、或查询词里没有 `/` ⇒ 空数组
+ */
+export function referenceCrumbs(query: string, drilled: boolean): string[] {
+  if (!drilled) {
+    return [];
+  }
+  const slash: number = query.lastIndexOf('/');
+  if (slash < 0) {
+    return [];
+  }
+  const parts: string[] = [];
+  const segments: string[] = query.substring(0, slash).split('/');
+  for (let i = 0; i < segments.length; i++) {
+    if (segments[i].length > 0) {
+      parts.push(segments[i]);
+    }
+  }
+  return [REFERENCE_CRUMB_ROOT].concat(parts);
+}
+
+/**
+ * 相对时间的**桶词**（官方 `reference` 命名空间的 `time.*`：`{n}分钟` 这一套）。
+ *
+ * 【为什么不用 `Present.relativeTime`】那句话是**会话行**的措辞（`3 分钟前` / `2 小时前`）；
+ * 而官方给引用菜单单独准备了一套（`3分钟` / `2小时`，没有"前"、没有空格），
+ * 并且在自己的字典注释里写明了原因：*"locale-owned copy keeps the words per plugin,
+ * while the bucketing they name is the one shared relativeTime in ui-primitives."*
+ * 也就是**分桶逻辑共用、措辞各插件自带**。
+ *
+ * @param unit `now` / `minutes` / `hours` / `days` / `months` / `years`
+ * @param n 桶内数量（`now` 时忽略）
+ */
+export function referenceAgeText(unit: string, n: number): string {
+  if (unit === 'minutes') {
+    return `${n}分钟`;
+  }
+  if (unit === 'hours') {
+    return `${n}小时`;
+  }
+  if (unit === 'days') {
+    return `${n}天`;
+  }
+  if (unit === 'months') {
+    return `${n}个月`;
+  }
+  if (unit === 'years') {
+    return `${n}年`;
+  }
+  return '刚刚';
+}
+
+/**
+ * 一个时间戳 → 引用菜单里的时间文案（与 `Present.relativeTime` **同一套分桶**）。
+ *
+ * 分桶边界照本仓既有实现（1 分钟 / 1 小时 / 1 天 / 30 天 / 365 天），
+ * 只把措辞换成官方引用命名空间那一套。
+ */
+export function referenceAgeLine(atMs: number, nowMs: number): string {
+  if (atMs <= 0) {
+    return '';
+  }
+  const diff: number = nowMs - atMs;
+  if (diff < 60 * 1000) {
+    return referenceAgeText('now', 0);
+  }
+  const minute: number = 60 * 1000;
+  const hour: number = 60 * minute;
+  const day: number = 24 * hour;
+  if (diff < hour) {
+    return referenceAgeText('minutes', Math.floor(diff / minute));
+  }
+  if (diff < day) {
+    return referenceAgeText('hours', Math.floor(diff / hour));
+  }
+  if (diff < 30 * day) {
+    return referenceAgeText('days', Math.floor(diff / day));
+  }
+  if (diff < 365 * day) {
+    return referenceAgeText('months', Math.floor(diff / (30 * day)));
+  }
+  return referenceAgeText('years', Math.floor(diff / (365 * day)));
+}
+
+/**
+ * 文件候选那一行的两段文字（官方 `fileCandidate` 的等价实现）。
+ *
+ * 官方：`name = basename + (目录 ? '/' : '')`；`description = 未钻取时的父目录`（根目录下不给）。
+ * 目录还带 `drill: true`——那是"选中后继续钻"的标记，我们的等价物是 `ReferenceCandidate.kind === 'directory'`。
+ */
+export function referenceFileRowName(path: string, isDirectory: boolean): string {
+  const slash: number = path.lastIndexOf('/');
+  const name: string = slash >= 0 ? path.substring(slash + 1) : path;
+  const shown: string = name.length > 0 ? name : path;
+  return isDirectory ? `${shown}/` : shown;
+}
+
+/** 文件候选的父目录（未钻取时显示；根目录下的文件给空串，官方同） */
+export function referenceFileRowDetail(path: string, showLocation: boolean): string {
+  if (!showLocation) {
+    return '';
+  }
+  const slash: number = path.lastIndexOf('/');
+  return slash < 0 ? '' : path.substring(0, slash);
+}
+
+/**
+ * 会话候选那一行的两段文字（官方 `sessionCandidate` 的等价实现）。
+ *
+ * 官方三条规则：① 会话在当前工作区（`sameWorkspace`）⇒ **不显示位置**（同一处，写了是噪声）；
+ * ② 没有 cwd ⇒ 写 `（无工作目录）`（而不是留空，让用户以为界面吞了信息）；
+ * ③ 有位置 ⇒ `位置 · 时间`。
+ */
+export function referenceSessionRowDetail(cwd: string, sameWorkspace: boolean, ageText: string): string {
+  const location: string = sameWorkspace ? '' : (cwd.length > 0 ? cwd : REFERENCE_NO_CWD);
+  if (location.length === 0) {
+    return ageText;
+  }
+  return ageText.length > 0 ? `${location} · ${ageText}` : location;
 }

@@ -148,6 +148,16 @@ const FEATURES = [
    * 非空 ⇒ 把 `命令 + 空格` 填进输入框并说明；否则照旧直接执行。
    * 钉三段：判定（纯函数）+ 面板那条分流 + 提示文案。
    */
+  /*
+   * `@` 引用菜单的钻孔与行信息（P9-5）。官方 `ui-reference` 的两条规则：
+   * ① 选中**目录**时菜单**不关**（`onPick` 返回 `{text, continue: true}`）⇒ 接着列那个目录；
+   * ② 只有**钻孔**列表才给面包屑（`crumb.root` = 工作区），因为"界面替你换了路径，欠你一条回得去的路"。
+   * 另有行信息规则：文件行是"名字（目录带尾斜杠）+ 未钻孔时的父目录"，会话行是"位置 · 相对时间"
+   * （同工作区不写位置、没有 cwd 写「（无工作目录）」），时间措辞用官方引用命名空间那套 `{n}分钟`。
+   * 钉三段：纯模型 + 钻孔那条分支 + 行信息那两处调用。
+   */
+  { name: '引用菜单钻取', patterns: [['referenceDrillQuery', 2], ['referenceCrumbs', 2], ['referenceAgeLine', 2],
+    ['referenceFileRowName', 2], ['referenceSessionRowDetail', 2]] },
   { name: '命令参数分流', patterns: [['commandPickAction', 2], ['commandDraftText', 2], ['commandInputNotice', 2]] },
   { name: '正文文件提及', patterns: [['resolveProducedMention', 2], ['mentionPath', 2], ['onOpenMention', 2]] },
   { name: '原图预览（灯箱）', patterns: [['lightboxFit', 2], ['bindContentCover', 1], ['IMAGE_PREVIEW_DIALOG', 2]] },
