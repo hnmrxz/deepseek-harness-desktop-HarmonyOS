@@ -57,10 +57,22 @@ export interface SecretLoadResult {
   value: string;
 }
 
-/** 把字符串编码为 Asset Store 要求的 `Uint8Array` */
+/**
+ * 把字符串编码为 Asset Store 要求的 `Uint8Array`。
+ *
+ * 【为什么不是 `encoder.encode(text)`】那个重载 **since 7 / deprecated since 9**，
+ * 官方 `@useinstead` 指的正是 `encodeIntoUint8Array`（P8-7 清 API 兼容告警时按声明改的）。
+ * 它需要调用方先给一块目标缓冲，并把"实际写入多少字节"回传（`{read, written}`）。
+ *
+ * 【缓冲区怎么定大小】UTF-8 最坏情况是一个 UTF-16 码元 3 字节（BMP 内），
+ * 而 `text.length` 就是码元数 ⇒ `length * 3 + 3` 一定够（+3 兜住空串与边界）。
+ * 多要一点内存换来"绝不用猜"，对一个密钥（几十字节）完全不值得省。
+ */
 function toBytes(text: string): Uint8Array {
   const encoder: util.TextEncoder = new util.TextEncoder();
-  return encoder.encode(text);
+  const buffer: Uint8Array = new Uint8Array(text.length * 3 + 3);
+  const info: util.EncodeIntoUint8ArrayInfo = encoder.encodeIntoUint8Array(text, buffer);
+  return buffer.slice(0, info.written);
 }
 
 /** 把 `Uint8Array` 解码回字符串 */

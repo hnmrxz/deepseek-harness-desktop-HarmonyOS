@@ -274,6 +274,21 @@ const FEATURES = [
  */
 const FORBIDDEN = [
   {
+    /*
+     * `accessSync` 会抛异常（`@ohos.file.fs` 的 `13900018 Not a directory` 等），
+     * 而本仓近二十处把它当纯布尔谓词用过 —— 其中 `CoreStore.verifyStagedTree()` 的三个
+     * "关键件哨兵"正是**靠它来决定要不要给一句说得清的失败**：文件真缺时它抛异常，
+     * 那句 `fail('解包结果缺少宿主包…')` 根本走不到（守卫成了崩溃点，E402）。
+     * 现在统一走 `hostruntime/core/FileProbe.fileExists()` / `dirExists()`。
+     */
+    name: '`fs.accessSync` 不得直接使用（它会抛，不是返回 false）',
+    dirs: ['hostruntime/src', 'entry/src', 'appstate/src', 'platform/src', 'connection/src'],
+    patterns: ['accessSync'],
+    allowFiles: ['hostruntime/src/main/ets/core/FileProbe.ets'],
+    why: '改用 FileProbe 的 fileExists()/dirExists()：accessSync 在"不是目录/权限不足"时抛异常，'
+      + '会让守卫把失败原因换成一个未处理异常'
+  },
+  {
     name: '侧栏呈现判定不得被硬编码',
     files: ['entry/src/main/ets/view/shell/AppShell.ets'],
     patterns: ['TrackPresentation\\.RAIL']
@@ -339,19 +354,29 @@ for (const f of FEATURES) {
 }
 
 for (const rule of FORBIDDEN) {
-  for (const rel of rule.files) {
-    const src = sources.find((x) => x.path === rel);
-    if (src === undefined) {
-      problems.push(`  ✗ ${rule.name}：受检文件不存在 ${rel}`);
+  /*
+   * 反面规则支持两种范围：`files`（点名若干文件）与 `dirs`（某个目录下**所有**文件）。
+   * 后者是这一轮加的：`accessSync` 这种"哪里都不许出现"的模式，一个一个文件列名字
+   * 只会在新增文件时漏掉——而漏掉的门禁等于没有。
+   */
+  const targets = rule.dirs === undefined
+    ? rule.files.map((rel) => ({ path: rel, text: (sources.find((x) => x.path === rel) || { text: undefined }).text }))
+    : sources.filter((x) => rule.dirs.some((d) => x.path.startsWith(d)));
+  for (const t of targets) {
+    if (t.text === undefined) {
+      problems.push(`  ✗ ${rule.name}：受检文件不存在 ${t.path}`);
       continue;
     }
-    const body = stripComments(src.text);
+    if (rule.allowFiles !== undefined && rule.allowFiles.includes(t.path)) {
+      continue;
+    }
+    const body = stripComments(t.text);
     const lines = body.split('\n');
     for (let i = 0; i < lines.length; i++) {
       for (const pattern of rule.patterns) {
         if (new RegExp(pattern).test(lines[i])) {
-          problems.push(`  ✗ ${rule.name}：${rel}:${i + 1} 出现了 "${pattern.replace(/\\/g, '')}"`
-            + '（呈现判定必须走 sidebarPresentation()，不许写常量）');
+          problems.push(`  ✗ ${rule.name}：${t.path}:${i + 1} 出现了 "${pattern.replace(/\\/g, '')}"`
+            + `（${rule.why === undefined ? '该模式在本仓被禁用' : rule.why}）`);
         }
       }
     }

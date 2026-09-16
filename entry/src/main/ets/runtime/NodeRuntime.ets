@@ -15,6 +15,7 @@
  */
 import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
+import { fileExists } from 'hostruntime';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { http } from '@kit.NetworkKit';
 import dshhost from 'libdshhost.so';
@@ -164,7 +165,7 @@ export class NodeRuntime implements RuntimePort {
   private readAuthUrl(homeDir: string, port: number): string {
     const path: string = `${homeDir}/host-ready.json`;
     try {
-      if (!fs.accessSync(path)) {
+      if (!fileExists(path)) {
         return '';
       }
       const parsed = JSON.parse(fs.readTextSync(path)) as Record<string, string>;

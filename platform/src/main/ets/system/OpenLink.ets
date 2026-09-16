@@ -31,13 +31,13 @@ export function isOpenableUrl(url: string): boolean {
  *
  * @param url 目标地址（非 http/https 会被直接拒绝）
  */
-export async function openExternalUrl(url: string): Promise<boolean> {
+export async function openExternalUrl(context: common.UIAbilityContext,
+  url: string): Promise<boolean> {
   if (!isOpenableUrl(url)) {
     hilog.warn(DOMAIN, TAG, 'rejected non-http url');
     return false;
   }
   try {
-    const context = getContext() as common.UIAbilityContext;
     await context.openLink(url.trim(), { appLinkingOnly: false });
     return true;
   } catch (err) {

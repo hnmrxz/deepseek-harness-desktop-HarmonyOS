@@ -20,6 +20,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { CoreStore, OpResult } from './CoreStore';
 import { parseArchiveName } from './Naming';
+import { fileExists } from './FileProbe';
 
 const TAG: string = 'HDSH-BundledCore';
 const DOMAIN: number = 0x0000;
@@ -50,7 +51,7 @@ export async function installBundledCores(resourceDir: string, workDir: string,
   const result: BundledInstallResult = emptyResult('');
 
   try {
-    if (resourceDir.length === 0 || !fs.accessSync(resourceDir)) {
+    if (resourceDir.length === 0 || !fileExists(resourceDir)) {
       result.note = `未找到内置资源目录（${resourceDir}），跳过内置核心的安装`;
       return result;
     }
@@ -102,7 +103,7 @@ export async function installBundledCores(resourceDir: string, workDir: string,
       let stamp: string = '';
       try {
         const stampPath: string = `${store.coreDir(version)}/.hdsh-bundled-stamp`;
-        if (fs.accessSync(stampPath)) {
+        if (fileExists(stampPath)) {
           stamp = fs.readTextSync(stampPath).trim();
         }
       } catch (e) {
@@ -125,7 +126,7 @@ export async function installBundledCores(resourceDir: string, workDir: string,
        */
       try {
         const oldDir: string = store.coreDir(version);
-        if (fs.accessSync(oldDir)) {
+        if (fileExists(oldDir)) {
           const stale: string = `${oldDir}.stale-${Date.now()}.tmp`;
           fs.renameSync(oldDir, stale);
           staleDirs.push(stale);
@@ -137,7 +138,7 @@ export async function installBundledCores(resourceDir: string, workDir: string,
     const tmp: string = `${workDir}/bundled-${name}`;
     try {
       // 第一步：把只读的 resfile 拷到可写目录（解压 API 要求可读写路径）
-      if (fs.accessSync(tmp)) {
+      if (fileExists(tmp)) {
         fs.unlinkSync(tmp);
       }
       await fs.copyFile(src, tmp);
@@ -169,7 +170,7 @@ export async function installBundledCores(resourceDir: string, workDir: string,
     } finally {
       // 无论成败都清掉临时文件——63 MB × N 份留在沙箱里是纯浪费
       try {
-        if (fs.accessSync(tmp)) {
+        if (fileExists(tmp)) {
           fs.unlinkSync(tmp);
         }
       } catch (e) {

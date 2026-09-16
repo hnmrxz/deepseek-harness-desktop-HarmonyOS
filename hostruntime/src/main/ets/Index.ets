@@ -23,6 +23,7 @@
 
 export * from './core/Types';
 export * from './core/Naming';
+export * from './core/FileProbe';
 export * from './core/CoreStore';
 export * from './core/BundledCore';
 export * from './core/PluginRows';

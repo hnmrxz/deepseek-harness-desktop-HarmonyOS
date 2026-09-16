@@ -22,6 +22,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { ActivationDecision, ActivationAction, CoreHealth, CoreState, CoreVersionRecord, decideActivation, decideRollback, emptyState, evictionCandidates, parseState, serializeState } from './Types';
 import { TREE_INFO_FILE, isSafeVersion, topDirOf } from './Naming';
+import { fileExists } from './FileProbe';
 
 const TAG: string = 'HDSH-CoreStore';
 const DOMAIN: number = 0x0000;
@@ -182,10 +183,10 @@ export class CoreStore {
    */
   ensureLayout(): OpResult {
     try {
-      if (!fs.accessSync(this.coresDir())) {
+      if (!fileExists(this.coresDir())) {
         fs.mkdirSync(this.coresDir(), true);
       }
-      if (!fs.accessSync(this.homeDir())) {
+      if (!fileExists(this.homeDir())) {
         fs.mkdirSync(this.homeDir(), true);
       }
       return ok(`布局就绪：${this.baseDir()}`);
@@ -198,7 +199,7 @@ export class CoreStore {
   // ── 状态 ──────────────────────────────────────────────────────────────
   readState(): CoreState {
     try {
-      if (!fs.accessSync(this.statePath())) {
+      if (!fileExists(this.statePath())) {
         return emptyState();
       }
       return parseState(fs.readTextSync(this.statePath()));
@@ -229,7 +230,7 @@ export class CoreStore {
   listInstalled(): string[] {
     const out: string[] = [];
     try {
-      if (!fs.accessSync(this.coresDir())) {
+      if (!fileExists(this.coresDir())) {
         return out;
       }
       const names: string[] = fs.listFileSync(this.coresDir());
@@ -271,7 +272,7 @@ export class CoreStore {
       nativePackages: [],
     };
     try {
-      if (!fs.accessSync(this.treeInfoPath(version))) {
+      if (!fileExists(this.treeInfoPath(version))) {
         return empty;
       }
       const raw = JSON.parse(fs.readTextSync(this.treeInfoPath(version))) as CoreTreeInfo;
@@ -334,7 +335,7 @@ export class CoreStore {
     const inner: string = `${staging}/${topDirOf(version)}`;
 
     try {
-      if (fs.accessSync(staging)) {
+      if (fileExists(staging)) {
         // 残留的 staging 可能是上次失败留下的**完整树**：同样只能异步删（E47）
         await fs.rmdir(staging);
       }
@@ -355,11 +356,11 @@ export class CoreStore {
 
     // 校验：顶层目录与元数据必须都在（否则这不是我们的容器，或解包不完整）
     try {
-      if (!fs.accessSync(inner)) {
+      if (!fileExists(inner)) {
         await this.dropStaging(staging);
         return fail(`容器内缺少顶层目录 ${topDirOf(version)}`);
       }
-      if (!fs.accessSync(`${inner}/${TREE_INFO_FILE}`)) {
+      if (!fileExists(`${inner}/${TREE_INFO_FILE}`)) {
         await this.dropStaging(staging);
         return fail(`容器内缺少元数据 ${TREE_INFO_FILE}`);
       }
@@ -378,7 +379,7 @@ export class CoreStore {
     // 落位：目标已存在时，只有"它不是当前运行版本"才允许替换
     const state: CoreState = this.readState();
     try {
-      if (fs.accessSync(target)) {
+      if (fileExists(target)) {
         if (state.current === version) {
           await this.dropStaging(staging);
           return fail(`版本 ${version} 正在使用中，拒绝覆盖（请先切到别的版本）`);
@@ -406,7 +407,7 @@ export class CoreStore {
    * 直到启动时才以"某个插件加载失败"的形态出现**，而用户看到的是"核心已安装却起不来"。
    *
    * 【为什么只挑几件，不做全树计数】全树 2.5 万个文件的遍历正是端侧要避免的事
-   * （E45/E47 都是"同步大目录操作把 ArkUI 主线程锁死"）。哨兵只做几次 accessSync，
+   * （E45/E47 都是"同步大目录操作把 ArkUI 主线程锁死"）。哨兵只做几次存在性探测（`FileProbe.fileExists`），
    * 代价可忽略，而它拦下的正是"树不完整"这一类。
    */
   private verifyStagedTree(inner: string): OpResult {
@@ -421,13 +422,13 @@ export class CoreStore {
       return fail(`树内元数据缺少 coreVersion`);
     }
     // 哨兵 1：宿主本体（profile-boot / dsh CLI 都在这个包里）
-    if (!fs.accessSync(`${inner}/node_modules/@deepseek-ai/dsh/package.json`)) {
+    if (!fileExists(`${inner}/node_modules/@deepseek-ai/dsh/package.json`)) {
       return fail(`解包结果缺少宿主包 @deepseek-ai/dsh`);
     }
     // 哨兵 2：原生件 koffi（装错平台/漏拷时立刻暴露，而不是等模型跑第一转时才发现）
     let koffiFound: boolean = false;
     for (const abi of ['openharmony_arm64', 'linux_arm64']) {
-      if (fs.accessSync(`${inner}/node_modules/koffi/build/koffi/${abi}/koffi.node`)) {
+      if (fileExists(`${inner}/node_modules/koffi/build/koffi/${abi}/koffi.node`)) {
         koffiFound = true;
       }
     }
@@ -435,7 +436,7 @@ export class CoreStore {
       return fail(`解包结果缺少原生件 koffi.node（abis 里一个都没有）`);
     }
     // 哨兵 3：端侧 profile（没有它 Host 起不到 webServer，见 D6 §5.3）
-    if (!fs.accessSync(`${inner}/profiles/${ON_DEVICE_PROFILE}/cordis.patch.yml`)) {
+    if (!fileExists(`${inner}/profiles/${ON_DEVICE_PROFILE}/cordis.patch.yml`)) {
       return fail(`解包结果缺少端侧 profile profiles/${ON_DEVICE_PROFILE}/cordis.patch.yml`);
     }
     return ok('关键件哨兵齐备');
@@ -443,7 +444,7 @@ export class CoreStore {
 
   private async dropStaging(staging: string): Promise<void> {
     try {
-      if (fs.accessSync(staging)) {
+      if (fileExists(staging)) {
         await fs.rmdir(staging);
       }
     } catch (e) {

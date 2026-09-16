@@ -21,6 +21,7 @@
  * `node tools/check-plugin-toggle.mjs` → `enabled=true` 翻成 `false`、`RESULT: PASS`。
  */
 import { fileIo as fs } from '@kit.CoreFileKit';
+import { fileExists } from './FileProbe';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { OpResult } from './CoreStore';
@@ -37,7 +38,7 @@ const TAG: string = 'HDSH-PluginRows';
 export function readUserRows(profileDir: string): UserPluginRow[] {
   const path: string = userRowsPath(profileDir);
   try {
-    if (!fs.accessSync(path)) {
+    if (!fileExists(path)) {
       return [];
     }
     return parseUserRows(fs.readTextSync(path)).rows;
@@ -69,7 +70,7 @@ export function writeUserRows(profileDir: string, rows: UserPluginRow[]): OpResu
 export function clearUserRows(profileDir: string): OpResult {
   const path: string = userRowsPath(profileDir);
   try {
-    if (fs.accessSync(path)) {
+    if (fileExists(path)) {
       fs.unlinkSync(path);
     }
     return { ok: true, message: '已恢复默认（用户启停设置已清除）' };

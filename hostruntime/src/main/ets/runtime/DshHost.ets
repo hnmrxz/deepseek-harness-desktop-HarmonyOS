@@ -23,6 +23,7 @@ import { ActivationDecision, ActivationAction, CoreHealth, CoreState, CoreVersio
 import { CoreStore, CorePluginRow, CorePluginTotals, CoreTreeInfo, OpResult } from '../core/CoreStore';
 import { BundledInstallResult, installBundledCores } from '../core/BundledCore';
 import { UserPluginRow, clearUserRows, readUserRows, writeUserRows } from '../core/PluginRows';
+import { fileExists } from '../core/FileProbe';
 import { HostHandle, NativeFact, RuntimePort, RuntimeProbe, RuntimeKind } from '../runtime/RuntimePort';
 
 const DOMAIN: number = 0x0000;
@@ -227,7 +228,7 @@ export class DshHost {
   private readHostReadyRuntime(): HostReadyRuntime | undefined {
     try {
       const p: string = `${this.store.homeDir()}/host-ready.json`;
-      if (!fs.accessSync(p)) {
+      if (!fileExists(p)) {
         return undefined;
       }
       const parsed = JSON.parse(fs.readTextSync(p)) as HostReadyFile;
@@ -574,7 +575,7 @@ export class DshHost {
   localHostReadyUrl(): string {
     try {
       const p: string = `${this.store.homeDir()}/host-ready.json`;
-      if (!fs.accessSync(p)) {
+      if (!fileExists(p)) {
         return '';
       }
       const parsed = JSON.parse(fs.readTextSync(p)) as HostReadyFile;
@@ -596,7 +597,7 @@ export class DshHost {
   localHostWorkspace(): string {
     try {
       const p: string = `${this.store.homeDir()}/host-ready.json`;
-      if (!fs.accessSync(p)) {
+      if (!fileExists(p)) {
         return '';
       }
       const parsed = JSON.parse(fs.readTextSync(p)) as HostReadyFile;
@@ -642,7 +643,7 @@ export class DshHost {
       const err = e as Error;
       if (wrote) {
         try {
-          if (fs.accessSync(requestPath)) {
+          if (fileExists(requestPath)) {
             fs.unlinkSync(requestPath);
           }
         } catch (e2) {

@@ -17,6 +17,7 @@
 
 import { Border, Fs, Lh, MdBlock, MdBlockKind, MdSpan, Radius, SemanticColor, Sp, parseMarkdown, plainTextOf } from 'appstate';
 import { openExternalUrl } from 'platform';
+import { common } from '@kit.AbilityKit';
 import hilog from '@ohos.hilog';
 
 const DOMAIN: number = 0xD5A2;
@@ -217,7 +218,13 @@ export struct MarkdownRenderer {
    * 不伪造成功。
    */
   private openLink(href: string): void {
-    openExternalUrl(href).then((ok: boolean) => {
+    /*
+     * 上下文由**组件**给（`getContext(this)`）：全局无参 `getContext()` 已 deprecated，
+     * 而 `platform` 层拿不到组件上下文——所以由这里传进去，`OpenLink` 只负责打开
+     * （P8-7 清 API 兼容告警时改的）。
+     */
+    const context = getContext(this) as common.UIAbilityContext;
+    openExternalUrl(context, href).then((ok: boolean) => {
       if (!ok) {
         hilog.warn(DOMAIN, TAG, 'open link failed');
       }

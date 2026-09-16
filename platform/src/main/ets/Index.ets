@@ -57,7 +57,6 @@ export { localized, localizedOr } from './system/Strings';
 
 // ── 窗口与形态 ──
 export {
-  currentWindowId,
   focusMainWindow,
   openRoutedWindow,
   openSessionWindow,

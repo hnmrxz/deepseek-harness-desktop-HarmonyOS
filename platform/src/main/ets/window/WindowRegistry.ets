@@ -139,20 +139,3 @@ async function startSelf(context: common.UIAbilityContext,
     return false;
   }
 }
-
-/**
- * 取当前窗口的系统 id（字符串化）。
- *
- * 存在理由：`RuntimeSingleton` 的窗口台账要按窗口 id 登记。
- * 各 API 对窗口 id 的类型不一致（WindowProperties.id 是 number），统一转成字符串再比较。
- */
-export async function currentWindowId(): Promise<string> {
-  try {
-    const win: window.Window = await window.getLastWindow(getContext());
-    return String(win.getWindowProperties().id);
-  } catch (err) {
-    const e = err as BusinessError;
-    hilog.warn(DOMAIN, TAG, 'getLastWindow failed: %{public}s', e.message);
-    return '';
-  }
-}

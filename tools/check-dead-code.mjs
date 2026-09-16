@@ -323,7 +323,14 @@ export function deadExports(sources, corpusText) {
     if (skip.has(src.path)) continue;
     const lines = src.text.split('\n');
     for (let i = 0; i < lines.length; i++) {
-      const m = lines[i].match(/^export (?:interface|type|enum|function|class|const) (\w+)/);
+      /*
+       * 【P8-7 修的一处盲区】原正则不认 `export async function`（`async` 夹在中间）
+       * ⇒ 所有异步导出的函数**从来没被这条规则看过**。发现方式很偶然：
+       * 删掉 `platform/window/WindowRegistry.currentWindowId()` 时才发现它一直在那里
+       * （零调用点，而且实现里还用了已弃用的 `getContext()`）。
+       * 顺手把 `declare` 与 `abstract` 也放进来：将来加类时不会又漏一类。
+       */
+      const m = lines[i].match(/^export (?:declare )?(?:abstract )?(?:async )?(?:interface|type|enum|function|class|const) (\w+)/);
       if (m === null) continue;
       const re = new RegExp(`(?<![\\w$])${m[1]}(?![\\w])`, 'g');
       if ((corpusText.match(re) || []).length > 2) continue;

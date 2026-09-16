@@ -30,6 +30,7 @@
 
 import { Fs, HarmonySpacing, Radius, Sp } from 'appstate';
 import { fileIo as fs } from '@kit.CoreFileKit';
+import { fileExists } from 'hostruntime';
 
 /**
  * 打开沙箱文件夹选择器（宿主持句柄、组件注册实现）。
@@ -125,7 +126,7 @@ export struct FolderPicker {
   /** 读当前目录（不存在就建出来：第一次进来时 `workspace` 往往还不存在） */
   private list(): void {
     try {
-      if (!fs.accessSync(this.path)) {
+      if (!fileExists(this.path)) {
         fs.mkdirSync(this.path);
       }
       const names: string[] = fs.listFileSync(this.path);
