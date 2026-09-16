@@ -31,7 +31,7 @@
  * 放这里之后可在本机直接测（`tools/check-layout-fixtures.mjs`），视图只读结论。
  */
 
-import { PanelDescriptor, PanelLocation, PanelRegistry, PANEL_RIGHT_DETAIL, PANEL_SIDEBAR_WORKSPACES, PANEL_SIDEBAR_SETTINGS, PANEL_SIDEBAR_CORE } from './PanelRegistry';
+import { PanelDescriptor, PanelLocation, PanelRegistry, PANEL_RIGHT_DETAIL, PANEL_SIDEBAR_SETTINGS, PANEL_SIDEBAR_CORE } from './PanelRegistry';
 
 /* ───────────────────────── 主区面板 ───────────────────────── */
 
@@ -194,8 +194,19 @@ export function legacyTabOfMainPanel(panelId: string): string {
 
 /** 主区面板 id → 它在侧栏里的**席位** id（没有席位时返回空串） */
 export function sidebarPanelOfMainPanel(mainPanelId: string): string {
+  /*
+   * 【工作区面板没有侧栏席位了（2026-09-17，回扫时发现的残留）】
+   *
+   * `sidebarPanels()` 里的 `sidebar.workspaces` 席位**已按用户要求删除**
+   * （"不需要单独的工作区页面，工作区只需要在侧栏展示即可"，见方案 §3.11）。
+   * 而这里当时还返回那个 id ⇒ "让对应席位高亮"会去高亮一个**不存在的**席位。
+   *
+   * 这不只是观感问题：本函数的契约自己写着"**没有席位时返回空串**"，
+   * 与 `MAIN_CONVERSATION` 那条（下一个分支）是同一条规则。
+   * 当时改了注册表、漏了这一处——**回扫（把口径逐条对回代码）才抓出来**。
+   */
   if (mainPanelId === MAIN_WORKSPACES) {
-    return PANEL_SIDEBAR_WORKSPACES;
+    return '';
   }
   if (mainPanelId === MAIN_SETTINGS) {
     return PANEL_SIDEBAR_SETTINGS;

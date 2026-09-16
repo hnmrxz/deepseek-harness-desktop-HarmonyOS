@@ -1573,10 +1573,23 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
       && !reg.canSelect('sidebar', 'sidebar.core'), true);
 
   // P1-4：侧栏席位 ↔ 主区面板（点侧栏入口该切到哪个面板、哪一项该高亮）
-  t.eq('工作区席位 → 工作区面板', mainPanelOfSidebarPanel(PANEL_SIDEBAR_WORKSPACES), MAIN_WORKSPACES);
+  /*
+   * 【2026-09-17 修期望：`sidebar.workspaces` 席位已按用户要求删除】
+   *
+   * 用户原话：「其实不需要单独的工作区页面，工作区只需要在侧栏展示即可。」
+   * ⇒ `sidebarPanels()` 里那个席位没了（方案 §3.11）。于是：
+   *   · 它不再对应任何可点的侧栏入口；
+   *   · `sidebarPanelOfMainPanel(MAIN_WORKSPACES)` 按本函数自己的契约（"没有席位时返回空串"）
+   *     应返回空串——**这一条是回扫时才发现漏改的**（当时改了注册表，漏了映射）。
+   * `mainPanelOfSidebarPanel(PANEL_SIDEBAR_WORKSPACES)` 仍然成立：它是"给定席位 id 该去哪个面板"
+   * 的纯查表，席位虽然不在清单里了，映射本身没有歧义（留作兜底，不返回空串以免主区空着）。
+   */
+  t.eq('工作区席位 → 工作区面板（席位已不在清单里，映射仍作兜底）',
+    mainPanelOfSidebarPanel(PANEL_SIDEBAR_WORKSPACES), MAIN_WORKSPACES);
   t.eq('设置席位 → 设置面板', mainPanelOfSidebarPanel(PANEL_SIDEBAR_SETTINGS), MAIN_SETTINGS);
   t.eq('未知席位回落工作区（不返回空串：空串会让主区空着）', mainPanelOfSidebarPanel('nope'), MAIN_WORKSPACES);
-  t.eq('工作区面板 → 工作区席位（高亮用）', sidebarPanelOfMainPanel(MAIN_WORKSPACES), PANEL_SIDEBAR_WORKSPACES);
+  t.eq('工作区面板没有侧栏席位 ⇒ 空串（不再高亮一个不存在的席位）',
+    sidebarPanelOfMainPanel(MAIN_WORKSPACES), '');
   t.eq('设置面板 → 设置席位', sidebarPanelOfMainPanel(MAIN_SETTINGS), PANEL_SIDEBAR_SETTINGS);
   t.eq('会话面板没有侧栏席位 ⇒ 空串（不高亮任何一项，而不是随便高亮）',
     sidebarPanelOfMainPanel(MAIN_CONVERSATION), '');
