@@ -299,6 +299,76 @@ function flatNativeName(basename) {
 })();
 
 /*
+ * 鸿蒙沙箱拒绝 `link()` 时的降级垫片（F1，2026-09-16 真机取证）。
+ *
+ * 【症状】agent 的 `write` 在真机上**必然失败**：
+ *   `EACCES: permission denied, link '<workspace>/..x.md.<pid>.<uuid>.tmpdir/x.md.tmp' -> '<workspace>/x.md'`
+ * 上游 `@deepseek-ai/dsh-fs-local` 的 `writeFileAtomic()` 走"同目录 staging → 原子发布"：
+ * **新建**用 `link()`（no-replace 语义）、覆盖用 `rename()`。真机错在 `link()`，
+ * 两端同目录 ⇒ **不是 EXDEV，是沙箱策略拒绝 linkat**。
+ *
+ * 【为什么在这里降级，而不是改上游】本仓不变式：不改上游源码、不改核心树，端侧差异只走运行期组合
+ * （与 `installNativeRedirect` 同一手法）。
+ *
+ * 【降级成什么】`copyFile(tmp, dst, COPYFILE_EXCL)`：
+ *   · **保住**"不覆盖已存在文件"这条语义（`COPYFILE_EXCL` 与 `link` 的 no-replace 等价）；
+ *   · **丢掉**原子性与"同 inode" —— 这是实打实的取舍，所以**必须往旁路日志如实打一行**，
+ *     并且只在第一次命中时打（不刷屏）。
+ *
+ * 【为什么要打 errno 原文】不靠猜：第一次命中时把 `code`/`errno`/`syscall` 原样记下来，
+ * 万一将来鸿蒙给的是别的码（或 `copyFile` 也被拒），日志里能直接看出是哪一种。
+ *
+ * 【为什么用 defineProperty 而不是赋值】`node:fs` / `node:fs/promises` 的导出是
+ * **getter-only** 属性，直接赋值在非严格模式下会静默失败——那会变成"装了垫片但没生效"，
+ * 正是本项目最忌讳的"改了、看起来绿、实际没用"。
+ */
+(function installLinkFallback() {
+  let reported = false;
+  const DEGRADE_CODES = ['EACCES', 'EPERM', 'ENOSYS', 'EOPNOTSUPP', 'ENOTSUP'];
+  const note = (e, from, to) => {
+    if (reported) return;
+    reported = true;
+    diag('link() 被沙箱拒绝，已降级为 copyFile(COPYFILE_EXCL)：'
+      + `${from} -> ${to}（code=${e && e.code} errno=${e && e.errno} syscall=${e && e.syscall}）；`
+      + 'no-replace 语义保持，原子性减弱（已登记为端侧已知取舍）');
+  };
+  try {
+    const fsp = require('node:fs/promises');
+    const fsMod = require('node:fs');
+    const realLink = fsp.link.bind(fsp);
+    const realCopyFile = fsp.copyFile.bind(fsp);
+    const realLinkSync = fsMod.linkSync.bind(fsMod);
+    const realCopyFileSync = fsMod.copyFileSync.bind(fsMod);
+    const excl = fsMod.constants.COPYFILE_EXCL;
+    const patchedLink = async (from, to) => {
+      try {
+        return await realLink(from, to);
+      } catch (e) {
+        if (!e || DEGRADE_CODES.indexOf(e.code) < 0) throw e;
+        note(e, from, to);
+        return await realCopyFile(from, to, excl);
+      }
+    };
+    const patchedLinkSync = (from, to) => {
+      try {
+        return realLinkSync(from, to);
+      } catch (e) {
+        if (!e || DEGRADE_CODES.indexOf(e.code) < 0) throw e;
+        note(e, from, to);
+        return realCopyFileSync(from, to, excl);
+      }
+    };
+    // `require('node:fs').promises` 与 `require('node:fs/promises')` 在 Node 里是同一个对象，
+    // 所以这一处 defineProperty 同时覆盖两条 require 路径。
+    Object.defineProperty(fsp, 'link', { value: patchedLink, writable: true, configurable: true, enumerable: true });
+    Object.defineProperty(fsMod, 'linkSync', { value: patchedLinkSync, writable: true, configurable: true, enumerable: true });
+    diag('link 降级垫片已安装（沙箱拒绝 link 时退回 copyFile EXCL）');
+  } catch (e) {
+    diag(`link 降级垫片安装失败：${e && e.message}`);
+  }
+})();
+
+/*
  * jitless 下的 `undici` **模块名**解析钩子（与上面的 fetch 垫片是同一件事的另一半）。
  *
  * 【为什么光有垫片还不够】上面的垫片解决的是"全局 fetch 不可用"，但上游
