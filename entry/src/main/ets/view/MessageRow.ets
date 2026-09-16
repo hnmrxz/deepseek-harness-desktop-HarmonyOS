@@ -35,7 +35,8 @@
 import {
   Fs, HarmonyColor, HarmonyRadius, HarmonySpacing, HarmonyType, INTERNAL_BODY_HIDDEN_PREFIX, MenuGesture,
   Radius, Sp, Speaker,
-  TrajectoryItem, contextMenuGestures, formatClock, formatDuration, hoverEnabled, userFacingBodyOf
+  TrajectoryItem, contextMenuGestures, formatClock, formatDuration, hoverEnabled, parseMarkdown,
+  plainTextOf, userFacingBodyOf
 } from 'appstate';
 /** 类型单独 import type（本仓约定：值与类型分开写） */
 import type { InputModality } from 'appstate';
@@ -105,6 +106,8 @@ export struct MessageRow {
   @State hovered: boolean = false;
   /** 上下文菜单是否已打开 */
   @State menuShown: boolean = false;
+  /** 超长正文是否已展开（默认折叠成一行；见 build 里的长文折叠说明） */
+  @State bodyExpanded: boolean = false;
 
   /** 输入模态快照（策略模型的输入；本组件只做映射，不做判断） */
   private modality(): InputModality {
@@ -114,6 +117,41 @@ export struct MessageRow {
   /** 悬停态（只有指针设备才可能有"悬停"这个概念） */
   private isHovered(): boolean {
     return hoverEnabled(this.modality()) && this.hovered;
+  }
+
+  /** 这条消息的**可见正文**（内部条目为空串，见 F22） */
+  private bodyFull(): string {
+    return userFacingBodyOf(this.item);
+  }
+
+  /** 折叠态要显示的那一行：**纯文本**（不是 Markdown 源文），否则标记会把字数算进去 */
+  private bodyPlain(): string {
+    return plainTextOf(parseMarkdown(this.bodyFull()));
+  }
+
+  /**
+   * 是否算"超长"（用户口径：超长的才折，短消息原样）。
+   *
+   * 阈值：纯文本 > 500 字 **或** 行数 > 6。两个条件都要，是因为
+   * "500 字一行写不完"和"6 行短句加起来不到 500 字"都很常见，只用一个会漏。
+   */
+  private bodyIsLong(): boolean {
+    const plain: string = this.bodyPlain();
+    if (plain.length > 500) {
+      return true;
+    }
+    let lines: number = 1;
+    for (let i = 0; i < plain.length; i++) {
+      if (plain.charCodeAt(i) === 10) {
+        lines += 1;
+      }
+    }
+    return lines > 6;
+  }
+
+  /** 折叠态成立？流式进行中不折（正文还在长，折了会看到"越写越短"） */
+  private bodyCollapsed(): boolean {
+    return !this.bodyExpanded && !this.item.streaming && this.bodyIsLong();
   }
 
   /** 是否支持右键唤起菜单（手势集合来自策略模型，不在视图里散落判断） */
@@ -176,13 +214,52 @@ export struct MessageRow {
        * 内部条目取值是空串：此时渲染既有的一句说明（文案复用 `TrajectoryDetail` 里那一份，
        * 不在这里新造第二份），而不是留一片空白让人以为"这条没有内容"。
        */
-      if (userFacingBodyOf(this.item).length > 0) {
-        MarkdownRenderer({
-          text: this.item.streaming ? userFacingBodyOf(this.item) + ' ▌' : userFacingBodyOf(this.item),
-          // 文件提及的词汇表由**回合**给（见 TurnView），这里只透传
-          mentionPath: this.mentionPath,
-          onOpenMention: this.onOpenMention
-        })
+      /*
+       * 【超长正文默认折叠成一行，点击展开】用户要求（2026-09-17）：
+       * "对话里超长的应当只显示一行，点击再展开全部内容"。
+       *
+       * 判据放在**纯文本**上（不是 Markdown 源文）：`plainTextOf(parseMarkdown(…))` 才是用户
+       * 真正会看到的字数，用源文长度会把一堆标记算进去、把不该折的折了。
+       * 阈值：纯文本 > 500 字 **或** 超过 6 行 ⇒ 视为"超长"。
+       * 短消息**原样渲染**——把每一条都折成一行会让整段对话没法读（这是刻意的选择）。
+       *
+       * 折叠态渲染的是**纯文本单行**（省略号），所以它不可能出现 Markdown 的块级结构；
+       * 展开后仍是原来那套 `MarkdownRenderer`（行内强调/代码块/链接提及都在）。
+       * 流式进行中不折：正文还在长，折了会看到"越写越短"的怪相。
+       */
+      if (this.bodyFull().length > 0) {
+        if (this.bodyCollapsed()) {
+          Row({ space: Sp.S }) {
+            Text(this.bodyPlain())
+              .fontSize(Fs.BODY)
+              .fontColor($r('sys.color.font_primary'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .layoutWeight(1)
+            Text('展开')
+              .fontSize(Fs.CAPTION)
+              .fontColor($r('sys.color.brand'))
+          }
+          .width('100%')
+          .onClick(() => {
+            this.bodyExpanded = true;
+          })
+        } else {
+          MarkdownRenderer({
+            text: this.item.streaming ? this.bodyFull() + ' ▌' : this.bodyFull(),
+            // 文件提及的词汇表由**回合**给（见 TurnView），这里只透传
+            mentionPath: this.mentionPath,
+            onOpenMention: this.onOpenMention
+          })
+          if (this.bodyIsLong()) {
+            Text('收起')
+              .fontSize(Fs.CAPTION)
+              .fontColor($r('sys.color.brand'))
+              .onClick(() => {
+                this.bodyExpanded = false;
+              })
+          }
+        }
       } else if (this.item.internal === true) {
         Text(INTERNAL_BODY_HIDDEN_PREFIX)
           .fontSize(Fs.CAPTION)
