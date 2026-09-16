@@ -45,10 +45,23 @@ export struct GoalBar {
     return goalBarStateOf(s.goalText.length > 0, s.goalText, s.goalPhase, '', s.goalNote);
   }
 
-  /** 跑一个动作并把回执变成一句人话 */
+  /**
+   * 跑一个动作并把回执变成一句人话。
+   *
+   * 【为什么动作完了要再拉一次目标（2026-09-17 真机取证）】
+   * 此前这里只写回执、**不刷新**：真机上点「暂停」客户端确实发了 `goals/pause`，
+   * 点「清除」Host 也回了 `goals/clear ok present=false`（**真的清掉了**），
+   * 可进度条一直显示「进行中 · 暂停 · 编辑 · 清除」——状态是旧的，用户以为没生效。
+   * 写动词不做乐观改（这是对的），但"不做乐观改"不等于"不刷新"：
+   * 写完就从 Host 取一次真值，界面才跟得上。
+   */
   private run(action: Promise<ActionNotice>): void {
     action.then((n: ActionNotice) => {
       this.notice = n.code === 'command.executed' ? '' : `未生效：${n.code}`;
+      SessionHub.shared().refreshGoal();
+    }).catch(() => {
+      this.notice = '未生效：动作没能送出去';
+      SessionHub.shared().refreshGoal();
     });
   }
 
