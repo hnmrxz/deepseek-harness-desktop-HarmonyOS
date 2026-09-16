@@ -1026,17 +1026,18 @@ struct Index {
         return true;
       case BackAction.BACK_TO_LIST:
         /*
-         * 手机单栏：从"会话整页"退回列表。
+         * 手机单栏：从"会话整页"退回**列表**。
          *
-         * 【为什么必须同时切主区面板】会话在单栏下是**一层**：`openSession` 既把主区切到
-         * 会话面板、又把 `stackPage` 设成 `CONVERSATION`。只清 `stackPage` 的话，
-         * `activeMainPanelOf` 仍返回会话面板 ⇒ 屏幕上还是那个会话（一次"按了没反应"）。
-         * 主区回列表**但保留会话选择**：会话仍在 Host 上跑，用户点一下就能回去，
-         * 也不需要清掉正在编辑的草稿。
+         * 【2026-09-17 改：列表 = 侧栏抽屉，不再是「工作区」页面】
+         * 用户原话：「在会话里返回依旧会回到工作区页面」——而工作区已经不是独立页面了
+         * （`sidebarPanels()` 里那个席位已删，见台账 §3.11）：侧栏本来就画着工作区树＋会话。
+         * 所以返回的正确落点是**把抽屉打开**（列表就在那儿），而不是切主区面板——
+         * 切过去只会得到一个"本该不存在"的第二份列表。
+         *
+         * 会话选择**保留**：会话仍在 Host 上跑，抽屉里点一下就能回去，也不必清掉草稿。
          */
-        this.nav = navigateToMain(this.nav, MAIN_WORKSPACES, this.panelRegistry);
-        this.stackPage = StackPage.MAIN;
-        hilog.info(DOMAIN, TAG, 'HDSH-BACK 会话页回列表（保留会话 %{public}s）', this.selectedSessionId);
+        this.nav = setDrawer(this.nav, DrawerState.OPEN);
+        hilog.info(DOMAIN, TAG, 'HDSH-BACK 会话页回列表（打开抽屉；保留会话 %{public}s）', this.selectedSessionId);
         return true;
       case BackAction.STACK_TO_MAIN: {
         const from: string = this.stackPage;
