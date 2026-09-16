@@ -2670,6 +2670,35 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   t.eq('非竞态返回 NONE', queueRaceKind('gateway/internal'), QUEUE_RACE_NONE);
 }
 
+// ── P9-4：选中一条斜杠命令之后（要参数的命令不许"直接执行"） ──
+{
+  const IT = require2('./InputTrigger.js');
+  const { commandNeedsInput, commandPickAction, commandDraftText, commandInputNotice,
+    COMMAND_PICK_RUN, COMMAND_PICK_DRAFT } = IT;
+
+  // ① 权威信号：Host 的 `input.hint`（我们投影成 args）
+  t.eq('有 hint ⇒ 需要参数', commandNeedsInput('一段反馈文字'), true);
+  t.eq('没有 hint ⇒ 不需要参数', commandNeedsInput(''), false);
+  t.eq('只有空白 ⇒ 不需要参数（Host 给的空提示不算"要参数"）', commandNeedsInput('   '), false);
+
+  // ② 动作分流：需要参数的**不许**直接执行（直接发出去只会被 Host 拒绝）
+  t.eq('需要参数 ⇒ 填进输入框（draft）', commandPickAction('一段反馈文字'), COMMAND_PICK_DRAFT);
+  t.eq('不需要参数 ⇒ 直接执行（run）', commandPickAction(''), COMMAND_PICK_RUN);
+
+  // ③ 填进输入框的文本：命令名 + 一个空格（词法要求，见模型注释）
+  t.eq('插入文本 = `/feedback `', commandDraftText('/feedback'), '/feedback ');
+  t.eq('去掉名字两端空白', commandDraftText('  /goal  '), '/goal ');
+  t.eq('空名字 ⇒ 空串（不往输入框塞一个空格）', commandDraftText('   '), '');
+
+  // ④ 提示文案三要素：为什么没执行 / 参数长什么样 / 下一步
+  const notice = commandInputNotice('/feedback', '一段反馈文字');
+  t.eq('说清"没有执行"', notice.includes('没有执行'), true);
+  t.eq('说清为什么（会被 Host 拒绝）', notice.includes('Host 拒绝'), true);
+  t.eq('带上 Host 原话的参数提示', notice.includes('一段反馈文字'), true);
+  t.eq('给出下一步（已填进输入框）', notice.includes('已经填进输入框'), true);
+  t.eq('没有 hint 时不留残句', commandInputNotice('/x', '  ').includes('参数是'), false);
+}
+
 // ── P9-3：正文里的文件提及（官方 MarkdownFileMentions：resolver 用自己的真实文件词汇） ──
 {
   const PF = require2('./ProducedFiles.js');

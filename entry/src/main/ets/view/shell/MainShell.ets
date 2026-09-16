@@ -17,7 +17,7 @@
  * 而它**已经是组件 `HubBanner`**，故这里直接渲染组件。
  */
 
-import { ActionNotice, CommandCandidate, DiagEntry, DiagMode, DiagReport, Fs, HostRecord, HubPhase, MAIN_CONNECT, MAIN_CONVERSATION, ModelOption, ModelSelection, PanelRegistry, PendingAttachment, PendingItem, Radius, ReferenceCandidate, SessionHub, SessionJob, Sp, StackPage, TrajectoryItem, diagHintOf, diagTitleOf, filterDiagEntries, openSettings } from 'appstate';
+import { ActionNotice, CommandCandidate, DiagEntry, DiagMode, DiagReport, Fs, HostRecord, HubPhase, MAIN_CONNECT, MAIN_CONVERSATION, ModelOption, ModelSelection, PanelRegistry, PendingAttachment, PendingItem, Radius, ReferenceCandidate, SessionHub, SessionJob, Sp, StackPage, TrajectoryItem, COMMAND_PICK_DRAFT, commandDraftText, commandInputNotice, commandPickAction, diagHintOf, diagTitleOf, filterDiagEntries, openSettings } from 'appstate';
 import hilog from '@ohos.hilog';
 import { CommandList } from '../CommandList';
 import { ConnectPane } from '../ConnectPane';
@@ -200,6 +200,19 @@ export struct MainShell {
           commands: this.f.commands,
           onRun: (c: CommandCandidate) => {
             this.f.setPaletteOpen(false);
+            /*
+             * 【P9-4：要参数的命令不许"直接执行"】Host 的 `CommandDescriptor.input.hint`
+             * 是权威信号（我们投影成 `c.args`）：它非空就表示这条命令需要一段自由文本。
+             * 此前无论要不要参数都直接发出去 ⇒ 选 `/feedback` 会拿到 Host 那句英文 usage、
+             * 面板关了、输入框空着（用户以为命令坏了）。
+             * 现在按规则分流：要参数 ⇒ 填进输入框 + 说明；不要参数 ⇒ 照旧执行。
+             * 判定在 `appstate/model/InputTrigger`（纯函数，有 fixture）。
+             */
+            if (commandPickAction(c.args) === COMMAND_PICK_DRAFT) {
+              this.f.setDraft(commandDraftText(c.name));
+              this.f.setSettingWriteNote(commandInputNotice(c.name, c.args));
+              return;
+            }
             SessionHub.shared().executeCommand(c.name).then((n: ActionNotice) => {
               this.f.setSettingWriteNote(this.f.noticeText(n));
             }).catch((e: Object) => {

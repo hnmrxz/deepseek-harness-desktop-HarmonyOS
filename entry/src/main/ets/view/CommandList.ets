@@ -44,8 +44,20 @@ export struct CommandList {
             Text(c.name)
               .fontSize(Fs.SECONDARY)
               .width('100%')
-            if (c.detail.length > 0 || c.args.length > 0) {
-              Text(c.detail.length > 0 ? c.detail : c.args)
+            /*
+             * 【两行都要显示（P9-4）】此前是 `detail.length > 0 ? detail : args`：
+             * Host 同时给了说明与参数提示时，**参数提示被吞掉** ⇒ 用户不知道这条命令要参数，
+             * 点下去就被拒。现在参数提示单独一行（它决定了这条命令能不能直接执行），
+             * 说明另一行。
+             */
+            if (c.args.length > 0) {
+              Text(`参数：${c.args}`)
+                .fontSize(Fs.CAPTION)
+                .fontColor($r('sys.color.font_tertiary'))
+                .width('100%')
+            }
+            if (c.detail.length > 0) {
+              Text(c.detail)
                 .fontSize(Fs.CAPTION)
                 .fontColor($r('sys.color.font_tertiary'))
                 .width('100%')

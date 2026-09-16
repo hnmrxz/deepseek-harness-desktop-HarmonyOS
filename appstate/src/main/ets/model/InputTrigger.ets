@@ -126,3 +126,73 @@ export function appendPick(draft: string, insert: string): string {
   const space: string = needsTrailingSpace(insert) ? ' ' : '';
   return `${draft}${sep}${insert}${space}`;
 }
+
+/* ───────────────────────── 选中一条斜杠命令之后（P9-4） ───────────────────────── */
+
+/**
+ * 这条命令**需要参数**吗。
+ *
+ * 【判据来自 Host，不是我们猜】官方 `CommandDescriptor` 的形状是
+ * `{name, description, input?: {hint, attachments?}}` —— `input` 存在就表示
+ * "这条命令接受（并通常需要）一段自由文本"，`hint` 就是给用户看的占位说明。
+ * 我们把它投影成 `CommandCandidate.args`（见 `Wire.projectCommands`），
+ * 因此"要不要参数"这件事**有权威来源**：`args` 非空即需要。
+ *
+ * 【为什么不能靠命令名白名单】命令目录由 Host 提供（不同 Host 装的东西不同），
+ * 写死 `/feedback` / `/goal` 这些名字等于把 Host 的目录抄一份到客户端——
+ * 那份抄件一旦过期，界面上就会出现"明明要参数却被直接执行"的命令。
+ */
+export function commandNeedsInput(args: string): boolean {
+  return args.trim().length > 0;
+}
+
+/** 选中命令后的动作：直接执行 */
+export const COMMAND_PICK_RUN: string = 'run';
+/** 选中命令后的动作：填进输入框让用户补齐参数 */
+export const COMMAND_PICK_DRAFT: string = 'draft';
+
+/**
+ * 选中一条命令时该做什么。
+ *
+ * 【为什么需要这条规则（真实缺陷）】命令面板此前**无论命令要不要参数都直接执行**：
+ * 选 `/feedback`（Host 的 hint 写着要一段文本）⇒ 直接发给 Host ⇒ 被拒，
+ * 界面上出现 Host 那句英文 usage（`Feedback text is required. Usage: /feedback <text>`），
+ * 面板关了、输入框空着。官方的做法是给这类命令挂一个 `popupSelect`：
+ * **永远不会发出一次"已知不完整"的调用**（`CommandDecoration` 的注释逐字：
+ * "the decoration replaces only the bare menu-pick/enter with a popup whose onSelect
+ * **typically submits a completed line back through command.execute**"）。
+ *
+ * 我们没有它的选项来源（那是各业务包自己的协议），于是取**最小且诚实**的等价物：
+ * 需要参数的命令 ⇒ 把 `命令 + 空格` 填进输入框（与输入区斜杠菜单**同一条规则**），
+ * 并把 Host 给的 hint 显示出来；不需要参数的 ⇒ 照旧直接执行。
+ */
+export function commandPickAction(args: string): string {
+  return commandNeedsInput(args) ? COMMAND_PICK_DRAFT : COMMAND_PICK_RUN;
+}
+
+/**
+ * 需要参数时填进输入框的文本：`/name `（**末尾一个空格**）。
+ *
+ * 空格不是装饰：Host 的用法行是 `/feedback <text>`，用户接着打的就是"参数"，
+ * 而输入区的补全与 `detectTrigger` 都要求命令名后**恰好**有一处空白才开始算参数
+ * （见本文件顶部的词法说明）。
+ */
+export function commandDraftText(name: string): string {
+  const trimmed: string = name.trim();
+  return trimmed.length === 0 ? '' : `${trimmed} `;
+}
+
+/**
+ * 需要参数时的提示文案（出现在输入区上方那条通道里）。
+ *
+ * 三件事都要说清：① 为什么没执行（这条命令要参数）；② 参数长什么样（Host 的 hint 原话）；
+ * ③ 下一步（已填进输入框，补齐后发送）。
+ */
+export function commandInputNotice(name: string, hint: string): string {
+  const trimmed: string = name.trim();
+  const what: string = trimmed.length > 0 ? trimmed : '这条命令';
+  const expected: string = hint.trim();
+  const detail: string = expected.length > 0 ? `参数是「${expected}」。` : '';
+  return `${what} 需要参数，没有执行（直接发出去只会被 Host 拒绝）。`
+    + `${detail}已经填进输入框，补齐后按发送即可。`;
+}

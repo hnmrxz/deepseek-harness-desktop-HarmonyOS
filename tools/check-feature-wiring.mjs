@@ -140,6 +140,15 @@ const FEATURES = [
    * 用户只能去过程流里一个个翻工具卡。
    * 钉三段：解析（纯模型）+ 渲染器的回调位 + 词汇表在**回合**那一层给。
    */
+  /*
+   * 命令参数分流（P9-4）。官方把"裸执行"这类命令交给 client 的 `popupSelect`
+   * （`CommandDecoration` 的注释："…a popup whose onSelect typically submits a **completed line**
+   * back through command.execute"），也就是**永远不发出一次已知不完整的调用**。
+   * 我们没有它的选项来源（那是各业务包自己的协议），取最小等价物：Host 的 `input.hint`
+   * 非空 ⇒ 把 `命令 + 空格` 填进输入框并说明；否则照旧直接执行。
+   * 钉三段：判定（纯函数）+ 面板那条分流 + 提示文案。
+   */
+  { name: '命令参数分流', patterns: [['commandPickAction', 2], ['commandDraftText', 2], ['commandInputNotice', 2]] },
   { name: '正文文件提及', patterns: [['resolveProducedMention', 2], ['mentionPath', 2], ['onOpenMention', 2]] },
   { name: '原图预览（灯箱）', patterns: [['lightboxFit', 2], ['bindContentCover', 1], ['IMAGE_PREVIEW_DIALOG', 2]] },
   { name: '错误生命周期', patterns: [['errorClearedBy', 2], ['clearErrorOn', 2], ['setConnectionError', 2]] },
