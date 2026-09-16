@@ -1149,6 +1149,25 @@ export class SessionHub {
   }
 
   /**
+   * 记一条**动作级**错误（F3 的根治）。
+   *
+   * 【为什么要有这个方法】上面 `setConnectionError` 的注释早就写了这条纪律——
+   * 「用方法而不是逐处 `this.lastError = …` 的原因是**作用域必须跟着文案一起写**」——
+   * 但真机上核对下来：全文件 **24 处**直接赋值 `this.lastError`，只有 3 处同时写了作用域。
+   * 于是**一旦之前发生过连接级错误**，后面每一条动作级错误都会**继承 `connection` 作用域**，
+   * 而 `errorClearedBy(connection, turn-ended-ok) === false` ⇒ 它们**永远不会被清掉**。
+   * 这正是真机上那条「轨迹流失败」横幅跑完成功回合仍然挂着、
+   * 只有冷启才消失的成因（F3），而且它不是一处笔误，是**一整类**。
+   *
+   * 现在：动作级错误一律走这里；连接级错误走 `setConnectionError`。
+   * 直接写 `this.lastError = …` 只允许出现在"清空"（写空串）那两处。
+   */
+  private setActionError(text: string): void {
+    this.lastError = text;
+    this.lastErrorScope = ERROR_SCOPE_ACTION;
+  }
+
+  /**
    * 按规则清理错误（P8-6c）：连上了清全部；动作成功只清动作级的那些。
    *
    * 判据在零依赖 `model/ErrorLifecycle.errorClearedBy()`（有 fixture）。
@@ -1447,7 +1466,7 @@ export class SessionHub {
       answers.push(one as Object);
     }
     if (answers.length === 0) {
-      this.lastError = '没有可提交的答案：请先作答（或显式跳过）至少一题';
+      this.setActionError('没有可提交的答案：请先作答（或显式跳过）至少一题');
       this.notify();
       return false;
     }
@@ -1474,7 +1493,7 @@ export class SessionHub {
    */
   async cancelQuestionGroup(pendingId: string): Promise<boolean> {
     if (!this.unaryReady) {
-      this.lastError = '未连接：无法放弃这次提问';
+      this.setActionError('未连接：无法放弃这次提问');
       this.notify();
       return false;
     }
@@ -1545,7 +1564,7 @@ export class SessionHub {
   private async sendEventResult(eventId: string, outcome: Object): Promise<boolean> {
     const clientId: string | undefined = this.conn.getHostFactsClientId();
     if (clientId === undefined || clientId.length === 0) {
-      this.lastError = '事件流尚未就绪，无法应答；请等待连接恢复后重试';
+      this.setActionError('事件流尚未就绪，无法应答；请等待连接恢复后重试');
       this.notify();
       return false;
     }
@@ -1562,7 +1581,7 @@ export class SessionHub {
     const failure = result.error;
     const code: string = failure === undefined ? 'unknown' : failure.code;
     const message: string = failure === undefined ? '应答未被 Host 接受' : failure.message;
-    this.lastError = `应答失败：${code} ${message}`;
+    this.setActionError(`应答失败：${code} ${message}`);
     this.record(`result fail ${code}`);
     this.notify();
     return false;
@@ -1861,7 +1880,7 @@ export class SessionHub {
     for (let i = 0; i < fields.length; i++) {
       const res: SettingsWriteResult = await this.writeSetting(`agent-default-model.${fields[i]}`, values[i]);
       if (res.outcome !== SettingsWriteOutcome.OK) {
-        this.lastError = res.message;
+        this.setActionError(res.message);
         this.notify();
         return `默认模型只写成了 ${done.length > 0 ? done.join('、') : '0'} 个字段：${res.message}`;
       }
@@ -2160,7 +2179,7 @@ export class SessionHub {
    */
   async createSession(): Promise<string | undefined> {
     if (!this.unaryReady) {
-      this.lastError = '尚未连接 Host，无法新建会话。请先在「添加 Host」里完成连接。';
+      this.setActionError('尚未连接 Host，无法新建会话。请先在「添加 Host」里完成连接。');
       this.notify();
       return undefined;
     }
@@ -2187,7 +2206,7 @@ export class SessionHub {
      */
     const args: Object | undefined = argsFor(SESSION_CREATE_ENDPOINT, inner as Object);
     if (args === undefined) {
-      this.lastError = '兼容面缺少会话创建端点的参数契约（上表未生成？）';
+      this.setActionError('兼容面缺少会话创建端点的参数契约（上表未生成？）');
       this.notify();
       return undefined;
     }
@@ -2195,7 +2214,7 @@ export class SessionHub {
     if (!result.ok) {
       const failure = result.error;
       const code: string = failure === undefined ? 'unknown' : failure.code;
-      this.lastError = `新建会话失败：${friendlyFailure(code, failure === undefined ? '' : failure.message)}`;
+      this.setActionError(`新建会话失败：${friendlyFailure(code, failure === undefined ? '' : failure.message)}`);
       this.record(`create fail ${code}`);
       this.notify();
       return undefined;
@@ -2276,7 +2295,7 @@ export class SessionHub {
     const body: Record<string, Object> = {};
     const args: Object | undefined = argsFor(SESSION_LIST_ENDPOINT, body as Object);
     if (args === undefined) {
-      this.lastError = '兼容面缺少会话列表端点的参数契约（上表未生成？）';
+      this.setActionError('兼容面缺少会话列表端点的参数契约（上表未生成？）');
       this.notify();
       return;
     }
@@ -2284,7 +2303,7 @@ export class SessionHub {
     if (!result.ok) {
       const failure = result.error;
       const code: string = failure === undefined ? 'unknown' : failure.code;
-      this.lastError = `会话列表获取失败：${friendlyFailure(code, failure === undefined ? '' : failure.message)}`;
+      this.setActionError(`会话列表获取失败：${friendlyFailure(code, failure === undefined ? '' : failure.message)}`);
       this.record(`list fail ${code}`);
       this.notify();
       return;
@@ -2366,7 +2385,7 @@ export class SessionHub {
     // —— 这正是用户看到的「轨迹流失败」。
     const args: Object | undefined = argsFor(SESSION_FOLLOW_ENDPOINT, request as Object);
     if (args === undefined) {
-      this.lastError = '兼容面缺少轨迹流端点的参数契约';
+      this.setActionError('兼容面缺少轨迹流端点的参数契约');
       this.notify();
       return;
     }
@@ -2377,7 +2396,21 @@ export class SessionHub {
       },
       onError: (code: string, message: string) => {
         this.followCancel = undefined;
-        this.lastError = `轨迹流失败：${code} ${message}`;
+        this.setActionError(`轨迹流失败：${code} ${message}`);
+        /*
+         * 【F3：这里必须**同时**写作用域，否则横幅永不消失】
+         *
+         * 真机读数：这条横幅**一次成功的回合跑完之后仍然在**（换会话、回列表、再进会话都在），
+         * 只有冷启才消失。根因就是这一行漏了 `lastErrorScope`：
+         * 作用域停留在上一次的错误上（很可能是某次连接错误留下的 `connection`），
+         * 而 `errorClearedBy(connection, turn-ended-ok) === false` ⇒
+         * **「一轮成功跑完就清掉」这条规则永远轮不到它**，横幅于是长期挂着。
+         *
+         * 为什么是**动作级**而不是连接级：这条错误说的是"读这条会话的轨迹失败了"，
+         * 而不是"连接坏了"（横幅自己那一行事实里就写着 `连接 live`）。
+         * 动作级才是它的真实语义，也才对应"这个动作后来成功了就该清掉"。
+         */
+        this.lastErrorScope = ERROR_SCOPE_ACTION;
         this.record(`follow error ${code}`);
         // 流没了 ⇒ 立刻接管：这是设备上最常见的一条路径（开流帧发出后 ~40ms 就撞上载体死亡）
         this.ensurePageFallback();
@@ -2393,7 +2426,7 @@ export class SessionHub {
     };
     const cancel = this.conn.openStream(SESSION_FOLLOW_ENDPOINT, args, sink);
     if (cancel === undefined) {
-      this.lastError = '无法打开轨迹流：连接尚未就绪';
+      this.setActionError('无法打开轨迹流：连接尚未就绪');
       // 流开不起来 ⇒ 交给一元兜底（否则会话页会永远空白）
       this.ensurePageFallback();
       this.notify();
@@ -2907,7 +2940,7 @@ export class SessionHub {
     }
     const children: FileNode[] | undefined = await this.listDirectory(path, path, scope);
     if (children === undefined) {
-      this.lastError = `目录「${path}」列表获取失败（详见诊断页旁路日志）`;
+      this.setActionError(`目录「${path}」列表获取失败（详见诊断页旁路日志）`);
       this.notify();
       return;
     }
@@ -3213,7 +3246,7 @@ export class SessionHub {
       },
       onError: (code: string, message: string) => {
         this.record(`workspace follow error ${code}`);
-        this.lastError = `工作区注册表流异常：${friendlyFailure(code, message)}`;
+        this.setActionError(`工作区注册表流异常：${friendlyFailure(code, message)}`);
         this.notify();
       },
       onEnd: () => {
@@ -4145,7 +4178,7 @@ export class SessionHub {
         this.controlCancel = undefined;
         this.record(`control error ${code}`);
         if (code !== GATEWAY_SIGNATURE_INVALID) {
-          this.lastError = `控制流失败：${code} ${message}`;
+          this.setActionError(`控制流失败：${code} ${message}`);
         }
         this.notify();
       },
@@ -4486,13 +4519,13 @@ export class SessionHub {
       return false;
     }
     if (!this.unaryReady) {
-      this.lastError = '当前离线，无法修改待发队列。';
+      this.setActionError('当前离线，无法修改待发队列。');
       this.notify();
       return false;
     }
     const payload: Object | undefined = sessionUpdateQueuePayload(sessionId, itemId, action);
     if (payload === undefined) {
-      this.lastError = '兼容面缺少队列更新端点的参数契约';
+      this.setActionError('兼容面缺少队列更新端点的参数契约');
       this.notify();
       return false;
     }
@@ -4524,7 +4557,7 @@ export class SessionHub {
         // 视为"已收敛"：调用方不该再显示自己的失败文案（否则又变成一次假失败）
         return true;
       }
-      this.lastError = `修改待发队列失败：${friendlyFailure(code, failure === undefined ? '' : failure.message)}`;
+      this.setActionError(`修改待发队列失败：${friendlyFailure(code, failure === undefined ? '' : failure.message)}`);
       this.record(`updateQueue fail ${code}`);
       this.notify();
       return false;
@@ -4555,7 +4588,7 @@ export class SessionHub {
     const trimmed: string = text.trim();
     if (trimmed.length === 0) {
       // 上游要求 `content` 非空（D2b）：发空内容必然被拒，不如提前说清楚
-      this.lastError = '排队项内容不能为空（Host 拒绝空内容的编辑）。';
+      this.setActionError('排队项内容不能为空（Host 拒绝空内容的编辑）。');
       this.notify();
       return false;
     }
@@ -4574,7 +4607,7 @@ export class SessionHub {
   async sendPrompt(text: string): Promise<boolean> {
     const sessionId: string = this.selectedSessionId;
     if (sessionId.length === 0) {
-      this.lastError = '尚未选择会话';
+      this.setActionError('尚未选择会话');
       this.notify();
       return false;
     }
@@ -4590,12 +4623,12 @@ export class SessionHub {
       // 图片更彻底：它是**内联**在消息里的，端侧**没有**任何"稍后补发"的凭据。
       // 因此离线时只排文本，并明确告知附件/图片不会跟着走。
       if (this.attachmentList.length > 0) {
-        this.lastError = hasInlineImage(this.draftInputs())
+        this.setActionError(hasInlineImage(this.draftInputs())
           ? '当前离线：已加入待发队列，但**图片不会随队列发送**（图片是内联在消息里的，'
             + '端侧没有可稍后补发的凭据）。请恢复连接后重新选择图片。'
-          : '当前离线：已加入待发队列，但**附件不会随队列发送**，请恢复连接后重新添加附件。';
+          : '当前离线：已加入待发队列，但**附件不会随队列发送**，请恢复连接后重新添加附件。');
       } else {
-        this.lastError = '当前离线：已加入待发队列，连接恢复后自动发送';
+        this.setActionError('当前离线：已加入待发队列，连接恢复后自动发送');
       }
       this.outboxList.push({ requestId: requestId, sessionId: sessionId, text: trimmed, at: Date.now() });
       // 已排队 ⇒ 视图**不得**把草稿还回输入框（否则这条消息会被发两次）
@@ -4652,7 +4685,7 @@ export class SessionHub {
     const args: Object | undefined =
       promptPayload(requestId, sessionId, PromptMode.QUEUE, content, '');
     if (args === undefined) {
-      this.lastError = '兼容面缺少提示词端点的参数契约';
+      this.setActionError('兼容面缺少提示词端点的参数契约');
       this.notify();
       return false;
     }
@@ -4671,13 +4704,13 @@ export class SessionHub {
     if (result.ok) {
       // `ok` 但没被接受（上游回复缺 `accepted`）——**不当作成功**：
       // 乐观清空附件会让用户丢失一次上传，而失败的原因被掩盖。
-      this.lastError = '发送未获确认：Host 没有明确接受这次提示词。';
+      this.setActionError('发送未获确认：Host 没有明确接受这次提示词。');
       this.record('prompt ok 但未 accepted');
       this.notify();
       return false;
     }
     const failure = result.error;
-    this.lastError = `发送失败：${friendlyFailure(failure === undefined ? 'unknown' : failure.code, failure === undefined ? '' : failure.message)}`;
+    this.setActionError(`发送失败：${friendlyFailure(failure === undefined ? 'unknown' : failure.code, failure === undefined ? '' : failure.message)}`);
     this.record(`prompt fail ${failure === undefined ? '?' : failure.code}`);
     this.notify();
     return false;
@@ -4749,7 +4782,7 @@ export class SessionHub {
       return true;
     }
     const failure = result.error;
-    this.lastError = `取消失败：${friendlyFailure(failure === undefined ? 'unknown' : failure.code, failure === undefined ? '' : failure.message)}`;
+    this.setActionError(`取消失败：${friendlyFailure(failure === undefined ? 'unknown' : failure.code, failure === undefined ? '' : failure.message)}`);
     this.notify();
     return false;
   }
