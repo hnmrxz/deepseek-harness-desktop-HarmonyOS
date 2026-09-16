@@ -79,7 +79,14 @@ export struct ProducedFilesRow {
               NativeChip({
                 label: file.name,
                 active: false,
-                a11y: `打开 ${file.path}`,
+                /*
+                 * 逐文件 ±（官方卡里每个文件后面跟 `+15 -2`）走**无障碍文案**而不是 chip 正文：
+                 * chip 在手机上本来就是省地方的形态，塞进 `名称 +15 -2` 会把它撑成两三倍宽，
+                 * 而这一行的左端已经给了"本回合总共多少"。读屏用户在这里拿到的是完整信息，
+                 * 看得见的用户拿到的是"总共多少"——**不是丢掉，是分层**。
+                 * （可视呈现等一个支持尾随计数的 chip 变体，登记在方案里。）
+                 */
+                a11y: `打开 ${file.path}，本次改动 +${file.added} −${file.removed}`,
                 onTap: () => {
                   this.onOpen(file.path, file.name);
                 }

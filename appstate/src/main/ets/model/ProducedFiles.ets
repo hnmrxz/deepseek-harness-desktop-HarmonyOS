@@ -38,6 +38,14 @@ export interface ProducedFile {
   path: string;
   /** 展示名（路径末段） */
   name: string;
+  /**
+   * 该文件在这回合里的最终增行 / 删行（官方逐文件 `+15 -2`）。
+   *
+   * 同一个文件被改多次时取**最后一次**对照的结果（"现在它是什么样"），
+   * 不是累加（"总共敲了多少"）——累加值由行尾的 `+N −M` 表达。
+   */
+  added: number;
+  removed: number;
 }
 
 /** 路径末段（`a/b/c.ts` → `c.ts`；没有分隔符就是它自己） */
@@ -76,7 +84,20 @@ export function producedFilesOf(items: TrajectoryItem[]): ProducedFile[] {
       continue;
     }
     seen.push(path);
-    out.push({ path: path, name: baseNameOf(path) });
+    /*
+     * 逐文件 ±（官方那张卡里每个文件后面都跟着 `+15 -2`）。
+     * 判据就在这里**已经算出来了**（上面那行 `intendedDiffOf`），以前只用了 `path` 就把它丢了。
+     * 同一个文件被改多次时取**最后一次**的对照——那张卡说的是"现在这个文件变成了什么样"，
+     * 而不是"这一回合总共敲了多少增删"。要总数看行尾那个 `+N −M`。
+     */
+    const stat: DiffStat = diffStatOf(diffLines(diff.oldText, diff.newText));
+    const known: number = out.findIndex((f: ProducedFile) => f.path === path);
+    if (known >= 0) {
+      out[known].added = stat.added;
+      out[known].removed = stat.removed;
+      continue;
+    }
+    out.push({ path: path, name: baseNameOf(path), added: stat.added, removed: stat.removed });
   }
   return out;
 }
