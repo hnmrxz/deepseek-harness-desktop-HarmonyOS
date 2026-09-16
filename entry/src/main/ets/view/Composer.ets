@@ -523,8 +523,12 @@ export struct Composer {
           && (this.layoutMode !== 'single' || this.permissionSwitchableNow)) {
           Row() {
             NativeChip({
-              // 非单栏：与官方一致，保留「权限：X」前缀且不可切时也显示（读得出为什么点不了）
-              label: this.layoutMode === 'single' ? this.permissionLabel : `权限：${this.permissionLabel}`,
+              /*
+               * 非单栏：**与官方 1:1**——官方在那里显示的就是「值 + ⌄」
+               * （截图里是 `工作区内修改 ⌄` / `完全权限 ⌄`），没有「权限：」前缀。
+               * 单栏（手机）：只留值本身、且只在真能切时出现，见上面那段说明。
+               */
+              label: this.permissionLabel,
               active: false,
               disabled: !this.permissionSwitchableNow,
               maxWidth: this.layoutMode === 'single' ? 84 : 160,
@@ -537,6 +541,12 @@ export struct Composer {
                 }
               }
             })
+            // 官方那一格带 `⌄`（可选项的形状提示）。手机端省地方，不加。
+            if (this.layoutMode !== 'single') {
+              SymbolGlyph($r('sys.symbol.chevron_down'))
+                .fontSize(Sz.TOUCH_MIN / 2)
+                .fontColor([$r('sys.color.font_tertiary')])
+            }
           }
           .margin({ right: Sp.XS, bottom: Sp.XS })
         }
