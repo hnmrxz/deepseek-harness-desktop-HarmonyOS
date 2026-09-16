@@ -20,7 +20,6 @@ import { SubagentCard } from './SubagentCard';
 import { ToolCard } from './ToolCard';
 import { ReasoningRow } from './ReasoningRow';
 import { ConversationHeader } from './ConversationHeader';
-import { GoalBar } from './GoalBar';
 import { TurnView, TurnViewController } from './TurnView';
 import { PendingPane } from './PendingPane';
 
@@ -1143,18 +1142,14 @@ export struct ConversationPane {
       }
 
       /*
-       * 【目标栏搬到输入区上方（2026-09-17，对齐官方 + 解锁 D38）】
+       * 【目标栏已挪进 `Composer` 内部（2026-09-17，第 50 轮）】
        *
-       * 官方会话页里「进行中的目标」就常驻在输入区上方一行（可编辑/清除）。
-       * 我们此前把它放在 `MainShell` 的**命令面板**里，而那个面板**只能靠快捷键打开**
-       * （`paletteOpen` 只由 `command-palette` 动作置位）⇒ 手机上根本看不到目标栏，
-       * D38 §1–§4/§6/§7 那几条判据在真机上"不可达"而不是"不通过"。
-       *
-       * `GoalBar` 自足读中枢快照（没有 props），所以搬过来只需要挂一行；
-       * 没有目标时它自己整段不占位（D38 §5 已验过通过）。
+       * 原来它挂在这里（与 `Composer` 同级），但真机上**一行都不渲染**，
+       * 而数据侧完全正常（旁路日志有 `goals/get ok present=true phase=active rev=1`）。
+       * 三条假设（数据为空／快照倒着覆盖／组件不重绘）都被排除之后，只剩"同级却画不出来"
+       * 这一条现象；于是换挂法——挂进**每一帧都在重绘**的 `Composer` 里。
+       * 位置仍是"输入区上方"，与官方一致；没有目标时它整段不占位（D38 §5）。
        */
-      GoalBar()
-
       Composer({
         draft: this.draft,
         running: this.running,

@@ -15,6 +15,7 @@ import {
   referenceFileRowDetail, referenceFileRowName, referenceSessionRowDetail, referenceSessionRowName, TriggerToken
 } from 'appstate';
 import { NativeButton, NativeChip } from './NativePrimitives';
+import { GoalBar } from './GoalBar';
 
 /**
  * 附件缩略图边长（vp）。
@@ -207,6 +208,22 @@ export struct Composer {
 
   build() {
     Column({ space: Sp.S }) {
+      /*
+       * 【目标栏挂在这里，而不是挂在会话面板里（2026-09-17，第 50 轮换挂法）】
+       *
+       * 官方把「进行中的目标」放在**输入区正上方**。我们此前把它挂在 `ConversationPane`
+       * 的 Composer 旁边（同级），结果**一行都不渲染**——而两边数据都是对的：
+       * 旁路日志有 `goals/get ok present=true phase=active rev=1`，
+       * `GoalBar` 自己也订阅了中枢。查过三条假设（数据为空是假读数／follow 快照倒着覆盖／
+       * 组件不重绘）都不是，只剩"同级却画不出来"这一条现象。
+       *
+       * 换挂法的依据很直接：**Composer 每一帧都在重绘**（敲一个字、草稿变、附件变都会），
+       * 而它自己渲染得好好的；目标栏挂在它内部，就搭上了这条确定的刷新路径。
+       * 位置也仍然是"输入区上方"——`GoalBar()` 在这段 Column 的第一个位置，
+       * 与官方一致（没有目标时它整段不占位，见 D38 §5）。
+       */
+      GoalBar()
+
       if (this.offline) {
         this.offlineNotice()
       }
