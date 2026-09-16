@@ -587,6 +587,14 @@ export class SessionHub {
   private sessions: SessionListItem[] = [];
   private pendingList: PendingItem[] = [];
   private trajectoryList: TrajectoryItem[] = [];
+  /**
+   * 乐观回显条目（F10）：发送被 accepted 之后立刻加、真实条目到达时被替换。
+   *
+   * **单独一个数组**而不是直接塞进 `trajectoryList`：后者每次刷新都是**整份替换**
+   * （`session/page` 给的是完整历史），塞进去会在下一次刷新时被抹掉——
+   * 那正是"发完一闪就没"的形态。放在这里、在组装快照时拼上，语义才稳。
+   */
+  private optimisticList: TrajectoryItem[] = [];
   private selectedSessionId: string = '';
   private running: boolean = false;
   private eventsReady: boolean = false;
@@ -1051,7 +1059,7 @@ export class SessionHub {
       authority: this.authority,
       sessions: this.sessions,
       pending: this.pendingList,
-      trajectory: this.trajectoryList,
+      trajectory: this.trajectoryWithOptimistic(),
       selectedSessionId: this.selectedSessionId,
       selectedTitle: this.titleOf(this.selectedSessionId),
       running: this.running,
@@ -1165,6 +1173,48 @@ export class SessionHub {
   private setActionError(text: string): void {
     this.lastError = text;
     this.lastErrorScope = ERROR_SCOPE_ACTION;
+  }
+
+  /**
+   * 快照里的轨迹 = 真实条目 + **尚未对上的**乐观回显（F10）。
+   *
+   * 对上就丢：真实条目里出现一条同样「用户 + 同样正文」的消息时，
+   * 这条乐观条目已经完成使命——留着就是"刚发的那句话出现两遍"。
+   * 判据用**正文全等**而不是 id：乐观条目的 id 是我们自己编的（`optimistic-<requestId>`），
+   * 与 Host 给的真实 id 无关，唯一能可靠对上的就是内容。
+   *
+   * 【按会话清】切会话时清空：乐观条目属于"我刚在这条会话里发的东西"，
+   * 带到别的会话就是凭空多一条消息。
+   */
+  private trajectoryWithOptimistic(): TrajectoryItem[] {
+    if (this.optimisticList.length === 0) {
+      return this.trajectoryList;
+    }
+    const kept: TrajectoryItem[] = [];
+    for (let i = 0; i < this.optimisticList.length; i++) {
+      const echo: TrajectoryItem = this.optimisticList[i];
+      let matched: boolean = false;
+      for (let j = 0; j < this.trajectoryList.length; j++) {
+        const real: TrajectoryItem = this.trajectoryList[j];
+        if (real.kind === TrajectoryKind.MESSAGE && real.speaker === Speaker.USER
+          && real.body === echo.body) {
+          matched = true;
+          break;
+        }
+      }
+      if (!matched) {
+        kept.push(echo);
+      }
+    }
+    this.optimisticList = kept;
+    if (kept.length === 0) {
+      return this.trajectoryList;
+    }
+    const out: TrajectoryItem[] = this.trajectoryList.slice();
+    for (let i = 0; i < kept.length; i++) {
+      out.push(kept[i]);
+    }
+    return out;
   }
 
   /**
@@ -2143,6 +2193,7 @@ export class SessionHub {
     this.traceLines = [];
     this.unknownTypes = [];
     this.trajectoryList = [];
+    this.optimisticList = [];
     this.pendingList = [];
     this.fileNodes = [];
     this.filePreview = undefined;
@@ -2354,6 +2405,7 @@ export class SessionHub {
     this.cancelFollow();
     this.selectedSessionId = sessionId;
     this.trajectoryList = [];
+    this.optimisticList = [];
     this.running = false;
     if (changed) {
       // 附件回执是**上一个会话的** Agent 作用域内的东西，切会话后一律失效。
@@ -4708,6 +4760,28 @@ export class SessionHub {
     const result: RpcResult = await this.conn.call(SESSION_PROMPT_ENDPOINT, args);
     if (result.ok && projectSessionPrompt(result.value).accepted) {
       this.running = true;
+      /*
+       * 【F10：乐观回显——把"我刚发的那条"立刻画出来】
+       *
+       * 真机读数：发一条消息后输入框清空、回合确实在跑（`session/prompt` 已发、
+       * `list ok 31 条`），但对话区**一片空白**——既没有自己那条的乐观回显，
+       * 也没有流式正文；退出会话再进来，消息与回答都在。
+       *
+       * 官方语义是"**乐观清空 + 乐观回显**"（本仓 P7-15 的注释自己就抄过这句），
+       * 我们只落地了前一半。这里补后一半：**只加一条本地条目**，
+       * 它会在真实条目到达时被替换掉（`reconcileOptimistic()`），
+       * 所以不会出现"发一次看到两条"。
+       *
+       * 为什么在**收到 accepted 之后**才加、而不是按发送键就加：
+       * 回执说 accepted 才算数——按发送键就画会在"发送失败"时留下一条**并不存在**的消息，
+       * 那比空白更误导。
+       */
+      if (text.length > 0) {
+        const echo: TrajectoryItem = makeItem(`optimistic-${requestId}`, TrajectoryKind.MESSAGE, Date.now());
+        echo.speaker = Speaker.USER;
+        echo.body = text;
+        this.optimisticList.push(echo);
+      }
       // 回执「成功进入收件箱」后即被 Host 回收，因此本地列表必须同时清空：
       // 留着它下次再发会被判为未知回执，而用户以为附件还在。
       this.attachmentList = [];
