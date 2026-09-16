@@ -20,6 +20,10 @@ export {
   indexOfItem,
   makeItem,
   mergeTrajectoryItem,
+  retryItemId,
+  RETRY_STATE_CANCELLED,
+  RETRY_STATE_SCHEDULED,
+  RETRY_STATE_STARTED,
   itemsOfKind,
   deliverablesOf
 } from './model/Trajectory';
@@ -35,7 +39,15 @@ export {
   pendingSortKey,
   previewOutput,
   relativeTime,
-  retryCountLine, retryWaitLine, riskLabel,
+  RETRY_DELAY_LABEL,
+  RETRY_FAILURE_LABEL,
+  RETRY_LABEL_ACTIVE,
+  RETRY_LABEL_CANCELLED,
+  RETRY_LABEL_SCHEDULED,
+  RETRY_LABEL_STARTED,
+  retrySecondsOf,
+  retryStatusLine,
+  riskLabel,
   sortPending,
   toolStateLabel
 } from './model/Present';

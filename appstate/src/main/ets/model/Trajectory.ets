@@ -127,9 +127,29 @@ export interface TrajectoryItem {
   /** 本次重试前的等待毫秒数（0 = 没有等待信息） */
   retryDelayMs: number;
   /** 重试模式：`''`（不是重试）/ `'normal'` / `'always'` */
-  retryMode: string;
-  /** 重试是否**已经开始**（`llm/retry-started` 到达后为 true；此时不再显示倒计时） */
-  retryStarted: boolean;
+  /**
+   * 重试**链**的状态（P8-6）：`RETRY_STATE_SCHEDULED` / `_STARTED` / `_CANCELLED`（空串 = 不是重试条目）。
+   *
+   * 【为什么用状态而不是 `retryStarted: boolean`】官方节点也是**一个** `retryState` 字段
+   * （`dsh-client-ui-chat` 的 `ModelRetryItem`：`active ? … : retryState === 'cancelled' ? … :
+   * retryState === 'started' ? … : scheduled`）。两个布尔会有"既没开始也没取消"和
+   * "既已开始又已取消"这两种不存在却可表示的组合——那种状态下界面只能猜。
+   *
+   * 三个取值的来源各不相同，如实分开：
+   *   · `scheduled`：上游 `llm/retry`（记下"要等多久"）；
+   *   · `started`：上游 `llm/retry-started`（等待结束、请求已发出）；
+   *   · `cancelled`：**本客户端**的事实——用户按了停止，那次等待永远不会再发生
+   *     （上游没有"取消重试"的事件，只有这两帧；这条状态就是为客户端的这一事实存在的）。
+   */
+  retryState: string;
+  /**
+   * 重试**链**身份（上游 `retryId`；一次请求的整条重试链共用）。
+   *
+   * 【为什么要在条目上存一份】它是条目 id 的来源（同一条链只占一行），
+   * 也是排查时唯一能说清"这 5 次重试是同一次故障"的字段。上游没给（老 Host）时为空串，
+   * 此时退回"每次重试各占一行"的旧行为（宁可多几行，也不要把两次不同的重试并成一条）。
+   */
+  retryChainId: string;
   /**
    * 命令配对 id（仅 COMMAND；`command/run` 与 `command/done` 靠它落成同一条）。
    *
@@ -187,8 +207,8 @@ export function makeItem(id: string, kind: TrajectoryKind, at: number): Trajecto
     retryAttempt: 0,
     retryMax: -1,
     retryDelayMs: 0,
-    retryMode: '',
-    retryStarted: false
+    retryState: '',
+    retryChainId: ''
   };
 }
 
@@ -256,9 +276,51 @@ export function mergeTrajectoryItem(previous: TrajectoryItem, next: TrajectoryIt
   // 上限只在 normal 分支出现：新值缺失（-1）时保留旧值，别把"5 次上限"擦成"无上限"
   merged.retryMax = next.retryMax >= 0 ? next.retryMax : previous.retryMax;
   merged.retryDelayMs = next.retryDelayMs > 0 ? next.retryDelayMs : previous.retryDelayMs;
-  merged.retryMode = next.retryMode.length > 0 ? next.retryMode : previous.retryMode;
-  merged.retryStarted = next.retryStarted || previous.retryStarted;
+  /*
+   * 【链节点的状态不能用"非空就取新"】`retryState` 表示**当前这一次**在等待还是在跑：
+   *   · 同一链上来了**更高**的重试序号（第 3 次失败 ⇒ 又要等）⇒ 状态必须回到 `scheduled`，
+   *     否则那一行会永远停在"已重试"，倒计时再也不出现（用户以为卡住了）；
+   *   · `started` / `cancelled` 是**单向**的：一旦到了就不该被后到的 `scheduled` 擦掉
+   *     （乱序到达时 `scheduled` 帧可能后于 `started` 帧）；
+   *   · `cancelled` 最强势：它是用户按了停止之后的事实，任何后到的上游帧都不该让它复活。
+   */
+  const nextState: string = next.retryState;
+  if (next.retryAttempt > previous.retryAttempt) {
+    merged.retryState = nextState;
+  } else if (previous.retryState === RETRY_STATE_CANCELLED) {
+    merged.retryState = RETRY_STATE_CANCELLED;
+  } else if (nextState.length > 0 && nextState !== RETRY_STATE_SCHEDULED) {
+    merged.retryState = nextState;
+  } else {
+    merged.retryState = previous.retryState;
+  }
+  merged.retryChainId = next.retryChainId.length > 0 ? next.retryChainId : previous.retryChainId;
   return merged;
+}
+
+/** 重试链状态：等待中（上游 `llm/retry`） */
+export const RETRY_STATE_SCHEDULED: string = 'scheduled';
+/** 重试链状态：等待结束、请求已发出（上游 `llm/retry-started`） */
+export const RETRY_STATE_STARTED: string = 'started';
+/** 重试链状态：已取消（**客户端事实**：用户按了停止，这次等待不会再发生） */
+export const RETRY_STATE_CANCELLED: string = 'cancelled';
+
+/**
+ * 重试条目的 id（P8-6：**整条链只占一行**）。
+ *
+ * 上游 `retryId` 是**链**身份（`dsh-llm-retry/lib/types/brand.d.ts` 逐字：
+ * "Stable identity shared by every attempt in one request-step retry chain."），
+ * 所以同链的每一帧都算出同一个 id ⇒ `appendOrMerge` 把它们并进同一行。
+ *
+ * 【没有 retryId 时为什么退回"按次数"】老 Host（或字段被裁剪）没给链身份，
+ * 此时宁可让每一条重试各占一行，也不要把两次**不同**的重试并成一条——
+ * 合并错（少一行、内容串在一起）比多一行更难被发现。
+ */
+export function retryItemId(attempt: number, chainId: string): string {
+  if (chainId.length > 0) {
+    return `ev-retry-chain-${chainId}`;
+  }
+  return `ev-retry-${attempt}`;
 }
 
 /** 在列表中按 id 定位条目；不存在返回 -1 */

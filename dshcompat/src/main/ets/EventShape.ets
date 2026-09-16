@@ -91,6 +91,17 @@ export enum ContentSlot {
   /** 重试计数（第几次） */
   RETRY = 'retry',
   /**
+   * 重试**链**身份（`dsh-llm-retry/lib/types/brand.d.ts` 逐字：
+   * "Stable identity shared by every attempt in one request-step retry chain."）。
+   *
+   * 【它到底稳定在哪一步】生产者（`dsh-llm-retry/lib/index.js` 的 `recover()`）是这么取的：
+   * `const retryId = priorPolicyRetry?.data.retryId ?? RetryId(randomUUID())` ——
+   * 取**同 turn / 同 step / 同 provider / 同 policyKey** 的上一条 `llm/retry` 的 `retryId`，
+   * 取不到才新造 ⇒ 一次请求的整条重试链共用同一个 id。
+   * （本仓 P7-18 曾把它读成"每次重试唯一"，于是同一次故障的 5 次重试在界面上成了 5 条错误卡。）
+   */
+  RETRY_ID = 'retry-id',
+  /**
    * 重试上限（`llm/retry` 的 `maxRetries`；**仅 `mode: 'normal'` 有**，`'always'` 没有上限）。
    *
    * 出处：`dsh-llm-retry/lib/types/types.d.ts` 的 `LlmRetryEventData` 是可辨识联合——
@@ -361,6 +372,7 @@ export const SESSION_EVENT_SHAPES: SessionEventShape[] = [
     type: 'llm/retry',
     standalone: true,
     slots: [
+      { slot: ContentSlot.RETRY_ID, path: 'retryId' },
       { slot: ContentSlot.RETRY, path: 'retry' },
       { slot: ContentSlot.RETRY_MAX, path: 'maxRetries' },
       { slot: ContentSlot.RETRY_DELAY_MS, path: 'delayMs' },
@@ -373,12 +385,15 @@ export const SESSION_EVENT_SHAPES: SessionEventShape[] = [
     /*
      * 重试**已开始**（等待结束、下一次请求发出前写入上游的日志）。
      * 官方界面据此把"倒计时"换成"正在重试"⇒ 这一帧不能丢（此前 `standalone: false`
-     * 意味着投影直接忽略它）。它与 `llm/retry` 靠 `retryId` 配对——我们按 turn/step/retry
-     * 落到同一条（见 `SessionHub` 的说明）。
+     * 意味着投影直接忽略它）。它与 `llm/retry` **靠 `retryId` 配对**——那个 id 是**整条链**
+     * 共享的（见 `ContentSlot.RETRY_ID` 的说明，出处是上游 `brand.d.ts` 与 `recover()`），
+     * 所以两帧落到同一条链节点上；`standalone: true` 意味着它自己进轨迹，
+     * 合并后并不会多出一条（`appendOrMerge` 按 id 合并）。
      */
     type: 'llm/retry-started',
     standalone: true,
     slots: [
+      { slot: ContentSlot.RETRY_ID, path: 'retryId' },
       { slot: ContentSlot.RETRY, path: 'retry' }
     ]
   },

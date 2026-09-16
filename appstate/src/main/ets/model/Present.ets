@@ -4,7 +4,7 @@
  * 这些函数把模型值翻译成界面文字，是 D3 §4「状态与文案规范」与 §3 各表格的实现依据。
  */
 
-import { PendingKind, PendingItem, RiskLevel, ToolState } from './Trajectory';
+import { PendingKind, PendingItem, RiskLevel, RETRY_STATE_CANCELLED, RETRY_STATE_STARTED, ToolState } from './Trajectory';
 
 /** 相对时间（D3 §3.1） */
 export function relativeTime(atMs: number, nowMs: number): string {
@@ -149,49 +149,69 @@ export function sortPending(items: PendingItem[]): PendingItem[] {
   return copy;
 }
 
-/**
- * 重试计数行（P7-18，对齐官方 `ModelRetryItem` 的 `{retry}/{maxRetries}` 与 `mode === 'always'` 时的 ∞）。
+/*
+ * 重试节点的文案（P8-6：**逐字取官方**）。
  *
- * 官方在 `mode === 'normal'` 时显示 `node.maxRetries`，否则显示 `∞`
- * （源码：`const maximum = node.mode === "normal" ? node.maxRetries : "∞";`）。
- * 我们照同一个判据，但不画符号：`∞` 在中文界面里不如「不限次数」直白。
+ * 官方的四段状态标签与状态行模板都在 `@deepseek-ai/dsh-client-locale` 里（逐字）：
+ *   `message.retry.scheduled` = 等待重试模型请求
+ *   `message.retry.active`    = 正在重试模型请求
+ *   `message.retry.started`   = 已重试模型请求
+ *   `message.retry.cancelled` = 模型请求重试已取消
+ *   `message.retry.status`    = `{label}（{retry}/{maximum}） · {seconds}s`
+ *   `message.retry.delay`     = 重试延迟：     `message.retry.failure` = 失败原因：
+ * 渲染见 `dsh-client-ui-chat` 的 `ModelRetryItem`：`maximum = node.mode === 'normal' ? node.maxRetries : '∞'`，
+ * `retrySeconds(ms) = Math.max(1, Math.ceil(ms / 1000))`（**最小 1 秒**：显示 "0s" 会被读成卡住），
+ * 且 `seconds = active ? 剩余秒 : scheduledSeconds`——即**什么时候都带秒数**。
  *
- * @param attempt 第几次（≤0 时返回空串：没有重试信息就不该显示这一行）
- * @param max 上限（**-1 = 上游没给上限**）
- * @param mode 模式（`'normal'` / `'always'` / 空）
+ * 【为什么换掉我们原来那两句】P7-18 写的是"正在重试（第 2/5 次）" + "约 N 秒后重试"：
+ * 同一件事用了两行、两套措辞，而且和官方一个词都对不上（官方是一行 `标签（n/max） · Ns`）。
+ * 现在按官方模板合成**一行**，并把三种状态映射清楚（见 `retryStatusLine`）。
  */
-export function retryCountLine(attempt: number, max: number, mode: string): string {
-  if (attempt <= 0) {
-    return '';
-  }
-  if (max > 0) {
-    return `正在重试（第 ${attempt}/${max} 次）`;
-  }
-  if (mode === 'always') {
-    return `正在重试（第 ${attempt} 次，不限次数）`;
-  }
-  return `正在重试（第 ${attempt} 次）`;
+export const RETRY_LABEL_SCHEDULED: string = '等待重试模型请求';
+export const RETRY_LABEL_ACTIVE: string = '正在重试模型请求';
+export const RETRY_LABEL_STARTED: string = '已重试模型请求';
+export const RETRY_LABEL_CANCELLED: string = '模型请求重试已取消';
+export const RETRY_DELAY_LABEL: string = '重试延迟：';
+export const RETRY_FAILURE_LABEL: string = '失败原因：';
+
+/** 秒数（**逐字对齐官方 `retrySeconds`**：向上取整且最小 1 秒） */
+export function retrySecondsOf(milliseconds: number): number {
+  return Math.max(1, Math.ceil(milliseconds / 1000));
 }
 
 /**
- * 倒计时行（剩余毫秒 → 人话）。
+ * 重试行的一行文案（官方 `message.retry.status` 模板）。
  *
- * 三种状态各有对应说法，**不许含糊**：
- *   · 还没到点 ⇒ 「约 N 秒后重试」；
- *   · 到点了但还没收到"已开始" ⇒ 「正在重试…」（诚实：等待结束，请求已发/将发）；
- *   · 已经收到 `llm/retry-started` ⇒ 空串（调用方显示"正在重试"即可，不再显示秒数）。
+ * 四种状态各有出处，**不许含糊**：
+ *   · 还在等（`scheduled`，倒计时 > 0）⇒ 「等待重试模型请求（2/5） · 8s」；
+ *   · 等到点了但还没收到 `llm/retry-started`（`scheduled`，倒计时 ≤ 0）⇒
+ *     「正在重试模型请求（2/5） · 1s」——"该开始却还没开始的这一小段"真实存在，
+ *     说"正在重试"比显示 "0s" 诚实；
+ *   · 已经收到 `llm/retry-started`（`started`）⇒ 「已重试模型请求（2/5） · 8s」，
+ *     秒数取**当初计划的延迟**（官方在非 active 状态下就是回落到 `scheduledSeconds`）；
+ *   · 用户按了停止（`cancelled`）⇒ 「模型请求重试已取消（2/5） · 8s」——
+ *     **这条必须显示**：不说的话那一行会一直写着"等待重试… 7s"，而那次重试永远不会发生。
  *
- * 秒数**向上取整**：显示 "0 秒后" 而实际还需 0.4 秒会让人以为卡住了。
+ * @param state `Trajectory.RETRY_STATE_*`
+ * @param max 上限；`<= 0` 表示上游这一帧没给（`mode: 'always'` 的分支没有 `maxRetries`）⇒ 按官方显示 `∞`
  */
-export function retryWaitLine(remainingMs: number, started: boolean): string {
-  if (started) {
+export function retryStatusLine(attempt: number, max: number, state: string,
+  remainingMs: number, delayMs: number): string {
+  if (attempt <= 0) {
     return '';
   }
-  if (remainingMs <= 0) {
-    return '正在重试…';
+  const maximum: string = max > 0 ? `${max}` : '∞';
+  let label: string = RETRY_LABEL_SCHEDULED;
+  if (state === RETRY_STATE_CANCELLED) {
+    label = RETRY_LABEL_CANCELLED;
+  } else if (state === RETRY_STATE_STARTED) {
+    label = RETRY_LABEL_STARTED;
+  } else if (remainingMs <= 0) {
+    label = RETRY_LABEL_ACTIVE;
   }
-  const seconds: number = Math.ceil(remainingMs / 1000);
-  return `约 ${seconds} 秒后重试`;
+  const waiting: boolean = label === RETRY_LABEL_SCHEDULED;
+  const seconds: number = waiting ? retrySecondsOf(remainingMs) : retrySecondsOf(delayMs);
+  return `${label}（${attempt}/${maximum}） · ${seconds}s`;
 }
 
 /** 风险等级文案 */

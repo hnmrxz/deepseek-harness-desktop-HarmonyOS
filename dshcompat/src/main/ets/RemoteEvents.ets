@@ -114,6 +114,18 @@ export const EVENT_GOAL_ACTIVATION_CHANGED: string = 'goal/activation-changed';
  */
 export const EVENT_GOAL_CHANGE: string = 'goal/change';
 
+/**
+ * 模型请求重试的两帧（`dsh-llm-retry`）。
+ *
+ * 【为什么要具名常量】投影层需要按**事件类型**区分这两帧（见 `SessionHub` 的重试投影）：
+ * `llm/retry` 记下"要等多久、第几次、为什么"，`llm/retry-started` 说"等待结束、请求已发出"。
+ * 此前靠"哪些字段缺失"去猜（`!delay && !mode && !failure` ⇒ 已开始），
+ * 而**用字段缺失推断事件类型**在任何一次上游加字段后都会静默失效——
+ * 事件类型是上游明明白白给的事实，就该直接读它。
+ */
+export const EVENT_LLM_RETRY: string = 'llm/retry';
+export const EVENT_LLM_RETRY_STARTED: string = 'llm/retry-started';
+
 // ── 会话轨迹事件的**命名空间前缀** ──
 //
 // 事件类型由各插件通过 declaration merging 扩展，完整取值域只能实测得到；

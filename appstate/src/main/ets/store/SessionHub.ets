@@ -31,7 +31,7 @@
 
 import { Connection } from 'connection';
 import { SessionJob } from '../model/Jobs';
-import { retryCountLine } from '../model/Present';
+import { retryStatusLine } from '../model/Present';
 import { failureText } from '../model/FailureText';
 import {
   AttachmentDraftInput,
@@ -112,6 +112,8 @@ import {
   GOALS_EDIT_ENDPOINT,
   GOALS_CLEAR_ENDPOINT,
   EVENT_GOAL_CHANGE,
+  EVENT_LLM_RETRY,
+  EVENT_LLM_RETRY_STARTED,
   MESSAGE_FEEDBACK_DELETE_ENDPOINT,
   MESSAGE_FEEDBACK_LIST_ENDPOINT,
   MESSAGE_FEEDBACK_PUT_ENDPOINT,
@@ -142,6 +144,10 @@ import {
   indexOfItem,
   makeItem,
   mergeTrajectoryItem,
+  retryItemId,
+  RETRY_STATE_CANCELLED,
+  RETRY_STATE_SCHEDULED,
+  RETRY_STATE_STARTED,
   PendingKind,
   RiskLevel,
   Speaker,
@@ -4539,6 +4545,27 @@ export class SessionHub {
   }
 
   /** 取消当前轮次（D3 §5.1 Esc / 停止按钮） */
+  /**
+   * 把**还在等待**的重试条目标成"已取消"（P8-6，见 `cancelTurn` 里的说明）。
+   *
+   * 只遍历当前会话的轨迹，且只改状态与那一行文案：失败原因留着
+   * （用户还想知道为什么失败），秒数不再走（状态行会显示"已取消"）。
+   */
+  private markPendingRetriesCancelled(): void {
+    let changed: number = 0;
+    for (let i = 0; i < this.trajectoryList.length; i++) {
+      const item: TrajectoryItem = this.trajectoryList[i];
+      if (item.retryAttempt > 0 && item.retryState === RETRY_STATE_SCHEDULED) {
+        item.retryState = RETRY_STATE_CANCELLED;
+        item.title = retryStatusLine(item.retryAttempt, item.retryMax, item.retryState, 0, item.retryDelayMs);
+        changed++;
+      }
+    }
+    if (changed > 0) {
+      this.record(`retry cancelled ${changed} 条（用户停止）`);
+    }
+  }
+
   async cancelTurn(): Promise<boolean> {
     const sessionId: string = this.selectedSessionId;
     if (sessionId.length === 0) {
@@ -4554,6 +4581,16 @@ export class SessionHub {
     const result: RpcResult = await this.conn.call(SESSION_CANCEL_ENDPOINT, args);
     if (result.ok) {
       this.running = false;
+      /*
+       * 停止之后，**待等的重试不会再发生**（P8-6）。
+       *
+       * 【为什么这件事只能由客户端下结论】上游只有 `llm/retry`（记下要等多久）与
+       * `llm/retry-started`（等待结束、请求发出）两帧，**没有"取消重试"的事件**。
+       * 不标这一下的后果是那句文案会一直写着「等待重试模型请求（3/5） · 7s」——
+       * 一个永远不会发生的承诺（界面撒谎，正是本仓明令禁止的那一类）。
+       * 只动**还在等待**的条目：已经开始的（请求已在飞）与已经取消的不再改。
+       */
+      this.markPendingRetriesCancelled();
       this.record('cancel accepted');
       this.notify();
       return true;
@@ -5257,17 +5294,50 @@ export function projectWireRecord(record: Object): TrajectoryItem | undefined {
      * "出错了 + 空白正文"——**用户既不知道在重试，也不知道为什么**。而重试恰恰是设备网络最差时
      * 最常见的状态（官方为此专门做了一个带倒计时的 `ModelRetryItem`）。
      *
-     * 两帧落到同一条：`llm/retry`（记下 plan）与 `llm/retry-started`（说这次开始了）。
-     * 它们靠 `retryId` 配对，但 `retryId` 是**每次重试唯一**的 ⇒ 若按它做 id，两帧会各占一条。
-     * 这里用 `轮次/步/第几次` 组成稳定 id：同一轮同一步的同一次重试只有一条。
-     * （`turn`/`step` 未必在每帧上都有，缺失时退回按 `retry` 计数——最坏情况是两帧分开显示，
-     *   但绝不会把两条不同的重试合并成一条。）
+     * ## 两帧落到同一条：靠 `retryId`（**整条链**的身份）
+     *
+     * P7-18 时我把它读成了"每次重试唯一"，于是按 `轮次/步/第几次` 建 id ⇒
+     * **同一次故障的 5 次重试在界面上是 5 条各自展开的错误卡**：一次网络抖动会画出一墙红色，
+     * 而用户完全看不出"这其实是同一个请求在自动重试"。
+     *
+     * 上游的权威说法有两处，都是逐字可查的：
+     *   · `dsh-llm-retry/lib/types/brand.d.ts`：`RetryId` =
+     *     "**Stable identity shared by every attempt in one request-step retry chain.**"
+     *   · `dsh-llm-retry/lib/index.js` 的 `recover()`：
+     *     `const retryId = priorPolicyRetry?.data.retryId ?? RetryId(randomUUID())`
+     *     —— 取同 turn / 同 step / 同 provider / 同 policyKey 的上一条 `llm/retry` 的 id，
+     *     取不到才新造 ⇒ 整条链共用一个 id。
+     * 官方界面据此把整条链渲染成**一个** `model-retry` 节点（`RetryState{turn, step, attempts[]}`，
+     * 见 `dsh-client-ui-chat/.../conversation-nodes/retry.d.ts`）。
+     *
+     * 因此：`id = ev-retry-chain-<retryId>` ⇒ 同链的每一帧都并进同一行，
+     * 行里的「第 n/max 次」「还有几秒」「失败原因」被后到的帧刷新。
+     * **上游没给 `retryId` 时**（老 Host）退回 `ev-retry-<第几次>` 的旧行为：
+     * 宁可多几行，也不要把两次不同的重试并成一条（合并错比拆开错更难发现）。
+     *
+     * ## 状态按**事件类型**判，不按"哪些字段缺失"判
+     *
+     * 旧写法用 `!delay && !mode && !failure ⇒ 已开始` 去猜 `llm/retry-started`。
+     * 那等于把"上游以后不加字段"当成前提：上游一旦给 `retry-started` 补一个字段，
+     * 这一行就会永远停在"等待重试"（倒计时归零后显示"正在重试…"却永不前进）。
+     * 事件类型是上游明明白白给的事实 ⇒ 直接读它（常量在 `dshcompat/RemoteEvents`）。
+     *
+     * 我们与官方的一处**刻意差异**：官方节点保留整条 `attempts[]` 历史，
+     * 我们只留**最新一次**的序号与原因（同一行能说清的就不重复列历史），已登记在矩阵。
      */
+    const retryIdSlot: ResolvedSlot = resolveSlot(data, shape, ContentSlot.RETRY_ID);
     const retry: ResolvedSlot = resolveSlot(data, shape, ContentSlot.RETRY);
     const retryMax: ResolvedSlot = resolveSlot(data, shape, ContentSlot.RETRY_MAX);
     const retryDelay: ResolvedSlot = resolveSlot(data, shape, ContentSlot.RETRY_DELAY_MS);
-    const retryMode: ResolvedSlot = resolveSlot(data, shape, ContentSlot.RETRY_MODE);
     const failure: ResolvedSlot = resolveSlot(data, shape, ContentSlot.RETRY_FAILURE);
+    /*
+     * `mode` 这一槽位**只用来判"有没有上限"**：官方 `ModelRetryItem` 也是这么算的
+     * （`maximum = node.mode === 'normal' ? node.maxRetries : '∞'`）。
+     * 而 `maxRetries` 只在 `mode: 'normal'` 分支里存在 ⇒ 读 `RETRY_MAX` 就已经知道了上限，
+     * 不必在条目上再存一个 `retryMode` 字段（存了却没有读点，就是留给下一个人的坑）。
+     */
+    const retryFrame: boolean = eventType === EVENT_LLM_RETRY;
+    const retryStartedFrame: boolean = eventType === EVENT_LLM_RETRY_STARTED;
     if (retry.found) {
       item.retryAttempt = retryNumber(retry.value);
     }
@@ -5277,26 +5347,26 @@ export function projectWireRecord(record: Object): TrajectoryItem | undefined {
     if (retryDelay.found) {
       item.retryDelayMs = retryNumber(retryDelay.value);
     }
-    if (retryMode.found) {
-      item.retryMode = asText(retryMode.value);
-    }
-    if (item.retryMode.length === 0 && item.retryAttempt > 0) {
-      // 只有 `retry` 没有 `mode`：这是重试帧（老 Host 或字段裁剪），按 normal 处理
-      item.retryMode = 'normal';
+    if (retryIdSlot.found) {
+      item.retryChainId = asText(retryIdSlot.value);
     }
     if (item.retryAttempt > 0) {
-      // 重试**已经开始**（那一帧只有 retry 计数，没有 delay/mode）
-      if (!retryDelay.found && !retryMode.found && failure.found === false) {
-        item.retryStarted = true;
-      }
-      item.id = `ev-retry-${item.retryAttempt}`;
+      item.retryState = retryStartedFrame ? RETRY_STATE_STARTED : RETRY_STATE_SCHEDULED;
+      // id 规则在纯模型里（`retryItemId`），这样"同链一条"能被 fixture 直接钉住
+      item.id = retryItemId(item.retryAttempt, item.retryChainId);
     }
     if (failure.found) {
       // 失败原因进正文：那条"出错了"的卡片必须能说出为什么
       item.body = asText(failure.value);
     }
-    if (retry.found) {
-      item.title = retryCountLine(item.retryAttempt, item.retryMax, item.retryMode);
+    if (retryFrame || retryStartedFrame) {
+      /*
+       * 标题只放**静态可算**的那一半：等待中的剩余秒数要每秒重画（视图里有 ticker），
+       * 所以投影给的是"计划延迟"的秒数，视图用 `Present.retryStatusLine` 按当前剩余时间覆盖。
+       * 两者同一个函数、同一套模板 ⇒ 不会出现"投影一套文案、界面另一套"。
+       */
+      item.title = retryStatusLine(item.retryAttempt, item.retryMax, item.retryState,
+        retryStartedFrame ? 0 : item.retryDelayMs, item.retryDelayMs);
     }
   }
   return item;

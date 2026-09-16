@@ -29,7 +29,7 @@
  * 与投影层用的是同一个数。
  */
 
-import { Fs, HarmonyColor, Radius, Sp, TrajectoryItem, retryCountLine, retryWaitLine } from 'appstate';
+import { Fs, HarmonyColor, Radius, Sp, TrajectoryItem, RETRY_DELAY_LABEL, RETRY_FAILURE_LABEL, RETRY_LABEL_SCHEDULED, RETRY_STATE_SCHEDULED, retrySecondsOf, retryStatusLine } from 'appstate';
 import { Border } from 'appstate';
 
 /** 模型请求失败后的一次重试（带倒计时） */
@@ -38,7 +38,7 @@ export struct RetryRow {
   /** 要显示的重试条目（`kind === ERROR` 且 `retryAttempt > 0`） */
   @Prop item: TrajectoryItem;
 
-  /** 每一秒自增一次，驱动倒计时重画（只在"还没开始重试"时运行） */
+  /** 每一秒自增一次，驱动倒计时重画（只在"还在等待"时运行） */
   @State tick: number = 0;
   /** 定时器句柄（-1 = 没开） */
   private timer: number = -1;
@@ -51,9 +51,14 @@ export struct RetryRow {
     this.stopTicker();
   }
 
-  /** 只在还需要显示秒数时开定时器；已经在重试（或没有等待信息）就不开 */
+  /**
+   * 只在**还在等待**时才开定时器。
+   *
+   * 什么时候不该开：已经收到 `retry-started`（秒数不再变化）、用户已取消（这一行不会再前进）、
+   * 或者根本没有等待信息（上游没给 delayMs）。少开一个定时器也少一份"界面上有个东西在动"的错觉。
+   */
   private startTicker(): void {
-    if (this.item.retryStarted || this.item.retryDelayMs <= 0) {
+    if (this.item.retryState !== RETRY_STATE_SCHEDULED || this.item.retryDelayMs <= 0) {
       return;
     }
     if (this.timer !== -1) {
@@ -81,34 +86,44 @@ export struct RetryRow {
     return this.item.retryDelayMs - elapsed;
   }
 
-  /** 计数行（第几次 / 上限） */
-  private countLine(): string {
-    return retryCountLine(this.item.retryAttempt, this.item.retryMax, this.item.retryMode);
+  /**
+   * 状态行（官方 `message.retry.status` 模板：`{标签}（{第几次}/{上限}） · {秒}s`）。
+   *
+   * 每秒重画用的就是这一行的 `remainingMs()`：投影给的 `item.title` 用"计划延迟"算秒数，
+   * 这里用**事件时间起算的剩余量**覆盖它——两处同一函数，措辞不会分叉。
+   */
+  private statusLine(): string {
+    return retryStatusLine(this.item.retryAttempt, this.item.retryMax, this.item.retryState,
+      this.remainingMs(), this.item.retryDelayMs);
   }
 
-  /** 等待行（倒计时 / 正在重试 / 空） */
-  private waitLine(): string {
-    return retryWaitLine(this.remainingMs(), this.item.retryStarted);
+  /** 重试延迟（官方 `message.retry.delay` 标签；拿不到就不显示这行） */
+  private delayLine(): string {
+    if (this.item.retryDelayMs <= 0) {
+      return '';
+    }
+    return `${RETRY_DELAY_LABEL}${retrySecondsOf(this.item.retryDelayMs)}s`;
   }
 
   build() {
     Row({ space: Sp.S }) {
       Divider().vertical(true).color(HarmonyColor.WARNING).height('100%')
       Column({ space: 2 }) {
-        Text(this.countLine().length > 0 ? this.countLine() : '正在重试')
+        // 状态行（含倒计时；`tick` 只是让这一行重画）
+        Text(this.statusLine().length > 0 ? this.statusLine() : RETRY_LABEL_SCHEDULED)
           .fontSize(Fs.CAPTION)
           .fontColor(HarmonyColor.WARNING)
           .width('100%')
-        // 倒计时（每秒自己减；`tick` 只是让这一行重画）
-        if (this.waitLine().length > 0) {
-          Text(this.waitLine())
+        // 重试延迟（官方 details 里的 `message.retry.delay`）
+        if (this.delayLine().length > 0) {
+          Text(this.delayLine())
             .fontSize(Fs.SECONDARY)
             .fontColor(HarmonyColor.TEXT_PRIMARY)
             .width('100%')
         }
-        // 失败原因（上游 invariant 保证非空；拿不到就不显示这一行，不写"未知原因"）
+        // 失败原因（官方 `message.retry.failure` 标签 + 上游 invariant 保证非空的正文）
         if (this.item.body.length > 0) {
-          Text(this.item.body)
+          Text(`${RETRY_FAILURE_LABEL}${this.item.body}`)
             .fontSize(Fs.CAPTION)
             .fontColor(HarmonyColor.TEXT_SECONDARY)
             .maxLines(3)
@@ -124,7 +139,7 @@ export struct RetryRow {
     .backgroundColor(HarmonyColor.SURFACE_TERTIARY)
     .borderWidth(Border.HAIRLINE)
     .borderColor(HarmonyColor.DIVIDER)
-    .accessibilityText(`${this.countLine()}${this.waitLine().length > 0 ? `，${this.waitLine()}` : ''}`
-      + (this.item.body.length > 0 ? `，原因：${this.item.body}` : ''))
+    .accessibilityText(`${this.statusLine()}`
+      + (this.item.body.length > 0 ? `，${RETRY_FAILURE_LABEL}${this.item.body}` : ''))
   }
 }

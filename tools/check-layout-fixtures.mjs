@@ -2665,25 +2665,93 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   t.eq('非竞态返回 NONE', queueRaceKind('gateway/internal'), QUEUE_RACE_NONE);
 }
 
-// ── P7-18：重试行的文案（计数行 / 倒计时行） ──
+// ── P8-6：重试行的文案（官方 `message.retry.status` 一行模板）与「整条链一条」 ──
 {
-  const { retryCountLine, retryWaitLine } = PST;
+  const { retryStatusLine, retrySecondsOf, RETRY_LABEL_SCHEDULED, RETRY_LABEL_ACTIVE,
+    RETRY_LABEL_STARTED, RETRY_LABEL_CANCELLED, RETRY_DELAY_LABEL, RETRY_FAILURE_LABEL } = PST;
 
-  t.eq('第 2/5 次（normal 有上限）', retryCountLine(2, 5, 'normal'), '正在重试（第 2/5 次）');
-  t.eq('always 模式：没有上限 ⇒ 说"不限次数"，不画 ∞',
-    retryCountLine(3, -1, 'always'), '正在重试（第 3 次，不限次数）');
-  t.eq('没有上限信息且模式未知 ⇒ 只说第几次（不编上限）',
-    retryCountLine(3, -1, ''), '正在重试（第 3 次）');
-  t.eq('上限为 0/负 ⇒ 不显示成"第 2/0 次"', retryCountLine(2, 0, 'normal'), '正在重试（第 2 次）');
-  t.eq('次数缺失 ⇒ 空串（没有重试信息就不该有这一行）', retryCountLine(0, 5, 'normal'), '');
-  // 倒计时：向上取整（显示"0 秒"而其实还要 0.4 秒会让人以为卡住）
-  t.eq('剩 7000ms ⇒ 约 7 秒后重试', retryWaitLine(7000, false), '约 7 秒后重试');
-  t.eq('剩 400ms ⇒ 仍写 1 秒（向上取整）', retryWaitLine(400, false), '约 1 秒后重试');
-  t.eq('已到点但还没收到"已开始" ⇒ 正在重试…', retryWaitLine(0, false), '正在重试…');
-  t.eq('负剩余（事件迟到）也算已到点', retryWaitLine(-5000, false), '正在重试…');
-  t.eq('已收到 retry-started ⇒ 不再显示秒数', retryWaitLine(7000, true), '');
+  // ① 标签逐字取官方（dsh-client-locale 的 message.retry.*）
+  t.eq('状态标签逐字取官方（等待）', RETRY_LABEL_SCHEDULED, '等待重试模型请求');
+  t.eq('状态标签逐字取官方（正在）', RETRY_LABEL_ACTIVE, '正在重试模型请求');
+  t.eq('状态标签逐字取官方（已重试）', RETRY_LABEL_STARTED, '已重试模型请求');
+  t.eq('状态标签逐字取官方（已取消）', RETRY_LABEL_CANCELLED, '模型请求重试已取消');
+  t.eq('details 里的两个标签也逐字取官方', `${RETRY_DELAY_LABEL}|${RETRY_FAILURE_LABEL}`, '重试延迟：|失败原因：');
+
+  // ② 秒数逐字对齐官方 `retrySeconds(ms) = Math.max(1, Math.ceil(ms/1000))`
+  t.eq('剩 7000ms ⇒ 7s', retrySecondsOf(7000), 7);
+  t.eq('剩 400ms ⇒ 1s（向上取整）', retrySecondsOf(400), 1);
+  t.eq('剩 0ms ⇒ 1s（**最小 1 秒**：显示 0s 会被读成卡住）', retrySecondsOf(0), 1);
+
+  // ③ 状态行 = `{标签}（{第几次}/{上限}） · {秒}s`（官方模板逐字）
+  t.eq('等待中：等待重试模型请求（2/5） · 8s', retryStatusLine(2, 5, 'scheduled', 8000, 8000),
+    '等待重试模型请求（2/5） · 8s');
+  t.eq('倒计时每秒变：剩 3 秒就写 3s', retryStatusLine(2, 5, 'scheduled', 3000, 8000),
+    '等待重试模型请求（2/5） · 3s');
+  t.eq('到点了但 retry-started 还没到 ⇒ 正在重试模型请求（2/5） · 8s',
+    retryStatusLine(2, 5, 'scheduled', 0, 8000), '正在重试模型请求（2/5） · 8s');
+  t.eq('已收到 retry-started ⇒ 已重试模型请求（2/5） · 8s（秒数取当初计划的延迟）',
+    retryStatusLine(2, 5, 'started', -1000, 8000), '已重试模型请求（2/5） · 8s');
+  t.eq('no上限（always 分支没有 maxRetries）⇒ 照官方显示 ∞',
+    retryStatusLine(3, -1, 'scheduled', 5000, 5000), '等待重试模型请求（3/∞） · 5s');
+  t.eq('次数缺失 ⇒ 空串（没有重试信息就不该有这一行）', retryStatusLine(0, 5, 'scheduled', 1, 1), '');
+  /*
+   * 用户按了停止（P8-6）：这一行**必须**变成"已取消"。
+   * 不变的话它会一直写着"等待重试模型请求（3/5） · 7s"——一个永远不会发生的承诺。
+   * 这条状态是**客户端事实**：上游没有"取消重试"的事件，只有 retry/retry-started 两帧。
+   */
+  t.eq('用户停止 ⇒ 模型请求重试已取消（3/5） · 8s',
+    retryStatusLine(3, 5, 'cancelled', 7000, 8000), '模型请求重试已取消（3/5） · 8s');
+  t.eq('已取消之后不再显示剩余秒数（秒数取当初计划的延迟，不再倒数）',
+    retryStatusLine(3, 5, 'cancelled', 1000, 8000).includes('· 8s'), true);
+
+  /*
+   * ④ 整条链一条：`retryId` 是**链**身份（上游 brand.d.ts 逐字："Stable identity shared by
+   * every attempt in one request-step retry chain."），因此同链的多帧必须并进同一行。
+   * 【缺陷原形】P7-18 把它读成"每次重试唯一"，按 `轮次/步/第几次` 建 id ⇒
+   * 同一次故障的 5 次重试在界面上是 5 条各自展开的错误卡。
+   */
+  const { mergeTrajectoryItem } = TJ;
+  const chain = (id, attempt, state, extra) => Object.assign({
+    id: `ev-retry-chain-${id}`, kind: 'error', at: 1000 * attempt, body: `失败 ${attempt}`,
+    reasoning: '', speaker: 'assistant', model: '', elapsedMs: 0, toolName: '', callId: '',
+    toolArgs: '', toolState: 'pending', toolOutput: '', subagentName: '', fileName: '', fileSize: 0,
+    title: '', progress: '', percent: -1, streaming: false, expanded: true, internal: false,
+    images: [], commandId: '', commandKind: '', retryAttempt: attempt, retryMax: 5,
+    retryDelayMs: 8000, retryState: state, retryChainId: id,
+  }, extra || {});
+
+  const a1 = chain('r1', 1, 'scheduled');
+  const a2 = chain('r1', 2, 'scheduled', { body: '失败 2' });
+  const merged12 = mergeTrajectoryItem(a1, a2);
+  t.eq('同链第二次重试：并进同一条（id 不变）', merged12.id, 'ev-retry-chain-r1');
+  t.eq('同链第二次重试：序号刷新成 2', merged12.retryAttempt, 2);
+  t.eq('同链第二次重试：失败原因刷新成最新那次的', merged12.body, '失败 2');
+  // 关键回归：新一轮等待必须把状态打回"等待"，否则那一行会永远停在"已重试"、倒计时永不出现
+  const startedFrame = chain('r1', 2, 'started', { body: '' });
+  const mergedStarted = mergeTrajectoryItem(a2, startedFrame);
+  t.eq('retry-started 到了 ⇒ 状态变"已重试"', mergedStarted.retryState, 'started');
+  t.eq('retry-started 不带正文 ⇒ 保留失败原因（不能擦成空）', mergedStarted.body, '失败 2');
+  const mergedNextWait = mergeTrajectoryItem(mergedStarted, chain('r1', 3, 'scheduled', { body: '失败 3' }));
+  t.eq('**下一次等待（序号更高）⇒ 状态回到"等待"**（否则永远显示已重试）', mergedNextWait.retryState, 'scheduled');
+  t.eq('归位后仍是一条链（id 不变）', mergedNextWait.id, 'ev-retry-chain-r1');
+  t.eq('上限不会被后续缺省帧擦掉', mergedNextWait.retryMax, 5);
+  const { retryItemId } = TJ;
+  t.eq('同链 ⇒ 同一个 id（每一帧都并进那一行）', retryItemId(1, 'r1') === retryItemId(4, 'r1'), true);
+  t.eq('同链的 id 里带链身份（排查时能一眼看出是同一次故障）', retryItemId(4, 'r1'), 'ev-retry-chain-r1');
+  t.eq('老 Host 没给链身份 ⇒ 退回按次数各占一行（宁可多一行，不要把两次不同重试并成一条）',
+    retryItemId(4, ''), 'ev-retry-4');
+
+  /*
+   * 不同链互不干扰：比较的是 **id**（中枢的 `appendOrMerge` 按 id 决定"并进去还是新开一行"，
+   * 而 `mergeTrajectoryItem` 只在确定要合并之后才被调用——所以这里比 id，不是比合并结果）。
+   */
+  t.eq('不同 retryId ⇒ id 不同 ⇒ 各占一行（链身份真的在起作用）',
+    a1.id !== chain('r2', 1, 'scheduled').id, true);
+  t.eq('取消是**最强势**的状态：后到的 scheduled 帧不许让它复活',
+    mergeTrajectoryItem(chain('r9', 2, 'cancelled'), chain('r9', 2, 'scheduled')).retryState, 'cancelled');
+  t.eq('取消也不会被后到的 started 帧改回"已重试"',
+    mergeTrajectoryItem(chain('r9', 2, 'cancelled'), chain('r9', 2, 'started')).retryState, 'cancelled');
 }
-
 
 // ── P7-19：失败文案表（可达集合必须都有专门文案；兜底必须保留原始码） ──
 {
@@ -2809,7 +2877,7 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
     toolState: state, toolOutput: '', subagentName: '', fileName: '', fileSize: 0, title: '',
     progress: '', percent: -1, streaming: false, expanded: false, internal: false,
     images: [], commandId: '', commandKind: '', retryAttempt: 0, retryMax: -1, retryDelayMs: 0,
-    retryMode: '', retryStarted: false,
+    retryState: '', retryChainId: '',
   });
 
   // ① 三种写类工具都算（`write` / `edit` / `str_replace_editor` 的 create 与 str_replace）

@@ -226,7 +226,12 @@ const FEATURES = [
    * 拼个 title、正文空白 ⇒ 设备网络最差时用户看到"出错了 + 一片空白"。钉三段：投影（中枢读五个槽位）
    * + 两段文案（纯模型）+ 行组件（含每秒倒计时）。
    */
-  { name: '重试行', patterns: [['retryCountLine', 2], ['retryWaitLine', 2], ['RetryRow', 2]] },
+  /*
+   * 重试行（P7-18，P8-6 改为"整条链一行"）。P8-6 把文案换成官方 `message.retry.status` 一行模板、
+   * 把 id 规则抽成纯函数（同链一条）⇒ 本门禁必须跟着改：**改名/改结构时它必须显式改这里**，
+   * 而不是让调用点悄悄消失（这正是它的用途）。
+   */
+  { name: '重试行', patterns: [['retryStatusLine', 2], ['retryItemId', 2], ['RetryRow', 2]] },
   /*
    * 失败文案表（P7-19）。上游有一张权威错误码表（46 个码），而本仓此前只有 8+5 个特例，
    * 其余落到兜底 `${code} ${message}` ⇒ 真机上出现「session/conflict session "x" already has cwd …」
