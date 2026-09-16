@@ -536,6 +536,10 @@ const SETTINGS_REFRESH_THROTTLE_MS: number = 1200;
  * 去掉"翻页"这条分支能让兜底通路保持简单——它本来就是应急用的。
  */
 const PAGE_FALLBACK_INTERVAL_MS: number = 3000;
+/** 兜底轮询最多尝试几次（F2：语义性拒绝以外的失败也不该无限重试） */
+const PAGE_FALLBACK_MAX_ATTEMPTS: number = 5;
+/** 宿主**明确拒绝**的码（真机见过的那一个）：重试无意义，立刻停 */
+const PAGE_FAIL_SEMANTIC_CODE: string = 'session/agent-busy';
 const PAGE_MAX_MESSAGES: number = 200;
 /**
  * 历史图片缓存条数上限。
@@ -797,6 +801,10 @@ export class SessionHub {
   private notifyHooks?: NotifyHooks;
   /** 一元读回历史的兜底轮询计时器（-1 = 未启用） */
   private pageTimer: number = -1;
+  /** 兜底轮询连续失败次数（成功即清零；见 `ensurePageFallback` 的 F2 说明） */
+  private pageFallbackAttempts: number = 0;
+  /** 最近一次 `session/page` 的失败码（停下来时记账用） */
+  private lastPageFailCode: string = '';
 
   /** waterfall 待答项：eventId → 呈现项 id（应答时必须原样带回 eventId） */
   private waterfallEventIds: Map<string, string> = new Map();
@@ -2467,6 +2475,8 @@ export class SessionHub {
     const result: RpcResult = await this.conn.call(sessionPageEndpoint(), payload);
     if (!result.ok) {
       const code: string = result.error === undefined ? 'unknown' : result.error.code;
+      // F2：失败码留一份给 `ensurePageFallback` 判断"该不该继续重试"
+      this.lastPageFailCode = code;
       this.record(`page fail ${code}`);
       return false;
     }
@@ -2527,7 +2537,37 @@ export class SessionHub {
         this.ensurePageFallback();
         return;
       }
-      this.refreshTrajectoryByPage();
+      /*
+       * 【F2 后半：语义性拒绝不该被无限重试】真机取证：点子代理会话时这条兜底每 **3 秒**
+       * 无限重试（`session/agent-busy`）——宿主说的是"不"，不是"现在不行"，重试一万次
+       * 也是同一个答案。当时的表现是"点开永久空白 + 后台一直在打请求"。
+       *
+       * 这里用**两条**判据，都不需要猜一套错误码分类：
+       *   ① 宿主明确报出的**语义性拒绝**（本仓见过的那一个：`session/agent-busy`）⇒ 立刻停；
+       *   ② 兜底尝试超过 `PAGE_FALLBACK_MAX_ATTEMPTS` 次 ⇒ 停。
+       * 停下来时把最后一次的错误码**记进旁路日志**——不静默：用户能从诊断页看到
+       * "为什么这条会话读不出来"，而不是面对一个永远转圈的空白页。
+       *
+       * 为什么不用"错误码白名单"：本仓没有一份可信的"可重试码"清单，
+       * 现编一份等于把猜测写成规则；而"次数上限"对任何码都成立。
+       */
+      this.refreshTrajectoryByPage().then((ok: boolean) => {
+        if (ok) {
+          this.pageFallbackAttempts = 0;
+          return;
+        }
+        this.pageFallbackAttempts += 1;
+        const last: string = this.lastPageFailCode;
+        const permanent: boolean = last === PAGE_FAIL_SEMANTIC_CODE;
+        if (permanent || this.pageFallbackAttempts >= PAGE_FALLBACK_MAX_ATTEMPTS) {
+          if (this.pageTimer !== -1) {
+            clearInterval(this.pageTimer);
+            this.pageTimer = -1;
+          }
+          this.record(`page fallback 停止：${permanent ? '宿主明确拒绝' : '已达尝试上限'} code=${last} attempts=${this.pageFallbackAttempts}`);
+          this.pageFallbackAttempts = 0;
+        }
+      });
     }, PAGE_FALLBACK_INTERVAL_MS);
   }
 
