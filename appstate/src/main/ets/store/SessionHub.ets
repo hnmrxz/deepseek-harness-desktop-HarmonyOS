@@ -3061,6 +3061,23 @@ export class SessionHub {
       return;
     }
     if (type === 'event') {
+      /*
+       * 【F31：**帧里带了投影就在帧里读**，不要只认 snapshot】
+       *
+       * 真机读数：同一会话已经跑到 `turn 3`（`turn/end {"turn":3}`），而会话头一直是
+       * 「1 轮 2 步 · 缓存命中 97%」，直到**重新进入该会话**才更新。
+       * 根因就在这里：`applySessionProjections()` 此前**只**在 `snapshot` 分支被调用，
+       * 而 Host 在一轮结束时发的是 **event 帧**。哪怕那一帧里就带着新的
+       * `projections.values['session-stats']`（上游确实把投影挂在帧上），我们也没看它一眼。
+       *
+       * 这一行是**纯增量且无副作用**：`applySessionProjections()` 在拿不到
+       * `projections.values` 时**直接 return**（见它的头两行），所以 Host 不带投影时
+       * 行为与现在完全一致；带了就当场更新，不必等下一次 snapshot 或重新进会话。
+       *
+       * 【为什么不去重新订阅 follow 流】"重新进会话"确实能修好，但那会整份替换轨迹、
+       * 打断正在进行的流。**能读到的数据不该用重连去换**。
+       */
+      this.applySessionProjections(value);
       // E112：一条事件可能展开成多条（消息 + 夹带的工具调用）
       const projected: TrajectoryItem[] = projectWireRecords(value);
       if (projected.length > 0) {
