@@ -3108,7 +3108,13 @@ export class SessionHub {
       const snapshotSaysAbsent: boolean = getRecord(goal, 'goal') === undefined
         && getString(goal, 'objective') === undefined
         && getString(goal, 'phase') === undefined;
-      if (!(snapshotSaysAbsent && this.goalId.length > 0)) {
+      /*
+       * 【判据用 `goalText` 而不是 `goalId`】第一版拿 `goalId` 当"手里已经有目标"的证据，
+       * 但 `goalId` 依赖 `projectGoalView()` 解析出 `id`——形状稍有出入它就恒为空串，
+       * 守卫于是**形同不存在**（真机上正是这个表现：加了守卫仍然被清空）。
+       * 要保护的东西就是**已经显示出来的那句正文**，所以直接拿它当判据，不绕一层 id。
+       */
+      if (!(snapshotSaysAbsent && this.goalText.length > 0)) {
         this.applyGoalView(goal, 'goal projection');
       }
     }

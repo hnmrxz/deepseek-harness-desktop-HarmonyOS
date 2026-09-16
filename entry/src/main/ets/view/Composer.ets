@@ -10,7 +10,8 @@
 
 import { CommandCandidate, Fs, ModelOption, ModelSelection, PendingAttachment, QueuedItem, Radius, ReferenceCandidate, Sp, Sz, formatBytes, modelSelectionLabel, referenceQueryOf } from 'appstate';
 import {
-  appendPick, applyPick, detectTrigger, referenceAgeLine, referenceCrumbs, referenceDrillQuery,
+  COMMAND_PICK_RUN, appendPick, applyPick, commandPickAction, detectTrigger, referenceAgeLine, referenceCrumbs,
+  referenceDrillQuery,
   referenceFileRowDetail, referenceFileRowName, referenceSessionRowDetail, TriggerToken
 } from 'appstate';
 import { NativeButton, NativeChip } from './NativePrimitives';
@@ -636,9 +637,25 @@ export struct Composer {
               .padding(Sp.S)
               .borderRadius(Radius.S)
               .onClick(() => {
-                // 命令同理：替换掉正在输入的 `/co`，而不是把它留在前面
-                this.onDraftChange(this.draftAfterPick(c.name));
+                /*
+                 * 【F24/D51 §4·§5：输入区斜杠菜单要与命令面板**同一套判定**】
+                 *
+                 * 此前这里只做一件事——把命令名填进草稿（`/export` 留在输入框里不动）。
+                 * 于是"选中一条**免参**命令"什么都不会发生，用户只能自己再按一次发送；
+                 * 而按了发送，命令又会被当成提示词发给模型（那一条已在 `sendDraft()` 里修掉）。
+                 *
+                 * 现在按宿主给的权威信号分流（`CommandDescriptor.input` → `CommandCandidate.args`）：
+                 *   · 需要参数 ⇒ 只填草稿（用户接着打参数），与面板一致；
+                 *   · 不需要参数 ⇒ 填草稿后**立刻走发送那条路**——`sendDraft()` 已经会识别
+                 *     "整条草稿是一条命令"并改道 `commands/execute`，所以这里不必再引一套执行通道
+                 *     （少一条通道就少一处会跑偏的地方）。
+                 */
+                const next: string = this.draftAfterPick(c.name);
                 this.panel = '';
+                this.onDraftChange(next);
+                if (commandPickAction(c.args) === COMMAND_PICK_RUN) {
+                  this.onSend();
+                }
               })
             }
           }, (c: CommandCandidate) => c.name)
