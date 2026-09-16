@@ -141,7 +141,7 @@ hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 
 **能力对等与"还差什么"**：唯一清单是 [`docs/parity-matrix.md`](docs/parity-matrix.md)（逐功能台账 + §6 缺口登记，由 `tools/check-parity.mjs` 强制）。**当前状态的权威结论**见 [`docs/07-当前状态与缺口.md`](docs/07-当前状态与缺口.md)；逐轮"缺陷 → 官方依据 → 修法 → 门禁"的历史见 [`docs/13-缺陷编年.md`](docs/13-缺陷编年.md)。
 
-**验收口径**：`DONE` 只表示"实现侧完成"，设备验收是另一根轴——逐项判据与真机读数在 [`docs/device-validation.md`](docs/device-validation.md)。**当前所有设备项（D1–D41）都尚未执行**（没有真机/模拟器，也没有发布签名材料），因此本仓库**不宣称**已完成设备验收。
+**验收口径**：`DONE` 只表示"实现侧完成"，设备验收是另一根轴——逐项判据与真机读数在 [`docs/device-validation.md`](docs/device-validation.md)。**设备验收已于 2026-09-16/17 在 HUAWEI Mate 70 Pro+ 上跑过一轮**：原始读数与 F1–F32 缺陷台账见 [`docs/device-validation-readings.md`](docs/device-validation-readings.md)，据此整理的**修复与优化方案**见 [`docs/80-修复与优化方案.md`](docs/80-修复与优化方案.md)。仍未收口的项在该方案 §七 逐条登记为「待真机复验」。
 
 ## 文档
 
