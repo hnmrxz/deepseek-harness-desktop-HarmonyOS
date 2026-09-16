@@ -135,6 +135,7 @@ import {
 import type { SessionEventShape, SlotBinding } from 'dshcompat';
 import { isSubagentSession, projectSessionList } from '../model/SessionList';
 import { followSessionAddress, followSubagentAddress } from '../model/Wire';
+import type { SessionAddressWire } from '../model/Wire';
 import { localOnlySearchNote, mergeSessionSearch } from '../model/SessionSearch';
 import { permissionCommand, permissionSwitchable } from '../model/Permissions';
 import { encodeQuestionAnswers } from '../model/Trajectory';
@@ -1184,7 +1185,7 @@ export class SessionHub {
    * ——保持既有行为（会被宿主拒、但错误信息是它自己给的那一条），
    * 而不是**编一个 mode** 让一条 `continuable` 的会话以 `one-shot` 的语义被打开。
    */
-  private followAddressFor(sessionId: string): Object {
+  private followAddressFor(sessionId: string): SessionAddressWire {
     for (let i = 0; i < this.sessions.length; i++) {
       const item: SessionListItem = this.sessions[i];
       if (item.id !== sessionId) {
@@ -2584,7 +2585,9 @@ export class SessionHub {
       this.record('page skip：取不到游标（projections.asOfSeq）');
       return false;
     }
-    const payload: Object | undefined = sessionPagePayload(sessionId, cursor, PAGE_MAX_MESSAGES);
+    // F2：与 `session/follow` **共用同一个地址判定**（子代理会话同样要它自己那种地址）
+    const payload: Object | undefined =
+      sessionPagePayload(this.followAddressFor(sessionId), cursor, PAGE_MAX_MESSAGES);
     if (payload === undefined) {
       return false;
     }

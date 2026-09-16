@@ -719,25 +719,41 @@ export interface SessionPageRequest {
   maxMessages?: number;
 }
 
-/** 会话地址（`session/follow` 与 `session/page` 共用同一形状）。 */
-export interface SessionAddressWire {
-  kind: string;
-  sessionId: string;
-}
+/**
+ * 会话地址（`session/follow` 与 `session/page` **共用同一形状**）。
+ *
+ * 【F2：它是**联合**而不是"只有 sessionId 的那种"】
+ * 核心契约里 `SessionAddress` 有两种形态（`{kind:'session', sessionId}` 与
+ * `{kind:'subagent', parentSessionId, childSessionId, mode}`），而这两个端点在契约里
+ * 是同一族（都叫 "durable address"）。此前这里写成单形态接口 ⇒ **子代理会话
+ * 在类型上就表达不出来**，于是调用方只能手工拼普通地址——真机上那条
+ * `session/agent-busy` 就是这么来的。改成联合之后，"两种地址"在类型上就是合法的，
+ * 由 `SessionHub.followAddressFor()` 一处决定用哪种。
+ */
+export type SessionAddressWire = FollowSessionAddress | FollowSubagentAddress;
 
 /**
  * 构造 `session/page` 的 args 载荷。
  *
- * @param throughSeq 包含式上界；传 `sessionCursorOf()` 的结果即为"读到当前末尾"
+ * 【F2：地址由调用方给，不再在这里写死 `kind:'session'`】
+ * `session/page` 与 `session/follow` 是**同一族**（契约里都叫 "durable address"），
+ * 所以子代理会话同样要 `{kind:'subagent', parentSessionId, childSessionId, mode}`。
+ * 判定"该用哪种地址"要知道会话列表（本模块是纯投影，不持有它）⇒
+ * 由 `SessionHub.followAddressFor()` 算好传进来，**两种请求共用一个判定**，
+ * 不在两处各写一遍（那正是本仓反复吃过的"同一件事两套口径"）。
  */
-export function sessionPagePayload(sessionId: string, throughSeq: number,
+export function sessionPagePayload(address: SessionAddressWire, throughSeq: number,
   maxMessages: number): Object | undefined {
-  const address: SessionAddressWire = { kind: 'session', sessionId: sessionId };
   const request: SessionPageRequest = { address: address, throughSeq: throughSeq };
   if (maxMessages > 0) {
     request.maxMessages = maxMessages;
   }
   return payloadFor(SESSION_PAGE_ENDPOINT, request);
+}
+
+/** 普通会话的地址（`session/page` 的调用方在拿不到会话项时用它） */
+export function sessionPageAddress(sessionId: string): SessionAddressWire {
+  return { kind: 'session', sessionId: sessionId };
 }
 
 /** `session/page` 的端点。 */
