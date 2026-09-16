@@ -1060,7 +1060,25 @@ export struct ConversationPane {
           })
         }
         .width('100%')
-        .constraintSize({ maxHeight: 300 })
+        /*
+         * 【F12：用明确的 height 而不是 constraintSize(maxHeight)，内层 List 才真的能滚】
+         *
+         * 真机读数：接管卡的三颗主键落在 `[126,1726][…,1731]`——**只有 5px 高**，
+         * 屏幕上只在最下沿露出半个字高，点也点不到。
+         *
+         * 机理：这里的容器只给了 `constraintSize({maxHeight:300})`（**上限，不是高度**），
+         * 而 `PendingPane` 的根是 `Column().height('100%')`、里面才是 `List().layoutWeight(1)`。
+         * 父容器高度是"由内容决定"时，`height('100%')` 解析不出确定值 ⇒ List 拿不到视口高度
+         * ⇒ **它不会滚**，内容按自然高度排下去、超出的部分被裁掉（`dumpLayout` 里那些 bounds
+         * 仍然在，但屏幕上看不见、也点不到——这正是"bounds 存在 ≠ 用户够得着"）。
+         *
+         * 给出**确定高度**之后，`height('100%')` → List 拿到视口 → 滚动生效 → 主键可达。
+         * 用**固定 vp**而不是百分比：百分比要先有一个确定高度的父容器才解析得出来，
+         * 而这正是上面那段机理里出问题的地方——不能用一个同样可能失效的写法去修它。
+         * 260vp 在手机（约 376×800vp）上约占三分之一屏：够放多题卡与自定义输入，
+         * 又给对话留出了大部分空间。
+         */
+        .height(260)
         .padding({ left: Sp.M, right: Sp.M, bottom: Sp.S })
       }
 
