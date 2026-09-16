@@ -127,9 +127,18 @@ export struct MessageRow {
         }
         Blank()
         if (this.item.model.length > 0) {
+          /*
+           * 模型名是**次要信息**（切换模型的入口在输入区的工具行），而它可能很长
+           * （`provider/model` 两段）。给一个宽度上限并省略：不省略的话，窄屏上它会把
+           * 左边的时间/时长挤出屏幕（docs/08 P0 §6：标题可以省略，诊断信息不能只剩省略号——
+           * 模型名不属于诊断信息，且这里省略的是尾部）。
+           */
           Text(this.item.model)
             .fontSize(Fs.CAPTION)
             .fontColor($r('sys.color.font_tertiary'))
+            .constraintSize({ maxWidth: 140 })
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
       }
       .width('100%')

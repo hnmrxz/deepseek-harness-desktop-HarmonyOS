@@ -154,27 +154,40 @@ export struct ConversationHeader {
           .padding({ left: Sp.M, right: Sp.M, top: Sp.XS })
       }
 
-      Row({ space: Sp.S }) {
-        this.viewChip('chat', $r('app.string.view_chat'))
-        this.viewChip('trajectory', $r('app.string.view_trajectory'))
-        Blank()
+      /*
+       * 【为什么这一行也要可换行】轨迹视图下右侧还有三个动作（展开全部 / 收起全部 / N 条事件），
+       * 加上左侧两个视图 chip，手机宽度下**加起来超过屏宽**；而这一行里没有任何 `layoutWeight`、
+       * 只靠一个 `Blank()` 撑开 ⇒ 超出的部分被**直接裁掉**（`docs/08` P0 §7 点名的那类缺陷：
+       * 操作区被挤压时不得静默消失）。官方的行容器用 `flex-wrap: wrap` + `space-between`，
+       * 这里照同一结构：放得下时右组靠右，放不下时整组换行，控件一个不少。
+       */
+      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween, alignItems: ItemAlign.Center }) {
+        Row({ space: Sp.S }) {
+          this.viewChip('chat', $r('app.string.view_chat'))
+          this.viewChip('trajectory', $r('app.string.view_trajectory'))
+        }
+        .margin({ bottom: Sp.XS })
+
         if (this.view === 'trajectory') {
-          // E197：官方的"展开/收起所有"（`toolbar.expandTurns`/`collapseTurns`、`expandCalls`/`collapseCalls`）
-          Text('展开全部')
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.brand'))
-            .onClick(() => {
-              this.onExpandAll();
-            })
-          Text('收起全部')
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.brand'))
-            .onClick(() => {
-              this.onCollapseAll();
-            })
-          Text(`${this.items.length} 条事件`)
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_tertiary'))
+          Row({ space: Sp.S }) {
+            // E197：官方的"展开/收起所有"（`toolbar.expandTurns`/`collapseTurns`、`expandCalls`/`collapseCalls`）
+            Text('展开全部')
+              .fontSize(Fs.CAPTION)
+              .fontColor($r('sys.color.brand'))
+              .onClick(() => {
+                this.onExpandAll();
+              })
+            Text('收起全部')
+              .fontSize(Fs.CAPTION)
+              .fontColor($r('sys.color.brand'))
+              .onClick(() => {
+                this.onCollapseAll();
+              })
+            Text(`${this.items.length} 条事件`)
+              .fontSize(Fs.CAPTION)
+              .fontColor($r('sys.color.font_tertiary'))
+          }
+          .margin({ bottom: Sp.XS })
         }
       }
       .width('100%')

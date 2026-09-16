@@ -398,106 +398,148 @@ export struct Composer {
     return this.planPending ? !this.planActive : this.planActive;
   }
 
-  /** 工具行：@ / / / 附件 / 计划 / 权限 / 模型（全部走 P1.5 的原生原语） */
+  /**
+   * 工具行：@ / / / 附件 / 图片 / 计划 / 权限 || 模型（全部走 P1.5 的原生原语）。
+   *
+   * ## 为什么是**可换行的 Flex**，而不是一行 `Row` + `Blank()`
+   *
+   * 一行 `Row` 里不放 `layoutWeight` 的子元素**不会缩**：手机上（360vp）这一行的固定宽度加起来
+   * 已经超过屏宽（两个 chip + 两个图标按钮 + 计划 + 权限 chip + 模型 chip），
+   * 于是**最右边的「模型」chip 被挤出屏幕**——它偏偏是手机上最常用的控件之一。
+   * 这正是 `docs/08` 的 P0 §7 点名的那类缺陷：「操作区被内容挤压时不得静默消失」。
+   *
+   * 官方 Web 的输入区这一行就是 `flex-wrap: wrap; justify-content: space-between`
+   * （`dsh-client-ui-conversation` 的 composer CSS：`.W5Twba_row{flex-wrap:wrap;justify-content:space-between;…}`），
+   * 并且把"模型/发送"那一组放在 `.trailing{margin-left:auto}` 里。
+   * 这里照同一结构：**外层可换行 + 两个组**（左组工具、右组模型）——
+   * 放得下时模型靠右，放不下时整组换到第二行，**没有任何控件被裁掉**。
+   *
+   * 间距用子元素的 margin（本仓 `NativeActionBar` 已是这个写法）：换行之后
+   * `space` 只在主轴方向生效，跨行间距得靠 margin 才一致。
+   */
   @Builder
   toolRow() {
-    Row({ space: Sp.XS }) {
-      NativeChip({
-        label: '@ 引用',
-        active: this.panel === 'ref',
-        a11y: '插入文件或会话引用',
-        onTap: () => {
-          this.panel = this.panel === 'ref' ? '' : 'ref';
-          this.filter = '';
-        }
-      })
-
-      NativeChip({
-        label: '/ 命令',
-        active: this.panel === 'cmd',
-        a11y: '运行命令',
-        onTap: () => {
-          this.panel = this.panel === 'cmd' ? '' : 'cmd';
-          this.filter = '';
-        }
-      })
-
-      Button() {
-        SymbolGlyph($r('sys.symbol.paperclip')).fontSize(Sz.TOUCH_MIN / 2)
-      }
-      .buttonStyle(ButtonStyleMode.TEXTUAL)
-      .accessibilityText('添加附件')
-      .onClick(() => {
-        this.onAddAttachment();
-      })
-
-      /*
-       * ── 图片（P0-4）──
-       *
-       * 【为什么单独一个按钮】两条路的线上语义不同（文件=先上传拿会话作用域回执；
-       * 图片=内联 base64，官方 `serializeImages()`），失败原因也不同 ⇒ 分开才说得清。
-       * 图标用 `sys.symbol.picture`（**已在本机 CLT 的 `sysResource.js` 的 symbol 段里核对过**：
-       * `paperclip` 与 `picture` 都在；猜一个名字会换来一个空白按钮，这是 E-symbol 的教训）。
-       */
-      Button() {
-        SymbolGlyph($r('sys.symbol.picture')).fontSize(Sz.TOUCH_MIN / 2)
-      }
-      .buttonStyle(ButtonStyleMode.TEXTUAL)
-      .accessibilityText('添加图片（随消息一起发送，不需要先上传）')
-      .onClick(() => {
-        this.onAddImage();
-      })
-
-      // ── 计划模式（官方 ui-plan：输入区的一级 chip；E202 的判据）──
-      NativeChip({
-        label: '计划',
-        active: this.planOn(),
-        a11y: `计划模式：${this.planOn() ? '已开启' : '已关闭'}，点击切换`,
-        onTap: () => {
-          this.onTogglePlan();
-        }
-      })
-
-      /*
-       * ── 权限模式：**能切就切，不能切就说"不可用"**（P7-6，对齐官方 permission-presets）──
-       *
-       * 官方把 `/permission` 装饰成 `popupSelect`：选中后执行 `/permission <presetId>`；
-       * 而这台 Host 没有这个能力时，它显示的是官方字典里的 `unavailable`（「不可用」），
-       * 连入口都不给。我们此前一律 `disabled: true` 挂着「权限：X（只读…）」——
-       * 有能力的 Host 上白白少一个功能，没能力的 Host 上又看不出为什么点不了。
-       *
-       * 现在按 `permissionSwitchable(permissionsOptions)` 分两种呈现：
-       *   · 有能力 ⇒ 可点的 chip，点了开单选浮层（复用既有 `ChoiceSheet`），选中后走
-       *     `/permission <id>` 命令通道；
-       *   · 没能力 ⇒ 仍然不可点，但文案是官方那句「不可用」，无障碍里写清"这台 Host 没有"。
-       */
-      if (this.permissionLabel.length > 0) {
-        NativeChip({
-          label: `权限：${this.permissionLabel}`,
-          active: false,
-          disabled: !this.permissionSwitchableNow,
-          maxWidth: 160,
-          a11y: this.permissionSwitchableNow
-            ? `当前权限模式：${this.permissionLabel}，点击切换`
-            : `权限：${this.permissionLabel}。${this.permissionHint}`,
-          onTap: () => {
-            if (this.permissionSwitchableNow) {
-              this.onPickPermission();
+    Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween, alignItems: ItemAlign.Center }) {
+      // ── 左组：输入类工具（自身也可换行：权限 chip 最长，手机上常换到第二行）──
+      Flex({ wrap: FlexWrap.Wrap, alignItems: ItemAlign.Center }) {
+        Row() {
+          NativeChip({
+            label: '@ 引用',
+            active: this.panel === 'ref',
+            a11y: '插入文件或会话引用',
+            onTap: () => {
+              this.panel = this.panel === 'ref' ? '' : 'ref';
+              this.filter = '';
             }
+          })
+        }
+        .margin({ right: Sp.XS, bottom: Sp.XS })
+
+        Row() {
+          NativeChip({
+            label: '/ 命令',
+            active: this.panel === 'cmd',
+            a11y: '运行命令',
+            onTap: () => {
+              this.panel = this.panel === 'cmd' ? '' : 'cmd';
+              this.filter = '';
+            }
+          })
+        }
+        .margin({ right: Sp.XS, bottom: Sp.XS })
+
+        Row() {
+          Button() {
+            SymbolGlyph($r('sys.symbol.paperclip')).fontSize(Sz.TOUCH_MIN / 2)
+          }
+          .buttonStyle(ButtonStyleMode.TEXTUAL)
+          .accessibilityText('添加附件')
+          .onClick(() => {
+            this.onAddAttachment();
+          })
+        }
+        .margin({ right: Sp.XS, bottom: Sp.XS })
+
+        /*
+         * ── 图片（P0-4）──
+         *
+         * 【为什么单独一个按钮】两条路的线上语义不同（文件=先上传拿会话作用域回执；
+         * 图片=内联 base64，官方 `serializeImages()`），失败原因也不同 ⇒ 分开才说得清。
+         * 图标用 `sys.symbol.picture`（**已在本机 CLT 的 `sysResource.js` 的 symbol 段里核对过**：
+         * `paperclip` 与 `picture` 都在；猜一个名字会换来一个空白按钮，这是 E-symbol 的教训）。
+         */
+        Row() {
+          Button() {
+            SymbolGlyph($r('sys.symbol.picture')).fontSize(Sz.TOUCH_MIN / 2)
+          }
+          .buttonStyle(ButtonStyleMode.TEXTUAL)
+          .accessibilityText('添加图片（随消息一起发送，不需要先上传）')
+          .onClick(() => {
+            this.onAddImage();
+          })
+        }
+        .margin({ right: Sp.XS, bottom: Sp.XS })
+
+        // ── 计划模式（官方 ui-plan：输入区的一级 chip；E202 的判据）──
+        Row() {
+          NativeChip({
+            label: '计划',
+            active: this.planOn(),
+            a11y: `计划模式：${this.planOn() ? '已开启' : '已关闭'}，点击切换`,
+            onTap: () => {
+              this.onTogglePlan();
+            }
+          })
+        }
+        .margin({ right: Sp.XS, bottom: Sp.XS })
+
+        /*
+         * ── 权限模式：**能切就切，不能切就说"不可用"**（P7-6，对齐官方 permission-presets）──
+         *
+         * 官方把 `/permission` 装饰成 `popupSelect`：选中后执行 `/permission <presetId>`；
+         * 而这台 Host 没有这个能力时，它显示的是官方字典里的 `unavailable`（「不可用」），
+         * 连入口都不给。我们此前一律 `disabled: true` 挂着「权限：X（只读…）」——
+         * 有能力的 Host 上白白少一个功能，没能力的 Host 上又看不出为什么点不了。
+         *
+         * 现在按 `permissionSwitchable(permissionsOptions)` 分两种呈现：
+         *   · 有能力 ⇒ 可点的 chip，点了开单选浮层（复用既有 `ChoiceSheet`），选中后走
+         *     `/permission <id>` 命令通道；
+         *   · 没能力 ⇒ 仍然不可点，但文案是官方那句「不可用」，无障碍里写清"这台 Host 没有"。
+         */
+        if (this.permissionLabel.length > 0) {
+          Row() {
+            NativeChip({
+              label: `权限：${this.permissionLabel}`,
+              active: false,
+              disabled: !this.permissionSwitchableNow,
+              maxWidth: 160,
+              a11y: this.permissionSwitchableNow
+                ? `当前权限模式：${this.permissionLabel}，点击切换`
+                : `权限：${this.permissionLabel}。${this.permissionHint}`,
+              onTap: () => {
+                if (this.permissionSwitchableNow) {
+                  this.onPickPermission();
+                }
+              }
+            })
+          }
+          .margin({ right: Sp.XS, bottom: Sp.XS })
+        }
+      }
+      .layoutWeight(1)
+
+      // ── 右组（官方的 `.trailing`）：模型。窄屏时会整组换到下一行，而不是被裁掉 ──
+      Row() {
+        NativeChip({
+          label: this.modelLabel(),
+          maxWidth: 160,
+          a11y: `当前模型：${this.modelLabel()}，点击切换`,
+          onTap: () => {
+            this.onPickModel();
           }
         })
       }
-
-      Blank()
-
-      NativeChip({
-        label: this.modelLabel(),
-        maxWidth: 160,
-        a11y: `当前模型：${this.modelLabel()}，点击切换`,
-        onTap: () => {
-          this.onPickModel();
-        }
-      })
+      .margin({ bottom: Sp.XS })
     }
     .width('100%')
   }

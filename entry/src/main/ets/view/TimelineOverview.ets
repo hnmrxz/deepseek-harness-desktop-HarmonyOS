@@ -52,20 +52,33 @@ export struct TimelineOverview {
 
   build() {
     Column({ space: Sp.XS }) {
-      Row({ space: Sp.S }) {
-        Text(timelineTotalLabel(this.timelineScale()))
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_secondary'))
-        Text(`${this.timelineScale().count} 格`)
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
-        Blank()
-        // 会话统计的**时间四项**（轮次/步数由会话头部那行承担，不在这里重复）
-        ForEach(statsLinesOf(this.stats), (line: StatsLine) => {
-          Text(this.statsLineText(line))
+      /*
+       * 【为什么可换行】左侧"总计 + N 格"与右侧四项统计在手机宽度下**加起来超过屏宽**，
+       * 而这一行既没有 `layoutWeight`、也不换行 ⇒ 末尾的统计（TPS 那项）会被裁掉。
+       * 统计是"读过就算"的信息，但它被裁掉时用户**不会知道**少了东西（docs/08 P0 §7）。
+       */
+      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween, alignItems: ItemAlign.Center }) {
+        Row({ space: Sp.S }) {
+          Text(timelineTotalLabel(this.timelineScale()))
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.font_secondary'))
+          Text(`${this.timelineScale().count} 格`)
             .fontSize(Fs.CAPTION)
             .fontColor($r('sys.color.font_tertiary'))
-        }, (line: StatsLine) => line.key)
+        }
+        .margin({ right: Sp.S, bottom: Sp.XS })
+
+        Flex({ wrap: FlexWrap.Wrap, alignItems: ItemAlign.Center }) {
+          // 会话统计的**时间四项**（轮次/步数由会话头部那行承担，不在这里重复）
+          ForEach(statsLinesOf(this.stats), (line: StatsLine) => {
+            Row() {
+              Text(this.statsLineText(line))
+                .fontSize(Fs.CAPTION)
+                .fontColor($r('sys.color.font_tertiary'))
+            }
+            .margin({ right: Sp.S, bottom: Sp.XS })
+          }, (line: StatsLine) => line.key)
+        }
       }
       .width('100%')
 

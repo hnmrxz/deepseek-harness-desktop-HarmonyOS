@@ -280,12 +280,55 @@ const FORBIDDEN = [
   }
 ];
 
+/**
+ * 「某文件里**必须**出现某模式」的规则（P8-4b）。
+ *
+ * 【为什么需要第三种规则】FEATURES 是**全局计数**（符号有没有被调用），FORBIDDEN 是
+ * "某文件里**不许**出现某模式"。而这一轮修的是"**某一行必须可换行**"这类**布局性质**：
+ * 它在代码里就是一个 `FlexWrap.Wrap`，全局计数说不出"是**哪个**文件里的那一行"。
+ * 布局行为本身要真机验收（见 `docs/device-validation.md` D46），但"这行还是不是可换行的"
+ * 这件事可以被静态钉住 —— 否则下一次有人为了"少一层 Flex"把它改回 `Row`，谁都不会发现。
+ *
+ * 【规则怎么定的】每条都对应 `docs/08` P0 §7 点名的一行（操作区被挤压时不得静默消失），
+ * 失败信息里写清"这一行为什么必须能换行"，免得下一个人以为是风格要求。
+ */
+const REQUIRED_IN_FILE = [
+  {
+    file: 'entry/src/main/ets/view/Composer.ets',
+    pattern: 'FlexWrap\\.Wrap',
+    why: '输入区工具行必须可换行：手机宽度下固定控件的总宽已超屏宽，'
+      + '尾部的「模型」chip 会被挤出屏幕（docs/08 P0 §7）'
+  },
+  {
+    file: 'entry/src/main/ets/view/ConversationHeader.ets',
+    pattern: 'FlexWrap\\.Wrap',
+    why: '会话头视图切换行必须可换行：轨迹视图下右侧三个动作 + 左侧两个 chip 在手机上超宽，'
+      + '会被直接裁掉'
+  },
+  {
+    file: 'entry/src/main/ets/view/TimelineOverview.ets',
+    pattern: 'FlexWrap\\.Wrap',
+    why: '时间总览统计行必须可换行：末尾的统计项在手机上会被裁掉，而用户不会知道少了东西'
+  }
+];
+
 /** 剥掉块注释与行注释（只做这一步：规则关心的常量名不会出现在字符串字面量里） */
 function stripComments(text) {
   return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
 }
 
 const problems = [];
+for (const rule of REQUIRED_IN_FILE) {
+  const src = sources.find((x) => x.path === rule.file);
+  if (src === undefined) {
+    problems.push(`  ✗ 必含模式规则：受检文件不存在 ${rule.file}`);
+    continue;
+  }
+  if (!new RegExp(rule.pattern).test(stripComments(src.text))) {
+    problems.push(`  ✗ ${rule.file} 里找不到 "${rule.pattern.replace(/\\/g, '')}"：${rule.why}`);
+  }
+}
+
 for (const f of FEATURES) {
   for (const [pattern, min] of f.patterns) {
     const { n, where } = count(pattern);
@@ -315,7 +358,8 @@ for (const rule of FORBIDDEN) {
   }
 }
 
-console.log(`# 功能接线回归（扫描 ${files.length} 个文件，${FEATURES.length} 个功能，${FORBIDDEN.length} 条反面规则）`);
+console.log(`# 功能接线回归（扫描 ${files.length} 个文件，${FEATURES.length} 个功能，`
+  + `${REQUIRED_IN_FILE.length} 条必含模式，${FORBIDDEN.length} 条反面规则）`);
 if (problems.length === 0) {
   console.log('✅ 全部功能的接线都在（中枢实现 + 界面调用点）。');
   process.exit(0);
