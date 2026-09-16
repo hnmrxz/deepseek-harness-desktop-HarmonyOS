@@ -177,9 +177,22 @@ export struct SettingRow {
         }
         .width('100%')
 
+        /*
+         * 【说明只占一行（2026-09-17，对齐官方设置页）】
+         *
+         * 官方设置页每一行是「标签 / 一句说明」两行 + 右侧控件（见其通用设置页：
+         * 权限 / 选择新会话的默认权限模式 …[工作区内修改]）。而我们的 `hintOf()` 有时会带回
+         * **整段**说明——例如 `须匹配 ^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$；Host 设置项 locale.preference`，
+         * 或者权限模式那三段话。真机上这些段落把一屏塞成两三条，密度极低。
+         *
+         * 这里把它**截成一行**（省略号），完整说明仍然在无障碍文案里（见下面 `.accessibilityText`），
+         * 所以"看得见的地方省地方、读屏那里不丢信息"。
+         */
         Text(this.hintOf(this.item))
           .fontSize(Fs.CAPTION)
           .fontColor($r('sys.color.font_tertiary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
 
         // `applies: 'restart'` 的命名空间改完需要重启 Host 才生效。

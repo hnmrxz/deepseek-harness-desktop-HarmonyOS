@@ -104,10 +104,15 @@ export struct SettingsGeneral {
                 .fontColor($r('sys.color.font_tertiary'))
                 .width('100%')
             }
+            // 一整段理由**截成一行**（2026-09-17，对齐官方设置页的"一句说明"）：
+            // 真机上它把这一屏吃掉三段，密度极低；完整说法保留在无障碍文案里。
             Text('端侧暂不可切换：把这几档捆绑成可切换预设的插件需要 shell 服务，而鸿蒙不允许应用创建进程（E15）。这里显示的是宿主当前生效的访问模式。')
               .fontSize(Fs.CAPTION)
               .fontColor($r('sys.color.font_tertiary'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
               .width('100%')
+              .accessibilityText('端侧暂不可切换：把这几档捆绑成可切换预设的插件需要 shell 服务，而鸿蒙不允许应用创建进程。这里显示的是宿主当前生效的访问模式。')
           }
           .width('100%')
           .padding(Sp.M)
