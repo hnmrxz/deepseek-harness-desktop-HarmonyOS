@@ -3901,6 +3901,8 @@ struct Index {
       this.attachNotice = sid === undefined
         ? '新建会话失败：见状态条上的原因。'
         : `已在 ${w.name.length > 0 ? w.name : w.path} 里新建会话。`;
+      // F4：与 `newSession()` 共用同一条尾——建完就切过去，两条入口行为一致
+      this.enterCreatedSession(sid);
     }).catch((e: Object) => {
       const err = e as Error;
       this.attachNotice = `新建会话失败：${err.message}`;
@@ -4265,9 +4267,41 @@ struct Index {
     this.selectTab(legacyTabOfMainPanel(mainPanelOfSidebarPanel(panelId)) as NavTab);
   }
 
-  /** 新建会话（侧栏一级入口与 Ctrl+N 走同一条路） */
+  /**
+   * 新建会话（侧栏一级入口与 Ctrl+N 走同一条路）。
+   *
+   * 【F4：新建之后**必须进会话**】真机读数：在工作区页点新建 ⇒ 会话**确实建出来了**
+   * （旁路日志 `follow snapshot records=0`、树里 `workspace · 10 会话`），
+   * 但主区仍停在工作区树；而在会话页打开抽屉后点，却进了新会话空态。
+   * 两条入口的差别不在"建没建成"，而在**建完之后有没有切视图**——
+   * 此前这里 `createSession()` 的返回值**被丢掉了**，于是切不切只取决于用户当时在哪一页。
+   *
+   * 现在：拿到 id 就交给 `enterCreatedSession()`（与 `createSessionIn` 共用同一条尾），
+   * 两条入口的行为**由此一致**。
+   */
   private newSession(): void {
-    SessionHub.shared().createSession();
+    SessionHub.shared().createSession().then((sid: string | undefined) => {
+      this.enterCreatedSession(sid);
+    }).catch((e: Object) => {
+      const err = e as Error;
+      this.attachNotice = `新建会话失败：${err.message}`;
+    });
+  }
+
+  /**
+   * 新建成功后的**共同尾**：切到那条新会话（F4）。
+   *
+   * 判据只有一条：**拿到 id 才切**。`createSession()` 在没有 id 时已经有自己的失败提示
+   * （中枢写 `lastError`，状态条会显示），这里不再补一句——两处都写会让同一件事说两遍。
+   * 切视图走 `openSession()`：它会做 `enterSession`（主区回会话面板 + 收起抽屉）、
+   * 清空轨迹、在中枢里选中，**与从列表点进一条会话完全同一条路**
+   * ——不新写一份"新建专用的切法"，那种第二份实现正是 F4 的成因。
+   */
+  private enterCreatedSession(sid: string | undefined): void {
+    if (sid === undefined || sid.length === 0) {
+      return;
+    }
+    this.openSession(sid);
   }
 
   /** 选中面板的中文名（页头标题用；注册表找不到时给空串，由视图兜底） */
