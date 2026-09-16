@@ -3878,17 +3878,30 @@ export class SessionHub {
     }
     /*
      * `ifVersion` 是契约里的必填（乐观并发）——"值为观察到的版本，或 `null` 表示要求原本不存在"。
-     * E254 曾把它记成"编码待宿主确认"；**现已按上游源码核对确认**
-     * （`@deepseek-ai/dsh-message-feedback/lib/types/types.d.ts` 的 `MessageFeedbackPutRequest`）：
-     *   `readonly ifVersion: MessageFeedbackVersion | null`，
-     *   `MessageFeedbackVersion = Branded<'MessageFeedbackVersion'>`（即字符串）。
-     * 我们**能表达**的是"已有反馈 ⇒ 回传它的 version"；"要求原本不存在"（`null`）需要
-     * 空值编码，而 ArkTS 的 `Record<string, Object>` 表达不了 null ⇒ 仍按能表达的方式发：
-     * 新建时**不带**该字段（而不是发空串——空串不是合法 token，只会换来 `arguments-invalid`）。
+     * 现已按上游源码核对确认（`@deepseek-ai/dsh-message-feedback/lib/types/types.d.ts`
+     * 的 `MessageFeedbackPutRequest`）：`readonly ifVersion: MessageFeedbackVersion | null`，
+     * `MessageFeedbackVersion = Branded<'MessageFeedbackVersion'>`（即字符串）。
+     * 两条路都发得出去：已有反馈 ⇒ 回传它的 version；没有 ⇒ 发 `null`（见下面的分支）。
      */
     const known: FeedbackRow | undefined = this.feedbackOf(messageId);
     if (known !== undefined && known.version.length > 0) {
       inner['ifVersion'] = known.version;
+    } else {
+      /*
+       * 【2026-09-17：`null` 真的发出去了——原先"表达不了"的结论**已作废**】
+       *
+       * 上面那段注释记的是"ArkTS 的 `Record<string, Object>` 表达不了 null ⇒ 只能不带该字段"。
+       * 但"键不存在"与"值是 null"在**契约上是两件事**（`ifVersion: Version | null`，
+       * `null` 有明确语义="要求原本不存在"），而真机上首次评价失败（`version-conflict`）
+       * 与这个差别**完全吻合**：宿主把"没给"当成了"缺键"，于是按乐观并发拒绝。
+       *
+       * 本文件里 `string | null` 本来就是**在用**的类型（见 `projectionTitle` 那一段），
+       * 所以这里借一个联合类型的 Record 取到 `null` 再放进 payload：
+       * `stringifyJson()` 是薄薄一层 `JSON.stringify`，对 `null` 会写出 `"ifVersion":null`，
+       * 正是契约要的形状。**构建已通过**（不是"试试看"），这条能力缺口因此关闭。
+       */
+      const nullable: Record<string, string | null> = { 'ifVersion': null };
+      inner['ifVersion'] = nullable['ifVersion'] as Object;
     }
     const args: Object | undefined = argsFor(MESSAGE_FEEDBACK_PUT_ENDPOINT, inner as Object);
     if (args === undefined) {
