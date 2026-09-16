@@ -116,12 +116,37 @@ declare function $r(value: string): Resource;
 declare type Resource = object;
 `;
 
-/** 找 tsc：CLT 自带 typescript，其次看 PATH */
+/**
+ * 找 tsc。
+ *
+ * 【2026-09-17（第 64 轮 E3）：加上"本机装了什么就用什么"的兜底】
+ *
+ * 原来只认两条路：`$DEVECO_CLI_CLT_PATH/codelinter/…` 与一个容器里的固定路径。
+ * 结果这台装了 **DevEco Studio** 的机器上它一直报"环境受阻（找不到 tsc）"、
+ * 退出码 3 —— 而 `tsc` 其实**就在本机**：
+ *   `…/sdk/default/openharmony/ets/build-tools/ets-loader/node_modules/typescript/bin/tsc`
+ *
+ * 这正是 `check-symbols.mjs` 早就用过的那套找法（环境变量优先 → 常见安装位置兜底）。
+ * **"没跑成"不是"通过"**，但一个明明跑得起来却因为路径没写全而永远不跑的门禁，
+ * 等于把这条纪律浪费掉了：第 51 轮那个 F33（映射没跟着改）就是它内部两条断言
+ * **编码着旧设计**却一直没红——**不是通过，是没跑**。
+ */
 function findTsc() {
   const candidates = [];
   const clt = process.env.DEVECO_CLI_CLT_PATH;
-  if (clt) candidates.push(join(clt, 'codelinter', 'node_modules', 'typescript', 'bin', 'tsc'));
+  if (clt) {
+    candidates.push(join(clt, 'codelinter', 'node_modules', 'typescript', 'bin', 'tsc'));
+    candidates.push(join(clt, 'sdk', 'default', 'openharmony', 'ets', 'build-tools', 'ets-loader',
+      'node_modules', 'typescript', 'bin', 'tsc'));
+  }
   candidates.push('/home/node/deveco-clt/command-line-tools/codelinter/node_modules/typescript/bin/tsc');
+  // 本机装了 DevEco Studio 的情形（与 `check-symbols.mjs` 同一组兜底位置）
+  for (const drive of ['C:', 'D:', 'E:']) {
+    candidates.push(join(drive, '\\', 'Huawei', 'DevEco Studio', 'sdk', 'default', 'openharmony',
+      'ets', 'build-tools', 'ets-loader', 'node_modules', 'typescript', 'bin', 'tsc'));
+    candidates.push(join(drive, '\\', 'Huawei', 'DevEco Studio', 'plugins', 'codelinter',
+      'node_modules', 'typescript', 'bin', 'tsc'));
+  }
   for (const c of candidates) {
     if (existsSync(c)) return c;
   }
@@ -1454,12 +1479,21 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
 
   // 排序：order 升序；同序按 id 稳定排序（不依赖注册顺序）
   const side = reg.descriptors(PanelLocation.SIDEBAR).map((d) => d.id);
-  // E110：核心不是独立一级（内容在设置页的第一个分区里）⇒ 席位登记着但不可用
-  t.eq('侧栏可用席位：工作区 → 设置（核心按 E110 不可用）', side.join(','), 'sidebar.workspaces,sidebar.settings');
+  /*
+   * 【2026-09-17 修期望（第 64 轮 E3）：`sidebar.workspaces` 席位已按用户要求删除】
+   *
+   * 用户原话：「其实不需要单独的工作区页面，工作区只需要在侧栏展示即可。」
+   * ⇒ 侧栏席位只剩「核心（E110 登记但不可用）」与「设置（沉底）」，**主入口清单为空**。
+   * 这几条期望此前一直没改——因为**这条门禁当时跑不起来**（找不到 tsc，退出码 3）。
+   * 第 64 轮把查找补全之后它立刻报出 5 条："不是通过，是没跑"的最直接证据。
+   */
+  t.eq('侧栏**可用**席位只剩 设置（工作区席位已按用户要求删除；核心按 E110 登记但不可用）', side.join(','),
+    'sidebar.settings');
   t.eq('**Settings 固定在底部**（order 最大）', side[side.length - 1], PANEL_SIDEBAR_SETTINGS);
   t.eq('核心席位仍登记在清单里（语义写在模型里，不靠视图恰好没遍历）',
-    sidebarPanels().map((d) => d.id).join(','), 'sidebar.workspaces,sidebar.core,sidebar.settings');
-  t.eq('主入口清单不含沉底项', sidebarEntries(reg).map((d) => d.id).join(','), 'sidebar.workspaces');
+    sidebarPanels().map((d) => d.id).join(','), 'sidebar.core,sidebar.settings');
+  t.eq('主入口清单**为空**（工作区不再是导航项，侧栏只画树；核心不可用、设置属沉底）',
+    sidebarEntries(reg).map((d) => d.id).join(','), '');
   t.eq('沉底项恰好是设置', sidebarPinnedEntries(reg).map((d) => d.id).join(','), 'sidebar.settings');
   const right = reg.descriptors(PanelLocation.RIGHTBAR).map((d) => d.id);
   // P3-1：右栏当前**唯一有内容**的面板是"详情"（sections 清单）；官方那六个候选登记着但不可用
@@ -1568,9 +1602,10 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   // 迁移桥：NavTab ↔ 面板 id（迁移期间行为不变的保证）
   t.eq('工作区页签 → 侧栏工作区面板 id', sidebarPanelIdOfTab('workspaces'), 'sidebar.workspaces');
   t.eq('设置页签 → 侧栏设置面板 id', sidebarPanelIdOfTab('settings'), 'sidebar.settings');
-  t.eq('工作区与设置席位可用、核心席位按 E110 不可用',
-    reg.canSelect('sidebar', 'sidebar.workspaces') && reg.canSelect('sidebar', 'sidebar.settings')
-      && !reg.canSelect('sidebar', 'sidebar.core'), true);
+  // E110 + 2026-09-17：核心席位按 E110 登记但不可用；工作区席位已按用户要求删除 ⇒ 它也不可选
+  t.eq('设置席位可选、核心与工作区席位不可选（前者 E110，后者席位已删）',
+    reg.canSelect('sidebar', 'sidebar.settings') && !reg.canSelect('sidebar', 'sidebar.core')
+      && !reg.canSelect('sidebar', 'sidebar.workspaces'), true);
 
   // P1-4：侧栏席位 ↔ 主区面板（点侧栏入口该切到哪个面板、哪一项该高亮）
   /*
@@ -1683,10 +1718,11 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
       sidebarTrackWidthOf('double', undefined) === 56 && ST.sidebarPresentationOf('double', undefined) === 'rail',
       true);
   }
-  // 侧栏 2（工作区 / 设置；核心席位按 E110 不可用）、右栏 7（详情 / 文件 / 轨迹 / 工具 / 子代理 / 交付物 / 预览）—— 可用清单与形态无关，只与注册表有关
+  // 侧栏**可用** 1（设置；工作区席位已按用户要求删除、核心按 E110 登记但不可用）、
+  // 右栏 7（详情 / 文件 / 轨迹 / 工具 / 子代理 / 交付物 / 预览）—— 可用清单与形态无关，只与注册表有关
   t.eq('**三种形态的面板清单一致**（信息架构不随设备变）',
     JSON.stringify(reg.descriptors(PanelLocation.SIDEBAR).length) + '/' + JSON.stringify(reg.descriptors(PanelLocation.RIGHTBAR).length),
-    '2/7');
+    '1/7');
 
   console.log('  ok    注册表（注册/排序/可用性/沉底/校验）+ 导航状态（页面与面板分离）+ 迁移桥含往返 + 四形态轨道');
 }
