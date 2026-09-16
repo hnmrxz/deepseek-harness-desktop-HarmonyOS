@@ -162,7 +162,13 @@ export struct SettingsGeneral {
       Column({ space: 2 }) {
         // 原「连接诊断」与「POC 协议验证」合并（E96）：它们都在回答"这台设备上的核心通不通"，
         // 一个给结论、一个给逐步证据；进同一个页面就能从结论下钻到证据。
-        Text('本地调试')
+        /*
+         * 文案走资源串（F8 顺手收敛）：侧栏那行「本地调试」删掉之后，
+         * `settings_local_debug` 这条资源**只剩这里一个用户**——而这里原来写的是字面量，
+         * 于是"删了侧栏"就会让资源变成孤儿。两处合并成一处：
+         * 文案只留资源串这一份，界面不再硬编码。
+         */
+        Text($r('app.string.settings_local_debug'))
           .fontSize(Fs.BODY)
           .width('100%')
         Text('连接诊断（五项判定）+ 协议往返验证（token → cookie → /api → WS 逐步证据）')

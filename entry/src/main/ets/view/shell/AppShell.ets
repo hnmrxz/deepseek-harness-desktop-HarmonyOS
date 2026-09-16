@@ -209,9 +209,6 @@ export struct AppShell {
         onNewSession: () => {
           this.f.onNewSession();
         },
-        onOpenDiagnostics: () => {
-          this.f.openDiagnostics();
-        },
         showExpandToggle: this.f.mode !== LayoutMode.SINGLE,
         onToggleExpanded: () => {
           this.f.onToggleSidebarExpanded();
@@ -341,9 +338,6 @@ export struct AppShell {
         },
         onNewSession: () => {
           this.f.onNewSession();
-        },
-        onOpenDiagnostics: () => {
-          this.f.openDiagnostics();
         },
         showExpandToggle: this.f.mode !== LayoutMode.SINGLE,
         onToggleExpanded: () => {

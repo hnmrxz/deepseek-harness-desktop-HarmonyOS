@@ -101,8 +101,6 @@ export struct SidebarShell {
   /** 新建会话（官方侧栏在品牌行下方就有这个一级入口） */
   onNewSession: () => void = () => {
   };
-  onOpenDiagnostics: () => void = () => {
-  };
   /** 收起 / 展开侧栏（P2-15：唯一控制点；生效值由宿主按"形态 + 偏好"派生，P5-2） */
   onToggleExpanded: () => void = () => {
   };
@@ -128,20 +126,20 @@ export struct SidebarShell {
       .margin({ top: -Sp.XS, right: -Sp.S })   // 角标压在图标右上角：负偏移是几何微调，不是间距节奏
   }
 
-  /** 二级入口（本地调试）：面板呈现下是一行文字，其它呈现下不显示（空间不够） */
-  @Builder
-  secondaryEntry() {
-    Text($r('app.string.settings_local_debug'))
-      .fontSize(Fs.CAPTION)
-      .fontColor($r('sys.color.font_secondary'))
-      .width('100%')
-      .height(Sz.TOUCH_MIN - 8)
-      .padding({ left: Sp.M })
-      .textAlign(TextAlign.Start)
-      .onClick(() => {
-        this.onOpenDiagnostics();
-      })
-  }
+  /*
+   * 【2026-09-17 F8：删掉侧栏底部那行「本地调试」】
+   *
+   * 真机读数：侧栏「设置」**下方**还有一行「本地调试」。而官方侧栏到 Settings 就结束了
+   * （那一项是沉底的），下面再挂一条会让人以为它比设置"更低一级"。
+   *
+   * 为什么删得掉而不是"标注成调试专用"：这个入口**在别处有至少五处**
+   * （`SettingsGeneral`「设置→通用」里就有一行、`SettingsPane`、`ConnectPane`、
+   * `HubBanner`、`WorkspaceBrowser` 空态），删掉这里不会让任何功能失去入口。
+   * 排障入口放在设置里才是它该在的位置——侧栏留给产品入口。
+   *
+   * 连同 `onOpenDiagnostics` 这个 prop 一起删（它只服务这一行），
+   * 并且两处 `SidebarShell({…})` 传参也要去掉——死代码门禁会替我们盯着。
+   */
 
   /**
    * 三栏：完整面板。
@@ -212,9 +210,6 @@ export struct SidebarShell {
       ForEach(sidebarPinnedEntries(this.panelRegistry), (d: PanelDescriptor) => {
         this.panelEntry(d)
       }, (d: PanelDescriptor) => d.id)
-
-      // 二级入口放在最底部：它是排障用的，不该和产品入口抢位置
-      this.secondaryEntry()
     }
     .width('100%')
     .height('100%')
