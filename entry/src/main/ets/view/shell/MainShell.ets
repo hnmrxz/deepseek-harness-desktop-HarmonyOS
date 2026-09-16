@@ -466,6 +466,10 @@ export struct MainShell {
         searchOpen: this.f.searchOpen,
         onCloseSearch: () => {
           this.f.setSearchOpen(false);
+        },
+        // 触屏入口：手机上没有 Ctrl/Cmd+F，而官方轨迹页的搜索框是常驻可见的
+        onOpenSearch: () => {
+          this.f.setSearchOpen(true);
         }
       })
     } else {

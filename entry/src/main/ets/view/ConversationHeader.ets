@@ -93,6 +93,11 @@ export struct ConversationHeader {
   /** 关闭搜索 */
   onCloseSearch: () => void = () => {
   };
+  /** 打开搜索（**触屏入口**；手机上按不到 Ctrl/Cmd+F） */
+  onOpenSearch: () => void = () => {
+  };
+  /** 当前档位（`Index` 发布）——只用来决定搜索框是"常驻"还是"按需" */
+  @StorageProp('dshLayoutMode') layoutMode: string = 'single';
   /** 时间总览：聚焦某一格 / 提交（提交 = 滚到聚焦项）/ 拖动状态变化 */
   onFocusCell: (cellId: string) => void = () => {
   };
@@ -183,6 +188,18 @@ export struct ConversationHeader {
               .onClick(() => {
                 this.onCollapseAll();
               })
+            /*
+             * 触屏搜索入口（单栏才需要：非单栏搜索框本来就常驻）。
+             * 图标名已在权威清单里核过（`magnifyingglass`），不是猜的。
+             */
+            if (this.layoutMode === 'single' && !this.searchOpen) {
+              SymbolGlyph($r('sys.symbol.magnifyingglass'))
+                .fontSize(Sz.TOUCH_MIN / 2)
+                .fontColor([$r('sys.color.brand')])
+                .onClick(() => {
+                  this.onOpenSearch();
+                })
+            }
             Text(`${this.items.length} 条事件`)
               .fontSize(Fs.CAPTION)
               .fontColor($r('sys.color.font_tertiary'))
@@ -231,7 +248,17 @@ export struct ConversationHeader {
         })
       }
 
-      if (this.searchOpen) {
+      /*
+       * 【搜索框的可见性（2026-09-17，对齐官方轨迹页）】
+       *
+       * 官方轨迹页顶部那个搜索框是**常驻**的；我们此前只在 `searchOpen` 为真时渲染，
+       * 而 `searchOpen` 只由 `Ctrl/Cmd+F` 置真 ⇒ ① 非单栏形态与官方不一致；
+       * ② 手机上**根本没有任何办法**打开会话内搜索。
+       *
+       * 现在：**非单栏一律显示**（与官方 1:1）；单栏仍按需（省竖向空间），
+       * 但补了一个触屏入口（下面那颗放大镜）——所以手机上不再是死路。
+       */
+      if (this.searchOpen || this.layoutMode !== 'single') {
         this.searchBar()
       }
     }

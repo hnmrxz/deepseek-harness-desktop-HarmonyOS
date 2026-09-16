@@ -262,6 +262,9 @@ export struct ConversationPane {
   /** 关闭搜索（`searchOpen` 是 `@Prop`，子组件不能可靠地写回，因此由宿主关闭） */
   onCloseSearch: () => void = () => {
   };
+  /** 打开搜索（同上：写回由宿主做）。官方轨迹页的搜索框是常驻可见的，手机端需要一个触屏入口 */
+  onOpenSearch: () => void = () => {
+  };
   /** 搜索关键词（本组件自己维护；宿主不需要知道用户搜了什么） */
   @State searchQuery: string = '';
   /** 当前选中的命中在**命中数组**里的位置（-1 = 未选中） */
@@ -893,6 +896,13 @@ export struct ConversationPane {
         },
         onCloseSearch: () => {
           this.onCloseSearch();
+        },
+        /*
+         * 触屏入口（官方轨迹页上那个搜索框是**常驻可见**的；我们此前只由 Ctrl/Cmd+F 打开
+         * ⇒ 手机上没有任何办法打开会话内搜索）。这里把它接到宿主已有的 `setSearchOpen` 上。
+         */
+        onOpenSearch: () => {
+          this.onOpenSearch();
         },
         onFocusCell: (cellId: string) => {
           this.focusedCellId = cellId;
