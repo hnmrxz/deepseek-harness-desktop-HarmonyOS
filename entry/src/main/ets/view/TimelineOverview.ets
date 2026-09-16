@@ -50,8 +50,31 @@ export struct TimelineOverview {
   /** 比例条实测宽度（拖动换算的起点） */
   @State barWidth: number = 0;
 
-  build() {
-    Column({ space: Sp.XS }) {
+  /**
+   * 左上角那句话（F11）：官方文案只在**真的什么计时都没有**时用。
+   *
+   * 判据分两层，都用已有数据：
+   *   · 比例条有没有数据 → `timelineScale().hasTiming`（逐条目 `elapsedMs`）
+   *   · 会话统计有没有值 → `statsLinesOf(this.stats)` 里有没有非零项
+   * 只有两者**都没有**时才是官方的"无计时数据"；否则说清是"条目没有逐条耗时"。
+   */
+  private totalLabel(): string {
+    const label: string = timelineTotalLabel(this.timelineScale());
+    if (this.timelineScale().hasData) {
+      return label;
+    }
+    const lines: StatsLine[] = statsLinesOf(this.stats);
+    let any: boolean = false;
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].value > 0) {
+        any = true;
+        break;
+      }
+    }
+    return any ? '条目无逐条耗时' : label;
+  }
+
+  build() {    Column({ space: Sp.XS }) {
       /*
        * 【为什么可换行】左侧"总计 + N 格"与右侧四项统计在手机宽度下**加起来超过屏宽**，
        * 而这一行既没有 `layoutWeight`、也不换行 ⇒ 末尾的统计（TPS 那项）会被裁掉。
@@ -59,7 +82,23 @@ export struct TimelineOverview {
        */
       Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween, alignItems: ItemAlign.Center }) {
         Row({ space: Sp.S }) {
-          Text(timelineTotalLabel(this.timelineScale()))
+          /*
+           * 【F11：这句话不能与右边那四项自相矛盾】
+           *
+           * 真机读数（同一屏）：
+           *   左：`无计时数据 · 6 格`
+           *   右：`模型用时 2.1 s · 工具调用用时 1.7 s · TTFT 817 ms · TPS 232.1`
+           * 左边说"没有计时数据"，右边当场给出四项——两句话互相打脸。
+           *
+           * 机理：左侧取的是**逐条目**的 `elapsedMs`（比例条要按条分配宽度），
+           * 而它**在投影里永远是 0**（F11 的根因）；右侧取的是 Host 给的**会话级**统计，
+           * 那是有值的。所以准确的措辞是"**条目**没有逐条耗时"，不是"没有计时数据"。
+           *
+           * 处置：只有在**右边也没有任何计时**时才用官方那句「无计时数据」；
+           * 否则说清楚是"逐条耗时缺失"——**一句准确的话比一句照抄的话有用**。
+           * 官方文案本身不动（它是 `timeline.noTimingData` 的逐字译文，仍在真正的空数据时使用）。
+           */
+          Text(this.totalLabel())
             .fontSize(Fs.CAPTION)
             .fontColor($r('sys.color.font_secondary'))
           Text(`${this.timelineScale().count} 格`)

@@ -249,7 +249,22 @@ export struct WorkspaceBrowser {
          * 说明文字写清语义，避免"归档了为什么还在这里"的误解。
          */
         Row({ space: Sp.S }) {
-          Text(`${$r('app.string.section_archive')} · ${this.f.archivedSessionIds.length}`)
+          /*
+           * 【F5：**不要**把 `$r()` 拼进模板串】
+           *
+           * 真机读数：这一行渲染成字面量 `[object Object] · 4`。原因很直接——
+           * `$r()` 返回的是 **Resource 对象**，模板串会调它的 `toString()`，
+           * 整行于是变成"对象转字符串"的结果。`Text($r(...))` 单独用**没问题**
+           * （ArkUI 认得 Resource），出事的只有"拼进字符串"这一种写法。
+           *
+           * 处置：拆成两个 `Text`——两个都是"单独用 Resource / 单独用数字"，
+           * 走的是 ArkUI 认识的路径。**不去找 `localized()` 之类的旁路**：
+           * 本组件本来就没有那个依赖，为了拼一句话引进一条资源读取链路并不划算。
+           */
+          Text($r('app.string.section_archive'))
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.font_tertiary'))
+          Text(`· ${this.f.archivedSessionIds.length}`)
             .fontSize(Fs.CAPTION)
             .fontColor($r('sys.color.font_tertiary'))
             .layoutWeight(1)
@@ -267,10 +282,16 @@ export struct WorkspaceBrowser {
 
         if (this.f.archiveOpen) {
         Column({ space: Sp.XS }) {
-          Text(`${$r('app.string.section_archive')} · ${this.f.archivedSessionIds.length}`)
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_tertiary'))
-            .width('100%')
+          // F5：同样拆开——`$r()` 不能拼进模板串（理由见上面那一处）
+          Row({ space: Sp.S }) {
+            Text($r('app.string.section_archive'))
+              .fontSize(Fs.CAPTION)
+              .fontColor($r('sys.color.font_tertiary'))
+            Text(`· ${this.f.archivedSessionIds.length}`)
+              .fontSize(Fs.CAPTION)
+              .fontColor($r('sys.color.font_tertiary'))
+          }
+          .width('100%')
           ForEach(this.f.archivedSessions(), (s: SessionListItem) => {
             Row({ space: Sp.S }) {
               SymbolGlyph($r('sys.symbol.archivebox')).fontSize(HarmonyIconSize.STATUS)
