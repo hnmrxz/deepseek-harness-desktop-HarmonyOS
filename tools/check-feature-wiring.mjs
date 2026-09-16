@@ -191,6 +191,14 @@ const FEATURES = [
    */
   { name: '队列竞态', patterns: [['isBenignQueueRace', 2], ['QUEUE_ITEM_NOT_FOUND', 2], ['STEER_UNAVAILABLE', 2]] },
   /*
+   * 回合产出的文件（P7-21）。官方 `dsh-client-ui-deliverables` 把"本回合写了哪些文件"
+   * 作为回合尾部一行可点条目渲染，来源是**成功的写类工具调用**（"whether or not the model
+   * remembered to name it"），不读回答正文；只算成功、首次出现顺序 + 去重。
+   * 我们此前只有 `deliverables/presented` 事件（取决于模型是否上报）。
+   * 钉三段：纯推导 + 行组件 + 宿主打开回调（读内容 **并** 切到能看见预览的页面）。
+   */
+  { name: '产出文件', patterns: [['producedFilesOf', 2], ['ProducedFilesRow', 2], ['openProducedFile', 2]] },
+  /*
    * 模型请求的重试行（P7-18）。上游 `llm/retry` 携带 `{retry, maxRetries, delayMs, mode, failure}`
    * （`dsh-llm-retry` 的类型逐字），官方据此渲染一个**带倒计时**的节点；我们此前只读 `retry`
    * 拼个 title、正文空白 ⇒ 设备网络最差时用户看到"出错了 + 一片空白"。钉三段：投影（中枢读五个槽位）

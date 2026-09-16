@@ -70,6 +70,12 @@ export struct ConversationPane {
   };
   onAddAttachment: () => void = () => {
   };
+  /**
+   * 打开一枚产出文件（P7-21）：中枢读内容 + 宿主切到能看见预览的页面。
+   * 详情见 `TurnView.onOpenProduced` 的说明（只读不切在手机上等于没反应）。
+   */
+  onOpenProduced: (path: string, name: string) => void = () => {
+  };
   /** 添加图片（P0-4：内联发送，不走上传；见 `Composer.onAddImage` 的说明） */
   onAddImage: () => void = () => {
   };
@@ -847,6 +853,9 @@ export struct ConversationPane {
               TurnView({
                 turn: turn,
                 sessionId: this.sessionId,
+                onOpenProduced: (path: string, name: string) => {
+                  this.onOpenProduced(path, name);
+                },
                 expanded: this.expanded,
                 onExpandedChange: (next: string[]) => {
                   this.expanded = next;

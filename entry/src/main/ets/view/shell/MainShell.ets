@@ -100,6 +100,8 @@ export interface MainShellFacade {
   pickAndAttach: () => Promise<void>;
   /** 加一张图片（P0-4：图库 → **内联**发送，不走上传） */
   pickAndAttachImage: () => Promise<void>;
+  /** 打开一枚产出文件（P7-21）：读内容 + 切到能看见预览的页面 */
+  openProducedFile: (path: string, name: string) => void;
   planActive: boolean;
   planPending: boolean;
   queuedCount: number;
@@ -369,6 +371,9 @@ export struct MainShell {
         },
         onAddImage: () => {
           this.f.pickAndAttachImage();
+        },
+        onOpenProduced: (path: string, name: string) => {
+          this.f.openProducedFile(path, name);
         },
         onRemoveAttachment: (key: string) => {
           // 参数是**行身份**（文件=回执、图片=草稿 id），见 `Composer.onRemoveAttachment`

@@ -145,6 +145,7 @@ import {
   initialNavigationState,
   openSettings,
   legacyTabOfMainPanel,
+  MAIN_WORKSPACES,
   mainPanelOfLegacyTab,
   activeMainPanelOf,
   navigateToMain,
@@ -1907,6 +1908,19 @@ struct Index {
    *
    * 三种非成功结果与文件那条路同样分开提示（取消不提示、可修复的说明原因）。
    */
+  /**
+   * 打开一枚**产出文件**（P7-21）。
+   *
+   * 两件事必须一起做，少一件就是"点了没反应"：
+   *   ① 中枢把文件内容读进 `filePreview`（`workspaceFiles/read`，只读文本、超限如实说明）；
+   *   ② 主导航切到**工作区页**——文件预览就在那一页（手机上右栏不在屏幕上，
+   *      只做 ① 用户会以为按钮坏了）。
+   */
+  private openProducedFile(path: string, name: string): void {
+    SessionHub.shared().openFile(path, name);
+    this.nav = navigateToMain(this.nav, MAIN_WORKSPACES, this.panelRegistry);
+  }
+
   private async pickAndAttachImage(): Promise<void> {
     const picked: PickedFile = await pickImage(getContext(this) as common.Context);
     if (picked.outcome === PickOutcome.CANCELLED) {
@@ -2934,6 +2948,7 @@ struct Index {
     onPickPermission: () => this.openPermissionPicker(),
     pickAndAttach: () => this.pickAndAttach(),
     pickAndAttachImage: () => this.pickAndAttachImage(),
+    openProducedFile: (path: string, name: string) => this.openProducedFile(path, name),
     planActive: this.planActive,
     planPending: this.planPending,
     queuedCount: this.queuedCount,

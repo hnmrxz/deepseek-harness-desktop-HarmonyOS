@@ -74,6 +74,8 @@ const PURE_FILES = [
   'appstate/src/main/ets/model/ComposerSend.ets',
   // 目标栏的可判定状态（P7-20）：零依赖
   'appstate/src/main/ets/model/GoalBar.ets',
+  // 回合产出的文件（P7-21）：零依赖（只用 ToolDiff + Trajectory）
+  'appstate/src/main/ets/model/ProducedFiles.ets',
   // 失败码 → 用户文案（P7-19）：表的**键**来自 dshcompat（上游事实只许住那层），
   // 因此这里也要把 ErrorCodes 编进来（见下面 tsc 的 `paths` 映射）
   'dshcompat/src/main/ets/ErrorCodes.ets',
@@ -285,6 +287,7 @@ const IT = require2('./InputTrigger.js');
 const CS = require2('./ComposerSend.js');
 const FT = require2('./FailureText.js');
 const GB = require2('./GoalBar.js');
+const PFL = require2('./ProducedFiles.js');
 const QR = require2('./QueueCodes.js');
 const t = makeAsserter(selfTest);
 
@@ -2628,6 +2631,76 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   t.eq('blocked 文案', goalPhaseLabel('blocked'), '受阻');
   t.eq('complete 文案', goalPhaseLabel('complete'), '已完成');
   t.eq('未知相位不给文案', goalPhaseLabel('weird'), '');
+}
+
+
+// ── P7-21：回合产出的文件（来源是成功的写类调用，不是回答正文） ──
+{
+  const { producedFilesOf, producedRowText, baseNameOf } = PFL;
+  const { ToolState, TrajectoryKind } = TJ;
+  const tool = (name, args, state) => ({
+    id: `${name}-${state}`, kind: TrajectoryKind.TOOL, at: 0, body: '', reasoning: '',
+    speaker: 'assistant', model: '', elapsedMs: 0, toolName: name, callId: '', toolArgs: args,
+    toolState: state, toolOutput: '', subagentName: '', fileName: '', fileSize: 0, title: '',
+    progress: '', percent: -1, streaming: false, expanded: false, internal: false,
+    images: [], commandId: '', commandKind: '', retryAttempt: 0, retryMax: -1, retryDelayMs: 0,
+    retryMode: '', retryStarted: false,
+  });
+
+  // ① 三种写类工具都算（`write` / `edit` / `str_replace_editor` 的 create 与 str_replace）
+  const files = producedFilesOf([
+    tool('write', '{"file_path":"src/a.ts","content":"x"}', ToolState.SUCCESS),
+    tool('edit', '{"file_path":"src/b.ts","old_string":"x","new_string":"y"}', ToolState.SUCCESS),
+    tool('str_replace_editor', '{"command":"create","path":"src/c.ts","file_text":"z"}', ToolState.SUCCESS),
+    tool('str_replace_editor', '{"command":"str_replace","path":"src/d.ts","old_str":"a","new_str":"b"}', ToolState.SUCCESS),
+  ]);
+  t.eq('四种写类调用都进清单', files.map((f) => f.name).join(','), 'a.ts,b.ts,c.ts,d.ts');
+  t.eq('路径原样保留（不做归一化）', files[0].path, 'src/a.ts');
+
+  // ② 只算成功的：失败 / 被拒 / 还没结算都不算（官方："failed results contribute nothing"）
+  const mixed = producedFilesOf([
+    tool('write', '{"file_path":"ok.ts","content":"x"}', ToolState.SUCCESS),
+    tool('write', '{"file_path":"failed.ts","content":"x"}', ToolState.FAILED),
+    tool('write', '{"file_path":"rejected.ts","content":"x"}', ToolState.REJECTED),
+    tool('write', '{"file_path":"running.ts","content":"x"}', ToolState.RUNNING),
+    tool('write', '{"file_path":"pending.ts","content":"x"}', ToolState.PENDING),
+  ]);
+  t.eq('只有成功的那次算产出', mixed.map((f) => f.name).join(','), 'ok.ts');
+
+  // ③ 读 / 未知工具 / 畸形参数 / 缺路径都不算
+  const nonProducing = producedFilesOf([
+    tool('read', '{"file_path":"read.ts"}', ToolState.SUCCESS),
+    tool('bash', '{"command":"echo hi"}', ToolState.SUCCESS),
+    tool('write', 'not json at all', ToolState.SUCCESS),
+    tool('write', '{"content":"no path"}', ToolState.SUCCESS),
+    tool('str_replace_editor', '{"command":"view","path":"viewed.ts"}', ToolState.SUCCESS),
+  ]);
+  t.eq('读/未知工具/畸形参数/缺路径/编辑器只读命令都不算产出', nonProducing.length, 0);
+
+  // ④ 去重 + 首次出现顺序（官方："a file written and then edited in the same turn is one entry"）
+  const dedup = producedFilesOf([
+    tool('write', '{"file_path":"same.ts","content":"1"}', ToolState.SUCCESS),
+    tool('write', '{"file_path":"other.ts","content":"1"}', ToolState.SUCCESS),
+    tool('edit', '{"file_path":"same.ts","old_string":"1","new_string":"2"}', ToolState.SUCCESS),
+  ]);
+  t.eq('先写后改只算一条，且保持首次出现顺序', dedup.map((f) => f.name).join(','), 'same.ts,other.ts');
+
+  // ⑤ 非工具条目一律不算（消息正文里提到文件名**不算产出**——官方明确不读正文）
+  const withMessage = producedFilesOf([
+    { ...tool('write', '{"file_path":"real.ts","content":"1"}', ToolState.SUCCESS) },
+    { ...tool('read', '{"file_path":"x.ts"}', ToolState.SUCCESS), kind: TrajectoryKind.MESSAGE, body: '我改了 real.ts 与 fake.ts' },
+  ]);
+  t.eq('正文里提到的文件名不算产出', withMessage.map((f) => f.name).join(','), 'real.ts');
+
+  // ⑥ 空回合 / 展示名
+  t.eq('没有工具条目 ⇒ 空清单', producedFilesOf([]).length, 0);
+  t.eq('展示名取路径末段', baseNameOf('a/b/c.ts'), 'c.ts');
+  t.eq('没有目录分隔符时原名返回', baseNameOf('c.ts'), 'c.ts');
+
+  // ⑦ 行文案：0 个 ⇒ 空串（整行不渲染，官方同）
+  t.eq('0 个文件 ⇒ 不显示这一行', producedRowText(0, 6), '');
+  t.eq('3 个文件（未超上限）', producedRowText(3, 6), '本回合写入 3 个文件');
+  t.eq('9 个文件（超上限）要交代总数', producedRowText(9, 6), '本回合写入 9 个文件（显示前 6 个）');
 }
 
 

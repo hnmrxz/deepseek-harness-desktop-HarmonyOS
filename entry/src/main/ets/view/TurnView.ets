@@ -33,9 +33,9 @@
 import {
   ActionNotice, FeedbackRow, Fs, HarmonyColor, HarmonyType, Radius, SessionHub, Sp,
   Speaker, TrajectoryItem, TrajectoryKind, Turn, defaultExpanded, formatDuration, hasProcessGroup,
-  parseMarkdown, plainTextOf, processSummary
+  parseMarkdown, plainTextOf, processSummary, producedFilesOf
 } from 'appstate';
-import type { InputModality } from 'appstate';
+import type { InputModality, ProducedFile } from 'appstate';
 import { Border } from 'appstate';
 import { presentTool, toolStateLabel } from 'appstate';
 import { NativeCard, NativeChip } from './NativePrimitives';
@@ -48,6 +48,7 @@ import { SubagentCard } from './SubagentCard';
 import { ToolCard } from './ToolCard';
 import { CommandRow } from './CommandRow';
 import { RetryRow } from './RetryRow';
+import { ProducedFilesRow } from './ProducedFilesRow';
 
 /**
  * 把"全部展开 / 收起全部"从回合渲染里接出去（E351）。
@@ -88,6 +89,14 @@ export class TurnViewController {
 export struct TurnView {
   /** 要渲染的回合 */
   @Prop turn: Turn;
+  /**
+   * 打开一枚产出文件（P7-21）。
+   *
+   * 宿主必须**同时**做两件事：把内容读进预览 + 切到能看见预览的页面。
+   * 只读不切在手机上等于"点了没反应"（右栏在单栏形态下不在屏幕上）。
+   */
+  onOpenProduced: (path: string, name: string) => void = () => {
+  };
   /**
    * 会话 id（图片读取要用它做**会话作用域**授权）。
    *
@@ -222,8 +231,27 @@ export struct TurnView {
       ForEach(turn.notices, (it: TrajectoryItem) => {
         this.trajectoryItem(it)
       }, (it: TrajectoryItem) => `note-${it.id}`)
+      /*
+       * 回合尾部：本回合**产出的文件**（P7-21）。
+       *
+       * 来源是成功的写类工具调用（`producedFilesOf` 的规则逐条对齐官方 `ui-deliverables`：
+       * 不读回答正文、只算成功、首次出现顺序 + 去重）。0 个文件时整行不渲染（官方同）。
+       */
+      if (this.produced().length > 0) {
+        ProducedFilesRow({
+          files: this.produced(),
+          onOpen: (path: string, name: string) => {
+            this.onOpenProduced(path, name);
+          }
+        })
+      }
     }
     .width('100%')
+  }
+
+  /** 本回合产出的文件（纯模型给结论；工具条目在过程分组里） */
+  private produced(): ProducedFile[] {
+    return producedFilesOf(this.turn.process);
   }
 
   /**
