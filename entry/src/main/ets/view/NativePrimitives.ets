@@ -267,8 +267,29 @@ export struct NativeCard {
     return HarmonyElevation.FLAT;
   }
 
+  /** 摘要是否并进标题行（折叠态 = 一行；展开态仍走等宽那一段，便于读路径/命令） */
+  private inlineSummary(): boolean {
+    return this.summary.length > 0 && !this.expanded
+      && this.diffLines.length === 0 && this.bodyText.length === 0;
+  }
+
+  /** `▸ 查看结果` 是否并进标题行（同样只在折叠态并） */
+  private inlineHint(): boolean {
+    return this.collapsedHint.length > 0 && this.inlineSummary()
+      && (this.bodyText.length > 0 || this.diffLines.length > 0);
+  }
+
   build() {
     Column({ space: HarmonySpacing.INLINE }) {
+      /*
+       * 【折叠态 = **一行**（2026-09-17，对齐官方客户端）】
+       *
+       * 官方会话页里，思考/读取/编辑/命令**每条只占一行**：`[图标] 动作名 · 一行摘要…`，
+       * 点开才看全文。我们此前是"标题行 + 摘要行（等宽）"两行——手机上每个过程条目
+       * 白吃一行高度，一屏看不到几步。现在折叠时把摘要并进同一行（标题不再抢剩余宽度、
+       * 摘要占住余下空间、超出省略），`▸ 查看结果` 也挪到行尾。
+       * 展开后仍然是原来的分块呈现（等宽摘要 + 结果/改动对照），密度与可读性各自归位。
+       */
       Row({ space: HarmonySpacing.CONTROL_INNER }) {
         SymbolGlyph(this.iconSymbol)
           .fontSize(HarmonyIconSize.INLINE)
@@ -279,7 +300,16 @@ export struct NativeCard {
           .fontColor(HarmonyColor.TEXT_PRIMARY)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .layoutWeight(1)
+          .layoutWeight(this.inlineSummary() ? 0 : 1)
+        if (this.inlineSummary()) {
+          Text(this.summary)
+            .fontSize(HarmonyType.LABEL.size)
+            .fontFamily('monospace')
+            .fontColor(HarmonyColor.TEXT_TERTIARY)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .layoutWeight(1)
+        }
         if (this.badge.length > 0) {
           Text(this.badge)
             .fontSize(HarmonyType.LABEL.size)
@@ -291,6 +321,15 @@ export struct NativeCard {
             .fontColor(HarmonyColor.TEXT_TERTIARY)
             .maxLines(1)
         }
+        if (this.inlineHint()) {
+          Text(this.collapsedHint)
+            .fontSize(HarmonyType.LABEL.size)
+            .fontColor(HarmonyColor.BRAND)
+            .maxLines(1)
+            .onClick(() => {
+              this.onToggle();
+            })
+        }
       }
       .width('100%')
 
@@ -299,7 +338,7 @@ export struct NativeCard {
           .width('100%')
       }
 
-      if (this.summary.length > 0) {
+      if (this.summary.length > 0 && !this.inlineSummary()) {
         Text(this.summary)
           .fontSize(HarmonyType.LABEL.size)
           .fontFamily('monospace')
@@ -342,7 +381,7 @@ export struct NativeCard {
           .padding(HarmonySpacing.CONTROL_INNER)
           .borderRadius(HarmonyRadius.CONTROL)
           .backgroundColor(HarmonyColor.SURFACE)
-        } else if (this.collapsedHint.length > 0) {
+        } else if (this.collapsedHint.length > 0 && !this.inlineHint()) {
           Text(this.collapsedHint)
             .fontSize(HarmonyType.LABEL.size)
             .fontColor(HarmonyColor.BRAND)

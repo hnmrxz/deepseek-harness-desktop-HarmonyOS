@@ -132,12 +132,18 @@ export struct MessageRow {
   /**
    * 是否算"超长"（用户口径：超长的才折，短消息原样）。
    *
-   * 阈值：纯文本 > 500 字 **或** 行数 > 6。两个条件都要，是因为
-   * "500 字一行写不完"和"6 行短句加起来不到 500 字"都很常见，只用一个会漏。
+   * 阈值：纯文本 **> 200 字** 或 **> 4 个换行**。
+   *
+   * 【为什么是 200 而不是 500】第一版取 500，真机上立刻看出问题：那条
+   * `Current runtime context …`（约 520 字、**分 5 段**）刚好卡在门槛下，
+   * 于是它**整屏**铺开——而这正是用户说"信息密度太低"时看的那一条。
+   * 手机一行大约放得下 30~35 个汉字 ⇒ **6 行 ≈ 200 字**，
+   * 所以"约 6 行"该翻译成 200 字，而不是 500。
+   * 换行那一侧同理收紧到 4：段落本来就比行更长，4 段就已经"超长"了。
    */
   private bodyIsLong(): boolean {
     const plain: string = this.bodyPlain();
-    if (plain.length > 500) {
+    if (plain.length > 200) {
       return true;
     }
     let lines: number = 1;
@@ -146,7 +152,7 @@ export struct MessageRow {
         lines += 1;
       }
     }
-    return lines > 6;
+    return lines > 4;
   }
 
   /** 折叠态成立？流式进行中不折（正文还在长，折了会看到"越写越短"） */
@@ -160,6 +166,25 @@ export struct MessageRow {
   }
 
   build() {
+    /*
+     * 【2026-09-17 真机读数：空正文的助手消息要整行不画】
+     *
+     * 提密度时在真机上看到：连续三条「助手 00:34」下面**只有一排动作条**（复制/引用），
+     * 正文一行都没有（消息的 content 只有思考块、没有 text）。它看起来像"消息丢了"，
+     * 又白占三行高度——而按官方口径，思考是**单独一行**的条目（我们由 `ReasoningRow` 画），
+     * 这里本来就没有可视内容。⇒ 没有正文、没有图片、也不是内部条目时，整行不渲染。
+     */
+    if (this.bodyFull().length === 0 && this.item.images.length === 0
+      && this.item.internal !== true) {
+      Column() {
+      }
+    } else {
+      this.body()
+    }
+  }
+
+  @Builder
+  body() {
     Column({ space: Sp.XS }) {
       // ── 表头：谁 · 钟点 · 时长 · 模型 ──
       Row({ space: Sp.S }) {
