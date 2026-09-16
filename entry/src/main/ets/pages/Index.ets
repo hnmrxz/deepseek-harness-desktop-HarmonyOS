@@ -619,6 +619,8 @@ struct Index {
   private lastConnectKey: string = '';
   /** 自动连接尝试上限：为"先用旧 token、随后 token 刷新"这一正常序列留出余量。 */
   private connectAttempts: number = 0;
+  /** 上一次自动连接的"已等待毫秒数"（F19 的兜底重试用它算间隔） */
+  private lastAttemptWaited: number = -100000;
   /** 未识别的上游事件类型数量（真机跑一次即可据此回填事件表） */
   @State hubUnknownEvents: number = 0;
   /** 协议旁路日志（取尾部若干行展示，用于区分「列表为空」与「调用失败」） */
@@ -1179,7 +1181,18 @@ struct Index {
      * 也覆盖"旧 token 失败 → 新 token 到达后重连"这个正常序列。
      */
     const limit: number = 45000;
-    const maxAttempts: number = 3;
+    const maxAttempts: number = 4;
+    /*
+     * 【F19：不能只靠"凭据变了"这一个触发条件】真机实测（2026-09-17，冷启 5 次里 3 次中招）：
+     * 第一次用的是**上一轮的旧 token**（Host 还没起来）⇒ 失败；随后 Host 起来了、能力层也把
+     * 新 token 发到了 AppStorage（`HDSH-AUTO 已接入本端 Host tokenLen=43`），但轮询**再没有发起
+     * 第二次连接**，45 秒后 `等待结束 attempts=1`，界面从此停在「离线中」——用户只能再杀一次进程。
+     *
+     * 根因不在"有没有新凭据"，而在**把"能用"这件事押在一个变化事件上**：只要那次变化没有被观察到
+     * （时序/读写竞态），就再也不会重试。所以这里补第二条触发条件——**只要还没连上，就按固定间隔重试**。
+     * 两条并存：`changed` 覆盖"新凭据到了立刻重连"（快），`stale` 覆盖"没观察到变化但确实没连上"（兜底）。
+     */
+    const retryStep: number = 5000;
     const timer: number = setInterval(() => {
       waited += step;
       const state: string = this.rememberedTokenState;
@@ -1188,11 +1201,16 @@ struct Index {
         && this.rememberedToken.length > 0;
       if (ready) {
         const key: string = `${this.rememberedUrl}\u0000${this.rememberedToken}`;
-        if (key !== this.lastConnectKey && this.connectAttempts < maxAttempts) {
+        const changed: boolean = key !== this.lastConnectKey;
+        const stale: boolean = !this.hubConnected && (waited - this.lastAttemptWaited) >= retryStep;
+        if ((changed || stale) && this.connectAttempts < maxAttempts) {
           this.lastConnectKey = key;
+          this.lastAttemptWaited = waited;
           this.connectAttempts += 1;
-          hilog.info(DOMAIN, TAG, 'HDSH-CONN 第 %{public}d 次自动连接：url=%{public}s tokenLen=%{public}d',
-            this.connectAttempts, this.rememberedUrl, this.rememberedToken.length);
+          hilog.info(DOMAIN, TAG,
+            'HDSH-CONN 第 %{public}d 次自动连接：url=%{public}s tokenLen=%{public}d changed=%{public}s',
+            this.connectAttempts, this.rememberedUrl, this.rememberedToken.length,
+            changed ? 'true' : 'false');
           this.applyRememberedHostOutcome(state);
         }
       }
@@ -1713,6 +1731,25 @@ struct Index {
     if (this.hubConnected) {
       // 中枢会在切会话后重拉命令目录、文件树与引用候选（三者都是会话作用域的）
       SessionHub.shared().selectSession(id);
+      /*
+       * 【F29：同会话重进 ⇒ 空屏】真机取证（2026-09-17）：进会话 A → 系统返回 → **再点同一条 A**
+       * ⇒ 正文整屏空白、轨迹视图「0 条事件」；切到别的会话再回来就恢复。
+       *
+       * 根因就在这里上下两句的**配合失配**：
+       *   · 本方法先把视图那份清空（上一句 `this.trajectoryItems = []`，那是为"换会话"写的）；
+       *   · 而中枢的守卫是「同 id 且跟随流还开着 ⇒ 直接 return」（`SessionHub.selectSession`），
+       *     返回列表并不会关掉那条流，所以再进同一条会话时**不会有任何快照推回来**。
+       * ⇒ 视图清了、数据不再来，于是永久空屏；只有换一次会话才会真正重开流。
+       *
+       * 修法：既然流还开着、中枢手里就有这份轨迹，**直接从中枢取回来**，
+       * 而不是清空后干等一个不会到来的快照。取不到（确实是新会话）就照旧等 follow。
+       */
+      const snap: HubSnapshot = SessionHub.shared().snapshot();
+      if (snap.selectedSessionId === id && snap.trajectory.length > 0) {
+        this.trajectoryItems = snap.trajectory;
+        this.running = snap.running;
+        this.detailSections = projectDetailSections(this.trajectoryItems);
+      }
     }
     if (this.mode === LayoutMode.SINGLE) {
       this.stackPage = StackPage.CONVERSATION;
