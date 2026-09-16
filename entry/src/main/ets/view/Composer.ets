@@ -102,6 +102,14 @@ export struct Composer {
   @Prop planActive: boolean = false;
   @Prop planPending: boolean = false;
   /**
+   * 当前档位（`Index` 发布到 AppStorage）。
+   *
+   * 产品口径：**手机端适度优化调整，其他端与官方 100% 一致**。
+   * 所以"短标签（`@` / `/`）、不可切时隐藏权限 chip、模型 chip 收窄"这三处
+   * **只在单栏生效**；平板/折叠展开/2in1 上保持与官方一致的带文字 chip。
+   */
+  @StorageProp('dshLayoutMode') layoutMode: string = 'single';
+  /**
    * 当前会话的权限模式（只读展示）。
    *
    * 官方把它做成输入区的 `/permission` 弹层；本仓的**切换**端点尚未接线（见矩阵
@@ -433,7 +441,8 @@ export struct Composer {
     Flex({ wrap: FlexWrap.Wrap, alignItems: ItemAlign.Center }) {
         Row() {
           NativeChip({
-            label: '@',
+            // 手机端省地方用短标签；其他端与官方一致（官方是带文字的 chip）
+            label: this.layoutMode === 'single' ? '@' : '@ 引用',
             active: this.panel === 'ref',
             a11y: '插入文件或会话引用',
             onTap: () => {
@@ -446,7 +455,7 @@ export struct Composer {
 
         Row() {
           NativeChip({
-            label: '/',
+            label: this.layoutMode === 'single' ? '/' : '/ 命令',
             active: this.panel === 'cmd',
             a11y: '运行命令',
             onTap: () => {
@@ -510,16 +519,22 @@ export struct Composer {
          * 没能力时**不占这一行**——"这台 Host 没有权限预设"这件事在设置→通用里
          * 已经有一行如实说明（`权限模式 / 未报告` + 原因），没必要在输入区再占一格。
          */
-        if (this.permissionLabel.length > 0 && this.permissionSwitchableNow) {
+        if (this.permissionLabel.length > 0
+          && (this.layoutMode !== 'single' || this.permissionSwitchableNow)) {
           Row() {
             NativeChip({
-              label: this.permissionLabel,
+              // 非单栏：与官方一致，保留「权限：X」前缀且不可切时也显示（读得出为什么点不了）
+              label: this.layoutMode === 'single' ? this.permissionLabel : `权限：${this.permissionLabel}`,
               active: false,
-              disabled: false,
-              maxWidth: 84,
-              a11y: `当前权限模式：${this.permissionLabel}，点击切换`,
+              disabled: !this.permissionSwitchableNow,
+              maxWidth: this.layoutMode === 'single' ? 84 : 160,
+              a11y: this.permissionSwitchableNow
+                ? `当前权限模式：${this.permissionLabel}，点击切换`
+                : `权限：${this.permissionLabel}。${this.permissionHint}`,
               onTap: () => {
-                this.onPickPermission();
+                if (this.permissionSwitchableNow) {
+                  this.onPickPermission();
+                }
               }
             })
           }
@@ -530,7 +545,8 @@ export struct Composer {
       Row() {
         NativeChip({
           label: this.modelLabel(),
-          maxWidth: 120,
+          // 手机端收窄（官方桌面端给得更宽）；其他端保持与官方一致的宽度余量
+          maxWidth: this.layoutMode === 'single' ? 120 : 160,
           a11y: `当前模型：${this.modelLabel()}，点击切换`,
           onTap: () => {
             this.onPickModel();

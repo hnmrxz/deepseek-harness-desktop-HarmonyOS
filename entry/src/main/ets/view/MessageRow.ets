@@ -108,6 +108,14 @@ export struct MessageRow {
   @State menuShown: boolean = false;
   /** 超长正文是否已展开（默认折叠成一行；见 build 里的长文折叠说明） */
   @State bodyExpanded: boolean = false;
+  /**
+   * 当前档位（`Index` 发布；见那边 `AppStorage.setOrCreate('dshLayoutMode', …)` 的说明）。
+   *
+   * **折叠只在单栏（手机）生效**：官方客户端不做消息正文折叠，这条是本仓为手机屏幕空间
+   * 做的"适度优化"——口径是"手机端适度调整，其他端与官方 100% 一致"，
+   * 所以平板/折叠展开/2in1 上必须原样显示全文。
+   */
+  @StorageProp('dshLayoutMode') layoutMode: string = 'single';
 
   /** 输入模态快照（策略模型的输入；本组件只做映射，不做判断） */
   private modality(): InputModality {
@@ -155,9 +163,10 @@ export struct MessageRow {
     return lines > 4;
   }
 
-  /** 折叠态成立？流式进行中不折（正文还在长，折了会看到"越写越短"） */
+  /** 折叠态成立？流式进行中不折（正文还在长，折了会看到"越写越短"）；**只在单栏生效** */
   private bodyCollapsed(): boolean {
-    return !this.bodyExpanded && !this.item.streaming && this.bodyIsLong();
+    return this.layoutMode === 'single'
+      && !this.bodyExpanded && !this.item.streaming && this.bodyIsLong();
   }
 
   /** 是否支持右键唤起菜单（手势集合来自策略模型，不在视图里散落判断） */

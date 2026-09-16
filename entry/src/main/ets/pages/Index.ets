@@ -1527,6 +1527,16 @@ struct Index {
       return;
     }
     this.mode = next;
+    /*
+     * 【把档位发布到 AppStorage（2026-09-17）】
+     *
+     * 产品口径：**手机端适度优化调整，其他端与官方 100% 一致**。
+     * 于是"为了手机省地方"的那几处（正文超长折叠、工具行的短标签/隐藏不可切的权限 chip）
+     * 必须**只在单栏生效**，不能顺手改到平板/2in1 上去。
+     * 那些组件（`MessageRow` / `Composer`）拿不到 `LayoutMode`（它不是它们 props 的一部分），
+     * 所以在这里发一份出去，它们用 `@StorageProp` 读——一处真值，不新增第二条判定链。
+     */
+    AppStorage.setOrCreate<string>('dshLayoutMode', next);
     if (next !== LayoutMode.SINGLE && this.stackPage === StackPage.CONVERSATION) {
       this.stackPage = StackPage.MAIN;
     }
