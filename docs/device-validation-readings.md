@@ -740,10 +740,37 @@ Host 拒绝了本次访问（未认证）` —— 兜底重试**确实按 5 秒�
 
 **已修**：`run()` 在动作 settle 之后（成功与失败两条路）都调一次 `SessionHub.shared().refreshGoal()`。
 
-> **本轮没来得及复验**：重建重装后再用 `/goal` 造目标时，栏**又没出现**——
-> 与上面 round 16 记的那条是同一个现象：`GoalBar.state()` 的可见性第一参是
-> **`s.goalText.length > 0`**，**目标正文为空时会被当成"没有目标"**。
-> 也就是说"栏消不消失"这一条要等下一轮先解决"目标正文为什么有时是空的"，再复验。
+> **更正（2026-09-17 晚，用 fport 直接读 Host 之后）**：上面那句"目标正文是空的"**是错的**——
+> 那是我这边 **PowerShell 打印嵌套对象时的截断**造成的假读数。Host 侧的真实形状是：
+> ```
+> goal = { goal: { id, revision, objective, phase, maxGoalRounds }, roundsStarted, createdAt, updatedAt }
+> ```
+> 实测两条目标的 `objective` 都**有正文**（`"verify refresh fix"` / 中文那条也在，只是我的控制台按 ASCII 显示成 `?`）。
+> ⇒ **"目标正文为空"这个方向作废**，不要再顺着它查。
+
+### §3.11.2 目标栏时有时无的真正线索：**两个来源互相覆盖**
+
+旁路日志里两条紧挨着的行给出了方向：
+
+```
+HDSH-TRACE goals/get ok present=true phase=active rev=1        ← refreshGoal()（权威读）
+HDSH-TRACE goal projection ok present=false phase= rev=0       ← 控制帧的投影（后到）
+```
+
+- `goals/get` 说"这个会话有目标"；随后一条**控制帧的投影**说"没有"，于是 `applyGoalView()`
+  把 `goalText` 清成空串 ⇒ 栏消失。这正是"时有时无"的形态。
+- 两个来源共用 `applyGoalView()` 是**有意设计**（官方也是投影：`goals/get` + `goal/change` 实时推送），
+  但**没有按键（会话/agentId）归属**：任何一条 `present=false` 的投影都可能把
+  刚刚权威读到的目标清掉。
+- **下一轮的定位方向**（不再猜"正文为空"）：看 `applyControl()` 收到的投影帧是否**按会话过滤**——
+  若投影来自别的会话（或别的 agent），就必须先比对归属再落状态，而不是无条件清空。
+
+**未修**：这一条我没有当场改。改法是"投影帧必须先对上是哪个会话/agent 再落状态"，
+属于**会改变状态归属**的改动，凭现有读数还不足以确定过滤键；**宁可不改，也不猜一个**。
+
+---
+
+## §4 本机**不可验**的项（如实登记，不是"跳过"）
 
 ---
 
