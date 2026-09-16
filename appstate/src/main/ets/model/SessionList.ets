@@ -42,8 +42,31 @@ export interface SessionListItem {
   running: boolean;
   /** 是否「空会话」（尚无任何轮次）。列表默认不过滤，但 UI 可用它区分「刚建好还没说话」 */
   blank: boolean;
+  /**
+   * 父会话 id（**只有子代理会话才有**；空串 = 普通会话）。
+   *
+   * F2：真机上"子代理会话"与普通会话混在同一棵树里，点开是一条永远读不出轨迹的会话
+   * （宿主会回 `session/agent-busy … require their durable parent address`）。
+   * 这两个字段在原始对象里一直有（`Wire.ets` 的 `parentSessionId` / `origin`），
+   * 只是列表项没建模，于是界面**无从分辨**。建模出来才能在列表上如实标注。
+   */
+  parentSessionId: string;
+  /** 会话来源（`origin`；官方用它区分"用户开的"与"子代理开的"） */
+  origin: string;
   /** 原始对象（供尚未建模的字段使用） */
   raw: Object;
+}
+
+/**
+ * 这条会话是不是**子代理会话**（F2）。
+ *
+ * 判据用两个独立字段的**或**：`parentSessionId` 非空，或 `origin` 表明它是子代理开的。
+ * 为什么不只用一个：真机上见过的响应里 `parentSessionId` 有值、
+ * 而 `origin` 的取值枚举我们没有权威清单——所以**任何一个指向"这是子代理"就认**，
+ * 宁可多标一条（标错只是多一个徽标），也不要漏标（漏标就是"点开一片空白还不知道为什么"）。
+ */
+export function isSubagentSession(item: SessionListItem): boolean {
+  return item.parentSessionId.length > 0 || item.origin.indexOf('subagent') >= 0;
 }
 
 /** 列表返回 */
@@ -110,6 +133,9 @@ export function projectSessionList(value: Object | undefined): SessionListPage {
       createdAt: pickNumber(raw, FIELD_ALIASES.createdAt),
       running: pickBoolean(raw, FIELD_ALIASES.running),
       blank: pickBoolean(raw, ['blank']),
+      // F2：子代理会话的两个标识（原始对象里一直有，此前没建模）
+      parentSessionId: pickString(raw, ['parentSessionId']),
+      origin: pickString(raw, ['origin']),
       raw: raw
     };
     if (item.id.length === 0) {

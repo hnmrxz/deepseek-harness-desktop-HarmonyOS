@@ -19,7 +19,7 @@
 
 import { HubBanner } from './HubBanner';
 import { PendingPane } from './PendingPane';
-import { PendingAnswerDraft, CoreViewState, Fs, HarmonyIconSize, HubPhase, PendingItem, Radius, SessionListItem, SessionSearchRow, Sp, Sz, WorkspaceItem, formatClock, relativeTime, sessionEmptyCopy } from 'appstate';
+import { PendingAnswerDraft, CoreViewState, Fs, HarmonyIconSize, HubPhase, PendingItem, Radius, isSubagentSession, SessionListItem, SessionSearchRow, Sp, Sz, WorkspaceItem, formatClock, relativeTime, sessionEmptyCopy } from 'appstate';
 
 export interface WorkspaceBrowserFacade {
   answerPending: (item: PendingItem, drafts: PendingAnswerDraft[]) => void;
@@ -453,6 +453,24 @@ export struct WorkspaceBrowser {
               Text($r('app.string.status_running'))
                 .fontSize(Fs.CAPTION)
                 .fontColor($r('sys.color.brand'))
+            }
+            /*
+             * 【F2：子代理会话要**在列表上就看得出来**】
+             *
+             * 真机读数：子代理会话和普通会话混在同一棵树里，名字看着一样，
+             * 点开却是一条**永远读不出轨迹**的会话（宿主回
+             * `session/agent-busy … require their durable parent address`）。
+             * 用户看到的是"点开一片空白"，而且点几次都这样——因为界面上没有任何线索
+             * 告诉他"这条不是能直接打开的会话"。
+             *
+             * 这里只做**如实标注**（一个徽标），不假装能打开它：
+             * 打开子代理会话要带父级地址，那条通路本仓还没有。
+             * 标注之后，"点开空白"至少变成"事前就知道为什么"。
+             */
+            if (isSubagentSession(s)) {
+              Text($r('app.string.badge_subagent'))
+                .fontSize(Fs.CAPTION)
+                .fontColor($r('sys.color.font_tertiary'))
             }
             /*
              * E134：归档会话（官方语义是"注册表全局归档集"）。

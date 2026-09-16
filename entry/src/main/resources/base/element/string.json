@@ -137,6 +137,10 @@
       "value": "运行中"
     },
     {
+      "name": "badge_subagent",
+      "value": "子代理"
+    },
+    {
       "name": "status_not_started",
       "value": "还没有说话"
     },

@@ -3207,7 +3207,10 @@ export class SessionHub {
         changed = true;
         next.push({
           id: s.id, title: title, cwd: s.cwd, updatedAt: s.updatedAt, createdAt: s.createdAt,
-          running: s.running, blank: s.blank, raw: s.raw
+          running: s.running, blank: s.blank,
+          // F2：子代理标识要随标题更新一起带过去，不能在这里丢掉
+          parentSessionId: s.parentSessionId, origin: s.origin,
+          raw: s.raw
         });
       } else {
         next.push(s);

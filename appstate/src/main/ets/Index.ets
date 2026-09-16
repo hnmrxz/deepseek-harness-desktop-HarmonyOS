@@ -5,7 +5,7 @@
  */
 
 // ── 会话列表 ──
-export { projectSessionList, sessionListEndpoint } from './model/SessionList';
+export { isSubagentSession, projectSessionList, sessionListEndpoint } from './model/SessionList';
 export type { SessionListItem, SessionListPage } from './model/SessionList';
 
 // ── 轨迹与待决的呈现层契约 ──
