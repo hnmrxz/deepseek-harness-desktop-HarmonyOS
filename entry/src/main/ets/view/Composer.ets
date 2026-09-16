@@ -552,6 +552,16 @@ export struct Composer {
             this.onPickModel();
           }
         })
+        /*
+         * 官方在模型名后面有一个 `⌄`（"这是一组可选项"的形状提示，截图里很清楚）。
+         * 图标名**已在权威清单里核过**：`chevron_down` 存在
+         * （`sdk/default/openharmony/ets/build-tools/ets-loader/sysResource.js`，7251 个符号）。
+         * 顺带记两条**不存在**的名字，免得以后有人再猜：`command` / `terminal` 都不在清单里——
+         * 所以 `/` 那个入口继续用文字（这反而更贴官方：官方的写法就是"`/` 调用指令"）。
+         */
+        SymbolGlyph($r('sys.symbol.chevron_down'))
+          .fontSize(Sz.TOUCH_MIN / 2)
+          .fontColor([$r('sys.color.font_tertiary')])
       }
       .margin({ bottom: Sp.XS })
     }
