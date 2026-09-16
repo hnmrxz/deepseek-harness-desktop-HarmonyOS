@@ -120,8 +120,9 @@ export struct AppShell {
   buildSingle() {
     /*
      * 单栏（手机）：侧栏在官方就是**盖在页面上的一层**（抽屉），不是底部标签栏 ——
-     * 所以这里用 `Stack` 把页面与抽屉叠起来。底部标签栏**暂时保留**（过渡呈现）：
-     * 抽屉是**新增**的导航面，本轮不夺走任何既有入口（取舍说明见 `docs/50` E306）。
+     * 所以这里用 `Stack` 把页面与抽屉叠起来。
+     * **底部标签栏已于第 12 轮按用户要求删除**（"去掉底部三大栏目，只保留侧栏"），
+     * 于是单栏就是干净的 `Stack(页面 + 抽屉)`；导航入口只剩下页头的 `☰`。
      */
     Stack({ alignContent: Alignment.TopStart }) {
       Column() {
@@ -132,9 +133,17 @@ export struct AppShell {
         }
         .layoutWeight(1)
         .width('100%')
-        if (this.f.stackPage === StackPage.MAIN) {
-          this.bottomTabs()
-        }
+        /*
+         * 【2026-09-17：删掉这里原来的 `if (stackPage === MAIN) { this.bottomTabs() }`】
+         *
+         * `bottomTabs()` 渲染的是 `SidebarShell(presentation: OVERLAY)`，而 `tabsBody()`
+         * 已在第 12 轮**按用户要求清空**（"去掉底部三大栏目，只保留侧栏"）⇒ 这个调用
+         * 现在只剩一个**带背景色、零高度的空 Column**：屏幕上是一条看不出用途的细条。
+         *
+         * 顺带把上面那段注释里已经过期的两句话改掉——它此前写着"底部标签栏**暂时保留**"
+         * 与"本轮不夺走任何既有入口"，而事实是标签栏已经不在了。
+         * 单栏现在是干净的 `Stack(页面 + 抽屉)`。
+         */
       }
       .width('100%')
       .height('100%')
@@ -192,32 +201,14 @@ export struct AppShell {
     })
   }
 
-  @Builder
-  bottomTabs() {
-    // 侧栏内容归 SidebarShell 所有（P0：AppFrame 第一条轨道）；这里只给这条轨道的 surface。
-    Column() {
-
-      SidebarShell({
-        brand: this.f.appName,
-        browser: this.f.browser,
-        selectedPanelId: this.f.selectedSidebarPanel,
-        pendingBadge: this.f.pendingBadge,
-        presentation: TrackPresentation.OVERLAY,
-        onSelectPanel: (panelId: string) => {
-          this.f.onSelectSidebarPanel(panelId);
-        },
-        onNewSession: () => {
-          this.f.onNewSession();
-        },
-        showExpandToggle: this.f.mode !== LayoutMode.SINGLE,
-        onToggleExpanded: () => {
-          this.f.onToggleSidebarExpanded();
-        }
-      })
-    }
-    .width('100%')
-    .backgroundColor($r('sys.color.background_secondary'))
-  }
+  /*
+   * 【2026-09-17：`bottomTabs()` 已删】
+   *
+   * 它渲染的是 `SidebarShell(presentation: OVERLAY)`，而 `tabsBody()` 已在第 12 轮
+   * 按用户要求清空（"去掉底部三大栏目，只保留侧栏"）⇒ 这个 Builder 的唯一产物是一个
+   * **带背景色、零高度的空 Column**。它的调用点（`buildSingle` 里那段 `if`）也已删掉。
+   * 死代码门禁正是靠"零使用 @Builder"这一条把它点出来的——**门禁在这里起了作用**。
+   */
 
   @Builder
   buildDouble() {

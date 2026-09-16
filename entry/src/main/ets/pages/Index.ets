@@ -2002,6 +2002,18 @@ struct Index {
   private openProducedFile(path: string, name: string): void {
     SessionHub.shared().openFile(path, name);
     this.nav = navigateToMain(this.nav, MAIN_WORKSPACES, this.panelRegistry);
+    /*
+     * 【F32：光切面板不够，`stackPage` 也要跟着归位】
+     *
+     * 真机读数（台账 §3.7）：点产出文件 chip **两次**（节点 `clickable=true`、点的是正中心）
+     * 都**没有任何反应**——页面仍停在会话，也没切到文件页/预览。
+     *
+     * 这与第 18 轮修 `BACK_TO_LIST` 时记下的那条是**同一件事的两面**：
+     * 单栏下"会话整页"是**一层**，`openSession()` 会同时设 `stackPage = CONVERSATION`；
+     * 只改其中一个 ⇒ 屏幕上什么都不变（当时是"只清 stackPage"，这次是"只切面板"）。
+     * 所以这里把 `stackPage` 一并归位到 MAIN——**两层一起动**，视图才真的会换页。
+     */
+    this.stackPage = StackPage.MAIN;
   }
 
   private async pickAndAttachImage(): Promise<void> {
