@@ -12,7 +12,7 @@ import { CommandCandidate, Fs, ModelOption, ModelSelection, PendingAttachment, Q
 import {
   COMMAND_PICK_RUN, appendPick, applyPick, commandPickAction, detectTrigger, referenceAgeLine, referenceCrumbs,
   referenceDrillQuery,
-  referenceFileRowDetail, referenceFileRowName, referenceSessionRowDetail, TriggerToken
+  referenceFileRowDetail, referenceFileRowName, referenceSessionRowDetail, referenceSessionRowName, TriggerToken
 } from 'appstate';
 import { NativeButton, NativeChip } from './NativePrimitives';
 
@@ -790,7 +790,9 @@ export struct Composer {
   /** 引用行的主文案（官方 `fileCandidate` 的 `name`：目录名带尾斜杠） */
   private refRowName(c: ReferenceCandidate): string {
     if (c.kind === 'session') {
-      return c.label;
+      // F15：Host 对**还没有标题**的会话给的 `label` 就是 sessionId ⇒ 回落「未命名会话」，
+      // 判据在纯模型里（`referenceSessionRowName`），视图不自己写判断
+      return referenceSessionRowName(c.label);
     }
     return referenceFileRowName(c.label, c.kind === 'directory');
   }

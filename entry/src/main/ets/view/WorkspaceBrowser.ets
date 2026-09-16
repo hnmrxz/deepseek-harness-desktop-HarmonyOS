@@ -19,7 +19,7 @@
 
 import { HubBanner } from './HubBanner';
 import { PendingPane } from './PendingPane';
-import { PendingAnswerDraft, CoreViewState, Fs, HarmonyIconSize, HubPhase, PendingItem, Radius, isSubagentSession, SessionListItem, SessionSearchRow, Sp, Sz, WorkspaceItem, formatClock, relativeTime, sessionEmptyCopy } from 'appstate';
+import { PendingAnswerDraft, CoreViewState, Fs, HarmonyIconSize, HubPhase, PendingItem, Radius, isSubagentSession, sessionDisplayTitle, SessionListItem, SessionSearchRow, Sp, Sz, WorkspaceItem, formatClock, relativeTime, sessionEmptyCopy } from 'appstate';
 
 export interface WorkspaceBrowserFacade {
   answerPending: (item: PendingItem, drafts: PendingAnswerDraft[]) => void;
@@ -296,7 +296,7 @@ export struct WorkspaceBrowser {
             Row({ space: Sp.S }) {
               SymbolGlyph($r('sys.symbol.archivebox')).fontSize(HarmonyIconSize.STATUS)
                 .fontColor([$r('sys.color.font_secondary')])
-              Text(s.title.length > 0 ? s.title : $r('app.string.label_unnamed_session'))
+              Text(this.sessionTitleOf(s))
                 .fontSize(Fs.SECONDARY)
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -461,11 +461,26 @@ export struct WorkspaceBrowser {
    * 会话行（宽版与窄版**共用同一份**：240vp 下这一行本来就放得下——
    * 名字 + 运行中 + 归档，不需要为窄版再写一遍）。
    */
+  /**
+   * 会话在列表里的标题（F23）：纯模型判"有没有名字"，这里只负责回落同一句文案。
+   *
+   * 用资源串 `label_unnamed_session` 而不是模型里那个常量：本组件已经有这条资源
+   * （三处文案都用它），再引一个常量反而多一条口径。
+   */
+  private sessionTitleOf(s: SessionListItem): ResourceStr {
+    const title: string = sessionDisplayTitle(s);
+    return title.length > 0 ? title : $r('app.string.label_unnamed_session');
+  }
+
   @Builder
-  sessionRow(s: SessionListItem) {
-        Column({ space: 2 }) {
+  sessionRow(s: SessionListItem) {        Column({ space: 2 }) {
           Row({ space: Sp.S }) {
-            Text(s.title.length > 0 ? s.title : $r('app.string.label_unnamed_session'))
+            /*
+             * F23：标题取 `sessionDisplayTitle()` 的结论——它把"还没有标题"的会话
+             * （`blank` 且标题恰好等于 cwd 末段）判成空串，于是这里回落成与 `@` 候选
+             * **同一句**「未命名会话」（F15 也是这一句）。判据在纯模型里，视图不自己写。
+             */
+            Text(this.sessionTitleOf(s))
               .fontSize(Fs.SECONDARY)
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })

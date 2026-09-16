@@ -5,7 +5,7 @@
  */
 
 // ── 会话列表 ──
-export { isSubagentSession, projectSessionList, sessionListEndpoint } from './model/SessionList';
+export { isSubagentSession, projectSessionList, sessionDisplayTitle, sessionListEndpoint } from './model/SessionList';
 export type { SessionListItem, SessionListPage } from './model/SessionList';
 
 // ── 轨迹与待决的呈现层契约 ──
@@ -181,6 +181,7 @@ export {
   referenceFileRowName,
   referenceQueryOf,
   referenceSessionRowDetail,
+  referenceSessionRowName,
   TriggerKind,
   appendPick,
   applyPick,

@@ -247,6 +247,16 @@ export const REFERENCE_CRUMB_ROOT: string = '工作区';
 export const REFERENCE_NO_CWD: string = '（无工作目录）';
 
 /**
+ * 未命名会话的回落文案（F15）。
+ *
+ * **与资源串 `app.string.label_unnamed_session` 逐字相同**（本轮把那条资源从
+ * `（未命名会话）` 改成了 `未命名会话`——列表里显示成带括号的样子像是"附注"而不是标题）。
+ * 两边说的必须是同一句话，否则又会变成"同一件事两套口径"，而 F15/F23 正是这么被抓出来的。
+ * 这里不引资源串是因为模型层零依赖（本仓的分层规矩）；代价是这行注释必须一直留着。
+ */
+const REFERENCE_UNNAMED_SESSION: string = '未命名会话';
+
+/**
  * 一次"钻取"之后用于继续补全的查询词（官方 `onPick` 的 `{text, continue: true}` 那一支）。
  *
  * 【为什么要有这个函数】官方选中**目录**时**不关菜单**：把更深一层的路径写进草稿并
@@ -414,4 +424,24 @@ export function referenceSessionRowDetail(cwd: string, sameWorkspace: boolean, a
     return ageText;
   }
   return ageText.length > 0 ? `${location} · ${ageText}` : location;
+}
+
+/**
+ * 会话候选那一行的**名字**（F15）。
+ *
+ * 真机读数：`@` 菜单里的会话候选直接显示 `session-22a1d0f0-e811-4932-afee-ea8a76215dc1`。根因是
+ * Host 的 `sessionReferenceResolver/candidates` 对**还没有标题**的会话，`label` 就是 sessionId
+ * （已用 fport 取证），而客户端**原样显示**。
+ *
+ * 判据刻意做窄——**只有"长得就像 sessionId"才回落**：
+ * 前缀是 `session-` **且**总长 ≥ 16（真机给的 id 是 UUID 形态，远长于此）。
+ * 不做"凡是含横杠就当 id"那种宽判据：那会把用户自己起的名字也吞掉，
+ * 而"显示成未命名会话"比"显示成一个真名字"更糟。
+ */
+export function referenceSessionRowName(label: string): string {
+  const looksLikeSessionId: boolean = label.startsWith('session-') && label.length >= 16;
+  if (label.length === 0 || looksLikeSessionId) {
+    return REFERENCE_UNNAMED_SESSION;
+  }
+  return label;
 }

@@ -16,6 +16,7 @@
 
 import { getNumber, getRecord, getString, isRecord } from 'connection';
 import { FIELD_ALIASES, SESSION_LIST_ENDPOINT, titleFromProjections } from 'dshcompat';
+import { baseNameOf } from './ProducedFiles';
 
 /**
  * 无标题时的中性兜底文案。
@@ -67,6 +68,29 @@ export interface SessionListItem {
  */
 export function isSubagentSession(item: SessionListItem): boolean {
   return item.parentSessionId.length > 0 || item.origin.indexOf('subagent') >= 0;
+}
+
+/**
+ * 会话在列表里的**显示标题**（F23）。返回空串表示"没有可显示的名字"，
+ * 由视图回落成与 `@` 候选**同一句**「未命名会话」。
+ *
+ * 真机读数：经「新建会话」建的空会话在树里显示成 `workspace`（cwd 末段），
+ * 而 `@` 候选里同一批会话显示原始 UUID ⇒ 同一件事两套口径。
+ *
+ * 判据（做窄，只治那一种）：**还没说过话**（`blank`）**且**标题恰好等于 cwd 末段
+ * ⇒ 视为"还没有标题"。为什么不去比对 UUID：列表这一侧的标题来自 Host 的
+ * `projections.values.title`，那条路给的是 cwd 末段而不是 id（fport 已取证），
+ * 所以这里要治的就是 cwd 末段这一种；用户自己起的同名标题一旦说过话（`blank=false`）
+ * 就不再命中——这正是"做窄"的意思。
+ */
+export function sessionDisplayTitle(item: SessionListItem): string {
+  if (item.title.length === 0) {
+    return '';
+  }
+  if (item.blank && item.cwd.length > 0 && item.title === baseNameOf(item.cwd)) {
+    return '';
+  }
+  return item.title;
 }
 
 /** 列表返回 */
