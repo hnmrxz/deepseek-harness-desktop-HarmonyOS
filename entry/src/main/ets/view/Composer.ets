@@ -418,12 +418,21 @@ export struct Composer {
    */
   @Builder
   toolRow() {
-    Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween, alignItems: ItemAlign.Center }) {
-      // ── 左组：输入类工具（自身也可换行：权限 chip 最长，手机上常换到第二行）──
-      Flex({ wrap: FlexWrap.Wrap, alignItems: ItemAlign.Center }) {
+    /*
+     * 【2026-09-17 紧凑化：所有控件**直接**挂在外层可换行 Flex 上】
+     *
+     * 原来分成"左组 Flex + 右组 Row"两层，实测右组的模型 chip **每次都换到第二行**——
+     * 无论有没有 `layoutWeight(1)`（去掉之后仍然如此）：内层 Flex 参与外层测量时
+     * 会按"能占多宽占多宽"报告，于是 SpaceBetween 认为放不下。
+     *
+     * 现在把 7 件控件平铺成外层 Flex 的直接子节点：能一行就一行（手机 376vp 实测放得下），
+     * 放不下才换行，**任何一件都不会被裁掉**（D46 §1 的要求不动）。
+     * 这同时更接近官方客户端的形态：一行 = `+ ◎ 完全权限 本地 … 模型名 ⌄ ↑`。
+     */
+    Flex({ wrap: FlexWrap.Wrap, alignItems: ItemAlign.Center }) {
         Row() {
           NativeChip({
-            label: '@ 引用',
+            label: '@',
             active: this.panel === 'ref',
             a11y: '插入文件或会话引用',
             onTap: () => {
@@ -436,7 +445,7 @@ export struct Composer {
 
         Row() {
           NativeChip({
-            label: '/ 命令',
+            label: '/',
             active: this.panel === 'cmd',
             a11y: '运行命令',
             onTap: () => {
@@ -493,45 +502,34 @@ export struct Composer {
         .margin({ right: Sp.XS, bottom: Sp.XS })
 
         /*
-         * ── 权限模式：**能切就切，不能切就说"不可用"**（P7-6，对齐官方 permission-presets）──
+         * ── 权限模式（P7-6 + 2026-09-17 紧凑化）──
          *
-         * 官方把 `/permission` 装饰成 `popupSelect`：选中后执行 `/permission <presetId>`；
-         * 而这台 Host 没有这个能力时，它显示的是官方字典里的 `unavailable`（「不可用」），
-         * 连入口都不给。我们此前一律 `disabled: true` 挂着「权限：X（只读…）」——
-         * 有能力的 Host 上白白少一个功能，没能力的 Host 上又看不出为什么点不了。
-         *
-         * 现在按 `permissionSwitchable(permissionsOptions)` 分两种呈现：
-         *   · 有能力 ⇒ 可点的 chip，点了开单选浮层（复用既有 `ChoiceSheet`），选中后走
-         *     `/permission <id>` 命令通道；
-         *   · 没能力 ⇒ 仍然不可点，但文案是官方那句「不可用」，无障碍里写清"这台 Host 没有"。
+         * 原来一律挂着 `权限：<值>` 这个最长的 chip（手机上常把模型挤到第二行）。
+         * 现在：**只有真能切的时候才出现**，而且只显示值本身（前缀去掉）；
+         * 没能力时**不占这一行**——"这台 Host 没有权限预设"这件事在设置→通用里
+         * 已经有一行如实说明（`权限模式 / 未报告` + 原因），没必要在输入区再占一格。
          */
-        if (this.permissionLabel.length > 0) {
+        if (this.permissionLabel.length > 0 && this.permissionSwitchableNow) {
           Row() {
             NativeChip({
-              label: `权限：${this.permissionLabel}`,
+              label: this.permissionLabel,
               active: false,
-              disabled: !this.permissionSwitchableNow,
-              maxWidth: 160,
-              a11y: this.permissionSwitchableNow
-                ? `当前权限模式：${this.permissionLabel}，点击切换`
-                : `权限：${this.permissionLabel}。${this.permissionHint}`,
+              disabled: false,
+              maxWidth: 84,
+              a11y: `当前权限模式：${this.permissionLabel}，点击切换`,
               onTap: () => {
-                if (this.permissionSwitchableNow) {
-                  this.onPickPermission();
-                }
+                this.onPickPermission();
               }
             })
           }
           .margin({ right: Sp.XS, bottom: Sp.XS })
         }
-      }
-      .layoutWeight(1)
 
-      // ── 右组（官方的 `.trailing`）：模型。窄屏时会整组换到下一行，而不是被裁掉 ──
+      // ── 模型（官方把这一项放在工具行右端：`模型名 ⌄`）──
       Row() {
         NativeChip({
           label: this.modelLabel(),
-          maxWidth: 160,
+          maxWidth: 120,
           a11y: `当前模型：${this.modelLabel()}，点击切换`,
           onTap: () => {
             this.onPickModel();
@@ -541,6 +539,13 @@ export struct Composer {
       .margin({ bottom: Sp.XS })
     }
     .width('100%')
+    /*
+     * 权限那一格在"不可切"时**不占版面**（见上面权限 chip 的说明），但"这台 Host 为什么没有权限预设"
+     * 这句话不能因此消失——把它挂到整行的无障碍文案上：看得见的地方省宽度，读屏那里仍然说清。
+     */
+    .accessibilityText(this.permissionSwitchableNow
+      ? `工具行：引用、命令、附件、图片、计划、权限${this.permissionLabel}、模型${this.modelLabel()}`
+      : `工具行：引用、命令、附件、图片、计划、模型${this.modelLabel()}。${this.permissionHint}`)
   }
 
   @Builder

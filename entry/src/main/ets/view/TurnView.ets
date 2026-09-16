@@ -512,18 +512,15 @@ export struct TurnView {
   private messageActionsOf(item: TrajectoryItem): NativeAction[] {
     const out: NativeAction[] = [];
     out.push({ id: 'copy', label: '复制', a11y: '复制这条消息的正文' });
-    out.push({
-      id: 'like',
-      label: '有帮助',
-      active: this.myRating(item.id) === 'positive',
-      a11y: '评价为有帮助，可选择原因'
-    });
-    out.push({
-      id: 'dislike',
-      label: '没帮助',
-      active: this.myRating(item.id) === 'negative',
-      a11y: '评价为没帮助，可选择原因'
-    });
+    /*
+     * 【2026-09-17：去掉「有帮助 / 没帮助」】用户决定。
+     * 原来这两颗按钮占掉动作条一半宽度，而手机上动作条本身就在窄屏里换行/挤；
+     * 评价这条路还依赖 `messageFeedback/list`（真机上那条读不出来，见 F28），
+     * 于是"点了没反应"的概率远高于"真的存下来了"。**先把入口摘掉**，
+     * 等 F28 修好、并且有明确的产品需求时再加回来。
+     * `withdraw`（撤回评价）随之失去入口：没有入口能写入评价，它就不会出现——
+     * 保留判断本身不影响行为，但不再有可达的"没帮助"路径。
+     */
     out.push({ id: 'quote', label: '引用', a11y: '把这条消息引用到输入框' });
     if (item.speaker === Speaker.USER) {
       // 【为什么只给用户消息】"重发"对用户消息是**把同一句再发一次**（有真实协议面：

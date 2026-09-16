@@ -328,58 +328,20 @@ export struct SidebarShell {
   }
 
   /**
-   * 单栏：底部标签栏。
+   * 单栏：**不再画底部标签栏**（2026-09-17，用户决定）。
    *
-   * 【这是过渡呈现，不是终点】官方在手机上把 Sidebar 收成**抽屉**。当前仍用底部标签栏是为了
-   * "只搬代码不改观感"；改成抽屉属 P1（届时这里换成抽屉内容，主区不变）。
+   * 【为什么删掉】用户原话：「去掉底部 3 个大栏目，只保留侧栏，原本功能也重复」。
+   * 底部那一条（新建会话 / 工作区 / 设置）与抽屉里的入口**是同一份**：抽屉里已经有
+   * 品牌行 + ＋新建会话 + 工作区树 + 面板入口 + 设置沉底（见 `panelBody`），
+   * 两条导航面同时存在既重复又吃掉约 76vp 的竖向空间——手机本来就紧。
+   *
+   * 单栏的导航入口改为**只剩页头的抽屉按钮**（`☰`，D12 已在真机上验过：
+   * 点开、四条收起路径、返回键不穿透都通过）。
    */
   @Builder
   tabsBody() {
-    Row() {
-      // 单栏底部标签：**先把「新建会话」排在第一项**（E362：它此前只在 panelBody 里有入口，
-       // 而单栏走的是这一份 ⇒ 手机用户只能靠空态里那个按钮开新会话）。
-      // 官方在手机上把这个动作放在导航面的首项，与"侧栏一级入口"是同一个语义。
-      Column({ space: 2 }) {
-        SymbolGlyph($r('sys.symbol.plus_circle'))
-          .fontSize(HarmonyIconSize.NAV_RAIL)
-          .fontColor([$r('sys.color.brand')])
-        Text($r('app.string.action_new_session'))
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.brand'))
-      }
-      .layoutWeight(1)
-      .height('100%')
-      .justifyContent(FlexAlign.Center)
-      .accessibilityText($r('app.string.action_new_session'))
-      .onClick(() => {
-        this.onNewSession();
-      })
-
-      ForEach(this.panelRegistry.descriptors(PanelLocation.SIDEBAR), (d: PanelDescriptor) => {
-        Column({ space: 2 }) {
-          Stack({ alignContent: Alignment.TopEnd }) {
-            SymbolGlyph(sidebarPanelSymbol(d.id))
-              .fontSize(HarmonyIconSize.NAV_RAIL)
-              .fontColor([this.selectedPanelId === d.id ? $r('sys.color.brand') : $r('sys.color.font_secondary')])
-            if (this.badgeFor(d.id).length > 0) {
-              this.cornerBadge(this.badgeFor(d.id))
-            }
-          }
-          Text(sidebarPanelLabelRes(d.id))
-            .fontSize(Fs.CAPTION)
-            .fontColor(this.selectedPanelId === d.id ? $r('sys.color.brand') : $r('sys.color.font_secondary'))
-        }
-        .layoutWeight(1)
-        .height('100%')
-        .justifyContent(FlexAlign.Center)
-        .accessibilityText(`${d.label}标签`)
-        .onClick(() => {
-          this.onSelectPanel(d.id);
-        })
-      }, (d: PanelDescriptor) => d.id)
-    }
-    .width('100%')
-    .height(Sz.NAV_RAIL)
+    // 刻意留空：单栏下导航只走抽屉。保留这个 Builder 是为了让"呈现 → 走哪个 Builder"
+    // 的映射不变（`TrackPresentation.OVERLAY` 仍然有落点），改回来只需一行。
   }
 
   build() {
