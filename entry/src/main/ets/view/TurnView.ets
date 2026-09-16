@@ -30,7 +30,7 @@
  *    （列表项是它画的，命中集合也在它手里）。
  */
 
-import { ActionNotice, FeedbackRow, Fs, HarmonyColor, HarmonyType, Radius, SessionHub, Sp, Speaker, TrajectoryItem, TrajectoryKind, Turn, defaultExpanded, hasProcessGroup, parseMarkdown, plainTextOf, processSummary, producedFilesOf, userFacingBodyOf } from 'appstate';
+import { ActionNotice, FeedbackRow, Fs, HarmonyColor, HarmonyType, Radius, SessionHub, Sp, Speaker, TrajectoryItem, TrajectoryKind, Turn, baseNameOf, defaultExpanded, hasProcessGroup, parseMarkdown, plainTextOf, processSummary, producedFilesOf, resolveProducedMention, userFacingBodyOf } from 'appstate';
 import type { ProducedFile } from 'appstate';
 import { presentTool, toolStateLabel } from 'appstate';
 import { NativeCard, NativeChip } from './NativePrimitives';
@@ -342,6 +342,15 @@ export struct TurnView {
     MessageRow({
       item: item,
       sessionId: this.sessionId,
+      /*
+       * 正文里的文件提及（P9-3）：词汇表 = **本回合产出的文件**（与尾部那行 chip 同一份来源），
+       * 打开动作复用同一条链路（`onOpenProduced`：读内容 + 切到能看见预览的页面）。
+       * 认不出来的一律保持普通代码（官方："stays inert code"）。
+       */
+      mentionPath: (token: string) => resolveProducedMention(this.produced(), token),
+      onOpenMention: (path: string) => {
+        this.onOpenProduced(path, baseNameOf(path));
+      },
       a11yText: this.speakableText(item),
       hasPointer: this.hasPointer,
       hasKeyboard: this.hasKeyboard,

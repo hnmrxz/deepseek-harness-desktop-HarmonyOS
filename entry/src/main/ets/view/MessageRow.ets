@@ -63,6 +63,18 @@ export struct MessageRow {
   /** 两个输入模态事实（策略模型的输入） */
   @Prop hasPointer: boolean = false;
   @Prop hasKeyboard: boolean = false;
+  /**
+   * 行内代码 → 本回合产出的文件（空串 = 不是已知文件，保持普通代码）。P9-3。
+   *
+   * 【为什么由调用方给】官方 `MarkdownFileMentions`："the owner resolves an authored token to
+   * the file it names, using its own vocabulary of real files" —— 词汇表属于**回合**，
+   * 而 `MessageRow` 只认识"一条消息"。
+   */
+  mentionPath: (token: string) => string = () => '';
+
+  /** 点一个已知文件（宿主负责打开：读内容 + 切页） */
+  onOpenMention: (path: string) => void = () => {
+  };
   /** 这条消息正在被评价（父组件持有：它决定"哪条开着"） */
   @Prop feedbackOpen: boolean = false;
   /** 父组件侧的反馈回执（提交结果由父组件决定，这里只显示） */
@@ -153,7 +165,12 @@ export struct MessageRow {
       }
 
       // ── 正文（Markdown；流式光标跟在句尾）──
-      MarkdownRenderer({ text: this.item.streaming ? this.item.body + ' ▌' : this.item.body })
+      MarkdownRenderer({
+        text: this.item.streaming ? this.item.body + ' ▌' : this.item.body,
+        // 文件提及的词汇表由**回合**给（见 TurnView），这里只透传
+        mentionPath: this.mentionPath,
+        onOpenMention: this.onOpenMention
+      })
 
       // ── 行内动作条（助手消息才有；用户消息的动作在长按菜单里）──
       if (this.item.speaker === Speaker.ASSISTANT) {

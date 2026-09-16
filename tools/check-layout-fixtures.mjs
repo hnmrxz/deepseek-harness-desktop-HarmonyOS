@@ -2670,6 +2670,43 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   t.eq('非竞态返回 NONE', queueRaceKind('gateway/internal'), QUEUE_RACE_NONE);
 }
 
+// ── P9-3：正文里的文件提及（官方 MarkdownFileMentions：resolver 用自己的真实文件词汇） ──
+{
+  const PF = require2('./ProducedFiles.js');
+  const { resolveProducedMention, MENTION_TOKEN_MAX } = PF;
+  const files = [
+    { path: 'src/components/Button.tsx', name: 'Button.tsx' },
+    { path: 'src/utils/format.ts', name: 'format.ts' },
+    { path: 'docs/index.ts', name: 'index.ts' },
+    { path: 'src/index.ts', name: 'index.ts' }
+  ];
+
+  // ① 全路径相等（模型最常写的就是工具参数里那个路径）
+  t.eq('全路径包含 ⇒ 命中', resolveProducedMention(files, 'src/utils/format.ts'), 'src/utils/format.ts');
+  t.eq('路径两端的空白会被去掉（行内代码里常有）',
+    resolveProducedMention(files, '  src/utils/format.ts  '), 'src/utils/format.ts');
+  // ② 只写了后半截路径
+  t.eq('后半截路径（唯一命中）⇒ 补成完整路径',
+    resolveProducedMention(files, 'components/Button.tsx'), 'src/components/Button.tsx');
+  // ③ 只写了文件名
+  t.eq('文件名（唯一命中）⇒ 命中', resolveProducedMention(files, 'Button.tsx'), 'src/components/Button.tsx');
+  // ④ 歧义：两个 index.ts ⇒ **不猜**（官方 "never guesses"；猜错会打开另一个文件）
+  t.eq('同名文件有多个 ⇒ 返回空串（保持普通代码）', resolveProducedMention(files, 'index.ts'), '');
+  t.eq('歧义时也不退化成"取第一个"', resolveProducedMention(files, 'index.ts') === 'src/index.ts', false);
+  // ⑤ 认不出来的一律 inert
+  t.eq('本回合没产出的路径 ⇒ 空串（不许"看着像路径"就变可点）',
+    resolveProducedMention(files, '/etc/passwd'), '');
+  t.eq('普通行内代码（命令/变量名）⇒ 空串', resolveProducedMention(files, 'npm run build'), '');
+  t.eq('空 token ⇒ 空串', resolveProducedMention(files, '   '), '');
+  t.eq('超长 token ⇒ 空串（那种长串是命令或摘要，不是文件名）',
+    resolveProducedMention(files, 'a'.repeat(MENTION_TOKEN_MAX + 1)), '');
+  t.eq('大小写不同 ⇒ 不命中（端侧文件系统区分大小写，宽容会打开错文件）',
+    resolveProducedMention(files, 'button.tsx'), '');
+  t.eq('没有产出文件 ⇒ 什么都解析不出来', resolveProducedMention([], 'src/utils/format.ts'), '');
+  // ⑥ 全路径优先于 basename：同名文件里写全路径仍能点对
+  t.eq('写全路径时不受同名干扰', resolveProducedMention(files, 'docs/index.ts'), 'docs/index.ts');
+}
+
 // ── P9-2：原图预览（灯箱）的几何与文案（官方 ImageLightbox） ──
 {
   const MI = require2('./MessageImage.js');

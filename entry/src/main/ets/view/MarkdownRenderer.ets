@@ -111,11 +111,25 @@ export struct MarkdownRenderer {
             : (sp.href.length > 0 ? SemanticColor.BRAND : this.bodyColor()))
           .decoration({
             type: sp.strike ? TextDecorationType.LineThrough
-              : (sp.href.length > 0 ? TextDecorationType.Underline : TextDecorationType.None),
-            color: sp.href.length > 0 ? SemanticColor.BRAND : this.bodyColor()
+              : ((sp.href.length > 0 || this.mentionOf(sp).length > 0)
+                ? TextDecorationType.Underline : TextDecorationType.None),
+            color: (sp.href.length > 0 || this.mentionOf(sp).length > 0)
+              ? SemanticColor.BRAND : this.bodyColor()
           })
           .fontFamily(sp.code ? 'monospace' : '')
+          /*
+           * 无障碍里带上**完整路径**：官方 `resolve()` 返回 `{open, label, title}`，
+           * `title` 就是完整路径（网页上是悬停提示）。ArkUI 的 `Span` 没有 tooltip，
+           * 就把它放进无障碍文案——读屏用户与"看不清"的用户都靠它确认点的是哪个文件。
+           */
+          .accessibilityText(this.mentionOf(sp).length > 0
+            ? `${sp.text}，打开文件 ${this.mentionOf(sp)}` : '')
           .onClick(() => {
+            const mention: string = this.mentionOf(sp);
+            if (mention.length > 0) {
+              this.onOpenMention(mention);
+              return;
+            }
             if (sp.href.length > 0) {
               this.openLink(sp.href);
             }
@@ -217,6 +231,26 @@ export struct MarkdownRenderer {
    * 用户只会以为是应用卡了。这里用 hilog 留痕（端侧没有 toast 通道，见 `platform/notify` 的说明），
    * 不伪造成功。
    */
+  /**
+   * 行内代码里的**文件提及**解析器（P9-3，官方 `MarkdownFileMentions` 的等价物）。
+   *
+   * 【为什么是一个回调而不是渲染器自己判断】官方契约逐字写着
+   * "the owner resolves an authored token to the file it names, using **its own vocabulary of
+   * real files** — **the renderer never guesses at what looks like a path**"：
+   * 词汇表属于**回合**（本回合产出/改过的文件），渲染器既不知道也不该猜。
+   * 返回空串 = "这不是已知文件" ⇒ 那一格**保持普通代码**（官方的 "stays inert code"）。
+   */
+  mentionPath: (token: string) => string = () => '';
+
+  /** 点一个已知文件（由宿主打开它：读内容 + 切到能看见预览的页面） */
+  onOpenMention: (path: string) => void = () => {
+  };
+
+  /** 这一格是不是可点的文件提及（只有行内代码才参与，且必须解析得到真实文件） */
+  private mentionOf(sp: MdSpan): string {
+    return sp.code ? this.mentionPath(sp.text) : '';
+  }
+
   private openLink(href: string): void {
     /*
      * 上下文由**组件**给（`getContext(this)`）：全局无参 `getContext()` 已 deprecated，

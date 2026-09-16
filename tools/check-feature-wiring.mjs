@@ -133,6 +133,14 @@ const FEATURES = [
    * 我们此前是"点一下就地放大"，且**单图压根点不动**（官方此时开灯箱）。
    * 钉三段：几何判定（纯模型）+ 文案（官方中文字典逐字）+ 模态挂载点。
    */
+  /*
+   * 正文里的文件提及（P9-3）。官方 `MarkdownFileMentions` 的契约：**只有行内代码**参与，
+   * 由 owner 用**自己的真实文件词汇**解析，认不出来就保持普通代码（"never guesses"）。
+   * 我们此前正文里的 `\`src/a.ts\`` 只是等宽文字：模型说"我改了 3 个文件"，
+   * 用户只能去过程流里一个个翻工具卡。
+   * 钉三段：解析（纯模型）+ 渲染器的回调位 + 词汇表在**回合**那一层给。
+   */
+  { name: '正文文件提及', patterns: [['resolveProducedMention', 2], ['mentionPath', 2], ['onOpenMention', 2]] },
   { name: '原图预览（灯箱）', patterns: [['lightboxFit', 2], ['bindContentCover', 1], ['IMAGE_PREVIEW_DIALOG', 2]] },
   { name: '错误生命周期', patterns: [['errorClearedBy', 2], ['clearErrorOn', 2], ['setConnectionError', 2]] },
   { name: '浮层关闭语义', patterns: [['sheetDiscardNotice', 2], ['dismissSheetByUser', 2], ['textSettingSeed', 2]] },
