@@ -206,7 +206,7 @@ export struct MainShell {
             this.f.setPaletteOpen(false);
             SessionHub.shared().selectSessionModel(m.provider, m.modelId, m.defaultEffort)
               .then((n: ActionNotice) => {
-                this.f.setSettingWriteNote(this.f.noticeText(n));
+                this.f.setAttachNotice(this.f.noticeText(n));
               }).catch((e: Object) => {
                 this.f.setSettingWriteNote('切换会话模型失败：' + (e as Error).message);
               });
@@ -228,13 +228,13 @@ export struct MainShell {
              */
             if (commandPickAction(c.args) === COMMAND_PICK_DRAFT) {
               this.f.setDraft(commandDraftText(c.name));
-              this.f.setSettingWriteNote(commandInputNotice(c.name, c.args));
+              this.f.setAttachNotice(commandInputNotice(c.name, c.args));
               return;
             }
             SessionHub.shared().executeCommand(c.name).then((n: ActionNotice) => {
-              this.f.setSettingWriteNote(this.f.noticeText(n));
+              this.f.setAttachNotice(this.f.noticeText(n));
             }).catch((e: Object) => {
-              this.f.setSettingWriteNote('命令执行失败：' + (e as Error).message);
+              this.f.setAttachNotice('命令执行失败：' + (e as Error).message);
             });
           }
         })
