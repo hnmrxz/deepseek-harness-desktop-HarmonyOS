@@ -3488,9 +3488,29 @@ struct Index {
         names.push(n.name);
       }
     }
+    /*
+     * 【F27：原因必须出现在**被渲染的那一格**里】
+     *
+     * 真机读数：核心页只显示「1/3 已加载 · 缺 koffi / sharp」，**看不到为什么缺**——
+     * 于是 D31 第 0 步（"没有第三类解释时不要去查图片格式"）根本执行不了，
+     * 发图失败只能靠猜。根因是本方法此前把原因**只**放进 `fact()` 的 `note`，
+     * 而 note 在核心页这一版式里**不渲染**（E121/E148② 同一个坑的第三次）：
+     * 信息放错位置 = 等于没写。
+     *
+     * 现在把第一条原因（截断到 60 字）**接到 value 里**——那里是用户真正看得见的地方；
+     * 完整原因仍然保留在 note 里，等有版式时再用。多件缺失时给第一件的原因 + 其余件数，
+     * 保证这一行不至于被撑爆。
+     */
+    let reasonSuffix: string = '';
+    if (missing.length > 0) {
+      const first: string = missing[0];
+      const cut: string = first.length > 60 ? `${first.substring(0, 60)}…` : first;
+      const more: string = missing.length > 1 ? `（另有 ${missing.length - 1} 件，详见诊断）` : '';
+      reasonSuffix = `｜原因：${cut}${more}`;
+    }
     const value: string = names.length === 0
       ? `${loaded}/${probe.natives.length} 已加载`
-      : `${loaded}/${probe.natives.length} 已加载 · 缺 ${names.join(' / ')}`;
+      : `${loaded}/${probe.natives.length} 已加载 · 缺 ${names.join(' / ')}${reasonSuffix}`;
     return fact('原生件加载', value,
       all ? 'ok' : 'warn',
       all ? '' : `未加载：${missing.join('；')}`);
@@ -3528,7 +3548,38 @@ struct Index {
         + '（校验规则见 hostcore/README.md 的容器契约），现在导入无法保证包可用。';
       return;
     }
-    this.coreNotice = '「诊断导出」尚未接线：运行时接上后，这里会导出运行时事实与核心状态。';
+    /*
+     * 【F26：「导出诊断」接上——但只说它真的做了什么】
+     *
+     * 此前这里是一句"尚未接线"，等于把 D31 第 0 步（"复制诊断报告里的「原生件」一行"）
+     * 的出口堵死了：用户被告知去看报告，而报告拿不到。
+     *
+     * 现在做的是**它当场就能做到的那件事**：把核心页这一份运行时事实与核心状态
+     * **拼成文本复制到剪贴板**。不假装"导出文件"（那需要文件选择器与写盘权限），
+     * 也不改按钮的语义——按钮叫「导出诊断」，复制到剪贴板是最小可用形态，
+     * 回执里把"复制了 N 行"说清楚，用户自己决定贴到哪里。
+     */
+    const report: string[] = [];
+    report.push(`HDSH 诊断报告 ${new Date().toISOString()}`);
+    report.push(`核心：${this.coreView.title}`);
+    for (let i = 0; i < this.coreView.facts.length; i++) {
+      const f = this.coreView.facts[i];
+      report.push(`${f.label}：${f.value}${f.hint.length > 0 ? `（${f.hint}）` : ''}`);
+    }
+    if (this.hosts.length > 0) {
+      report.push(`Host：${this.hosts[0].authority} · ${this.hosts[0].authorized ? '已授权' : '未授权'}`);
+    }
+    report.push(`窗口：${this.winWidthVp}×${this.winHeightVp}vp · 档位 ${this.mode}`);
+    // 旁路日志最近若干行——排障时最常被要看的就是它
+    for (let i = 0; i < this.traceLines.length; i++) {
+      report.push(this.traceLines[i]);
+    }
+    const text: string = report.join('\n');
+    copyText(text).then(() => {
+      this.coreNotice = `诊断报告已复制到剪贴板（${report.length} 行）。`;
+    }).catch((e: Object) => {
+      this.coreNotice = `诊断报告复制失败：${(e as Error).message}`;
+    });
   }
 
   /** 起停核心。restart = 先停再起（stop 是幂等的）。 */
