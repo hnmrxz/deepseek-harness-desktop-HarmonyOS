@@ -159,6 +159,14 @@ export struct MainShell {
   @Prop f: MainShellFacade;
   /** 是否紧凑（单栏/双栏下少留白）——由宿主给，组件不自己判定形态 */
   @Prop compact: boolean = false;
+  /**
+   * 当前档位（`Index` 发布到 AppStorage）。
+   *
+   * 本组件只用它决定统计行**贴顶还是沉底**——与 `Composer` / `MessageRow` /
+   * `ConversationHeader` 用的是**同一个**来源，不在这里另立一套"单栏"判断
+   * （另立一套正是"同一件事两套口径"的起点，本仓已经因此吃过 F15/F23）。
+   */
+  @StorageProp('dshLayoutMode') layoutMode: string = 'single';
 
   @Builder
   mainContent(compact: boolean) {
@@ -335,8 +343,19 @@ export struct MainShell {
         }
       })
     } else if (this.f.activePanel() === MAIN_CONVERSATION) {
-      // E125：会话统计行（官方措辞），贴在会话页头部——数据来自投影，没有就不占位置
-      if (this.f.statsLine.length > 0) {
+      /*
+       * E125：会话统计行（官方措辞），数据来自投影，没有就不占位置。
+       *
+       * 【位置按形态分档（2026-09-17，对标官方 ⑧）】
+       * 官方把这一行放在**窗口最底部**（输入区下方，横跨主区）——截图里看得很清楚：
+       * `14 轮 754 步 · 259 tok/s · 292M tok · 缓存命中 99.9%`。
+       * 我们此前一律贴在会话页**头部**。
+       *
+       * 分档理由：非单栏（PC/平板/2in1）要 1:1 ⇒ 挪到底部（见本分支末尾那一段）；
+       * 单栏（手机）保持贴顶——底部紧挨输入区与软键盘，那一行的可读性反而更差，
+       * 而"手机端适应性优化"正是允许这种差异的地方。
+       */
+      if (this.layoutMode === 'single' && this.f.statsLine.length > 0) {
         Text(this.f.statsLine)
           .fontSize(Fs.CAPTION)
           .fontColor(('sys.color.font_tertiary'))
@@ -475,6 +494,18 @@ export struct MainShell {
           this.f.setSearchOpen(true);
         }
       })
+
+      /*
+       * 非单栏：统计行放**输入区下方、主区最底部**——与官方 1:1（见本分支开头那段说明）。
+       * 放在 `ConversationPane` **之后**，所以它在纵向排布上就在输入区下面。
+       */
+      if (this.layoutMode !== 'single' && this.f.statsLine.length > 0) {
+        Text(this.f.statsLine)
+          .fontSize(Fs.CAPTION)
+          .fontColor(('sys.color.font_tertiary'))
+          .width('100%')
+          .padding({ left: Sp.M, right: Sp.M, bottom: Sp.XS })
+      }
     } else {
       /*
        * 兜底分支：**不许再调 `mainContent`**（E343）。
