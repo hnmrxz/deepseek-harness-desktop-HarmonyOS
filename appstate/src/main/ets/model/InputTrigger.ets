@@ -128,6 +128,19 @@ export function detectTrigger(text: string): TriggerToken | undefined {
  *
  * 【为什么目录引用不补】官方目录引用的形态是 `@"dir/`（引号**未闭合**，留给下一次补全继续钻）。
  * 后面补空格会得到一个"引号没关、后面还跟着空格"的坏 token，下一次补全接不上。
+ *
+ * 【F30：只认"引号未闭合"这一种形态是不够的——我们自己的目录插入根本不含引号】
+ *
+ * 本仓目录候选的 `insert` 是 **`@dir/`**（见 `Wire.ets` 的 `isDir ? \`@${path}/\` : \`@${path}\``），
+ * 不含开引号。于是旧判据 `openQuoteOnly` 对它是 **false** ⇒ **补了空格**，
+ * 而 `detectTrigger()` 的规则是"`@` 之后**没有空白**才算正在输入"（见它上一段的注释）
+ * ⇒ 空格一加，token 立刻关闭：
+ *   · `referenceDrillQuery()` 拿不到触发词 ⇒ 回一个空查询；
+ *   · 于是 Host 收到的还是根目录（**看起来"点了目录没钻进去"**）；
+ *   · `referenceCrumbs('' , true)` 因为 `lastIndexOf('/') < 0` 回空数组（**没有面包屑**）。
+ *
+ * 真机读数（台账 F30）正是这一对症状。判据补一条：**以 `/` 结尾的目录提及同样不补空格**
+ * ——不论它是 `@"dir/` 还是 `@dir/`，"结尾是斜杠"就是"还要继续钻"的信号。
  */
 export function needsTrailingSpace(insert: string): boolean {
   if (insert.length === 0) {
@@ -135,7 +148,9 @@ export function needsTrailingSpace(insert: string): boolean {
   }
   const openQuoteOnly: boolean = insert.charAt(0) === '@' && insert.charAt(1) === '"'
     && insert.charAt(insert.length - 1) !== '"';
-  return !openQuoteOnly;
+  const openDirectory: boolean = insert.charAt(0) === '@'
+    && insert.charAt(insert.length - 1) === '/';
+  return !(openQuoteOnly || openDirectory);
 }
 
 /**
