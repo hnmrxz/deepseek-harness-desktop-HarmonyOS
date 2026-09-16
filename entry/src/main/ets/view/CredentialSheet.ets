@@ -66,7 +66,18 @@ export struct CredentialSheet {
           .fontColor($r('sys.color.font_tertiary'))
           .width('100%')
 
-        TextInput({ placeholder: '粘贴凭据值', text: this.draft })
+        TextInput({
+          /*
+           * 占位文案对齐官方 Models 页那张卡：已配置过就写「已配置——输入新值可替换」。
+           *
+           * 【为什么这句值得单独对齐】这**只写不读**的一格，用户唯一能得到的反馈就是
+           * "它到底配过没有"。官方那句把两件事一次说清：① 已经有值了；② 往里填就是替换，
+           * 不是追加、也不用先清空。我们原来的「粘贴凭据值」在两种状态下**长得一模一样**，
+           * 用户得靠下面那行「清除」按钮猜自己配没配过。
+           */
+          placeholder: this.configured ? '已配置——输入新值可替换' : '粘贴凭据值',
+          text: this.draft
+        })
           .type(InputType.Password)
           .enableAutoFill(false)
           .width('100%')
