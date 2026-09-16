@@ -53,6 +53,45 @@ function stripNoise(text) {
     .replace(/\/\/[^\n]*/g, '');
 }
 
+/**
+ * 【2026-09-17（第 63 轮）：把"可选回调的默认实现"排除掉，让这条门禁重新有用】
+ *
+ * 原判据报出 **193 处 / 43 个文件**——翻开一看全是同一种写法：
+ *
+ *     onClose: () => void = () => {
+ *     };
+ *
+ * 这是 ArkUI 里给**回调 prop 声明安全默认值**的标准写法（父组件不传也不能崩），
+ * 它**不是**"点了没反应"——真正的死按钮是**调用点**上传了个空实现
+ * （`onPickModel: () => {}` 这种，E130 当初要抓的正是它）。
+ *
+ * 一条**永远红、193 行**的门禁比没有门禁更糟：没人会读它，于是它谁也不保护。
+ * 所以这里把判据收窄成"**有类型标注的成员声明 + 空箭头默认值**"这一种形态**不报**，
+ * 其余空箭头/空方法照报。
+ *
+ * 判据长这样：`名字: (…) => 返回类型 = () => {` —— 中间那个 `=` 是"默认值"的信号；
+ * 调用点传参不会带这个 `=`（那才是可疑的那种）。
+ */
+function isOptionalCallbackDefault(line, prevLine) {
+  // ① 一行写完：`名字: (…) => 类型 = () => {`
+  if (/^\s*(private\s+|public\s+|protected\s+)?[A-Za-z_$][\w$]*\s*:\s*\([^)]*\)\s*=>\s*[^=]+=\s*\([^)]*\)\s*=>\s*\{\s*$/.test(line)) {
+    return true;
+  }
+  // ② 类型标注太长被折行：上一行以 `=` 结尾（默认值另起一行）——
+  //    这是同一件事的另一种排版，不认它就会漏掉一批良性项。
+  return /=\s*$/.test(prevLine ?? '');
+}
+
+/** 容器/构建器的**调用**：`Column() {`、`Row({...}) {` —— 空体是"什么都不画"，不是死方法 */
+function isContainerInvocation(line) {
+  return /^\s*(Column|Row|Stack|Flex|List|Grid|Scroll|SideBarContainer|RelativeContainer)\s*\(.*\)\s*\{\s*$/.test(line);
+}
+
+/** 返回一个"什么都不做"的清理函数（没订阅就没什么可退订）——不是按钮处理器 */
+function isReturnedNoop(line) {
+  return /^\s*return\s*\([^)]*\)\s*=>\s*\{\s*$/.test(line);
+}
+
 const hits = [];
 for (const dir of ROOTS) {
   for (const file of filesUnder(join(ROOT, dir))) {
@@ -68,11 +107,18 @@ for (const dir of ROOTS) {
       if (/=>\s*\{\s*$/.test(lines[i])) {
         const next = (lines[i + 1] ?? '').trim();
         if (next === '}' || next === '},' || next === '};') {
-          hits.push({ file, line: i + 1, kind: '空箭头函数体（跨行）', text: raw.split('\n')[i].trim() });
+          // 可选回调的默认实现 / 返回的空清理函数：都不报（理由见各自函数头）
+          // 或者**上一行有注释**——本仓的规矩是"说不出理由的空实现就是缺陷"，
+          // 反过来说：**写明了理由**的空实现（"这是诚实的空实现，因为…"）不报。
+          const prevRaw = (raw.split('\n')[i - 1] ?? '').trim();
+          const documented = prevRaw.includes('//') || prevRaw.endsWith('*/') || prevRaw.endsWith('*');
+          if (!isOptionalCallbackDefault(lines[i], lines[i - 1]) && !isReturnedNoop(lines[i]) && !documented) {
+            hits.push({ file, line: i + 1, kind: '空箭头函数体（跨行）', text: raw.split('\n')[i].trim() });
+          }
         }
       }
       // 空方法体：`name(...) {` 紧跟 `}`
-      if (/^\s{2,}[a-zA-Z_$][\w$]*\([^)]*\)\s*\{\s*$/.test(lines[i])) {
+      if (/^\s{2,}[a-zA-Z_$][\w$]*\([^)]*\)\s*\{\s*$/.test(lines[i]) && !isContainerInvocation(lines[i])) {
         const next = (lines[i + 1] ?? '').trim();
         if (next === '}') {
           hits.push({ file, line: i + 1, kind: '空方法体', text: raw.split('\n')[i].trim() });

@@ -312,6 +312,12 @@ export struct RightbarShell {
           onFocusCell: (cellId: string) => {
             this.timelineFocused = cellId;
           },
+          /*
+           * `onCommit` 的契约是"落定后把那一格**滚进主区列表的视野**"（见 `TimelineOverview` 头注：
+           * 这件事要拿宿主的 `scroller`）。右栏这条时间线**没有"主区列表"可滚**——
+           * 它自己就是列表旁边的那条比例条，所以这里**有意**交空实现。
+           * 写在这里，免得死按钮扫描器把它当缺陷再报一次。
+           */
           onCommit: () => {
           },
           onDragChange: (dragging: boolean) => {

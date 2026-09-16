@@ -333,6 +333,12 @@ export struct MainShell {
             }
           });
         },
+        /*
+         * 「开始发现」是**诚实的空实现**：那枚按钮的可用性由 `ConnectPane.discoveryAvailable`
+         * 决定，不可用时它显示「发现不可用」且 `enabled(false)`——**不是"点了没反应"**。
+         * 这台设备上没有可用的发现通道（E130 起本应用也只记一个 Host），
+         * 所以宿主侧交一个空实现。写在这里，免得死按钮扫描器把它当缺陷再报一次。
+         */
         onStartDiscovery: () => {
         },
         onOpenDiagnostics: () => {
