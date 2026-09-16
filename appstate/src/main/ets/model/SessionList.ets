@@ -17,6 +17,7 @@
 import { getNumber, getRecord, getString, isRecord } from 'connection';
 import { FIELD_ALIASES, SESSION_LIST_ENDPOINT, titleFromProjections } from 'dshcompat';
 import { baseNameOf } from './ProducedFiles';
+import { subagentModeOf } from './Wire';
 
 /**
  * 无标题时的中性兜底文案。
@@ -54,6 +55,13 @@ export interface SessionListItem {
   parentSessionId: string;
   /** 会话来源（`origin`；官方用它区分"用户开的"与"子代理开的"） */
   origin: string;
+  /**
+   * 子代理的运行模式（`one-shot` / `continuable`；普通会话为空串）。
+   *
+   * F2 的另一半要用它：打开子代理会话必须给出 `kind:'subagent'` 的地址，
+   * 而那个地址**必填** `mode`。读不到就留空串 ⇒ 调用方回落普通地址（**不编默认值**）。
+   */
+  subagentMode: string;
   /** 原始对象（供尚未建模的字段使用） */
   raw: Object;
 }
@@ -160,6 +168,7 @@ export function projectSessionList(value: Object | undefined): SessionListPage {
       // F2：子代理会话的两个标识（原始对象里一直有，此前没建模）
       parentSessionId: pickString(raw, ['parentSessionId']),
       origin: pickString(raw, ['origin']),
+      subagentMode: subagentModeOf(raw),
       raw: raw
     };
     if (item.id.length === 0) {

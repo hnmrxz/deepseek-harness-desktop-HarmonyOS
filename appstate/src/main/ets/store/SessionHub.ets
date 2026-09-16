@@ -133,7 +133,8 @@ import {
   LLM_LIST_CONFIGURABLE_PROVIDERS_ENDPOINT,
 } from 'dshcompat';
 import type { SessionEventShape, SlotBinding } from 'dshcompat';
-import { projectSessionList } from '../model/SessionList';
+import { isSubagentSession, projectSessionList } from '../model/SessionList';
+import { followSessionAddress, followSubagentAddress } from '../model/Wire';
 import { localOnlySearchNote, mergeSessionSearch } from '../model/SessionSearch';
 import { permissionCommand, permissionSwitchable } from '../model/Permissions';
 import { encodeQuestionAnswers } from '../model/Trajectory';
@@ -1173,6 +1174,29 @@ export class SessionHub {
   private setActionError(text: string): void {
     this.lastError = text;
     this.lastErrorScope = ERROR_SCOPE_ACTION;
+  }
+
+  /**
+   * 追流地址：普通会话给 `{kind:'session'}`，**子代理会话给 `{kind:'subagent', …}`**（F2）。
+   *
+   * 只在证据齐备时走子代理那种：会话在列表里、`isSubagentSession` 为真、
+   * 且 `parentSessionId` 与 `subagentMode` **都非空**。缺任何一项就退回普通地址
+   * ——保持既有行为（会被宿主拒、但错误信息是它自己给的那一条），
+   * 而不是**编一个 mode** 让一条 `continuable` 的会话以 `one-shot` 的语义被打开。
+   */
+  private followAddressFor(sessionId: string): Object {
+    for (let i = 0; i < this.sessions.length; i++) {
+      const item: SessionListItem = this.sessions[i];
+      if (item.id !== sessionId) {
+        continue;
+      }
+      if (isSubagentSession(item) && item.parentSessionId.length > 0 && item.subagentMode.length > 0) {
+        this.record(`follow 用子代理地址 mode=${item.subagentMode}`);
+        return followSubagentAddress(item.parentSessionId, sessionId, item.subagentMode);
+      }
+      break;
+    }
+    return followSessionAddress(sessionId);
   }
 
   /**
@@ -2422,11 +2446,18 @@ export class SessionHub {
       return;
     }
 
-    const address: Record<string, Object> = {};
-    address['kind'] = 'session';
-    address['sessionId'] = sessionId;
+    /*
+     * 【F2 的另一半：子代理会话要用**它自己那种地址**才打得开】
+     *
+     * 契约（`dsh-api-session-controller/lib/types/types.d.ts`）：
+     *   SessionAddress = {kind:'session', sessionId}
+     *                  | {kind:'subagent', parentSessionId, childSessionId, mode}
+     * 而 `history.js` 的 `validateAddress` 在"普通地址 + origin==='subagent'"时**直接抛**
+     * `session/agent-busy … require their durable parent address`——真机上那条报错
+     * 说的就是解法。本仓的 `followSubagentAddress()` **早就写好了**，只是没人调用。
+     */
     const request: Record<string, Object> = {};
-    request['address'] = address as Object;
+    request['address'] = this.followAddressFor(sessionId);
     request['maxMessages'] = 60;
     // assistantStream:true 让 Host 额外推送「正在进行中的助手输出」，
     // 这样流式光标与逐字输出才有数据（否则只能等整条消息落盘）。
@@ -3278,7 +3309,7 @@ export class SessionHub {
           id: s.id, title: title, cwd: s.cwd, updatedAt: s.updatedAt, createdAt: s.createdAt,
           running: s.running, blank: s.blank,
           // F2：子代理标识要随标题更新一起带过去，不能在这里丢掉
-          parentSessionId: s.parentSessionId, origin: s.origin,
+          parentSessionId: s.parentSessionId, origin: s.origin, subagentMode: s.subagentMode,
           raw: s.raw
         });
       } else {

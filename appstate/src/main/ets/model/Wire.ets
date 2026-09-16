@@ -887,6 +887,31 @@ export function followSubagentAddress(parentSessionId: string, childSessionId: s
   return { kind: 'subagent', parentSessionId: parentSessionId, childSessionId: childSessionId, mode: mode };
 }
 
+/**
+ * 从会话说描述的原始对象里读**子代理的运行模式**（F2 的另一半）。
+ *
+ * 契约（`dsh-api-session-controller/lib/types/types.d.ts`）里那个地址要
+ * `mode: 'one-shot' | 'continuable'`，而它**就在会话自己的 `subagent` 投影上**：
+ * `projections.values.subagent.mode`——同包 `history.js` 里
+ * `const identity = projections?.values.subagent` 读的是同一处。
+ *
+ * 读不到就返回**空串**（不是编一个默认值）：地址少一个必填字段会被宿主拒，
+ * 而"编一个 one-shot"会让一条 continuable 的子代理会话以错误的语义被打开——
+ * **错的语义比打不开更糟**（用户会以为续跑不生效是别的原因）。调用方据此回落到普通地址。
+ */
+export function subagentModeOf(raw: Object | undefined): string {
+  if (raw === undefined) {
+    return '';
+  }
+  const projections: Object | undefined = getRecord(raw, 'projections');
+  const values: Object | undefined = getRecord(projections, 'values');
+  const subagent: Object | undefined = getRecord(values, 'subagent');
+  if (subagent === undefined) {
+    return '';
+  }
+  return getString(subagent, 'mode') ?? '';
+}
+
 /** `session/follow` 业务参数体。 */
 export interface SessionFollowRequest {
   address: Object;
