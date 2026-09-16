@@ -55,7 +55,7 @@ export const TRAJECTORY_DETAIL_TITLE: string = '事件详情';
  * 这句话要同时回答：① 发生了什么（内部事件正文不显示）；② 为什么（可能含系统提示词，
  * 按安全口径不进任何用户可达出口）；③ 还能拿到什么（类别/工具名/模型/字符数在下面几行）。
  */
-const INTERNAL_BODY_HIDDEN_PREFIX: string =
+export const INTERNAL_BODY_HIDDEN_PREFIX: string =
   '内部事件正文不显示：它可能包含系统提示词或未识别载荷，按安全口径不进界面/复制/引用/通知/导出。'
   + '下面的类别、工具名、模型与字符数是可核查的结构化事实';
 

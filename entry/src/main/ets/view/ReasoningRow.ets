@@ -24,7 +24,7 @@
  * 展开集合的唯一真值在宿主（`TurnView` 或轨迹列表），本组件只吃 `expanded` 并上报 `onToggle`。
  */
 
-import { Fs, Radius, Sp, TrajectoryItem, formatDuration } from 'appstate';
+import { Fs, Radius, Sp, TrajectoryItem, formatDuration, userFacingBodyOf } from 'appstate';
 import { Border } from 'appstate';
 import { MarkdownRenderer } from './MarkdownRenderer';
 
@@ -67,7 +67,9 @@ export struct ReasoningRow {
       .width('100%')
 
       if (this.expanded) {
-        MarkdownRenderer({ text: this.item.body, muted: true })
+        // F22（真机取证 2026-09-16）：正文出口一律走 userFacingBodyOf——
+        // 内部条目（系统提示词 / 未识别载荷）在这里取到的是空串，不得原样渲染。
+        MarkdownRenderer({ text: userFacingBodyOf(this.item), muted: true })
       }
     }
     .width('100%')

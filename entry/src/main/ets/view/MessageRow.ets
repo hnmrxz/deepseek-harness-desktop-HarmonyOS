@@ -33,8 +33,9 @@
  */
 
 import {
-  Fs, HarmonyColor, HarmonyRadius, HarmonySpacing, HarmonyType, MenuGesture, Radius, Sp, Speaker,
-  TrajectoryItem, contextMenuGestures, formatClock, formatDuration, hoverEnabled
+  Fs, HarmonyColor, HarmonyRadius, HarmonySpacing, HarmonyType, INTERNAL_BODY_HIDDEN_PREFIX, MenuGesture,
+  Radius, Sp, Speaker,
+  TrajectoryItem, contextMenuGestures, formatClock, formatDuration, hoverEnabled, userFacingBodyOf
 } from 'appstate';
 /** 类型单独 import type（本仓约定：值与类型分开写） */
 import type { InputModality } from 'appstate';
@@ -165,12 +166,29 @@ export struct MessageRow {
       }
 
       // ── 正文（Markdown；流式光标跟在句尾）──
-      MarkdownRenderer({
-        text: this.item.streaming ? this.item.body + ' ▌' : this.item.body,
-        // 文件提及的词汇表由**回合**给（见 TurnView），这里只透传
-        mentionPath: this.mentionPath,
-        onOpenMention: this.onOpenMention
-      })
+      /*
+       * F22（真机取证 2026-09-16）：**正文渲染也是一条"出口"**。
+       *
+       * 此前这里直接渲染 `item.body`，于是轨迹视图里「系统」那一条把**整段系统提示词**
+       * 画了出来（不需要点任何格子）。而同一份代码里复制/引用早就走了
+       * `userFacingBodyOf()`（P8-5 的"唯一出口取值"）——**只有渲染这一路漏了**。
+       *
+       * 内部条目取值是空串：此时渲染既有的一句说明（文案复用 `TrajectoryDetail` 里那一份，
+       * 不在这里新造第二份），而不是留一片空白让人以为"这条没有内容"。
+       */
+      if (userFacingBodyOf(this.item).length > 0) {
+        MarkdownRenderer({
+          text: this.item.streaming ? userFacingBodyOf(this.item) + ' ▌' : userFacingBodyOf(this.item),
+          // 文件提及的词汇表由**回合**给（见 TurnView），这里只透传
+          mentionPath: this.mentionPath,
+          onOpenMention: this.onOpenMention
+        })
+      } else if (this.item.internal === true) {
+        Text(INTERNAL_BODY_HIDDEN_PREFIX)
+          .fontSize(Fs.CAPTION)
+          .fontColor($r('sys.color.font_tertiary'))
+          .width('100%')
+      }
 
       // ── 行内动作条（助手消息才有；用户消息的动作在长按菜单里）──
       if (this.item.speaker === Speaker.ASSISTANT) {
