@@ -191,6 +191,17 @@ export type {
 // ── 「关于」与诊断空态（**不是桩数据**：全部从 dshcompat 实时派生） ──
 export { aboutInfo } from './model/StubData2';
 export { emptyDiagReport } from './model/Diag';
+
+// ── 每会话输入草稿（P8-3：草稿是**会话视图状态的一部分**，官方 views.d.ts 逐字） ──
+export {
+  COMPOSER_DRAFT_MAX,
+  draftCount,
+  draftOf,
+  dropDraft,
+  emptyComposerDrafts,
+  putDraft
+} from './model/ComposerDrafts';
+export type { ComposerDrafts } from './model/ComposerDrafts';
 // 诊断模式（D7 §3 第 4 项）：本地核心 / 远程 Host 分流
 export { DiagMode, diagHintOf, diagModeOf, diagTitleOf, filterDiagEntries } from './model/Diag';
 

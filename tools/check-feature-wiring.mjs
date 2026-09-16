@@ -106,6 +106,13 @@ const FEATURES = [
    * 取值只有一处（`userFacingBodyOf`），脱敏只有一处（`Redact.scrubCredentials`）。
    * 三个都要"有调用点"：只留定义就等于又回到"通道有、没接"。
    */
+  /*
+   * 每会话草稿（P8-3）。官方 `views.d.ts` 逐字："Composer draft (persisted; survives session
+   * switches and reloads)" —— 草稿是**会话视图状态的一部分**，而我们此前是全应用一份：
+   * 在会话 A 里写一半、切到 B、顺手发送 ⇒ **那段话发给了 B**。
+   * 钉三段接线：纯模型的"取回"与"存回"都要有调用点，宿主里那个切换点必须在。
+   */
+  { name: '每会话草稿', patterns: [['switchDraftContext', 2], ['draftOf', 2], ['putDraft', 2], ['dropDraft', 2]] },
   { name: '内部内容隔离', patterns: [['mayExposeBodyToUser', 2], ['userFacingBodyOf', 2], ['scrubCredentials', 2], ['INTERNAL_BODY_HIDDEN', 1]] },
   /*
    * 文件变更流（E226）。E383 修自激时把 `openFilesStream` 改名为 `ensureFilesStream`

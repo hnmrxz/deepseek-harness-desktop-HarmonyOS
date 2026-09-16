@@ -58,7 +58,12 @@ import {
   HostRecord,
   HubPhase,
   BackAction,
+  ComposerDrafts,
   decideBack,
+  draftOf,
+  dropDraft,
+  emptyComposerDrafts,
+  putDraft,
   userFacingBodyOf,
   drillAfterPreviewClosed,
   LayoutMode,
@@ -617,6 +622,16 @@ struct Index {
 
   // ── 交互状态 ──
   @State draft: string = '';
+  /**
+   * 每个会话各一份草稿（P8-3）。
+   *
+   * 【为什么不能只有上面那一个 `draft`】官方 `views.d.ts` 逐字写着
+   * "Composer draft (persisted; **survives session switches** and reloads)" ——
+   * 草稿是**会话视图状态的一部分**。全应用一份的后果是真实且严重的：
+   * 在会话 A 里写一半、切到 B、顺手按发送 ⇒ **那段话发给了 B**。
+   * （本仓只做"跨会话切换"这一半；"跨重载"需要落盘，已登记在矩阵 §6。）
+   */
+  @State drafts: ComposerDrafts = emptyComposerDrafts();
   @State attachments: PendingAttachment[] = [];
   /** Host 侧待发队列（与会话一一对应，由 `session/control` 驱动） */
   @State queued: QueuedItem[] = [];
@@ -1777,10 +1792,27 @@ struct Index {
     return '';
   }
 
+  /**
+   * 切换输入框的**草稿上下文**（P8-3）。
+   *
+   * 三步，顺序不能换：① 把当前草稿存回**当前**会话（空文本会被 `putDraft` 删掉，不留空壳）；
+   * ② 取出目标会话的那一份；③ 用取回的值填输入框。
+   *
+   * 【为什么空串也要走这一趟】`nextSessionId === ''`（退回列表/切到别的页签）时取出的是空串，
+   * 输入框随之清空——用户回到那个会话时，`openSession` 会把他的草稿原样还给他。
+   */
+  private switchDraftContext(nextSessionId: string): void {
+    const bag: ComposerDrafts = putDraft(this.drafts, this.selectedSessionId, this.draft);
+    this.drafts = bag;
+    this.draft = draftOf(bag, nextSessionId);
+  }
+
   private openSession(id: string): void {
     // "进会话要同步哪些字段"在模型里只有一处（`enterSession`）：当前会话、主区回会话面板、
     // **收起手机抽屉**、右栏在不可用时回落到可用面板。此前这几个字段散在这里手写，
     // 抽屉那条就没人管（手机上从抽屉里点会话 ⇒ 抽屉还挡在前面）。
+    // 切会话前先把当前草稿**存回它自己的会话**，再取回目标会话的那一份（P8-3）
+    this.switchDraftContext(id);
     this.nav = enterSession(this.nav, id, this.panelRegistry);
     this.selectedSessionId = id;
     this.selectedSessionTitle = this.titleOf(id);
@@ -1859,6 +1891,8 @@ struct Index {
     this.stackPage = d.stackPage;
     this.wsDrill = d.wsDrill;
     if (d.clearSession) {
+      // 离开会话页签 = 离开这个会话：草稿存回它自己的会话，输入框清空（回来时再取回）
+      this.switchDraftContext('');
       this.selectedSessionId = '';
       this.selectedSessionTitle = '';
     }
@@ -3160,6 +3194,14 @@ struct Index {
       const snap = SessionHub.shared().snapshot();
       if (shouldRestoreDraft(ok, snap.lastSendQueued, this.draft, submitted)) {
         this.draft = submitted;
+        return;
+      }
+      /*
+       * 真的发出去了（或被排进待发队列）：这条草稿**用掉了** ⇒ 把袋子里那一份也删掉。
+       * 不删的话，切走再切回来会把已经发出去的原文又还给输入框（用户以为没发成功）。
+       */
+      if (ok || snap.lastSendQueued) {
+        this.drafts = dropDraft(this.drafts, this.selectedSessionId);
       }
     });
   }

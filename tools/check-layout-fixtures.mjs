@@ -72,6 +72,8 @@ const PURE_FILES = [
   'dshcompat/src/main/ets/QueueCodes.ets',
   // 提交失败后的草稿恢复规则（P7-15）：零依赖
   'appstate/src/main/ets/model/ComposerSend.ets',
+  // 每会话草稿（P8-3）：零依赖，纯数组操作
+  'appstate/src/main/ets/model/ComposerDrafts.ets',
   // 目标栏的可判定状态（P7-20）：零依赖
   'appstate/src/main/ets/model/GoalBar.ets',
   // 回合产出的文件（P7-21）：零依赖（只用 ToolDiff + Trajectory）
@@ -282,6 +284,7 @@ const PRT = require2('./PluginRowsText.js');
 const SS = require2('./SessionSearch.js');
 const PF = require2('./PendingFocus.js');
 const TDT = require2('./TrajectoryDetail.js');
+const CD = require2('./ComposerDrafts.js');
 const PM = require2('./Permissions.js');
 const PD = require2('./PrivacyDisclosure.js');
 const MI = require2('./MessageImage.js');
@@ -2663,6 +2666,52 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   t.eq('大小写变体不命中', isBenignQueueRace('SESSION/QUEUE-ITEM-NOT-FOUND'), false);
   t.eq('前缀相同但不同的码不命中', isBenignQueueRace('session/steer-unavailable-x'), false);
   t.eq('非竞态返回 NONE', queueRaceKind('gateway/internal'), QUEUE_RACE_NONE);
+}
+
+// ── P8-3：每会话草稿（官方 `views.d.ts`："Composer draft (persisted; survives session switches)") ──
+{
+  const { emptyComposerDrafts, putDraft, draftOf, dropDraft, draftCount, COMPOSER_DRAFT_MAX } = CD;
+
+  let bag = emptyComposerDrafts();
+  t.eq('空袋子：任何会话都是空串', draftOf(bag, 'A'), '');
+  t.eq('空袋子没有条目', draftCount(bag), 0);
+  t.eq('没有会话 id 时不存（宿主此时把它当界面临时状态）', draftCount(putDraft(bag, '', 'x')), 0);
+
+  // ① 缺陷原形：在 A 里写一半，切到 B —— 两边不许串台
+  bag = putDraft(bag, 'A', '给 A 的话');
+  bag = putDraft(bag, 'B', '给 B 的话');
+  t.eq('A 的草稿是 A 的', draftOf(bag, 'A'), '给 A 的话');
+  t.eq('B 的草稿是 B 的（**这就是原来会串台的地方**）', draftOf(bag, 'B'), '给 B 的话');
+  t.eq('两个会话各占一条', draftCount(bag), 2);
+
+  // ② 空文本 = 删条目（不留空壳）
+  bag = putDraft(bag, 'A', '');
+  t.eq('清空某个会话 ⇒ 条目被删掉', draftCount(bag), 1);
+  t.eq('删掉之后取回是空串', draftOf(bag, 'A'), '');
+  t.eq('别的会话不受影响', draftOf(bag, 'B'), '给 B 的话');
+
+  // ③ 最近写过的排在最前（淘汰规则据此不需要时间戳）
+  bag = putDraft(bag, 'A', '再来一次');
+  t.eq('重新写入 ⇒ 排到最前', bag.sessionIds[0], 'A');
+
+  // ④ 上限：超出丢最久没写的
+  let many = emptyComposerDrafts();
+  for (let i = 0; i < COMPOSER_DRAFT_MAX + 3; i++) {
+    many = putDraft(many, `s${i}`, `文本 ${i}`);
+  }
+  t.eq('条目数被上限夹住', draftCount(many), COMPOSER_DRAFT_MAX);
+  t.eq('最新那条在', draftOf(many, `s${COMPOSER_DRAFT_MAX + 2}`), `文本 ${COMPOSER_DRAFT_MAX + 2}`);
+  t.eq('最久没写的那条被丢掉', draftOf(many, 's0'), '');
+
+  // ⑤ 值类型：不修改入参（@State 才认得出"换了新对象"）
+  const before = putDraft(emptyComposerDrafts(), 'A', '原文');
+  const after = putDraft(before, 'A', '改过');
+  t.eq('写入**不修改**入参', draftOf(before, 'A'), '原文');
+  t.eq('新对象带着新值', draftOf(after, 'A'), '改过');
+
+  // ⑥ dropDraft：发送成功后把这条草稿用掉
+  bag = dropDraft(after, 'A');
+  t.eq('发送成功后该会话的草稿被丢弃', draftOf(bag, 'A'), '');
 }
 
 // ── P8-6：重试行的文案（官方 `message.retry.status` 一行模板）与「整条链一条」 ──
