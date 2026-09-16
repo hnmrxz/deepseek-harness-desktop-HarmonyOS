@@ -124,6 +124,8 @@ export interface MainShellFacade {
   selectedSessionId: string;
   /** 会话头上下文行的工作区名（从选中会话的 cwd 派生；空 = 不知道，不显示） */
   sessionWorkspaceName: string;
+  /** 品牌名（宿主给的事实；空会话空态里居中显示，对应官方新会话页的品牌区） */
+  appName: string;
   /** 选中会话的最近活动时间（毫秒；0 = 不知道 ⇒ 不显示「多久没动」） */
   sessionUpdatedAt: number;
   selection: ModelSelection;
@@ -342,6 +344,7 @@ export struct MainShell {
           .padding({ left: Sp.M, right: Sp.M, top: Sp.XS })
       }
       ConversationPane({
+        appName: this.f.appName,
         itemCount: this.f.trajectoryItems.length,
         // E115：审批/提问直接弹在会话里（官方 web 的形态），一次点击即可放行
         pending: this.f.pending,

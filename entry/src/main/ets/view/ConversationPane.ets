@@ -27,6 +27,8 @@ import { PendingPane } from './PendingPane';
 @Component
 export struct ConversationPane {
   @Prop @Watch('onSessionChanged') sessionId: string = '';
+  /** 品牌名（宿主给的事实；空会话空态里居中显示，与官方新会话页的品牌区对应） */
+  @Prop appName: string = '';
   /** 会话头上下文行：工作区名（宿主从选中会话的 cwd 派生；空 = 不显示） */
   @Prop workspaceName: string = '';
   /** 选中会话的最近活动时间（毫秒；0 = 不显示） */
@@ -919,6 +921,36 @@ export struct ConversationPane {
       })
 
       List({ space: Sp.M, scroller: this.scroller }) {
+        /*
+         * 【空态（2026-09-17，对标官方）】
+         *
+         * 官方的新会话页正中是一块品牌区（wordmark + 一行状态），下面才是输入区；
+         * 我们此前是**一整片空白**（真机截图里从页头到输入区全是空的），
+         * 用户第一眼看到的是一个像是"没加载出来"的页面。
+         *
+         * 这里只放**我们能如实说出来的**东西：品牌名 + 一句当前工作区。
+         * **不放**官方那两个 chip（`工作区 ⌄` / `标准模式 ⌄`）——
+         * 前者已核实做不了（兼容面没有改会话工作区的端点），后者要选 Agent 预设、
+         * 属于另一个功能（登记在方案里），先摆一个按不动的 chip 就是假入口。
+         */
+        if (this.itemCount === 0) {
+          ListItem() {
+            Column({ space: Sp.S }) {
+              Text(this.appName)
+                .fontSize(Fs.TITLE_L)
+                .fontWeight(FontWeight.Bold)
+                .fontColor($r('sys.color.font_primary'))
+              Text(this.workspaceName.length > 0
+                ? `工作区 ${this.workspaceName}`
+                : $r('app.string.empty_conversation_hint'))
+                .fontSize(Fs.CAPTION)
+                .fontColor($r('sys.color.font_tertiary'))
+            }
+            .width('100%')
+            .height(240)
+            .justifyContent(FlexAlign.Center)
+          }
+        }
         if (this.view === 'trajectory') {
           // 轨迹视图 = 全量台账：条目级扁平列表（工具、子代理、目标/任务、交付物都在这里可查）
           ForEach(this.visibleItems(), (item: TrajectoryItem) => {

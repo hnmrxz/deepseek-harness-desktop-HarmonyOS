@@ -3083,6 +3083,7 @@ struct Index {
     selectedSessionId: this.selectedSessionId,
     // 会话头上下文行（P2-7）：工作区名从选中会话的 cwd 派生（拿不到就空串 ⇒ 界面不显示那段）
     sessionWorkspaceName: this.selectedSessionWorkspaceName(),
+    appName: APP_NAME,
     sessionUpdatedAt: this.selectedSessionUpdatedAt(),
     selection: this.selection,
     sendDraft: () => this.sendDraft(),

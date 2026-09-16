@@ -141,6 +141,10 @@
       "value": "子代理"
     },
     {
+      "name": "empty_conversation_hint",
+      "value": "选择一条会话，或在下方输入开始新的对话"
+    },
+    {
       "name": "status_not_started",
       "value": "还没有说话"
     },
