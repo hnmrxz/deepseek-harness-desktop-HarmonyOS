@@ -425,6 +425,7 @@ export type { DetailCapacity, LayoutDecision, LayoutInput } from './ui/LayoutCon
 export {
   BackAction,
   decideBack,
+  drillAfterPreviewClosed,
   navTabs,
   normalizeTab,
   selectTab,

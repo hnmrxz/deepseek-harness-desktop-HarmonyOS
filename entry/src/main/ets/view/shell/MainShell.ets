@@ -126,7 +126,8 @@ export interface MainShellFacade {
   settingWriteDomain: string;
   setSettingWriteNote: (value: string) => void;
   stackPage: StackPage;
-  setStackPage: (value: StackPage) => void;
+  /** 「退回一层」（P8-1）：与系统返回键共用同一个执行点（见 `AppShellFacade.backOneLayer`） */
+  backOneLayer: () => void;
   statsLine: string;
   /**
    * 主区**剩下三类面板**（工作区 / 设置 / 核心）的门面——交给 `TabContentView` 渲染。
@@ -247,7 +248,7 @@ export struct MainShell {
           this.f.openPoc();
         },
         onBack: () => {
-          this.f.setStackPage(StackPage.MAIN);
+          this.f.backOneLayer();
         }
       })
     } else if (this.f.activePanel() === MAIN_CONNECT) {
@@ -307,7 +308,7 @@ export struct MainShell {
           this.f.openDiagnostics();
         },
         onBack: () => {
-          this.f.setStackPage(StackPage.MAIN);
+          this.f.backOneLayer();
         }
       })
     } else if (this.f.activePanel() === MAIN_CONVERSATION) {

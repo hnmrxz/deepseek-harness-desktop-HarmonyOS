@@ -101,7 +101,14 @@ export interface AppShellFacade {
   showsConversation: () => boolean;
   sidePanelWidthVp: () => number;
   stackPage: StackPage;
-  setStackPage: (value: StackPage) => void;
+  /**
+   * 「退回一层」（P8-1）：与系统返回键**共用同一个执行点**。
+   *
+   * 页头的返回箭头此前自己写 `setStackPage(MAIN)`：这是同一件事的第二套实现——
+   * 如果返回键的阶梯改了（比如"最上层可见的浮层先关"），箭头就会与它不一致。
+   * 现在箭头只说"我要退一层"，退哪一层由纯函数 `decideBack` 决定。
+   */
+  backOneLayer: () => void;
   updateDetailDrag: (deltaXVp: number) => void;
 }
 
@@ -177,7 +184,7 @@ export struct AppShell {
       showNav: this.f.mode === LayoutMode.SINGLE && this.f.stackPage === StackPage.MAIN,
       showDetailEntry: this.f.stackPage === StackPage.CONVERSATION && this.f.mode !== LayoutMode.TRIPLE,
       onBack: () => {
-        this.f.setStackPage(StackPage.MAIN);
+        this.f.backOneLayer();
       },
       onOpenDetail: () => {
         this.f.setDetailOverlayOpen(true);

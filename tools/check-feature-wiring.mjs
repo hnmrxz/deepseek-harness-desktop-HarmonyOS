@@ -54,7 +54,13 @@ function count(pattern) {
   let n = 0;
   const where = [];
   for (const s of sources) {
-    const lines = s.text.split('\n');
+    /*
+     * 【为什么计数前要剥注释】本门禁判的是"调用点在不在"，而注释里写出同一个符号名
+     * （"中枢本来就有 `closeFilePreview()`，但没人调用"）会让计数**假装**还有调用点。
+     * P8-1 归真验证时当场撞上：把真正的调用换回旧写法（只清本地镜像），本门禁照样打印"全在"。
+     * 于是计数与反面规则口径统一：都只看代码。
+     */
+    const lines = stripComments(s.text).split('\n');
     for (let i = 0; i < lines.length; i++) {
       if (re.test(lines[i])) {
         n++;
@@ -85,6 +91,14 @@ const FEATURES = [
    */
   { name: '长期目标', patterns: [['refreshGoal', 2], ['goalBarStateOf', 2], ['pauseGoal', 2], ['goal/change', 1]] },
   { name: '消息反馈', patterns: [['putFeedback', 2], ['refreshFeedback', 2]] },
+  /*
+   * 返回层级收口（P8-1）。这一条钉的正是"**能力存在、调用点没有**"的缺陷：
+   *   · `SessionHub.closeFilePreview()` 早就写好了，但**一个调用点都没有**；视图里关预览写的是
+   *     `this.preview = undefined`（只清本地镜像）⇒ 下一次中枢广播就把预览装回来 = "关不掉"。
+   *   · 返回箭头原先各自写一行（`wsDrill-1` / `setStackPage(MAIN)`）⇒ 与返回键两套实现。
+   * 现在要求：关预览走中枢、下钻归一化走纯函数、所有"退回一层"的入口都经过 `consumeBack`。
+   */
+  { name: '返回层级收口', patterns: [['closeFilePreview', 2], ['drillAfterPreviewClosed', 2], ['consumeBack', 2], ['backOneLayer', 2], ['BACK_TO_LIST', 2]] },
   /*
    * 文件变更流（E226）。E383 修自激时把 `openFilesStream` 改名为 `ensureFilesStream`
    * （语义也变了：**只在作用域变化/用户驱动时**才订阅），本门禁当场红了 —— 这正是它该做的事：

@@ -61,6 +61,7 @@ import {
   HubPhase,
   BackAction,
   decideBack,
+  drillAfterPreviewClosed,
   HarmonyColor,
   HarmonyRadius,
   HarmonySpacing,
@@ -146,6 +147,7 @@ import {
   openSettings,
   legacyTabOfMainPanel,
   MAIN_WORKSPACES,
+  MAIN_CONVERSATION,
   mainPanelOfLegacyTab,
   activeMainPanelOf,
   navigateToMain,
@@ -1073,31 +1075,40 @@ struct Index {
    * 各种浮层），不经过 router 栈 ⇒ 系统返回事件没有任何人消费，默认行为是
    * **直接把应用退回桌面**。用户实测报告："许多页面用系统返回会直接退回桌面"。
    *
-   * 【顺序 = 从最上面那层往回退】返回键的语义是"关掉当前这一层"，所以：
-   *   浮层/编辑态 → 二级页 → 会话详情 → 工作区下钻 → 文件预览 → 非首页签 → 交给系统。
+   * 【顺序 = 从最上面那层往回退】完整的阶梯（P8-1 重排后）在纯函数
+   * `appstate/ui/NavigationController.decideBack` 里，逐级与**全组合**都有 fixture：
+   *   抽屉 → 编辑浮层 → 详情半模态 → 文件预览（整页层） → 会话整页 → 二级页
+   *   → 会话详情 → 工作区下钻 → 文件预览（并排栏） → 非首页签 → 交给系统。
    * 只有**确实停在首页、且没有任何浮层**时才返回 false——那时系统把应用切到后台
    * 才是正确行为，不该被应用吞掉（吞掉会变成"按返回没反应"）。
    *
    * 每一步都写 hilog：真机上核对"到底哪一层没退掉"时，这行日志就是答案。
    */
   onBackPress(): boolean {
-    // 优先级阶梯（浮层 → 二级页 → 详情 → 下钻 → 预览 → 首页签 → 交给系统）全部在
-    // `appstate/ui/NavigationController.decideBack` 里，并有 fixture 逐级断言；
-    // 这里只做**执行 + 日志**，不再自己排顺序。
+    return this.consumeBack();
+  }
+
+  /**
+   * 「退回一层」的**唯一执行点**（P8-1）。
+   *
+   * 【为什么返回键与界面上的返回箭头必须共用它】此前工作区文件树的返回箭头自己写了一行
+   * `wsDrill - 1`，返回键走另一条阶梯 —— 同一件事两套实现，于是"箭头能退、返回键不能退"
+   * （或反过来）这类不一致只能靠用户发现。现在两边都调用这一个函数：决策仍是纯函数
+   * （`decideBack`），执行只有这一份。
+   *
+   * 返回值 = **是否消费了这次返回**：`false` 表示已在根层，交给系统（最小化应用）。
+   */
+  private consumeBack(): boolean {
     const action: BackAction = decideBack(this.navState(), this.overlayState());
     switch (action) {
       case BackAction.CLOSE_CREDENTIAL:
-        this.credentialRef = '';
-        this.credentialDraft = '';
-        this.credentialNote = '';
-        this.sheetNoteOwner = '';
+        // 浮层的复位只有一处（`closeSheet`）——返回键、关闭按钮、下拉/遮罩关闭都走它，
+        // 否则"关掉了但状态还留着"会让下一次打开浮层带着上一次的残留。
+        this.closeSheet();
         hilog.info(DOMAIN, TAG, 'HDSH-BACK 关闭凭据编辑浮层');
         return true;
       case BackAction.CLOSE_SETTING_DRAFT:
-        this.textSettingDraft = '';
-        this.structSettingDraft = '';
-        this.credentialNote = '';
-        this.sheetNoteOwner = '';
+        this.closeSheet();
         hilog.info(DOMAIN, TAG, 'HDSH-BACK 关闭设置编辑浮层');
         return true;
       case BackAction.CLOSE_SEARCH:
@@ -1105,13 +1116,27 @@ struct Index {
         hilog.info(DOMAIN, TAG, 'HDSH-BACK 关闭搜索');
         return true;
       case BackAction.CLOSE_CHOICE:
-        this.choosing = undefined;
+        this.closeSheet();
         hilog.info(DOMAIN, TAG, 'HDSH-BACK 关闭选择浮层');
         return true;
       case BackAction.CLOSE_DETAIL_OVERLAY:
-        // 交给 Sheet 自己收起（`shouldDismiss` 里会复位状态）
-        this.detailOverlayOpen = false;
+        // 半模态由原生 Sheet 收起，复位仍归 `closeSheet`（下拉/遮罩/关闭按钮同一条路）
+        this.closeSheet();
         hilog.info(DOMAIN, TAG, 'HDSH-BACK 关闭详情半模态');
+        return true;
+      case BackAction.BACK_TO_LIST:
+        /*
+         * 手机单栏：从"会话整页"退回列表。
+         *
+         * 【为什么必须同时切主区面板】会话在单栏下是**一层**：`openSession` 既把主区切到
+         * 会话面板、又把 `stackPage` 设成 `CONVERSATION`。只清 `stackPage` 的话，
+         * `activeMainPanelOf` 仍返回会话面板 ⇒ 屏幕上还是那个会话（一次"按了没反应"）。
+         * 主区回列表**但保留会话选择**：会话仍在 Host 上跑，用户点一下就能回去，
+         * 也不需要清掉正在编辑的草稿。
+         */
+        this.nav = navigateToMain(this.nav, MAIN_WORKSPACES, this.panelRegistry);
+        this.stackPage = StackPage.MAIN;
+        hilog.info(DOMAIN, TAG, 'HDSH-BACK 会话页回列表（保留会话 %{public}s）', this.selectedSessionId);
         return true;
       case BackAction.STACK_TO_MAIN: {
         const from: string = this.stackPage;
@@ -1128,8 +1153,16 @@ struct Index {
         hilog.info(DOMAIN, TAG, 'HDSH-BACK 工作区上退一层，drill=%{public}d', this.wsDrill);
         return true;
       case BackAction.CLOSE_PREVIEW:
-        this.preview = undefined;
-        hilog.info(DOMAIN, TAG, 'HDSH-BACK 关闭文件预览');
+        /*
+         * 【必须让中枢清，不能在视图里清】预览的真值在中枢（`SessionHub.filePreview`），
+         * 视图这份只是镜像（每次广播都从快照覆盖回来）。此前这里写的是 `this.preview = undefined`
+         * —— 下一次中枢广播（新事件、文件列表、心跳）就把预览**装回来**：用户看到的是
+         * "预览关不掉"。中枢本来就有 `closeFilePreview()`，但它一个调用点都没有（接线断了）。
+         */
+        SessionHub.shared().closeFilePreview();
+        // 单栏下预览就是工作区第 2 层：关掉它必须同时退回文件树（判据在纯函数里）
+        this.wsDrill = drillAfterPreviewClosed(this.navState());
+        hilog.info(DOMAIN, TAG, 'HDSH-BACK 关闭文件预览，drill=%{public}d', this.wsDrill);
         return true;
       case BackAction.CLOSE_DRAWER:
         this.setDrawerOpen(false);
@@ -1154,6 +1187,12 @@ struct Index {
       stackPage: this.stackPage,
       wsDrill: this.wsDrill,
       hasSession: this.selectedSessionId.length > 0,
+      /*
+       * 单栏（手机）下"会话"是一层：它盖住了工作区/会话列表。
+       * 多栏下会话在与列表并排的主区里（列表始终可见）⇒ 它不是一层，返回键不该拿它当一层。
+       * 这个事实由**布局档位 + 此刻的主区面板**共同决定，交给纯函数去排优先级。
+       */
+      conversationIsPage: this.mode === LayoutMode.SINGLE && this.activePanel() === MAIN_CONVERSATION,
       detailOpen: this.detailOpen,
       // 手机抽屉：真值在 NavigationState.mobileDrawer（视图不另立一份状态）
       drawerOpen: this.nav.mobileDrawer === DrawerState.OPEN
@@ -2080,6 +2119,11 @@ struct Index {
    *
    * 复位与"谁在显示"分开写是有意的——原生关闭路径（下拉/遮罩/关闭按钮）只知道"关了"，
    * 不知道关的是哪一个；让宿主统一清干净，就不会出现"关掉后状态还留着、再也打不开"。
+   *
+   * 【P8-1：返回键也走这里】此前返回键的四个分支各自写几行"把某几个字段清掉"，
+   * 与这个方法并存 = 同一件事两套复位。两套迟早不一致（漏清一个字段就是"关掉了还留着"），
+   * 所以现在**只有这一处**复位：Sheet 自己关、返回键关、浮层内的关闭按钮关，都调用它。
+   * 各类浮层自己的 `closeXSheet()` 也只剩一行委托。
    */
   private closeSheet(): void {
     this.detailOverlayOpen = false;
@@ -2089,10 +2133,17 @@ struct Index {
     this.credentialRef = '';
     this.credentialDraft = '';
     this.credentialNote = '';
+    this.credentialBusy = false;
     this.textSettingKey = '';
     this.textSettingDraft = '';
+    this.textSettingItem = undefined;
+    this.textBusy = false;
     this.structSettingKey = '';
     this.structSettingDraft = '';
+    this.structSettingItem = undefined;
+    this.structBusy = false;
+    // 回执归属与回执正文一起清：留着归属而正文已空，下一次开浮层会挂上一条"上一次的"回执
+    this.sheetNoteOwner = '';
   }
 
   /** 浮层内容分派（宿主的另一半：谁在显示就渲染谁） */
@@ -2251,8 +2302,9 @@ struct Index {
     showsConversation: () => this.showsConversation(),
     sidePanelWidthVp: () => this.sidePanelWidthVp(),
     stackPage: this.stackPage,
-    setStackPage: (value: StackPage) => {
-      this.stackPage = value;
+    // 视图里的返回箭头与系统返回键**共用**这一个执行点（P8-1，见 `consumeBack`）
+    backOneLayer: () => {
+      this.consumeBack();
     },
     updateDetailDrag: (deltaXVp: number) => this.updateDetailDrag(deltaXVp),
     };
@@ -2645,13 +2697,13 @@ struct Index {
 
   // ───────────────────── 凭据写入浮层 ─────────────────────
 
+  /**
+   * 关闭凭据浮层（P8-1：只委托，不再自己写一份复位）。
+   *
+   * 复位里最要紧的一条写在 `closeSheet`：**清掉草稿** —— 明文不该因为"关掉了浮层"而留在状态里。
+   */
   private closeCredentialSheet(): void {
-    this.credentialRef = '';
-    // 清掉草稿：明文不该因为「关掉了浮层」而继续留在状态里
-    this.credentialDraft = '';
-    this.credentialNote = '';
-    this.sheetNoteOwner = '';
-    this.credentialBusy = false;
+    this.closeSheet();
   }
 
   /** 当前编辑的凭据是否已配置（决定是否显示「清除」） */
@@ -2716,12 +2768,9 @@ struct Index {
 
   // ───────────────────── 文本 / 数字设置编辑浮层 ─────────────────────
 
+  /** 关闭文本/数字设置浮层（P8-1：只委托，复位只有 `closeSheet` 一份） */
   private closeTextSettingSheet(): void {
-    this.textSettingKey = '';
-    this.textSettingDraft = '';
-    this.textSettingItem = undefined;
-    this.credentialNote = '';
-    this.sheetNoteOwner = '';
+    this.closeSheet();
   }
 
   private openTextSettingSheet(item: SettingItem): void {
@@ -2774,12 +2823,16 @@ struct Index {
     this.credentialNote = '已恢复为 Host 上的当前值（尚未写回）。';
   }
 
+  /**
+   * 关闭结构设置浮层（P8-1：只委托）。
+   *
+   * 这里此前清的是**凭据浮层的** `credentialBusy`——结构浮层自己的忙标志是 `structBusy`
+   * （E353 才把三者分开）。如实说明：这处错位**没有变成已复现的缺陷**，因为打开路径
+   * （`openStructSettingSheet`）自己会把 `structBusy` 复位；它只是"清错了对象"这件事本身，
+   * 而只要还留着一份手写复位，下一次就未必这么巧。现在归 `closeSheet` 一处清。
+   */
   private closeStructSettingSheet(): void {
-    this.structSettingKey = '';
-    this.structSettingDraft = '';
-    this.structSettingItem = undefined;
-    this.credentialNote = '';
-    this.credentialBusy = false;
+    this.closeSheet();
   }
 
   /** 结构设置写入进行中（**本浮层自己的**忙标志；此前借用了凭据浮层的，见 E353） */
@@ -2977,8 +3030,9 @@ struct Index {
       this.settingWriteNote = value;
     },
     stackPage: this.stackPage,
-    setStackPage: (value: StackPage) => {
-      this.stackPage = value;
+    // 视图里的返回箭头与系统返回键**共用**这一个执行点（P8-1，见 `consumeBack`）
+    backOneLayer: () => {
+      this.consumeBack();
     },
     statsLine: this.statsLine,
     tabFacade: this.buildTabFacade(),
@@ -4165,6 +4219,10 @@ struct Index {
     wsDrill: this.wsDrill,
     setWsDrill: (value: number) => {
       this.wsDrill = value;
+    },
+    // 视图里的返回箭头与系统返回键**共用**这一个执行点（P8-1）
+    backOneLayer: () => {
+      this.consumeBack();
     },
     };
     return facade;

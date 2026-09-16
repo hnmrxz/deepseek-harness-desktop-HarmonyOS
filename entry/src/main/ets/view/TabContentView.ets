@@ -127,6 +127,14 @@ export interface TabContentFacade {
   writeSetting: (key: string, value: Object, label: string) => Promise<void>;
   wsDrill: number;
   setWsDrill: (value: number) => void;
+  /**
+   * 「退回一层」（P8-1）：**与系统返回键同一个执行点**。
+   *
+   * 【为什么不让组件自己减一】此前文件树的返回箭头直接写 `wsDrill - 1`，返回键走另一条阶梯：
+   * 同一件事两套实现，于是"箭头退了、状态没退"（预览留在那儿继续吃返回键）只能靠用户发现。
+   * 现在箭头只表达意图（我要退一层），怎么退由宿主的返回阶梯决定。
+   */
+  backOneLayer: () => void;
 }
 
 @Component
@@ -206,7 +214,8 @@ export struct TabContentView {
           this.f.attachWorkspaceFileToComposer(node);
         },
         onBack: () => {
-          this.f.setWsDrill(this.f.wsDrill > 0 ? this.f.wsDrill - 1 : 0);
+          // 与系统返回键共用同一个执行点（`Index.consumeBack`）——见 `backOneLayer` 的说明
+          this.f.backOneLayer();
         }
       })
     } else {

@@ -438,10 +438,12 @@ console.log('\n## 导航宽度映射');
 
 console.log('\n## 导航：返回键的优先级阶梯（迁移前写在 Index.onBackPress 里）');
 {
-  const { decideBack, BackAction, StackPage, selectTab, normalizeTab, showsConversation, navTabs } = NC;
+  const { decideBack, BackAction, StackPage, selectTab, normalizeTab, showsConversation, navTabs, previewIsLayer, drillAfterPreviewClosed } = NC;
   // 【坑】`NavTab.SESSIONS` 是 `'workspaces'` 的**别名**（E108：会话并入工作区），
   // 所以"在会话页签"与"在工作区页签"是同一个状态；默认值必须写 'workspaces'。
-  const nav = (o) => Object.assign({ tab: 'workspaces', stackPage: StackPage.MAIN, wsDrill: 0, hasSession: true, detailOpen: false, drawerOpen: false }, o);
+  // `conversationIsPage` 默认 false：**多栏形态**下会话不是"一层"（列表始终可见）。
+  // 单栏（手机）的用例显式传 true —— 见下面"会话整页"那组断言。
+  const nav = (o) => Object.assign({ tab: 'workspaces', stackPage: StackPage.MAIN, wsDrill: 0, hasSession: true, detailOpen: false, drawerOpen: false, conversationIsPage: false }, o);
   const ov = (o) => Object.assign({ credentialOpen: false, settingDraftOpen: false, searchOpen: false, choosingOpen: false, detailOverlayOpen: false, previewOpen: false }, o);
 
   // 优先级：浮层之间也有先后（凭据 → 设置草稿 → 搜索 → 选择）
@@ -476,7 +478,97 @@ console.log('\n## 导航：返回键的优先级阶梯（迁移前写在 Index.o
   t.eq('不在首页签则回会话', decideBack(nav({ tab: 'settings' }), ov({})), BackAction.TAB_TO_SESSIONS);
   // 根层交给系统（**必须**是 EXIT，否则就是"按返回没反应"的假入口）
   t.eq('根层交给系统（不消费）', decideBack(nav({}), ov({})), BackAction.EXIT);
+
+  /*
+   * ───────── P8-1：组合态（此前只测了 wsDrill=0 的顺路情形）─────────
+   *
+   * 缺陷原形：单栏下预览就是工作区第 2 层（`WorkspacePane.buildStacked`：0=列表、1=文件树、≥2=预览），
+   * 而阶梯里"下钻退一层"排在"关预览"之前 ⇒ 按返回只是把层数从 2 减到 1：
+   * 预览确实不在屏幕上了，`previewOpen` 却还留着 ⇒ 之后那一次返回键**白按一次**
+   * （屏幕上什么都不变），这是本项目反复出现的"假动作"。
+   */
+  t.eq('单栏：预览层（drill≥2）⇒ 先关预览，而不是先退下钻',
+    decideBack(nav({ tab: 'workspaces', wsDrill: 2 }), ov({ previewOpen: true })), BackAction.CLOSE_PREVIEW);
+  t.eq('单栏：drill=3 同理', decideBack(nav({ tab: 'workspaces', wsDrill: 3 }), ov({ previewOpen: true })), BackAction.CLOSE_PREVIEW);
+  t.eq('多栏：预览只是并排的一栏 ⇒ 先退下钻（它不盖住文件树）',
+    decideBack(nav({ tab: 'workspaces', wsDrill: 1 }), ov({ previewOpen: true })), BackAction.DRILL_UP);
+  t.eq('层判定：单栏 drill≥2 = 层', previewIsLayer(nav({ tab: 'workspaces', wsDrill: 2 })), true);
+  t.eq('层判定：drill=1 不是层', previewIsLayer(nav({ tab: 'workspaces', wsDrill: 1 })), false);
+  t.eq('层判定：二级页上不是层（预览没在屏幕上）',
+    previewIsLayer(nav({ tab: 'workspaces', wsDrill: 2, stackPage: StackPage.CONVERSATION })), false);
+  t.eq('层判定：非工作区页签不是层', previewIsLayer(nav({ tab: 'settings', wsDrill: 2 })), false);
+  // 关掉预览必须回到文件树：只清预览会留下"看不见却还在"的一层
+  t.eq('关预览 ⇢ 单栏回到文件树（2 → 1）', drillAfterPreviewClosed(nav({ tab: 'workspaces', wsDrill: 2 })), 1);
+  t.eq('关预览 ⇢ 多栏不动下钻', drillAfterPreviewClosed(nav({ tab: 'workspaces', wsDrill: 1 })), 1);
+
+  /*
+   * 手机单栏：会话是"盖在列表上的一层"。
+   *
+   * 缺陷原形：`openSession` 在单栏下既切主区面板、又把 `stackPage` 设成 `CONVERSATION`；
+   * 而 `STACK_TO_MAIN` 只改 `stackPage`。于是按返回 ⇒ 主区面板仍是会话 ⇒ **屏幕上什么都不变**，
+   * 再按一次 ⇒ 根层交给系统**直接退出应用**（用户看到"第一次没反应、第二次退出"）。
+   */
+  t.eq('单栏会话整页 ⇒ 返回列表（保留会话）',
+    decideBack(nav({ conversationIsPage: true, stackPage: StackPage.CONVERSATION }), ov({})), BackAction.BACK_TO_LIST);
+  t.eq('单栏会话整页优先于二级页（两者同时成立时只退一层）',
+    decideBack(nav({ conversationIsPage: true, stackPage: StackPage.CONVERSATION, wsDrill: 2 }), ov({})), BackAction.BACK_TO_LIST);
+  t.eq('多栏会话不是层 ⇒ 二级页规则照旧',
+    decideBack(nav({ conversationIsPage: false, stackPage: StackPage.CONVERSATION }), ov({})), BackAction.STACK_TO_MAIN);
+  t.eq('浮层仍优先于"会话整页"',
+    decideBack(nav({ conversationIsPage: true }), ov({ searchOpen: true })), BackAction.CLOSE_SEARCH);
+
+  /*
+   * 全组合矩阵：把阶梯按**文档顺序**写成数据表，再对状态的笛卡尔积逐个比对。
+   *
+   * 【为什么不只写几条顺路用例】阶梯的缺陷全部出在"两个条件同时成立"的组合态上
+   * （预览 × 下钻、会话整页 × 二级页…）。这里用一个**独立的实现**（表驱动、按顺序取第一个命中）
+   * 去对账 `decideBack` 的 if 链：任何一条分支挪了位置都会在某个组合上被抓住。
+   */
+  const LADDER = [
+    ['CLOSE_DRAWER', (n, o) => n.drawerOpen],
+    ['CLOSE_CREDENTIAL', (n, o) => o.credentialOpen],
+    ['CLOSE_SETTING_DRAFT', (n, o) => o.settingDraftOpen],
+    ['CLOSE_SEARCH', (n, o) => o.searchOpen],
+    ['CLOSE_CHOICE', (n, o) => o.choosingOpen],
+    ['CLOSE_DETAIL_OVERLAY', (n, o) => o.detailOverlayOpen],
+    ['CLOSE_PREVIEW', (n, o) => o.previewOpen && previewIsLayer(n)],
+    ['BACK_TO_LIST', (n, o) => n.conversationIsPage],
+    ['STACK_TO_MAIN', (n, o) => n.stackPage !== StackPage.MAIN],
+    ['CLOSE_DETAIL', (n, o) => n.detailOpen],
+    ['DRILL_UP', (n, o) => n.tab === 'workspaces' && n.wsDrill > 0],
+    ['CLOSE_PREVIEW', (n, o) => o.previewOpen],
+    ['TAB_TO_SESSIONS', (n, o) => n.tab !== 'workspaces'],
+    ['EXIT', () => true]
+  ];
+  const bools = [false, true];
+  let combos = 0;
+  let mismatches = 0;
+  for (const drawerOpen of bools)
+  for (const credentialOpen of bools)
+  for (const searchOpen of bools)
+  for (const detailOverlayOpen of bools)
+  for (const previewOpen of bools)
+  for (const conversationIsPage of bools)
+  for (const detailOpen of bools)
+  for (const stackPage of [StackPage.MAIN, StackPage.CONVERSATION, StackPage.DIAGNOSTICS])
+  for (const wsDrill of [0, 1, 2])
+  for (const tab of ['workspaces', 'settings']) {
+    const n = nav({ drawerOpen, conversationIsPage, detailOpen, stackPage, wsDrill, tab });
+    const o = ov({ credentialOpen, searchOpen, detailOverlayOpen, previewOpen });
+    // 表里写的是**动作名**，实际值要比对枚举值（`BackAction` 的值是小写串）
+    const want = BackAction[LADDER.find(([, when]) => when(n, o))[0]];
+    const got = decideBack(n, o);
+    combos++;
+    if (got !== want) {
+      mismatches++;
+      if (mismatches <= 3) {
+        t.eq(`组合态不一致：${JSON.stringify({ drawerOpen, credentialOpen, searchOpen, detailOverlayOpen, previewOpen, conversationIsPage, detailOpen, stackPage, wsDrill, tab })}`, got, want);
+      }
+    }
+  }
+  t.eq(`组合态矩阵：${combos} 种组合下动作唯一且与阶梯表一致`, mismatches, 0);
   console.log('  ok    返回键阶梯的每一级 + 浮层内部先后 + 详情半模态的位置，都被断言');
+  console.log(`  ok    P8-1：组合态矩阵 ${combos} 种（预览层 / 会话整页 / 抽屉 × 浮层 × 下钻 × 页签）`);
 
   // 页签归一化（E108/E110 的别名）
   t.eq('待决 → 工作区', normalizeTab('pending'), 'workspaces');
