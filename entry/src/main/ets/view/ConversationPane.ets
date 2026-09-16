@@ -638,18 +638,27 @@ export struct ConversationPane {
     return row === undefined ? '' : row.note;
   }
 
+  /** 当前档位（`Index` 发布）——手机端才隐藏评价按钮，其他端与官方一致 */
+  @StorageProp('dshLayoutMode') layoutMode: string = 'single';
+
   /** 条目动作清单（与 `TurnView` 同一份规则：复制 / 评价 / 引用 / 重发 / 撤回） */
   private flatActionsOf(item: TrajectoryItem): NativeAction[] {
     const out: NativeAction[] = [];
     out.push({ id: 'copy', label: '复制', a11y: '复制这条消息的正文' });
-    out.push({
-      id: 'like', label: '有帮助',
-      active: this.storedRatingOf(item.id) === 'positive', a11y: '评价为有帮助'
-    });
-    out.push({
-      id: 'dislike', label: '没帮助',
-      active: this.storedRatingOf(item.id) === 'negative', a11y: '评价为没帮助'
-    });
+    /*
+     * 评价按钮**只在手机端隐藏**（口径：PC/平板/2in1 与官方 1:1，手机端才做适应性优化）。
+     * 与 `TurnView.messageActionsOf` 保持同一条件——两处动作清单必须给出同样几项、同样顺序。
+     */
+    if (this.layoutMode !== 'single') {
+      out.push({
+        id: 'like', label: '有帮助',
+        active: this.storedRatingOf(item.id) === 'positive', a11y: '评价为有帮助'
+      });
+      out.push({
+        id: 'dislike', label: '没帮助',
+        active: this.storedRatingOf(item.id) === 'negative', a11y: '评价为没帮助'
+      });
+    }
     out.push({ id: 'quote', label: '引用', a11y: '把这条消息引用到输入框' });
     if (item.speaker === Speaker.USER) {
       // 只有用户消息能"重发"（助手消息重发需要"重跑那一轮"的端点，本仓没有 ⇒ 不给假入口）
