@@ -63,15 +63,18 @@ export struct TimelineOverview {
     if (this.timelineScale().hasData) {
       return label;
     }
+    return this.statsHaveValues() ? '条目无逐条耗时' : label;
+  }
+
+  /** 会话统计里**有没有**非零项（与 `totalLabel()` 共用同一判据，两处文案因此不会互相打脸） */
+  private statsHaveValues(): boolean {
     const lines: StatsLine[] = statsLinesOf(this.stats);
-    let any: boolean = false;
     for (let i = 0; i < lines.length; i++) {
       if (lines[i].value > 0) {
-        any = true;
-        break;
+        return true;
       }
     }
-    return any ? '条目无逐条耗时' : label;
+    return false;
   }
 
   build() {    Column({ space: Sp.XS }) {
@@ -169,8 +172,22 @@ export struct TimelineOverview {
             .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
       } else {
-        // 官方 `timeline.noTimingData` 的情形：如实说"无计时数据"，而不是画一条空条
-        Text('这一轮的条目没有计时数据，无法给出时间分布。')
+        /*
+         * 【F11 的**第二处**（2026-09-17 真机复验抓出来）】
+         *
+         * 上面那句标签我上一轮已经改了（`totalLabel()`），但**这一段说明漏了**——
+         * 真机上一屏里同时出现：
+         *   `条目无逐条耗时` + `模型用时 32.9 s · 工具调用用时 1 分 13 秒 · TTFT 761 ms · TPS 249.9`
+         *   紧接着 `这一轮的条目没有计时数据，无法给出时间分布。`
+         * ⇒ **还是自相矛盾**，只是换了个位置。这正是"改一处漏一处"的典型。
+         *
+         * 现在两句用**同一个判据**（`totalLabel()` 的那套）：会话统计里有时值时，
+         * 说明也必须说"条目没有逐条耗时"，而不是"没有计时数据"。
+         * 官方 `timeline.noTimingData` 那句原话仍保留在**真的什么都没有**的情形。
+         */
+        Text(this.timelineScale().hasData || !this.statsHaveValues()
+          ? '这一轮的条目没有计时数据，无法给出时间分布。'
+          : '这一轮的条目没有逐条耗时，画不出时间分布（会话总计见上方）。')
           .fontSize(Fs.CAPTION)
           .fontColor($r('sys.color.font_tertiary'))
       }
