@@ -16,6 +16,8 @@ Web 语义一致、HarmonyOS 表达原生、多形态不是缩放版。
 | 平板 | 导航 + 内容 + 条件详情 | 少弹层、多并排 |
 | 2in1 | 多栏/多窗 | 键鼠、hover、右键、快捷键、拖拽 |
 
+**对标口径（见 `docs/01` §1.1）**：手机形态对标 [DSH Mobile](https://github.com/sorsama/deepseek-harness-mobile) 的移动交互范式（抽屉导航、工具卡、队列/目标 dock、轨迹台账）；折叠展开 / 平板 / 2in1 复刻 dsh 官方最新原版（官方 Web/Desktop）的信息架构与布局，逐行登记在 `docs/parity-matrix.md`。
+
 ## 3. 页面层级
 
 应用内只允许四类层级：
