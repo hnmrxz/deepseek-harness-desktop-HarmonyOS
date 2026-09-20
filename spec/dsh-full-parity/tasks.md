@@ -1,302 +1,220 @@
-# Tasks: DSH Full Parity Completion — v2 官方 UI 复刻转向
+# Tasks: dsh 核心升级 0.1.6-alpha.2 —— 设置项核查与工作区工具能力修复（v3）
 
-**Input**: Design documents from `spec/dsh-full-parity/`（v2 spec.md + v2 plan.md，2026-09-20）
-**Prerequisites**: plan.md (required), spec.md (required for user stories)
+**Input**: Design documents from `spec/dsh-full-parity/`（spec.md v3 / plan.md v3）
+**Prerequisites**: plan.md（已就绪）、spec.md（已就绪，5 用户故事）
 
-**Tests**: 未显式请求单元测试，不包含测试任务；验证阶段含构建+部署+UI 验证。
+**Tests**: 未按 TDD 要求逐任务建测试；既有单测/门禁随任务同步更新。
 
-**Organization**: 任务按用户故事分组；US1/US2（Web 直载链）与 US3/US4（手机复刻链）在 Foundational 完成后可并行；US5 删除必须在 US1-US4 完成后执行；US6 路由终验最后。
+**Organization**: 按用户故事分组。基础阶段（配方→物化→补丁适配→打包）阻塞全部故事；故事阶段文件领地互不重叠，可并行派发。
 
-## Format
+## Format: `[ID] [P?] [Story] Description`
 
-任务行格式：`- [ ] [TaskID] [P?] [Story?] Description with exact file path`
-
-- **[P]**: 可并行执行（不同文件，无依赖）
+- **[P]**: 可并行（不同文件、无未完成依赖）
 - **[Story]**: 所属用户故事
-- 描述中包含精确文件路径与对照源码路径（`.research/deepseek-harness-mobile/` 为只读参照基准）
+- 路径均为仓库根相对路径
 
 ## Path Conventions
 
-- Web 直载壳: `entry/src/main/ets/view/shell/WebShell.ets`
-- 手机链组件: `entry/src/main/ets/view/`（对照源 `.research/deepseek-harness-mobile/app/src/main/java/com/labteto/dshmobile/`）
-- Mobile token 层: `appstate/src/main/ets/ui/MobileTheme.ets`（对照 `ui/theme/*.kt`）
-- 路由入口: `entry/src/main/ets/pages/Index.ets`
-- 门禁: `tools/*.mjs`（用 `D:\nodejs\node.exe` 运行）
+- 单仓库多模块工程：`entry/`（应用）、`appstate/`+`dshcompat/`+`connection/`（协议与状态 HAR）、`hostruntime/`（端侧宿主 HAR）、`hostcore/`（打包配方与入口脚本源）、`tools/`（构建/门禁脚本）、`docs/`（文档）
+- 产物路径：核心包 zip 落 `entry/src/main/resources/resfile/`（gitignore，不进版本库）；入口脚本放位产物 `entry/src/main/resources/resfile/resources/`（gitignore）
+- 任务描述中的路径均为仓库根相对路径
 
 ---
 
-## Phase 1: Setup (Shared Infrastructure)
+## Phase 1: Setup（升级入口）
 
-**Purpose**: MobileTheme token 层与形态判定，为手机复刻与路由提供共享基础
-
-- [X] T001 移植 DSH Mobile 设计 token——对照 `.research/deepseek-harness-mobile/app/src/main/java/com/labteto/dshmobile/ui/theme/`（Color.kt/Shape.kt/Spacing.kt/Type.kt/Animation.kt）逐值移植为独立 token 层，含明/暗两套色板 in appstate/src/main/ets/ui/MobileTheme.ets
-- [X] T002 [P] 更新 appstate 模块导出 MobileTheme 全部 token in appstate/src/main/ets/Index.ets
-- [X] T003 [P] 扩展 LayoutController 输出路由形态判定（PHONE 含折叠闭合 / DESKTOP_LIKE 含平板、2in1、折叠展开）及形态变化通知 in appstate/src/main/ets/ui/LayoutController.ets
+- [ ] T001 更新核心配方：`coreVersion` → `0.1.6-alpha.2`；删除变体配方 `hostcore/core-recipe-rc3.json`（避免双真值源，历史在 git）；核对 overrides 三项（node-pty/koffi/sharp 的 ohos 供给别名）与 0.1.6-alpha.2 依赖声明的一致性，不一致先记下待 T002 实证，in hostcore/core-recipe.json
 
 ---
 
-## Phase 2: Foundational (Blocking Prerequisites)
+## Phase 2: Foundational（核心物化与补丁适配——阻塞所有故事）
 
-**Purpose**: WebShell 骨架、路由接线、删除清单——所有用户故事依赖此阶段
+**⚠️ CRITICAL**: 本阶段全部完成前不得开始任何用户故事。
 
-**⚠️ CRITICAL**: 用户故事工作不可在此阶段完成前开始
+- [ ] T002 物化 0.1.6-alpha.2 核心树：npm install（--os=openharmony --cpu=arm64）钉 `@deepseek-ai/*@0.1.6-alpha.2`；处理依赖闭包漂移（koffi 版本要求变化则适配 tools/fetch-koffi.mjs 自建供给；sharp/libvips 供给 tools/collect-libvips.mjs 如需跟进），in tools/pack-core.mjs + hostcore/core-recipe.json
+- [ ] T003 核对新树上的裁剪规则与产物清单：prune 的 keepOnlyDirs/removeGlobs 路径是否仍存在（koffi/build/koffi、node-pty/prebuilds 等）、requiredNative 三项（koffi.node/pty.node/spawn-helper）在新版本布局下是否原样成立，失配即改配方，in hostcore/core-recipe.json
+- [ ] T004 六类补丁 + preset 逐锚点适配新源树（fail-loud：上游漂移即更新锚点与断言，绝不放宽为跳过）：Origin 栅栏列表、link 沙箱降级（patchLinkForSandbox）、凭据属主豁免（patchCredentialsOwnerCheck）、sharp 调度器（wrapSharp + assertSharpImplIsReal）、node-addon-system 平台包、linux_arm64 平台别名、addOnDevicePreset（preset 机制若在 0.1.6 变化则按新机制重生成），in tools/pack-core.mjs
+- [ ] T005 启动参数表实证复核：读新树 dsh-web-app 的 startup.js，核对 --port/--host/--no-open/--trusted-host 四项仍合法、无新增必填项；有变化则同步 hostcore/app/main.js 的 args 构造并写注释证据；改过 main.js 后重放 `node tools/place-host-app.mjs`，in hostcore/app/main.js + entry/src/main/resources/resfile/resources/
+- [ ] T006 打包全流程成功：`node tools/pack-core.mjs --place-in-app` 产出 dsh-core-0.1.6-alpha.2-openharmony-arm64.zip；从 entry/src/main/resources/resfile/ 移除 rc.2/rc.3 旧 zip（仅留 alpha.2）；树内元数据 hdsh-core.json 写读核对通过，in tools/pack-core.mjs + entry/src/main/resources/resfile/
+- [ ] T007 端侧版本管道验证：isSafeVersion("0.1.6-alpha.2") 通过、parseArchiveName/archiveNameOf 往返一致；补齐 hostratest/ohosTest 中针对含连字符预发布版本号的激活/回滚/逐出用例，in hostruntime/src/main/ets/core/Naming.ets + hostruntime/src/main/ets/core/Types.ets
 
-- [X] T004 实现 WebShell 组件骨架——Web 组件 + WebShellFacade 契约 + HostReadyState 状态机（BOOTING 等待页 / READY 时 loadUrl 加载 `http://127.0.0.1:3120` / FAILED、TIMEOUT 错误页含重试），WebviewController 私有持有，遵循现有 Facade 模式 in entry/src/main/ets/view/shell/WebShell.ets
-- [X] T005 Index.ets 路由矩阵初接——按 T003 的 formFactor 条件渲染 WebShell（DESKTOP_LIKE）或 RemoteShell（PHONE），暂以形态为唯一维度 in entry/src/main/ets/pages/Index.ets
-- [X] T006 PC 组件可达性分析——从 Index.ets 渲染树出发静态引用分析，产出「删除/保留」终裁清单（手机链可达即保留），写入 spec/dsh-full-parity/deletion-manifest.md（候选：AppShell/MainShell/MainHeaderShell/SidebarShell/RightbarShell/TrackResizer/DetailPane/PendingPane/DiagnosticsPane/WorkspacePane/TabContentView/CorePane/ShortcutKeys 等，以分析结果为准）
-
-**Checkpoint**: WebShell 可加载官方 UI 骨架就绪，删除清单就绪，用户故事可并行开始
-
----
-
-## Phase 3: User Story 1 - PC/平板官方 Web UI 直载（本机） (Priority: P1) 🎯 MVP
-
-**Goal**: DESKTOP_LIKE 形态打开 App 即见与官方像素级一致的 Web UI，桌面语义完整，异常路径不白屏
-
-**Independent Test**: 平板/2in1 模拟器启动 App，与官方 Web UI 同屏对比一致；对话/侧栏/轨迹/设置全部可用；杀掉 host 进程出现错误页可重试
-
-### Implementation for User Story 1
-
-- [X] T007 [US1] 验证明文 localhost 直载与桌面交互语义——键鼠/hover/右键/快捷键/文本选择在 Web 组件内完整透传；若明文 `http://127.0.0.1:3120` 被安全策略拦截则补本地回环明文放行配置 in entry/src/main/ets/view/shell/WebShell.ets + entry/src/main/module.json5
-- [X] T008 [US1] 完善等待/错误态——host 启动进度文案与超时阈值、加载失败诊断信息（HTTP 状态/URL）、onErrorReceive 接线、重试/重载动作 in entry/src/main/ets/view/shell/WebShell.ets
-- [X] T009 [US1] 响应式布局跟随——窗口 resize/横竖屏/分屏变化时官方 UI 重排正确，WebShell 不固定尺寸约束 in entry/src/main/ets/view/shell/WebShell.ets
-
-**Checkpoint**: PC/平板本机 Web 直载完整可用
+**Checkpoint**: 新核心包就位、入口脚本适配完成、版本管道就绪。
 
 ---
 
-## Phase 4: User Story 2 - 远程模式 Web 直载（PC/平板） (Priority: P1)
+## Phase 3: User Story 1 - 核心升级到 0.1.6-alpha.2（Priority: P1）🎯 MVP
 
-**Goal**: 远程模式下 DESKTOP_LIKE 形态加载远程主机官方 Web UI，断连/认证失败有明确处理
+**Goal**: 新核心在本机回路可启动、host 就绪信号契约保持、既有 boot 序列不回归。
+**Independent Test**: 本机回路对 0.1.6-alpha.2 树跑通 boot 检查；hdsh-core.json 版本读数为 0.1.6-alpha.2。
 
-**Independent Test**: PC 连接局域网内另一台 dsh host，官方 UI 完整可用；断网出现断连提示并自动重连
+- [ ] T008 [US1] 本机核心回路检查：check-core-loop 对新树跑通（boot 序列、入口解析、可本机验证的段落）；脚本若绑旧版本细节则适配，本机跑不了的段（ohos 原生件加载）如实标"待端侧"，in tools/check-core-loop.mjs
+- [ ] T009 [US1] host 就绪契约保持：writeHostReady 的 url/baseUrl/token/port/profile/workspace/runtime 各字段在新核心 stdout 输出形态下仍能可靠抓取（watchdogAuthUrl 锚点适配如需）；host-stop-request 停止通道对新版 shutdown 语义复核，in hostcore/app/main.js
 
-### Implementation for User Story 2
-
-- [X] T010 [US2] WebShell 支持远程加载——从 HubSnapshot.activeRemoteHost 派生 remoteBaseUrl，hostReadyState 或 activeRemoteHost 变化时重载 in entry/src/main/ets/view/shell/WebShell.ets
-- [X] T011 [P] [US2] 远程状态呈现——断连 DEGRADED 横幅在 WebShell 外层显示（Web 内容保留最后状态）；认证失败明确提示与重新输入入口 in entry/src/main/ets/view/shell/WebShell.ets + entry/src/main/ets/view/HubBanner.ets
-- [X] T012 [P] [US2] ConnectPane 的 DESKTOP_LIKE 适配——远程入口（LAN 发现列表/手动 IP:Port）在 Web 路线下的连接页样式与流程收口 in entry/src/main/ets/view/ConnectPane.ets
-
-**Checkpoint**: PC/平板双模式 Web 直载完整
+**Checkpoint**: US1 本机可验部分全部通过；端侧启动验证归入 Phase 9。
 
 ---
 
-## Phase 5: User Story 3 - 手机 DSH Mobile 复刻：核心对话流 (Priority: P1)
+## Phase 4: User Story 2 - 工作区文件读写工具能力（Priority: P1）
 
-**Goal**: 手机形态核心屏与 DSH Mobile 源码逐屏对照一致——回合流、顶栏、输入区、工具卡、设计基元
+**Goal**: agent 新建/读取/覆盖/列目录四步链与工作区面板的端到端链路在新核心下成立（含历史两处修复的锚点再适配）。
+**Independent Test**: 静态+本机回路可验部分通过；四步链真机实测归入 Phase 9。
 
-**Independent Test**: 手机模拟器发起对话，各屏与 `.research/deepseek-harness-mobile` 对应源文件对照一致
+- [ ] T010 [US2] 写入路径诊断与垫片适配：核对 0.1.6-alpha.2 的 dsh-fs-local writeFileAtomic 实现形态（link/rename/copyFile 的使用是否变化），main.js 的 installLinkFallback 降级垫片锚点适配；确认"新建=link 被拒→copyFile(COPYFILE_EXCL)、覆盖=rename"两语义在新版仍被垫片覆盖，in hostcore/app/main.js
+- [ ] T011 [US2] 默认工作区链路复核：host-ready.json 的 workspace 字段（可写目录）→ 客户端建会话 workspaceId/cwd 互斥回退 → workspaceFiles 列表，整链在 0.1.6-alpha.2 协议下逐段核对（上游 `accepts workspaceId or cwd, not both` 约束是否变化），漂移即适配，in appstate/src/main/ets/store/SessionHub.ets + appstate/src/main/ets/model/Wire.ets
+- [ ] T012 [US2] ondevice preset 工具集重核：0.1.6-alpha.2 的 preset/插件机制若变化，按新机制重生成端侧 preset；默认维持禁用 tool-bash/tool-pwsh/tool-fs-search，确保禁用项不出现在会话、fs 读写类工具真实注册，in hostcore/profile/ondevice/package.json + tools/pack-core.mjs
 
-### Implementation for User Story 3
-
-- [X] T013 [US3] 回合流对照复刻——ChatTranscript.kt/ChatNodeItem.kt/ChatProjections.kt 的回合列表结构、流式输出、节点可见性规则 in entry/src/main/ets/view/ConversationPane.ets + MessageRow.ets + TurnView.ets
-- [X] T014 [P] [US3] 顶栏对照复刻——ChatTopBar.kt 的布局、状态、返回/抽屉触发 in entry/src/main/ets/view/ConversationHeader.ets
-- [X] T015 [P] [US3] 输入区对照复刻——Composer.kt/QuestionComposer.kt 的布局、发送态、附件入口、斜杠命令入口 in entry/src/main/ets/view/Composer.ets
-- [X] T016 [P] [US3] 工具卡对照复刻——ToolCards.kt/ToolCardMapping.kt/ToolCardModels.kt 的卡片分类、样式、折叠交互 in entry/src/main/ets/view/ToolCard.ets
-- [X] T017 [P] [US3] 设计基元移植——DsButton/DsCard/DsPill/DsSegmented/DsIconButton/DsBottomSheet/EmptyHero/SectionHeader/StateDot/Shimmer/ToggleRow/DisclosureRow/ContextMeter 对照 ui/components/ in entry/src/main/ets/view/NativePrimitives.ets
-- [X] T018 [US3] 主屏范式对照——MainScreen.kt/AppRoot.kt 的整体结构与面板状态（PanelState.kt）映射到 RemoteShell 主区 in entry/src/main/ets/view/shell/RemoteShell.ets
-
-**Checkpoint**: 手机核心对话流逐屏对照达标
+**Checkpoint**: 工具能力链路在代码层逐段成立，等待端侧实测。
 
 ---
 
-## Phase 6: User Story 4 - 手机 DSH Mobile 复刻：抽屉、dock 与次级屏幕 (Priority: P2)
+## Phase 5: User Story 3 - Web UI 设置项（Priority: P2）
 
-**Goal**: 边缘手势抽屉、队列/目标 dock、轨迹台账、Sheet 系列与次级屏幕全部对照复刻
+**Goal**: 新版官方 Web UI 设置项清单化，设置存储跨版本兼容。
+**Independent Test**: 清单文档生成；$DSH_HOME 旧配置在新核心读取路径核对通过。
 
-**Independent Test**: 手势滑出抽屉、操作 dock、查看台账、打开各 Sheet，逐项与源码对照一致
+- [ ] T013 [P] [US3] 生成 Web UI 设置项核查清单：以 0.1.6-alpha.2 新版前端实际设置项为准（模型/供应商与密钥、工具、插件、外观等）枚举成表，每项含"打开→修改→保存→重启→读回"五步核查列与结论列（供 Phase 9 执行走查），in docs/08-设置项核查清单.md
+- [ ] T014 [US3] 设置存储跨版本兼容核查：$DSH_HOME 为跨版本共享目录，核对 0.1.6-alpha.2 的配置读写路径/格式相对 rc.3 是否迁移或改名，端侧入口（main.js 环境与 HOME 钉死）下首启不丢用户设置；发现不兼容点在入口脚本/补丁层修复，in hostcore/app/main.js
 
-### Implementation for User Story 4
-
-- [X] T019 [US4] 左抽屉对照复刻——ChatListDrawer.kt 的手势滑出/跟手拖拽/关闭动画、会话列表布局（含 ArchivedSessions.kt 归档态） in entry/src/main/ets/view/DrawerNav.ets
-- [X] T020 [US4] 右抽屉详情对照复刻——DetailsPanel.kt/WorkspacePanels.kt 的会话详情布局 in entry/src/main/ets/view/shell/RemoteShell.ets
-- [X] T021 [P] [US4] dock 对照复刻——Docks.kt 的队列 dock（编辑/删除/重排）与目标 dock（阶段/轮次/暂停/恢复/编辑）in entry/src/main/ets/view/LatticeDock.ets
-- [X] T022 [P] [US4] 轨迹台账对照复刻——TrajectoryTab.kt 的按回合步骤与用量统计布局 in entry/src/main/ets/view/TrajectoryInspector.ets + TimelineOverview.ets
-- [X] T023 [P] [US4] Sheet 系列与搜索/反馈对照复刻——SheetCommands/SheetModels/SheetPermission/SheetPresets/SheetSubagents/SessionSearch/FeedbackDialog/SlashAdjudication 对照源码 in entry/src/main/ets/view/CommandList.ets + SessionModelPicker.ets + SettingsPresets.ets + SubagentCard.ets + SessionSearch.ets + MessageFeedback.ets
-- [X] T024 [P] [US4] 连接/设置屏对照复刻——ConnectScreen.kt/ConnectDiagnosis.kt/SettingsScreen.kt 的布局与流程 in entry/src/main/ets/view/ConnectPane.ets + SettingsPane.ets
-
-**Checkpoint**: 手机全量屏幕（TerminalPanel/PairScreen 延期除外）对照达标
+**Checkpoint**: 清单就绪、存储兼容性有结论；逐项走查归入 Phase 9。
 
 ---
 
-## Phase 7: User Story 5 - 旧 PC 原生组件删除与工程收敛 (Priority: P2)
+## Phase 6: User Story 4 - 原生设置项（Priority: P2）
 
-**Goal**: 按 deletion-manifest 执行删除，构建零死引用，门禁全绿
+**Goal**: 原生侧设置能力在新核心下代码层成立。
+**Independent Test**: 代码走查 + 既有单测通过。
 
-**Independent Test**: 删除后构建成功、门禁套件全部通过、手机链功能回归无损
+- [ ] T015 [P] [US4] 原生设置链路核查：SettingsPane/主题持久化（prefs）/核心管理页（版本显示取 hdsh-core.json、激活/回滚动作）在新核心元数据格式下逐项核对；ReadSettings 相关模型如需适配 0.1.6 配置格式则改，in entry/src/main/ets/view/SettingsPane.ets + hostruntime/src/main/ets/core/CoreStore.ets
+- [ ] T016 [P] [US4] 远程主机与连接设置回归核查：远程模式连接/重认证/断连提示链路在 0.1.6-alpha.2 端点下核对（与 T017 探测结果联动，漂移同步适配），in entry/src/main/ets/view/ConnectPane.ets + connection/src/main/ets/Index.ets
 
-**⚠️ 依赖**: 必须在 US1-US4 全部完成后执行（手机链引用关系确定后才可终裁）
-
-### Implementation for User Story 5
-
-- [X] T025 [US5] 删除第一批——PC 专用 shell 组件（以 deletion-manifest 为准：AppShell/MainShell/MainHeaderShell/SidebarShell/RightbarShell/TrackResizer 等）及 Index.ets 中对应装配代码 in entry/src/main/ets/view/shell/
-- [X] T026 [US5] 删除第二批——PC 专用 pane 与工具组件（以 deletion-manifest 为准：DetailPane/PendingPane/DiagnosticsPane/WorkspacePane/TabContentView/CorePane/ShortcutKeys 等）及残余死引用清理 in entry/src/main/ets/view/
-- [X] T027 [US5] token 与基线收敛——仅 PC 链消费的 HarmonyTheme token 清理，design-token baseline 棘轮收紧（裸值计数只降不升）in appstate/src/main/ets/ui/HarmonyTheme.ets + tools/design-token-baseline.json
-- [X] T028 [US5] 门禁脚本同步——feature-wiring 锚点、parity 行状态、layout fixtures 对删除与新架构的适配 in tools/check-feature-wiring.mjs + tools/check-parity.mjs + tools/check-layout-fixtures.mjs
-
-**Checkpoint**: 架构收敛完成，双链（Web/手机）无死代码
+**Checkpoint**: 原生设置代码层就绪；真机走查归入 Phase 9。
 
 ---
 
-## Phase 8: User Story 6 - 形态与模式路由编排 (Priority: P3)
+## Phase 7: User Story 5 - 协议兼容回归（Priority: P3）
 
-**Goal**: 四形态 × 两模式路由矩阵完整，折叠屏开合动态切换不丢状态
+**Goal**: 协议层与 0.1.6-alpha.2 兼容，端点表按新契约再生成。
+**Independent Test**: 协议探测全通过；客户端协议层与再生成端点表一致。
 
-**Independent Test**: 折叠屏开合切换渲染路线正确且会话延续；远程模式下切换形态路由正确
+- [ ] T017 [US5] 协议探测与端点表再生成：对 0.1.6-alpha.2（本机可跑部分用 dev-host/回路，端侧部分用真机日志）运行 tools/protocol-probe.mjs；tools/gen-compat-endpoints.mjs 重生成端点表；既有契约端点（会话创建/列表/跟随、轨迹、审批、提问、workspaceFiles）逐一核对，漂移适配 dshcompat/appstate 协议层，in tools/protocol-probe.mjs + tools/gen-compat-endpoints.mjs + dshcompat/src/main/ets/
+- [ ] T018 [US5] 手机链协议消费核对：RemoteShell 全功能消费的载荷/事件形状（Wire.ets/EventShape.ets 解析的字段）在新契约下逐字段核对，缺失字段按"可能缺失"口径兼容，形状级破坏则适配，in appstate/src/main/ets/model/Wire.ets + dshcompat/src/main/ets/EventShape.ets
 
-### Implementation for User Story 6
-
-- [X] T029 [US6] 折叠屏开合动态切换——LayoutController 形态变化事件驱动路由重算，Web↔原生互切时会话/草稿状态不丢失（状态全部住 SessionHub/AppStorage 的验证）in entry/src/main/ets/pages/Index.ets
-- [X] T030 [US6] 路由矩阵终验与边缘态——模式切换跨形态（PC 本机→远程、手机本机→远程）组合下路由正确；remoteModePending 等守卫在双壳下行为一致 in entry/src/main/ets/pages/Index.ets
-
-**Checkpoint**: 路由编排完整
+**Checkpoint**: 全部故事代码层完成。
 
 ---
 
-## Phase 9: Polish & Cross-Cutting Concerns
+## Phase 8: Polish（横切与文档）
 
-- [X] T031 [P] 文档更新——docs/01 §1.1 对标口径、docs/04 UI 规范、docs/parity-matrix.md §4/§5/§6 改为「Web 直载 + DSH Mobile 源码对照复刻」新架构口径 in docs/01-产品与功能说明.md + docs/04-HarmonyOS多端UI设计规范.md + docs/parity-matrix.md
-- [X] T032 [P] 运行全门禁套件——check-parity/check-design-tokens/check-feature-wiring/check-layout-fixtures/check-compliance（用 `D:\nodejs\node.exe` 运行）全绿 in tools/
-- [X] T033 代码审查——手机链组件头注释标注对照源文件路径（契约要求）；无新增裸设计值；无 stub 残留 in entry/src/main/ets/
+- [ ] T019 文档口径同步：版本引用（rc.2/rc.3 → 0.1.6-alpha.2）、resfile 双包描述、工具能力状态（link 降级/默认工作区/preset）、协议基线更新，in docs/parity-matrix.md + docs/07-当前状态与缺口.md + docs/50-端侧核心运行架构.md + docs/10-协议兼容事实基线.md + docs/06-开发与发布指南.md + README.md
+- [ ] T020 全门禁 + 构建收口：check-parity/check-design-tokens/check-feature-wiring/check-layout-fixtures/check-compliance/check-dead-code/arch-check 七门禁全绿（D:\nodejs\node.exe 运行）；entry assembleHap 与 ohosTest 构建成功；design-token 基线棘轮只降不升，in tools/
 
 ---
 
-## Phase 10: Verification
+## Phase 9: Verification
 
 <!-- verification_scope: build+ui -->
 
-**Purpose**: 构建、部署与逐用户故事 UI 验证
+**Purpose**: 构建、部署、逐故事 UI 验证（含 v2 遗留验收回归）。设备以当时可用为准，真机优先（沙箱策略类问题只有真机可定论；模拟器验证项在报告如实标注）。
 
-- [ ] T034 Build project and fix any compilation errors (invoke build_project; iterate fix → build until success)
-- [ ] T035 Deploy application to device/emulator (invoke start_app)
-- [ ] T036 Run UI verification against deployed application (invoke verify_ui)——逐用户故事：US1 平板形态官方 UI 像素一致；US2 远程 Web 直载；US3/US4 手机屏对照 DSH Mobile；US5 删除后回归；US6 路由切换
+- [ ] T021 Build project and fix any compilation errors (invoke build_project; iterate fix → build until success)
+- [ ] T022 Deploy application to device/emulator (invoke start_app)
+- [ ] T023 Run UI verification against deployed application (invoke verify_ui): US1 host 以 0.1.6-alpha.2 启动且 Web UI 新版可用、完成一次问答回合；US2 agent 四步文件链（新建→读取→覆盖→列目录）零报错 + Web UI 工作区面板与沙箱一致；US3 按 docs/08-设置项核查清单.md 逐项走查（改→存→重启→读回）；US4 原生设置走查（主题/核心管理版本显示与回滚/远程连接）；US5 手机链一轮会话回归；v2 遗留验收：形态路由矩阵（PHONE/DESKTOP_LIKE × 本机/远程/诊断）、删除收敛后页面无死链、WebShell 直载官方 UI
 
 ---
 
 ## Dependencies & Execution Order
 
+### Phase Dependencies
+
+- **Setup (Phase 1)**: 无依赖，立即开始
+- **Foundational (Phase 2)**: 依赖 Phase 1；**阻塞所有用户故事**（T001→T002→T003→T004→T005→T006→T007 主线串行）
+- **User Stories (Phase 3-7)**: 均依赖 Phase 2 完成；故事间可并行（按下方领地表，避免同文件冲突）
+- **Polish (Phase 8)**: 依赖全部故事完成（T019 汇总各故事结论）
+- **Verification (Phase 9)**: 依赖 T020 收口
+
+### Story Dependencies
+
+- **US1 (P1)**: T008→T009（回路先行，main.js 契约随后）
+- **US2 (P1)**: T010（main.js，依赖 T009 完成——同文件串行）→T011；T012 独立
+- **US3 (P2)**: T013 独立可并行；T014 依赖 T009/T010（同文件 main.js，串行）
+- **US4 (P2)**: T015→T016；与其他故事无文件冲突
+- **US5 (P3)**: T017 依赖 T009/T011 的链路结论；T018 依赖 T017
+
 ### Dependency Graph
 
 ```mermaid
 graph TD
-    subgraph Setup
-        T001-->T002
-        T003
-    end
-    subgraph Foundational
-        T004-->T005
-        T006
-    end
-    subgraph US1-Web本机
-        T005-->T007
-        T007-->T008
-        T007-->T009
-    end
-    subgraph US2-Web远程
-        T008-->T010
-        T010-->T011
-        T005-->T012
-    end
-    subgraph US3-手机核心
-        T001-->T013
-        T001-->T014
-        T001-->T015
-        T001-->T016
-        T001-->T017
-        T017-->T018
-        T003-->T018
-    end
-    subgraph US4-手机全屏
-        T013-->T019
-        T018-->T020
-        T017-->T021
-        T017-->T022
-        T017-->T023
-        T019-->T024
-    end
-    subgraph US5-删除
-        T006-->T025
-        T025-->T026
-        T026-->T027
-        T027-->T028
-    end
-    subgraph US6-路由
-        T005-->T029
-        T029-->T030
-    end
-    subgraph Polish
-        T028-->T031
-        T033-->T032
-    end
-    T026-->T034
-    T030-->T034
-    T031-->T034
-    T032-->T034
-    T034-->T035
-    T035-->T036
+  T001 --> T002
+  T002 --> T003
+  T003 --> T004
+  T004 --> T005
+  T005 --> T006
+  T006 --> T007
+  T006 --> T008
+  T008 --> T009
+  T009 --> T010
+  T010 --> T011
+  T006 --> T012
+  T006 --> T013
+  T009 --> T014
+  T006 --> T015
+  T015 --> T016
+  T009 --> T017
+  T011 --> T017
+  T017 --> T018
+  T012 --> T019
+  T013 --> T019
+  T014 --> T019
+  T016 --> T019
+  T018 --> T019
+  T019 --> T020
+  T020 --> T021
+  T021 --> T022
+  T022 --> T023
 ```
 
-**执行顺序硬约束**：
-- US5 的 T025/T026 必须等 US1-US4 全部完成（T009/T011/T012/T019-T024）后才可执行
-- 其余用户故事在 Foundational（T004-T006）完成后即可并行
+## Parallel Example: 故事阶段并行派发
 
----
-
-## ⚡ Parallel Execution Guide
-
-| Phase | Tasks | Required Files | Execution Notes |
-|-------|-------|----------------|-----------------|
-| Setup | T002, T003 | Index.ets(appstate), LayoutController.ets | 两个独立文件，与 T001 并行 |
-| Foundational | T004→T005, T006 | WebShell.ets, Index.ets(entry), 分析 | WebShell 骨架与可达性分析可并行 |
-| US1 | T008, T009 | WebShell.ets | 同文件串行，T007 先行 |
-| US2 | T011, T012 | HubBanner.ets, ConnectPane.ets | 与 T010（WebShell）不同文件可并行 |
-| US3 | T013, T014, T015, T016, T017 | ConversationPane/Header/Composer/ToolCard/NativePrimitives | 五个不同文件，完全并行（本特性最大并行批次） |
-| US4 | T021, T022, T023 | LatticeDock/TrajectoryInspector/Sheet 系列 | 三个不同文件可并行；T019/T020/T024 串行收尾 |
-| US5 | T025→T026→T027→T028 | shell/, view/, HarmonyTheme, tools | 严格串行（每步构建验证） |
-| Polish | T031, T032 | docs/, tools/ | 文档与门禁可并行 |
-
----
-
-## Parallel Example: User Story 3（本特性最大并行批次）
-
-```text
-# 前置：T001 MobileTheme 完成、T004-T006 Foundational 完成
-# 五个不同文件，可同时派发五个并行任务：
-
-Task T013: "回合流对照 ChatTranscript.kt in ConversationPane.ets + MessageRow.ets + TurnView.ets"
-Task T014: "顶栏对照 ChatTopBar.kt in ConversationHeader.ets"
-Task T015: "输入区对照 Composer.kt in Composer.ets"
-Task T016: "工具卡对照 ToolCards.kt in ToolCard.ets"
-Task T017: "设计基元对照 ui/components/ in NativePrimitives.ets"
-
-# 然后串行收尾：
-Task T018: "主屏范式对照 MainScreen.kt in RemoteShell.ets"（依赖 T003 + T017）
+```bash
+# Phase 2 完成后，同时启动（文件领地互不重叠）：
+Task: "US1+US2 主链（main.js 领地合并）: T008→T009→T010→T012→T014"   # hostcore/app/main.js + pack-core/profile + check-core-loop
+Task: "US2 客户端链路: T011"                                          # appstate/store/SessionHub.ets + model/Wire.ets（待 T010 结论后开始）
+Task: "US3 清单: T013"                                                # docs/08-设置项核查清单.md（纯文档，立即可并行）
+Task: "US4 原生设置: T015→T016"                                       # entry/view + hostruntime + connection
+Task: "US5 协议层: T017→T018"                                         # tools/protocol-* + dshcompat（待 T009/T011 结论）
+# 全部返回后串行收尾：
+Task: "T019 文档收口 → T020 门禁+构建收口"
 ```
-
----
 
 ## Implementation Strategy
 
-### 双链并行（推荐）
+### MVP First（T001-T009）
 
-1. Setup + Foundational → WebShell 骨架 + 路由初接 + 删除清单
-2. **链 A（Web 直载）**：US1→US2，一个代理顺序执行
-3. **链 B（手机复刻）**：US3→US4，可再拆 2 个代理（核心屏批 + 次级屏批）
-4. 汇合：US5 删除收敛（严格串行）→ US6 路由终验
-5. Polish → Verification（build + UI）
+1. 完成 Phase 1-2（配方→物化→补丁适配→打包→版本管道）
+2. 完成 US1（本机回路 + host 契约）
+3. **STOP and VALIDATE**: 新核心包就位且本机回路通过——此时升级本身已是可交付增量
+4. 端侧部署验证可在任意检查点插入（Phase 9 正式执行）
 
-### MVP
+### Incremental Delivery
 
-Setup + Foundational + US1 即为 MVP——PC/平板官方 UI 直载可用。
+1. Setup + Foundational → 新核心包产出
+2. +US1 → 新核心本机可启动（MVP）
+3. +US2 → 工作区工具链路修复完成
+4. +US3/+US4 → 设置项双侧就绪
+5. +US5 → 协议回归通过
+6. Polish + Verification → 全绿交付
 
----
+## Summary Report
+
+- **总任务数**: 23（实现 20 + 验证 3）
+- **按故事**: US1×2（T008-T009）、US2×3（T010-T012）、US3×2（T013-T014）、US4×2（T015-T016）、US5×2（T017-T018）、Setup/Foundational×7（T001-T007）、Polish×2（T019-T020）、Verification×3（T021-T023）
+- **并行机会**: 故事阶段 5 路并行（见 Parallel Example；main.js 领地合并给单代理）
+- **MVP 范围**: T001-T009
+- **独立测试**: 每个故事均有代码层/本机层独立判据（见各 Phase Checkpoint），端侧实测统一归 Phase 9
 
 ## Notes
 
-- Web 组件 API 基线：WebviewController.loadUrl / onControllerAttached / onErrorReceive / refresh（已核实）
-- 手机复刻唯一参照：`.research/deepseek-harness-mobile/app/src/main/java/com/labteto/dshmobile/`（只读，禁止修改）
-- 延期项不复刻：TerminalPanel.kt（Terminal/PTY）、PairScreen.kt（relay 配对）
-- 每个手机链组件实现须在头注释标注对照源文件路径（T033 审查项）
-- 删除以 deletion-manifest.md 终裁，禁止盲删；每批删除后必须构建验证
-- design-token baseline 棘轮只降不升；门禁用 `D:\nodejs\node.exe` 运行
-- v1 遗留：`remoteModePending` 守卫等机制保留并在 T030 双壳下验证
+- 全程 git 纪律：每个波次完成后由主协调代理 commit + push（不留给最后一次性提交）。
+- `D:\nodejs\node.exe`（v24.19.0）是门禁/工具链的指定 Node；系统默认 node v18 跑不动相关脚本。
+- `.research/` 只读；resfile zip 与 place-host-app 产物不进版本库（.gitignore 已有）。
+- 上游形状断言必须保持 fail-loud：失配的修法是"适配锚点"，不是"放宽断言"。
