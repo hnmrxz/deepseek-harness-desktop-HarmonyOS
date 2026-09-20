@@ -16,6 +16,7 @@ import {
   evictionCandidates,
   isSafeVersion,
   parseArchiveName,
+  archiveNameOf,
   parseState,
   serializeState,
   topDirOf,
@@ -139,6 +140,74 @@ export default function coreDecisionTest() {
       // 不是本项目容器名 ⇒ 空串（不猜）
       expect(parseArchiveName('something-else.zip')).assertEqual('');
       expect(topDirOf('1.2.3')).assertEqual('dsh-core-1.2.3');
+    });
+
+    // ── 0.1.6-alpha.2 升级路径：连字符预发布号贯穿全部版本管道 ─────────
+    // 【为什么钉这组】0.1.6-alpha.2 是本项目首个"非 rc 命名"的核心版本，
+    // 版本号会经历 容器名→目录名→state.json→回滚判据 的完整链路。
+    // 若哪一环对连字符/双点格式有隐藏假设，症状是"升级包躺在 resfile 里
+    // 却永远装不上/删不掉/回滚失败"——全部用真实升级序列钉死。
+    it('alpha_version_is_safe_and_round_trips_naming', 0, () => {
+      expect(isSafeVersion('0.1.6-alpha.2')).assertTrue();
+      expect(isSafeVersion('0.1.5-rc.3')).assertTrue();
+      // 往返：构造容器名 → 解析回版本号，必须一字不差
+      const name = archiveNameOf('0.1.6-alpha.2');
+      expect(name).assertEqual('dsh-core-0.1.6-alpha.2-openharmony-arm64.zip');
+      expect(parseArchiveName(name)).assertEqual('0.1.6-alpha.2');
+      expect(topDirOf('0.1.6-alpha.2')).assertEqual('dsh-core-0.1.6-alpha.2');
+      // 实际打包产物名（resfile 里那个 zip）也要能解析
+      expect(parseArchiveName('dsh-core-0.1.6-alpha.2-openharmony-arm64.zip')).assertEqual('0.1.6-alpha.2');
+    });
+
+    it('activates_alpha2_over_rc3_and_sets_rc3_as_previous', 0, () => {
+      // 真实升级序列：rc.3 是当前、rc.2 是回滚目标
+      const s: CoreState = {
+        current: '0.1.5-rc.3',
+        previous: '0.1.5-rc.2',
+        history: ['0.1.5-rc.3', '0.1.5-rc.2'],
+      };
+      const d = decideActivation(s, '0.1.6-alpha.2', CoreHealth.PASS, '');
+      expect(d.action).assertEqual(ActivationAction.ACTIVATE);
+      expect(d.next.current).assertEqual('0.1.6-alpha.2');
+      // 升级后 rc.3 必须成为新的回滚目标
+      expect(d.next.previous).assertEqual('0.1.5-rc.3');
+      expect(d.next.history[0]).assertEqual('0.1.6-alpha.2');
+      expect(d.next.history[1]).assertEqual('0.1.5-rc.3');
+
+      // 健康未知时宁可停在 rc.3，也不切一个没验证过的 alpha
+      const refused = decideActivation(s, '0.1.6-alpha.2', CoreHealth.UNKNOWN, '未检查');
+      expect(refused.action).assertEqual(ActivationAction.REFUSE);
+      expect(refused.next.current).assertEqual('0.1.5-rc.3');
+    });
+
+    it('rolls_back_from_alpha2_to_rc3_only_if_rc3_dir_still_exists', 0, () => {
+      const s: CoreState = {
+        current: '0.1.6-alpha.2',
+        previous: '0.1.5-rc.3',
+        history: ['0.1.6-alpha.2', '0.1.5-rc.3', '0.1.5-rc.2'],
+      };
+      const d = decideRollback(s, ['0.1.6-alpha.2', '0.1.5-rc.3']);
+      expect(d.action).assertEqual(ActivationAction.ROLLBACK);
+      expect(d.next.current).assertEqual('0.1.5-rc.3');
+      // 回滚后 alpha.2 反过来成为回滚目标（可再前进）
+      expect(d.next.previous).assertEqual('0.1.6-alpha.2');
+
+      // rc.3 目录已被清理 ⇒ 拒绝，绝不把 current 指向不存在的版本
+      const refused = decideRollback(s, ['0.1.6-alpha.2']);
+      expect(refused.action).assertEqual(ActivationAction.REFUSE);
+      expect(refused.next.current).assertEqual('0.1.6-alpha.2');
+    });
+
+    it('eviction_after_upgrade_only_takes_old_rc2', 0, () => {
+      // 升级完成后的清理：current=alpha.2、previous=rc.3 受保护，只有 rc.2 可删
+      const s: CoreState = {
+        current: '0.1.6-alpha.2',
+        previous: '0.1.5-rc.3',
+        history: ['0.1.6-alpha.2', '0.1.5-rc.3', '0.1.5-rc.2'],
+      };
+      const doomed = evictionCandidates(s, ['0.1.6-alpha.2', '0.1.5-rc.3', '0.1.5-rc.2'], 0);
+      expect(doomed.length).assertEqual(1);
+      expect(doomed[0]).assertEqual('0.1.5-rc.2');
     });
 
     // ── 阶段映射：未知值必须保守落到"未接线" ────────────────────────────

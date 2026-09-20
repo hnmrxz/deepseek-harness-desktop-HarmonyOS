@@ -493,6 +493,18 @@ function stage(name, extra) {
 stage('BOOT_00_NODE_START',
   `pid=${process.pid} node=${process.version} platform=${process.platform}/${process.arch} jitless=${process.execArgv.includes('--jitless')}`);
 
+/*
+ * 【0.1.6-alpha.2 升级项】端侧垫片（pack-core 的 patchRequireBuiltinForOhos）取代了
+ * node-addon-require-builtin 的原生件，dsh-app-boot 的 profile resolution（boot 必经路径）
+ * 靠它取 Node 内部模块——那需要宿主以 --expose-internals 启动（argv 由 hostruntime 的
+ * buildHostArgv 构造，升级项登记给宿主层）。这里只做**早期读数**：真缺了的话垫片会在
+ * profile boot 时以带修法的错误 fail-loud；提前打一行是为了让诊断日志第一屏就看到原因，
+ * 而不是在十几层 stack 之后才炸出一个看不出来源的 MODULE_NOT_FOUND。
+ */
+if (!process.execArgv.includes('--expose-internals')) {
+  diag('!! 宿主 Node 未带 --expose-internals：0.1.6 的 profile resolution 垫片（node-addon-require-builtin）需要它，Host 大概率起不来（buildHostArgv 升级项）');
+}
+
 /**
  * 捕获 dsh 打印的 **authenticatedUrl**，并落盘成 `host-ready.json` 供 ArkTS 侧接入。
  *
@@ -1102,6 +1114,11 @@ async function start() {
    *     .option("--host <host>").option("--no-open").option("--port <port>")
    *     .option("--trusted-host <authority...>")
    * —— 合法的就这四个。
+   *
+   * 【0.1.6-alpha.2 复核（2026-09-20）】新树 dsh-web-app/lib/startup.js:22 仍只定义
+   * 这四个 option（--host/--no-open/--port/--trusted-host），无 .argument() 必填位置参数、
+   * 无 .requiredOption()、无新增项；args 构造无需改动。`dsh web: <url>` 的 stdout
+   * 打印行（dsh-web-app/lib/index.js:203）格式也未变，watchdogAuthUrl 锚点保持。
    *
    * 【曾经写过一个不存在的 `--skip-auth`】实测真机读数（D6 E33）：
    *     error: unknown option '--skip-auth'   → runProfile 直接拒绝，Host 从未起监听（rc=1）

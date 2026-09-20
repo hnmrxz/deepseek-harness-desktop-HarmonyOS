@@ -23,7 +23,7 @@
 
 ## Phase 1: Setup（升级入口）
 
-- [ ] T001 更新核心配方：`coreVersion` → `0.1.6-alpha.2`；删除变体配方 `hostcore/core-recipe-rc3.json`（避免双真值源，历史在 git）；核对 overrides 三项（node-pty/koffi/sharp 的 ohos 供给别名）与 0.1.6-alpha.2 依赖声明的一致性，不一致先记下待 T002 实证，in hostcore/core-recipe.json
+- [X] T001 更新核心配方：`coreVersion` → `0.1.6-alpha.2`；删除变体配方 `hostcore/core-recipe-rc3.json`（避免双真值源，历史在 git）；核对 overrides 三项（node-pty/koffi/sharp 的 ohos 供给别名）与 0.1.6-alpha.2 依赖声明的一致性，不一致先记下待 T002 实证，in hostcore/core-recipe.json
 
 ---
 
@@ -31,12 +31,12 @@
 
 **⚠️ CRITICAL**: 本阶段全部完成前不得开始任何用户故事。
 
-- [ ] T002 物化 0.1.6-alpha.2 核心树：npm install（--os=openharmony --cpu=arm64）钉 `@deepseek-ai/*@0.1.6-alpha.2`；处理依赖闭包漂移（koffi 版本要求变化则适配 tools/fetch-koffi.mjs 自建供给；sharp/libvips 供给 tools/collect-libvips.mjs 如需跟进），in tools/pack-core.mjs + hostcore/core-recipe.json
-- [ ] T003 核对新树上的裁剪规则与产物清单：prune 的 keepOnlyDirs/removeGlobs 路径是否仍存在（koffi/build/koffi、node-pty/prebuilds 等）、requiredNative 三项（koffi.node/pty.node/spawn-helper）在新版本布局下是否原样成立，失配即改配方，in hostcore/core-recipe.json
-- [ ] T004 六类补丁 + preset 逐锚点适配新源树（fail-loud：上游漂移即更新锚点与断言，绝不放宽为跳过）：Origin 栅栏列表、link 沙箱降级（patchLinkForSandbox）、凭据属主豁免（patchCredentialsOwnerCheck）、sharp 调度器（wrapSharp + assertSharpImplIsReal）、node-addon-system 平台包、linux_arm64 平台别名、addOnDevicePreset（preset 机制若在 0.1.6 变化则按新机制重生成），in tools/pack-core.mjs
-- [ ] T005 启动参数表实证复核：读新树 dsh-web-app 的 startup.js，核对 --port/--host/--no-open/--trusted-host 四项仍合法、无新增必填项；有变化则同步 hostcore/app/main.js 的 args 构造并写注释证据；改过 main.js 后重放 `node tools/place-host-app.mjs`，in hostcore/app/main.js + entry/src/main/resources/resfile/resources/
-- [ ] T006 打包全流程成功：`node tools/pack-core.mjs --place-in-app` 产出 dsh-core-0.1.6-alpha.2-openharmony-arm64.zip；从 entry/src/main/resources/resfile/ 移除 rc.2/rc.3 旧 zip（仅留 alpha.2）；树内元数据 hdsh-core.json 写读核对通过，in tools/pack-core.mjs + entry/src/main/resources/resfile/
-- [ ] T007 端侧版本管道验证：isSafeVersion("0.1.6-alpha.2") 通过、parseArchiveName/archiveNameOf 往返一致；补齐 hostratest/ohosTest 中针对含连字符预发布版本号的激活/回滚/逐出用例，in hostruntime/src/main/ets/core/Naming.ets + hostruntime/src/main/ets/core/Types.ets
+- [X] T002 物化 0.1.6-alpha.2 核心树：npm install（--os=openharmony --cpu=arm64）钉 `@deepseek-ai/*@0.1.6-alpha.2`；处理依赖闭包漂移（koffi 版本要求变化则适配 tools/fetch-koffi.mjs 自建供给；sharp/libvips 供给 tools/collect-libvips.mjs 如需跟进），in tools/pack-core.mjs + hostcore/core-recipe.json
+- [X] T003 核对新树上的裁剪规则与产物清单：prune 的 keepOnlyDirs/removeGlobs 路径是否仍存在（koffi/build/koffi、node-pty/prebuilds 等）、requiredNative 三项（koffi.node/pty.node/spawn-helper）在新版本布局下是否原样成立，失配即改配方，in hostcore/core-recipe.json
+- [X] T004 六类补丁 + preset 逐锚点适配新源树（fail-loud：上游漂移即更新锚点与断言，绝不放宽为跳过）：Origin 栅栏列表、link 沙箱降级（patchLinkForSandbox）、凭据属主豁免（patchCredentialsOwnerCheck）、sharp 调度器（wrapSharp + assertSharpImplIsReal）、node-addon-system 平台包、linux_arm64 平台别名、addOnDevicePreset（preset 机制若在 0.1.6 变化则按新机制重生成），in tools/pack-core.mjs
+- [X] T005 启动参数表实证复核：读新树 dsh-web-app 的 startup.js，核对 --port/--host/--no-open/--trusted-host 四项仍合法、无新增必填项；有变化则同步 hostcore/app/main.js 的 args 构造并写注释证据；改过 main.js 后重放 `node tools/place-host-app.mjs`，in hostcore/app/main.js + entry/src/main/resources/resfile/resources/
+- [X] T006 打包全流程成功：`node tools/pack-core.mjs --place-in-app` 产出 dsh-core-0.1.6-alpha.2-openharmony-arm64.zip；从 entry/src/main/resources/resfile/ 移除 rc.2/rc.3 旧 zip（仅留 alpha.2）；树内元数据 hdsh-core.json 写读核对通过，in tools/pack-core.mjs + entry/src/main/resources/resfile/
+- [X] T007 端侧版本管道验证：isSafeVersion("0.1.6-alpha.2") 通过、parseArchiveName/archiveNameOf 往返一致；补齐 hostratest/ohosTest 中针对含连字符预发布版本号的激活/回滚/逐出用例，in hostruntime/src/main/ets/core/Naming.ets + hostruntime/src/main/ets/core/Types.ets
 
 **Checkpoint**: 新核心包就位、入口脚本适配完成、版本管道就绪。
 

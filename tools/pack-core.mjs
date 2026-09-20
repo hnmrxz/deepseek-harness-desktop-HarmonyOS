@@ -134,9 +134,57 @@ function materialize() {
     '--loglevel=error',
   ];
   log(`[pack-core]   ${npm} ${args.join(' ')}`);
-  // stdio: inherit —— 5 分钟量级的安装，进度要看得到；也避免管道相关限制
-  const r = spawnSync(npm, args, { cwd: STAGE, stdio: 'inherit', shell: process.platform === 'win32' });
+  // stdio: inherit —— 5 分钟量级的安装，进度要看得到；也避免管道相关限制。
+  // shell:true 时命令串里的可执行路径若含空格（如 DevEco 的 tools/node/npm.cmd）
+  // 必须自带引号，否则会被 cmd 按空格切开（实测：'D:\Huawei\DevEco' is not recognized）。
+  const r = spawnSync(`"${npm}"`, args, { cwd: STAGE, stdio: 'inherit', shell: process.platform === 'win32' });
   if (r.status !== 0) die(`npm install 失败（exit=${r.status}）`);
+}
+
+/**
+ * 钉版核对（T002）：闭包里所有 @deepseek-ai/* 的 dsh 主线包必须**精确等于** recipe.coreVersion。
+ *
+ * 【为什么用"安装后核对"而不是 overrides 通配】实测（2026-09-20）：npm overrides 的键
+ * **不支持 scoped 通配**——`"@deepseek-ai/*"` 会被静默忽略（用"指向不同版本"的对照实验
+ * 确认：被通配覆盖的包仍按 caret 范围解析）。而生成全量显式 overrides 需要先知道整棵
+ * 闭包（鸡生蛋）。所以钉版的执行手段是：根依赖精确钉 recipe.coreVersion（上游主线包
+ * 间的 `^<version>` 预发布范围目前只解析到该版本），安装后**逐包核对**，漂移即 die
+ * ——上游若发布 0.1.6-beta/alpha.3 被 caret 放进来，这里会响，而不是悄悄混装。
+ *
+ * 【哪些包参与核对】版本号以 recipe.coreVersion 的 `<major.minor>` 线开头的才是 dsh
+ * 主线包；跨线包（@deepseek-ai/cordis 4.x、schemastery 3.x、node-addon-* 0.1.x、
+ * cordis-plugin-* 1.x）按各自版本线解析，不参与核对。
+ */
+function verifyCoreClosurePins() {
+  const nm = join(STAGE, 'node_modules');
+  if (!existsSync(nm)) die('钉版核对：node_modules 不存在');
+  const line = recipe.coreVersion.split('-')[0]; // 如 "0.1.6"
+  const onLine = (v) => v === line || v.startsWith(`${line}.`) || v.startsWith(`${line}-`);
+  const drift = [];
+  let pinned = 0;
+  for (const f of listFilesRecursive(nm)) {
+    const rel = f.slice(nm.length + 1).split(sep).join('/');
+    // 覆盖所有提升层：顶层 `@deepseek-ai/<pkg>/` 与嵌套 `<pkg>/node_modules/@deepseek-ai/<pkg>/`。
+    // 注意 rel 已去掉 nm 前缀，顶层路径**没有** node_modules 段。
+    if (!/(?:^|\/)@deepseek-ai\/[^/]+\/package\.json$/.test(rel)) continue;
+    let pkg;
+    try {
+      pkg = JSON.parse(readFileSync(f, 'utf8'));
+    } catch {
+      continue;
+    }
+    if (typeof pkg.version !== 'string' || !onLine(pkg.version)) continue;
+    pinned++;
+    if (pkg.version !== recipe.coreVersion) {
+      drift.push(`${rel.slice(0, rel.length - '/package.json'.length)}@${pkg.version}`);
+    }
+  }
+  if (drift.length > 0) {
+    die(`钉版核对：闭包里有 ${drift.length} 个 @deepseek-ai 主线包不在 ${recipe.coreVersion} 上：\n`
+      + `    ${drift.join('\n    ')}\n`
+      + `（caret 范围把更新的 ${line} 线版本放进来了；修法：显式钉住或更新配方，不允许混装）`);
+  }
+  log(`[pack-core]   钉版核对通过：${pinned} 个 @deepseek-ai 主线包全部 = ${recipe.coreVersion}`);
 }
 
 // ── ② 裁剪 ──────────────────────────────────────────────────────────────
@@ -732,6 +780,106 @@ function patchCredentialsOwnerCheck() {
   log('[pack-core]   凭据权限补丁：鸿蒙上豁免"仅属主可读"检查（hmfs 强制 660）');
 }
 
+/**
+ * `node-addon-require-builtin` 的端侧 JS 垫片（0.1.6-alpha.2 新增的硬原生依赖）。
+ *
+ * ─────────────── 为什么 0.1.6 必须处理这个包 ───────────────
+ * 0.1.6 起 dsh 的 profile 模块解析换了机制：`dsh-app-boot` 的 `installProfileResolution()`
+ * （由 `runProfile` 默认的 resolutionMode="runtime" 经 `PluginPackages` 无条件装载）通过
+ *     createRequire(import.meta.url)("node-addon-require-builtin")
+ *     .requireBuiltin("internal/modules/esm/loader") …
+ * 拿 Node **内部模块**去接管 ESM/CJS resolver。也就是说：**boot 必经路径**上有一个原生件。
+ *
+ * 而这个原生件在鸿蒙上不可能就位：
+ *   · 平台包只有 darwin / linux-gnu / win32 三家的预编译（无 openharmony，也无 musl 变体）；
+ *   · 上游 README 明说 "Published installs do not ship native sources and fail closed"——
+ *     npm 包里只有 20 行委托代码，没有 C++ 源，想自建（koffi 路线）都没有原料。
+ * 旧的 `process.pkg = {}`（选 proxy 目录、避开符号链接）也救不了场：0.1.6 里
+ * `process.pkg` 只会把 resolutionMode 钉成 "runtime"（正是需要原生件的那条路）；
+ * 唯一不要原生件的 "link" 模式会物化**符号链接**（E46 沙箱禁令）。
+ *
+ * ─────────────── 为什么 JS 垫片在语义上等价 ───────────────
+ * 上游 README 自述这是 "unrestricted variant"：`requireBuiltin(id)` 就是把 id **转发给
+ * Node 的内置 require**，`isAllowedInternalId()` 恒真。原生件存在的唯一意义是绕开
+ * `--expose-internals` 启动开关；而宿主 argv 可以直接带上这个开关（端侧 argv 由
+ * hostruntime 的 buildHostArgv 构造，升级项已登记给宿主层）。带开关后，普通
+ * `require(id)` 与原生转发拿到的是**同一个**内部模块对象——通道不同，语义相同。
+ *
+ * 【fail-loud】若宿主没带 --expose-internals，垫片在 requireBuiltin 里抛**带修法**的
+ * 错误，而不是让 boot 在十几层深的 MODULE_NOT_FOUND 里炸出一个看不出原因的失败。
+ * 上游若改了入口实现（不再委托 node-addon-native-custom-loader），这里报错退出。
+ */
+function patchRequireBuiltinForOhos() {
+  const target = join(STAGE, 'node_modules', 'node-addon-require-builtin', 'lib', 'index.js');
+  if (!existsSync(target)) {
+    die(`require-builtin 垫片：找不到 ${target}（0.1.6 闭包应含该包；若上游改名/移除请重新核锚）`);
+  }
+  let text = readFileSync(target, 'utf8');
+  if (text.includes('HDSH_REQUIRE_BUILTIN_SHIM')) {
+    log('[pack-core]   require-builtin 垫片已存在（跳过）');
+    return;
+  }
+  // fail-loud 锚点：上游入口是对 node-addon-native-custom-loader 的委托
+  if (!text.includes('createEntryApi')) {
+    die('require-builtin 垫片：上游入口实现已变化（未找到 createEntryApi 委托），拒绝静默跳过');
+  }
+  writeFileSync(target, [
+    '"use strict";',
+    '/*',
+    ' * HDSH_REQUIRE_BUILTIN_SHIM —— 端侧（openharmony）JS 垫片，替代 node-addon-require-builtin 的原生件。',
+    ' * 由 tools/pack-core.mjs 的 patchRequireBuiltinForOhos() 生成，不要手改。',
+    ' *',
+    ' * 原生件在鸿蒙上没有平台包也不发布源码（fail closed）；而本包自述是 "unrestricted',
+    ' * variant"——requireBuiltin(id) 就是转发给 Node 的内置 require。宿主以 --expose-internals',
+    ' * 启动后普通 require 即可取到内部模块，语义等价、通道不同。',
+    ' */',
+    'const { createRequire } = require("node:module");',
+    'const requireFromHere = createRequire(__filename);',
+    '',
+    'function requireBuiltin(moduleId) {',
+    '\tconst id = String(moduleId).replace(/^node:/, "");',
+    '\ttry {',
+    '\t\treturn requireFromHere(id);',
+    '\t} catch (error) {',
+    '\t\tif (!process.execArgv.includes("--expose-internals")) {',
+    '\t\t\tthrow new Error(',
+    '\t\t\t\t"HDSH: requireBuiltin(" + JSON.stringify(id) + ") 需要宿主以 --expose-internals 启动"',
+    '\t\t\t\t+ "（端侧垫片取代了 node-addon-require-builtin 的原生件；"',
+    '\t\t\t\t+ "见 tools/pack-core.mjs 的 patchRequireBuiltinForOhos）",',
+    '\t\t\t);',
+    '\t\t}',
+    '\t\tthrow error;',
+    '\t}',
+    '}',
+    '',
+    'function isAllowedInternalId() {',
+    '\treturn true;',
+    '}',
+    '',
+    'function getBindingInfo() {',
+    '\treturn {',
+    '\t\tmode: "js-shim",',
+    '\t\tproduct: "hdsh",',
+    '\t\tbackend: "napi",',
+    '\t\tabi: "napi-v9",',
+    '\t\tbindingPath: __filename,',
+    '\t\tbindingSource: "hdsh-expose-internals-shim",',
+    '\t\tlocalBindingPath: "",',
+    '\t\toptionalPackageName: "",',
+    '\t\toptionalBinaryRelativePath: "",',
+    '\t\tplatformPackageSuffix: process.platform + "-" + process.arch,',
+    '\t};',
+    '}',
+    '',
+    'exports.requireBuiltin = requireBuiltin;',
+    'exports.isAllowedInternalId = isAllowedInternalId;',
+    'exports.getBindingInfo = getBindingInfo;',
+    'exports.default = { requireBuiltin, isAllowedInternalId, getBindingInfo };',
+    '',
+  ].join('\n'), 'utf8');
+  log('[pack-core]   require-builtin 垫片：JS 实现替换原生件（宿主需带 --expose-internals）');
+}
+
 function embedTreeInfo() {
   // 插件与原生模块清单：**在构建期算一次**，写进树里给端侧读。
   // 【为什么不在端侧现算】端侧要算同一件事，得在 27250 个文件 / 4000 个目录上递归
@@ -1045,6 +1193,7 @@ if (process.argv.includes('--check-sharp')) {
 }
 
 materialize();
+verifyCoreClosurePins();
 prune();
 const sig = verify();
 addPlatformAliases();
@@ -1053,6 +1202,7 @@ wrapSharp();
 addSystemAddonPackage();
 patchLinkForSandbox();
 patchCredentialsOwnerCheck();
+patchRequireBuiltinForOhos();
 addOnDevicePreset();
 embedTreeInfo();
 verifyTreeInfoContract();

@@ -1,6 +1,6 @@
 {
   "$comment": "HDSH 端侧 dsh 核心树的配方（唯一事实来源）。tools/pack-core.mjs 读它来物化、裁剪、校验、打包。改版本/换移植件都只改这里。",
-  "coreVersion": "0.1.5-rc.2",
+  "coreVersion": "0.1.6-alpha.2",
   "platform": {
     "os": "openharmony",
     "cpu": "arm64"
