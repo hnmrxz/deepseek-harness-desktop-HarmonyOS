@@ -31,7 +31,7 @@ import {
   RpcResult
 } from 'connection';
 import { READONLY_PROBE_ENDPOINTS, SURFACE } from 'dshcompat';
-import { Border, Fs, Radius } from 'appstate';
+import { Border, Fs, HarmonyColor, Radius } from 'appstate';
 
 const DOMAIN: number = 0xD5D5;
 const TAG: string = 'DshPoc1';
@@ -376,14 +376,14 @@ struct Poc1 {
           .fontSize(Fs.SECONDARY)
         Text(this.busy ? '运行中…' : '空闲')
           .fontSize(Fs.SECONDARY)
-          .fontColor(Color.Gray)
+          .fontColor($r('sys.color.font_tertiary'))
       }
       .width('100%')
 
       if (this.hostFactsText.length > 0) {
         Text(this.hostFactsText)
           .fontSize(Fs.CAPTION)
-          .fontColor(Color.Gray)
+          .fontColor($r('sys.color.font_tertiary'))
           .width('100%')
       }
 
@@ -393,7 +393,7 @@ struct Poc1 {
             Row({ space: 6 }) {
               Text(line.time)
                 .fontSize(Fs.CAPTION)
-                .fontColor(Color.Gray)
+                .fontColor($r('sys.color.font_tertiary'))
                 .width(64)
               Text(line.level)
                 .fontSize(Fs.CAPTION)
@@ -411,7 +411,7 @@ struct Poc1 {
       .layoutWeight(1)
       .width('100%')
       .borderWidth(Border.HAIRLINE)
-      .borderColor(Color.Gray)
+      .borderColor(HarmonyColor.DIVIDER)
       .borderRadius(Radius.XS)
       .padding(6)
     }
@@ -434,17 +434,17 @@ function formatClock(epochMs: number): string {
   return `${hh}:${mm}:${ss}`;
 }
 
-function levelColor(level: LogLevel): Color {
+function levelColor(level: LogLevel): ResourceColor {
   if (level === LogLevel.OK) {
-    return Color.Green;
+    return $r('sys.color.confirm');
   }
   if (level === LogLevel.FAIL) {
-    return Color.Red;
+    return $r('sys.color.warning');
   }
   if (level === LogLevel.STEP) {
-    return Color.Blue;
+    return $r('sys.color.brand');
   }
-  return Color.Gray;
+  return $r('sys.color.font_tertiary');
 }
 
 function summarize(value: Object | undefined): string {

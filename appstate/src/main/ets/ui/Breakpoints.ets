@@ -48,36 +48,16 @@ export enum NavTab {
   SETTINGS = 'settings'
 }
 
-/**
- * 导航项文案。
+/*
+ * 【本轮删除：`sidebarPanelSymbol` / `sidebarPanelLabelRes`】
  *
- * E108 之后 `SESSIONS` 只是 `WORKSPACES` 的别名（会话并入工作区），
- * 因此这里**不再单列**「会话」分支——写了也是同一分支，反而会让类型收窄判成"无重叠"。
+ * 两者是 **PC 侧栏席位**的图标/文案映射（v1 的 AppShell 侧栏轨道按面板 id 取 `$r`）。
+ * T025 删除 AppShell/SidebarShell 后，侧栏这条呈现路径整体退役：
+ *   · 手机链的会话列表是 `DrawerNav`（自己持有 `SessionSearch` 与本组件的行文案，不走侧栏席位）；
+ *   · 设置分区的文案走**保留的** `settingsSectionLabelRes`（下面这个函数）。
+ * 于是两者在整仓零消费点，随组件一起消亡——留着只会让人以为"侧栏还在"。
  */
-/**
- * 侧栏席位的**图标**（按面板 id；官方侧栏每个入口一个系统符号）。
- *
- * 【为什么改为按 id 而不是按 `NavTab`】P1-4 之后侧栏入口由 `PanelRegistry` 决定
- * （哪些入口存在、什么顺序），视图只按 id 取图标/文案 ⇒ `NavTab` 不再是导航的真值。
- */
-export function sidebarPanelSymbol(panelId: string): Resource {
-  if (panelId === 'sidebar.workspaces') {
-    return $r('sys.symbol.folder');
-  }
-  // 核心：用"分层的方块堆"表达"多版本核心 + 运行时分层"
-  // 名字取自 SDK 符号清单（previewer/.../resources.txt，共 4027 个）中实存的一项
-  if (panelId === 'sidebar.core') {
-    return $r('sys.symbol.square_stack_3d');
-  }
-  return $r('sys.symbol.gearshape');
-}
 
-/**
- * 侧栏席位的**文字资源**（跟随系统语言；底部标签栏也用同一份映射）。
- *
- * 【为什么按 id】同 `sidebarPanelSymbol`。资源本体在 `resources/base/element/string.json`
- * （中文，默认）与 `resources/en_US/...`（英文），由系统按当前语言选择。
- */
 /**
  * 设置分区 → 文案资源（按分区 id；P4-1）。
  *
@@ -107,16 +87,6 @@ export function settingsSectionLabelRes(sectionId: string): Resource {
   return $r('app.string.settings_device');
 }
 
-export function sidebarPanelLabelRes(panelId: string): Resource {
-  if (panelId === 'sidebar.workspaces') {
-    return $r('app.string.tab_workspaces');
-  }
-  if (panelId === 'sidebar.core') {
-    return $r('app.string.tab_core');
-  }
-  return $r('app.string.tab_settings');
-}
-
 /** 详情栏是否在该档位下可用（单栏时详情以全屏下钻呈现） */
 export function detailPanelAvailable(mode: LayoutMode): boolean {
   return mode === LayoutMode.TRIPLE;
@@ -140,4 +110,21 @@ export function navPresentation(mode: LayoutMode): NavPresentation {
     return NavPresentation.RAIL;
   }
   return NavPresentation.PANEL;
+}
+
+// ───────────────────────── 运行模式 ─────────────────────────
+
+/**
+ * 运行模式：本机运行 vs 连接远程主机（DSH Full Parity §FR-032）。
+ *
+ * 【为什么合入 Breakpoints 而不是单列文件】
+ *   RunMode 与 LayoutMode 同属「顶层形态决定因子」——
+ *   Index.ets 根据两者共同决定渲染 AppShell 还是 RemoteShell，
+ *   合在一处便于审查"形态判定全在一处"这条纪律。
+ */
+export enum RunMode {
+  /** 本机运行（HDSH 端侧自足范式） */
+  LOCAL = 'local',
+  /** 连接远程主机（DSH Mobile 抽屉范式） */
+  REMOTE = 'remote'
 }

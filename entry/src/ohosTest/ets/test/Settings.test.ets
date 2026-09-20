@@ -17,7 +17,6 @@ import {
   parseSettingInput,
   parseStructInput,
   projectSettingsEntries,
-  projectSettingsGroups,
   projectSettingsNamespace,
   SettingKind,
   SettingOrigin,
@@ -27,6 +26,24 @@ import {
   splitSettingKey
 } from 'appstate';
 import type { SettingGroup, SettingItem } from 'appstate';
+
+/**
+ * 只要 group 的那一层（本文件内部用）。
+ *
+ * 【为什么在测试里自己写一行】`appstate` 的 `projectSettingsGroups` 是 `projectSettingsEntries`
+ * 的薄包装，因**零调用点**被删（E368，见 `model/Settings.ets` 的登记）；
+ * 而本文件从不 import `entry.group` 的角度用得太碎（6 处断言），
+ * 逐处改成 `projectSettingsEntries(x)[i].group` 只会把断言语义弄糊。
+ * 于是保留"投影成 group 列表"这一步，只是把它搬进测试（它本来就是测试的读法）。
+ */
+function projectSettingsGroups(value: Object | undefined): SettingGroup[] {
+  const entries = projectSettingsEntries(value);
+  const out: SettingGroup[] = [];
+  for (let i = 0; i < entries.length; i++) {
+    out.push(entries[i].group);
+  }
+  return out;
+}
 
 /** 实测 `ui-theme` 命名空间（union(const×3) + number(12–17)） */
 const UI_THEME = '{"ns":"ui-theme","applies":"live","revision":0,"secrets":[],'

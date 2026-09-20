@@ -1,29 +1,70 @@
 /**
  * 输入区（Composer）—— D3 §3.6。
  *
- * 覆盖：多行输入、@ 引用弹层、斜杠命令弹层、附件、模型与推理强度 chip、
- * 发送/停止、草稿持久化（由宿主负责存储，本组件只上报变更）、
- * 离线排队提示、无障碍标签。
+ * ## v2 T015：按 DSH Mobile 源码级对照重塑（视觉/交互层）
+ *
+ * 【对照源文件】`.research/deepseek-harness-mobile/app/src/main/java/com/labteto/dshmobile/ui/screens/main/Composer.kt`
+ * （`Composer` 卡片、`AttachmentStrip` / `FileAttachmentChip`、`PermissionChip`、`CircleAction`）。
+ *
+ * · **卡片形态**：`Surface(shape = DsShapes.composer, color = composerCard, border = 1dp borderL1)`
+ *   → r22 圆角卡 + `composerCard` 填充 + `borderL1` 发丝边；内边距 `DsSpacing.MEDIUM`、
+ *   内部间距 `DsSpacing.SMALL`（源码同值）。
+ * · **输入框**：全宽多行（`maxLines = 8`）、`STD_14` 字阶、占位 `labelTertiary`、透明底
+ *   （源码 `TextFieldDefaults.colors(…Transparent…)`）。
+ * · **附件条**：图片 = 56dp 方块（`bgModulePlatform` 底 + r12）+ 右上 18dp 移除徽（`toastBg`）；
+ *   文件 = 高 56、宽 120–200 的 chip（图标 + 名字 + 大小/状态），失败时 `error` 描边。
+ * · **底行**：`+` 30dp（`hoverSolid`）→ 命令面板；权限 chip（`lock_shield` 14 + `SMALL_13` +
+ *   `chevron_down` 12；「完全权限」时图标转 `warnLabel`，源码同判据）；spacer；
+ *   **Send 常驻** 36dp（可发 → `buttonInfoFill` + 白箭头；不可发 → `buttonPrimaryDimmed`）；
+ *   **运行中 Stop 并存** 36dp（`error` 底 + 白 11dp r3 方块）——源码注释明确：两者共槽
+ *   会让运行中的会话无法排队/插话，所以发送常驻、停止加入而非替换。
+ * · **模型 chip 已移除**（源码注释："The model selector is deliberately *not* here —
+ *   it moved to the top bar"）→ 归 `ConversationHeader` 的 ModelChip（T014）。
+ * · 无 Mobile 对应件的 v1 功能**全部保留接线**：@ 引用与 / 命令弹层、附件上传回执、
+ *   图片内联、计划模式横幅、离线/能力提示、排队项管理、草稿触发词替换
+ *   （`detectTrigger`/`applyPick`）；工具行保持**可换行 Flex**（门禁要求，防控件被裁掉）。
+ * · 明暗色板：`mediaquery('(prefers-color-scheme: dark)')` + `dsPaletteOf(SYSTEM, dark)`。
  *
  * 本组件不直接调用协议层：所有动作通过回调上报给宿主，便于接入真实连接时只改宿主。
  */
 
-import { CommandCandidate, Fs, ModelOption, ModelSelection, PendingAttachment, QueuedItem, Radius, ReferenceCandidate, Sp, Sz, formatBytes, modelSelectionLabel, referenceQueryOf } from 'appstate';
+import { Border, CommandCandidate, DsPalette, DsShape, DsSpacing, DsThemePreference, DsType, PendingAttachment, QueuedItem, ReferenceCandidate, dsPaletteOf, formatBytes, referenceQueryOf } from 'appstate';
 import {
   COMMAND_PICK_RUN, appendPick, applyPick, commandPickAction, detectTrigger, referenceAgeLine, referenceCrumbs,
   referenceDrillQuery,
   referenceFileRowDetail, referenceFileRowName, referenceSessionRowDetail, referenceSessionRowName, TriggerToken
 } from 'appstate';
-import { NativeButton, NativeChip } from './NativePrimitives';
 import { GoalBar } from './GoalBar';
+import { mediaquery } from '@kit.ArkUI';
 
 /**
- * 附件缩略图边长（vp）。
- *
- * 取值与设计令牌里的 `Sz.TOUCH_MIN`（44）无关：这里是**图片预览**，不是命中目标
- * （删除按钮才是）。32 是"看得清是什么图"与"不把输入区撑高"之间的折中。
+ * 附件平铺的**边长 / 徽标**（vp）。对照 `Composer.kt` `AttachmentStrip`：
+ * `size(56.dp)` 方块 + 18dp 移除徽 + 12dp 徽内 `xmark`——DsSpacing 无 56/18/12* 档
+ * （12 有 XSMALL_12 字阶但不是间距），照抄源码值并在此注明出处。
  */
-const THUMB_SIDE: number = 32;
+const ATT_TILE: number = 56;
+const ATT_BADGE: number = 18;
+const ATT_BADGE_ICON: number = 12;
+/** 文件 chip 的宽度区间（源码 `widthIn(min = 120.dp, max = 200.dp)`） */
+const ATT_FILE_MIN_W: number = 120;
+const ATT_FILE_MAX_W: number = 200;
+/** 移除徽 / Stop 方块的图标白（源码字面 `Color.White`；ArkUI 侧以 0xAARRGGBB 常量承载） */
+const WHITE_TINT: number = 0xFFFFFFFF;
+/** Stop 方块的边长与圆角（源码 `size(11.dp)` + `RoundedCornerShape(3.dp)`） */
+const STOP_SQUARE: number = 11;
+const STOP_RADIUS: number = 3;
+/**
+ * 图标几何（vp）。对照 `Composer.kt` / `DsIconButton.kt` 的 iconSize 字面值：
+ * `doc_text` 18、`paperclip`/`picture`/`arrow_up` 16、`plus`/`lock_shield` 14、
+ * `chevron_down` 12——字阶 token（DsType）不表达图标边长，照抄源码值并在此注明。
+ */
+const ICON_DOC: number = 18;
+const ICON_TOOL: number = 16;
+const ICON_SMALL: number = 14;
+const ICON_CHEVRON: number = 12;
+/** 圆形动作钮直径（源码 `CircleAction` 30dp、Send/Stop 36dp；圆角 = 直径一半 → 全圆） */
+const ACTION_PLUS: number = 30;
+const ACTION_SEND: number = 36;
 
 /**
  * 附件条目的展示文本：`名字 · 大小`。
@@ -82,8 +123,6 @@ export struct Composer {
   @Prop attachments: PendingAttachment[] = [];
   /** 当前会话在 Host 侧的排队项（`session/control` 驱动；与会话一一对应） */
   @Prop queued: QueuedItem[] = [];
-  @Prop models: ModelOption[] = [];
-  @Prop selection: ModelSelection = { provider: '', modelId: '', effort: '' };
   @Prop references: ReferenceCandidate[] = [];
   @Prop commands: CommandCandidate[] = [];
   /**
@@ -106,15 +145,15 @@ export struct Composer {
    * 当前档位（`Index` 发布到 AppStorage）。
    *
    * 产品口径：**手机端适度优化调整，其他端与官方 100% 一致**。
-   * 所以"短标签（`@` / `/`）、不可切时隐藏权限 chip、模型 chip 收窄"这三处
-   * **只在单栏生效**；平板/折叠展开/2in1 上保持与官方一致的带文字 chip。
+   * 权限 chip 的收窄与可见性**只在单栏生效**；平板/折叠展开/2in1 上保持带文字的完整形态。
    */
   @StorageProp('dshLayoutMode') layoutMode: string = 'single';
   /**
-   * 当前会话的权限模式（只读展示）。
+   * 当前会话的权限模式。
    *
-   * 官方把它做成输入区的 `/permission` 弹层；本仓的**切换**端点尚未接线（见矩阵
-   * `permission-presets` 行），所以这里**如实只显示当前生效值**——不做一个点了没反应的假入口。
+   * 官方把它做成输入区的 `/permission` 弹层；本仓同款——切换走 `/permission <id>` 命令
+   * （`onPickPermission` → 宿主开单选浮层）。Host 没这个能力时 chip 只读并显示官方
+   * 字典的「不可用」，不做一个点了没反应的假入口。
    * 空串表示中枢还没读到，此时不显示该 chip（而不是显示一个"未知"）。
    */
   /**
@@ -159,9 +198,6 @@ export struct Composer {
    */
   onRemoveAttachment: (key: string) => void = () => {
   };
-  /** 切换模型（宿主弹出选择器） */
-  onPickModel: () => void = () => {
-  };
 
   /** 切换计划模式（执行 `/plan` 命令，宿主把它做成了一条命令） */
   onTogglePlan: () => void = () => {
@@ -205,22 +241,57 @@ export struct Composer {
    * 所以要给面包屑"还他一条回得去的路"；自己敲的路径上下文就在草稿里，不需要面包屑。
    */
   @State drilled: boolean = false;
+  /** 系统是否深色（`prefers-color-scheme`；MobileTheme 色板的解析输入） */
+  @State dark: boolean = false;
+  /** 深色模式监听（aboutToDisappear 必须注销） */
+  private darkQuery: mediaquery.MediaQueryListener | null = null;
+
+  aboutToAppear(): void {
+    this.darkQuery = mediaquery.matchMediaSync('(prefers-color-scheme: dark)');
+    this.dark = this.darkQuery.matches;
+    this.darkQuery.on('change', (result: mediaquery.MediaQueryResult) => {
+      this.dark = result.matches;
+    });
+  }
+
+  aboutToDisappear(): void {
+    this.darkQuery?.off('change');
+    this.darkQuery = null;
+  }
+
+  /** 当前语义色板（MobileTheme 唯一视觉 token 源；SYSTEM 偏好随系统明暗切换） */
+  private palette(): DsPalette {
+    return dsPaletteOf(DsThemePreference.SYSTEM, this.dark);
+  }
+
+  /**
+   * 发送是否可用。对照源码 `canSend`：
+   * `enabled && !preparing && (draft.isNotBlank || attachments.isNotEmpty) && attachmentsSettled`。
+   *
+   * · `enabled` / `preparing`：本仓没有"输入区整体禁用"与"图片处理中"两个事实 ⇒ 恒真；
+   * · `attachmentsSettled`：我们的文件附件**上传完成才入列**（`key` 就是回执），
+   *   不存在源码那种 Uploading/Failed 中间态 ⇒ 恒真；
+   * · 剩下的正文/附件判据照抄。
+   */
+  private canSend(): boolean {
+    return this.draft.trim().length > 0 || this.attachments.length > 0;
+  }
+
+  /** 计划模式的**生效**值（官方判据：`pending ? !active : active`） */
+  private planOn(): boolean {
+    return this.planPending ? !this.planActive : this.planActive;
+  }
 
   build() {
-    Column({ space: Sp.S }) {
+    Column({ space: DsSpacing.SMALL }) {
       /*
        * 【目标栏挂在这里，而不是挂在会话面板里（2026-09-17，第 50 轮换挂法）】
        *
        * 官方把「进行中的目标」放在**输入区正上方**。我们此前把它挂在 `ConversationPane`
-       * 的 Composer 旁边（同级），结果**一行都不渲染**——而两边数据都是对的：
-       * 旁路日志有 `goals/get ok present=true phase=active rev=1`，
-       * `GoalBar` 自己也订阅了中枢。查过三条假设（数据为空是假读数／follow 快照倒着覆盖／
-       * 组件不重绘）都不是，只剩"同级却画不出来"这一条现象。
-       *
+       * 的 Composer 旁边（同级），结果**一行都不渲染**——而两边数据都是对的。
        * 换挂法的依据很直接：**Composer 每一帧都在重绘**（敲一个字、草稿变、附件变都会），
        * 而它自己渲染得好好的；目标栏挂在它内部，就搭上了这条确定的刷新路径。
-       * 位置也仍然是"输入区上方"——`GoalBar()` 在这段 Column 的第一个位置，
-       * 与官方一致（没有目标时它整段不占位，见 D38 §5）。
+       * 位置也仍然是"输入区上方"——与官方一致（没有目标时它整段不占位，见 D38 §5）。
        */
       GoalBar()
 
@@ -232,23 +303,24 @@ export struct Composer {
         this.capabilityNotice()
       }
 
+      if (this.planOn()) {
+        this.planBanner()
+      }
+
       if (this.queued.length > 0) {
         this.queuePanel()
       }
 
-      if (this.attachments.length > 0) {
-        this.attachmentRow()
-      }
-
-      if (this.panel.length > 0) {
-        this.overlayPanel()
-      }
-
-      this.toolRow()
-
-      Row({ space: Sp.S }) {
-        // E123：占位文案改用官方措辞（「发消息或创建任务, / 调用指令, @ 文件或对话」），
-        // 走资源 ⇒ 跟随系统语言，默认中文
+      /*
+       * 卡片本体（对照 `Composer.kt` 的 `Surface`）：
+       * r22（`DsShape.COMPOSER`）+ `composerCard` 填充 + `borderL1` 发丝边。
+       */
+      Column({ space: DsSpacing.SMALL }) {
+        /*
+         * 多行输入（对照源码 `TextField(minLines = 1, maxLines = 8, textStyle = std14)`）：
+         * 全宽、透明底、占位 `labelTertiary`。E123：占位文案走资源 ⇒ 跟随系统语言。
+         * 源码注释：字段是多行的，屏幕上的回车键就是换行——发送键是按钮，不在这里抢。
+         */
         TextArea({
           text: this.draft,
           placeholder: this.offline
@@ -261,81 +333,109 @@ export struct Composer {
             this.drilled = false;
             this.updateOverlay(value);
           })
-          .layoutWeight(1)
-          .constraintSize({ minHeight: Sz.TOUCH_MIN, maxHeight: Sz.TOUCH_MIN * 5 })
+          .fontSize(DsType.STD_14.size)
+          .fontColor(this.palette().labelPrimary)
+          .placeholderColor(this.palette().labelTertiary)
+          .backgroundColor(Color.Transparent)
+          .padding(0)
+          // maxLines 8（源码同值）：上限高度 = 行高 × 8
+          .constraintSize({
+            minHeight: DsType.STD_14.lineHeight,
+            maxHeight: DsType.STD_14.lineHeight * 8
+          })
+          .width('100%')
           .accessibilityText('消息输入框')
 
-        this.sendButton()
+        if (this.attachments.length > 0) {
+          this.attachmentStrip()
+        }
+
+        this.toolRow()
+
+        this.actionRow()
       }
       .width('100%')
-      .alignItems(VerticalAlign.Bottom)
+      .padding(DsSpacing.MEDIUM)
+      .backgroundColor(this.palette().composerCard)
+      .borderRadius(DsShape.COMPOSER)
+      .borderWidth(Border.HAIRLINE)
+      .borderColor(this.palette().borderL1)
+
+      if (this.panel.length > 0) {
+        this.overlayPanel()
+      }
     }
     .width('100%')
-    .padding(Sp.M)
-    .backgroundColor($r('sys.color.background_primary'))
+    // 源码 Surface 外距：horizontal = medium, vertical = small
+    .padding({
+      left: DsSpacing.MEDIUM,
+      right: DsSpacing.MEDIUM,
+      top: DsSpacing.SMALL,
+      bottom: DsSpacing.SMALL
+    })
   }
 
   @Builder
   offlineNotice() {
-    Row({ space: Sp.S }) {
+    Row({ space: DsSpacing.SMALL }) {
       SymbolGlyph($r('sys.symbol.wifi_slash'))
-        .fontSize(14)
-        .fontColor([$r('sys.color.warning')])
+        .fontSize(DsType.SMALL_13.size)
+        .fontColor([this.palette().warnLabel])
       Text(this.queuedCount > 0
         ? `离线中：已排队 ${this.queuedCount} 条，连接恢复后按序发送`
         : '离线中：发送的消息将在连接恢复后按序发送')
-        .fontSize(Fs.CAPTION)
-        .fontColor($r('sys.color.warning'))
+        .fontSize(DsType.SMALL_13.size)
+        .fontColor(this.palette().warnLabel)
         .layoutWeight(1)
     }
     .width('100%')
-    .padding(Sp.S)
-    .borderRadius(Radius.S)
-    .backgroundColor($r('sys.color.background_secondary'))
+    .padding(DsSpacing.SMALL)
+    .borderRadius(DsShape.BLOCK)
+    .backgroundColor(this.palette().warnTertiary)
   }
 
   @Builder
   queuePanel() {
-    Column({ space: Sp.XS }) {
-      Row({ space: Sp.S }) {
+    Column({ space: DsSpacing.XSMALL }) {
+      Row({ space: DsSpacing.SMALL }) {
         Text(`待发队列 ${this.queued.length} 条`)
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
+          .fontSize(DsType.SMALL_13.size)
+          .fontColor(this.palette().labelTertiary)
           .layoutWeight(1)
         Text('由 Host 维护')
-          .fontSize(Fs.CAPTION_XS)
-          .fontColor($r('sys.color.font_tertiary'))
+          .fontSize(DsType.CAPTION_11.size)
+          .fontColor(this.palette().labelTertiary)
       }
       .width('100%')
 
       ForEach(this.queued, (item: QueuedItem) => {
-        Column({ space: Sp.XS }) {
+        Column({ space: DsSpacing.XSMALL }) {
           Text(item.text)
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_primary'))
+            .fontSize(DsType.SMALL_13.size)
+            .fontColor(this.palette().labelPrimary)
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .width('100%')
-          Row({ space: Sp.L }) {
+          Row({ space: DsSpacing.MEDIUM }) {
             Text('取回编辑')
-              .fontSize(Fs.CAPTION_XS)
-              .fontColor($r('sys.color.brand'))
+              .fontSize(DsType.CAPTION_11.size)
+              .fontColor(this.palette().accent)
               .onClick(() => {
                 this.onPullQueued(item.id, item.text);
               })
             Text(placementLabel(item.placement))
-              .fontSize(Fs.CAPTION_XS)
-              .fontColor($r('sys.color.font_tertiary'))
+              .fontSize(DsType.CAPTION_11.size)
+              .fontColor(this.palette().labelTertiary)
             Blank()
             Text('插话')
-              .fontSize(Fs.CAPTION_XS)
-              .fontColor($r('sys.color.brand'))
+              .fontSize(DsType.CAPTION_11.size)
+              .fontColor(this.palette().accent)
               .onClick(() => {
                 this.onSteerQueued(item.id);
               })
             Text('移除')
-              .fontSize(Fs.CAPTION_XS)
-              .fontColor($r('sys.color.alert'))
+              .fontSize(DsType.CAPTION_11.size)
+              .fontColor(this.palette().error)
               .onClick(() => {
                 this.onRemoveQueued(item.id);
               })
@@ -343,9 +443,9 @@ export struct Composer {
           .width('100%')
         }
         .width('100%')
-        .padding(Sp.S)
-        .borderRadius(Radius.S)
-        .backgroundColor($r('sys.color.background_secondary'))
+        .padding(DsSpacing.SMALL)
+        .borderRadius(DsShape.BLOCK)
+        .backgroundColor(this.palette().bgModulePlatform)
       }, (item: QueuedItem) => item.id)
     }
     .width('100%')
@@ -353,63 +453,118 @@ export struct Composer {
 
   @Builder
   capabilityNotice() {
-    Row({ space: Sp.S }) {
+    Row({ space: DsSpacing.SMALL }) {
       SymbolGlyph($r('sys.symbol.exclamationmark_circle'))
-        .fontSize(14)
-        .fontColor([$r('sys.color.font_secondary')])
+        .fontSize(DsType.SMALL_13.size)
+        .fontColor([this.palette().labelSecondary])
       Text(this.notice)
-        .fontSize(Fs.CAPTION)
-        .fontColor($r('sys.color.font_secondary'))
+        .fontSize(DsType.SMALL_13.size)
+        .fontColor(this.palette().labelSecondary)
         .layoutWeight(1)
     }
     .width('100%')
-    .padding(Sp.S)
-    .borderRadius(Radius.S)
-    .backgroundColor($r('sys.color.background_secondary'))
+    .padding(DsSpacing.SMALL)
+    .borderRadius(DsShape.BLOCK)
+    .backgroundColor(this.palette().bgModulePlatform)
     .accessibilityText(this.notice)
   }
 
+  /**
+   * 计划模式**生效中**的横幅（T030，FR-010 / spec 场景 4）。
+   *
+   * 【为什么 chip 之外还要一条横幅】spec 的场景 4 要求"输入区整体进入计划模式的
+   * 视觉状态"，而不只是一个高亮的 chip：开关打开意味着**接下来的消息会走另一条
+   * 流程**（先出计划、等确认再执行），这件事不写出来，第一次用的用户只会看到
+   * "回复变奇怪了"。chip 的实底回答"开关开着没"，横幅回答"开了会发生什么"。
+   *
+   * 【如实登记】官方 Web **没有**这条横幅的先例（输入区只有 chip）——这是我们按
+   * FR-010 主动补的告知，文案只陈述 plan-review 的实际语义（"先给出计划，待你确认
+   * 后再执行"），不承诺官方没有的按钮；差异应登记在 parity 矩阵的 plan 行。
+   */
   @Builder
-  attachmentRow() {
+  planBanner() {
+    Row({ space: DsSpacing.SMALL }) {
+      SymbolGlyph($r('sys.symbol.list_bullet'))
+        .fontSize(DsType.SMALL_13.size)
+        .fontColor([this.palette().accent])
+      Text('计划模式已开启：发送后助手会先给出计划，待你确认后再执行。')
+        .fontSize(DsType.SMALL_13.size)
+        .fontColor(this.palette().labelSecondary)
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .padding(DsSpacing.SMALL)
+    .borderRadius(DsShape.BLOCK)
+    .backgroundColor(this.palette().accentTertiary)
+    .accessibilityText('计划模式已开启：发送后助手会先给出计划，待你确认后再执行。')
+  }
+
+  /**
+   * 附件条（对照 `AttachmentStrip` / `FileAttachmentChip`）：
+   * 图片 = 56dp 方块缩略图；文件 = 56dp 高的 chip（图标 + 名字 + 大小）。
+   * 两者右上角同款 18dp 移除徽（`toastBg` 底 + 白 `xmark`）——源码让移除位置
+   * 在**每一种**附件上都在同一个地方，手指不用重新找。
+   */
+  @Builder
+  attachmentStrip() {
     Scroll() {
-      Row({ space: Sp.S }) {
+      Row({ space: DsSpacing.SMALL }) {
         ForEach(this.attachments, (item: PendingAttachment) => {
-          Row({ space: Sp.XS }) {
-            /*
-             * 图片给**缩略图**、文件给回形针（P0-4）。
-             *
-             * 【为什么不都用回形针】图片最常见的问题是"选错了一张"——缩略图是唯一
-             * 能在发出前看出来的信息；文件名（`IMG_20240101_120000.jpg`）对人几乎无用。
-             * 官方输入区的附件槽位同样给预览。
-             */
+          Stack({ alignContent: Alignment.TopEnd }) {
             if (attachmentPreview(item).length > 0) {
               Image(attachmentPreview(item))
-                .width(THUMB_SIDE)
-                .height(THUMB_SIDE)
+                .width(ATT_TILE)
+                .height(ATT_TILE)
                 .objectFit(ImageFit.Cover)
-                .borderRadius(Radius.XS)
+                .borderRadius(DsShape.BLOCK)
+                .backgroundColor(this.palette().bgModulePlatform)
                 .accessibilityText(`图片预览：${item.name}`)
             } else {
-              SymbolGlyph($r('sys.symbol.paperclip')).fontSize(12)
-                .fontColor([$r('sys.color.font_secondary')])
+              Row({ space: DsSpacing.SMALL }) {
+                SymbolGlyph($r('sys.symbol.doc_text'))
+                  .fontSize(ICON_DOC)
+                  .fontColor([this.palette().labelSecondary])
+                Column() {
+                  Text(item.name)
+                    .fontSize(DsType.SMALL_13.size)
+                    .fontColor(this.palette().labelPrimary)
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  Text(attachmentLabel(item))
+                    .fontSize(DsType.CAPTION_11.size)
+                    .fontColor(this.palette().labelTertiary)
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                }
+                .layoutWeight(1)
+              }
+              .height(ATT_TILE)
+              .constraintSize({ minWidth: ATT_FILE_MIN_W, maxWidth: ATT_FILE_MAX_W })
+              .padding({ left: 10, right: 22 })
+              .borderRadius(DsShape.BLOCK)
+              .backgroundColor(this.palette().bgModulePlatform)
+              .borderWidth(Border.HAIRLINE)
+              .borderColor(this.palette().borderL3)
+              .alignItems(VerticalAlign.Center)
             }
-            Text(attachmentLabel(item))
-              .fontSize(Fs.CAPTION)
-              .maxLines(1)
-              .constraintSize({ maxWidth: 160 })
-            Text('×')
-              .fontSize(Fs.CAPTION)
-              .fontColor($r('sys.color.alert'))
-              .onClick(() => {
-                // 以**行身份 `key`** 移除，而不是文件名：同名文件可以加两次，
-                // 按名字移除会一次删掉两个（用户以为只删了一个）。
-                // 图片没有回执，它的 key 是客户端草稿 id（P0-4）。
-                this.onRemoveAttachment(item.key);
-              })
+            // 移除徽（两种附件同一个位置、同一个形状）
+            Stack({ alignContent: Alignment.Center }) {
+              SymbolGlyph($r('sys.symbol.xmark'))
+                .fontSize(ATT_BADGE_ICON)
+                .fontColor([WHITE_TINT])
+            }
+            .width(ATT_BADGE)
+            .height(ATT_BADGE)
+            .borderRadius(ATT_BADGE / 2)
+            .backgroundColor(this.palette().toastBg)
+            .accessibilityText(item.kind === 'file' ? '移除文件附件' : '移除图片')
+            .onClick(() => {
+              // 以**行身份 `key`** 移除，而不是文件名：同名文件可以加两次，
+              // 按名字移除会一次删掉两个（用户以为只删了一个）。
+              // 图片没有回执，它的 key 是客户端草稿 id（P0-4）。
+              this.onRemoveAttachment(item.key);
+            })
           }
-          .padding({ left: Sp.S, right: Sp.S, top: Sp.XS, bottom: Sp.XS })
-          .borderRadius(Radius.S)
-          .backgroundColor($r('sys.color.background_secondary'))
         }, (item: PendingAttachment) => item.key)
       }
     }
@@ -418,188 +573,242 @@ export struct Composer {
     .width('100%')
   }
 
-  /** 计划模式的**生效**值（官方判据：`pending ? !active : active`） */
-  private planOn(): boolean {
-    return this.planPending ? !this.planActive : this.planActive;
-  }
-
   /**
-   * 工具行：@ / / / 附件 / 图片 / 计划 / 权限 || 模型（全部走 P1.5 的原生原语）。
+   * 工具行：@ / / / 附件 / 图片 / 计划。
+   *
+   * 【与 Mobile 源码的关系】`Composer.kt` 把这些收进 `+` 弹层（底行那颗 30dp 的 +）；
+   * 我们的 `+` 只开**命令**面板，引用/附件/图片/计划保留为显式入口——这是 v1 功能
+   * 接线的保留（任务约束：附件上传、Plan、@引用、popupSelect 命令一个不少），
+   * 差异登记 parity 矩阵。
    *
    * ## 为什么是**可换行的 Flex**，而不是一行 `Row` + `Blank()`
    *
-   * 一行 `Row` 里不放 `layoutWeight` 的子元素**不会缩**：手机上（360vp）这一行的固定宽度加起来
-   * 已经超过屏宽（两个 chip + 两个图标按钮 + 计划 + 权限 chip + 模型 chip），
-   * 于是**最右边的「模型」chip 被挤出屏幕**——它偏偏是手机上最常用的控件之一。
-   * 这正是 `docs/08` 的 P0 §7 点名的那类缺陷：「操作区被内容挤压时不得静默消失」。
+   * 一行 `Row` 里不放 `layoutWeight` 的子元素**不会缩**：手机上（360vp）这一行的固定宽度
+   * 加起来可能超过屏宽，于是最右边的控件被挤出屏幕。这正是 `docs/08` P0 §7 点名的
+   * 那类缺陷：「操作区被内容挤压时不得静默消失」。放不下时整组换行，控件一个不少。
    *
-   * 官方 Web 的输入区这一行就是 `flex-wrap: wrap; justify-content: space-between`
-   * （`dsh-client-ui-conversation` 的 composer CSS：`.W5Twba_row{flex-wrap:wrap;justify-content:space-between;…}`），
-   * 并且把"模型/发送"那一组放在 `.trailing{margin-left:auto}` 里。
-   * 这里照同一结构：**外层可换行 + 两个组**（左组工具、右组模型）——
-   * 放得下时模型靠右，放不下时整组换到第二行，**没有任何控件被裁掉**。
-   *
-   * 间距用子元素的 margin（本仓 `NativeActionBar` 已是这个写法）：换行之后
-   * `space` 只在主轴方向生效，跨行间距得靠 margin 才一致。
+   * 间距用子元素的 margin（`space` 只在主轴方向生效，跨行间距得靠 margin 才一致）。
    */
   @Builder
   toolRow() {
-    /*
-     * 【2026-09-17 紧凑化：所有控件**直接**挂在外层可换行 Flex 上】
-     *
-     * 原来分成"左组 Flex + 右组 Row"两层，实测右组的模型 chip **每次都换到第二行**——
-     * 无论有没有 `layoutWeight(1)`（去掉之后仍然如此）：内层 Flex 参与外层测量时
-     * 会按"能占多宽占多宽"报告，于是 SpaceBetween 认为放不下。
-     *
-     * 现在把 7 件控件平铺成外层 Flex 的直接子节点：能一行就一行（手机 376vp 实测放得下），
-     * 放不下才换行，**任何一件都不会被裁掉**（D46 §1 的要求不动）。
-     * 这同时更接近官方客户端的形态：一行 = `+ ◎ 完全权限 本地 … 模型名 ⌄ ↑`。
-     */
     Flex({ wrap: FlexWrap.Wrap, alignItems: ItemAlign.Center }) {
-        Row() {
-          NativeChip({
-            // 手机端省地方用短标签；其他端与官方一致（官方是带文字的 chip）
-            label: this.layoutMode === 'single' ? '@' : '@ 引用',
-            active: this.panel === 'ref',
-            a11y: '插入文件或会话引用',
-            onTap: () => {
-              this.panel = this.panel === 'ref' ? '' : 'ref';
-              this.filter = '';
-            }
-          })
-        }
-        .margin({ right: Sp.XS, bottom: Sp.XS })
-
-        Row() {
-          NativeChip({
-            label: this.layoutMode === 'single' ? '/' : '/ 命令',
-            active: this.panel === 'cmd',
-            a11y: '运行命令',
-            onTap: () => {
-              this.panel = this.panel === 'cmd' ? '' : 'cmd';
-              this.filter = '';
-            }
-          })
-        }
-        .margin({ right: Sp.XS, bottom: Sp.XS })
-
-        Row() {
-          Button() {
-            SymbolGlyph($r('sys.symbol.paperclip')).fontSize(Sz.TOUCH_MIN / 2)
-          }
-          .buttonStyle(ButtonStyleMode.TEXTUAL)
-          .accessibilityText('添加附件')
-          .onClick(() => {
-            this.onAddAttachment();
-          })
-        }
-        .margin({ right: Sp.XS, bottom: Sp.XS })
-
-        /*
-         * ── 图片（P0-4）──
-         *
-         * 【为什么单独一个按钮】两条路的线上语义不同（文件=先上传拿会话作用域回执；
-         * 图片=内联 base64，官方 `serializeImages()`），失败原因也不同 ⇒ 分开才说得清。
-         * 图标用 `sys.symbol.picture`（**已在本机 CLT 的 `sysResource.js` 的 symbol 段里核对过**：
-         * `paperclip` 与 `picture` 都在；猜一个名字会换来一个空白按钮，这是 E-symbol 的教训）。
-         */
-        Row() {
-          Button() {
-            SymbolGlyph($r('sys.symbol.picture')).fontSize(Sz.TOUCH_MIN / 2)
-          }
-          .buttonStyle(ButtonStyleMode.TEXTUAL)
-          .accessibilityText('添加图片（随消息一起发送，不需要先上传）')
-          .onClick(() => {
-            this.onAddImage();
-          })
-        }
-        .margin({ right: Sp.XS, bottom: Sp.XS })
-
-        // ── 计划模式（官方 ui-plan：输入区的一级 chip；E202 的判据）──
-        Row() {
-          NativeChip({
-            label: '计划',
-            active: this.planOn(),
-            a11y: `计划模式：${this.planOn() ? '已开启' : '已关闭'}，点击切换`,
-            onTap: () => {
-              this.onTogglePlan();
-            }
-          })
-        }
-        .margin({ right: Sp.XS, bottom: Sp.XS })
-
-        /*
-         * ── 权限模式（P7-6 + 2026-09-17 紧凑化）──
-         *
-         * 原来一律挂着 `权限：<值>` 这个最长的 chip（手机上常把模型挤到第二行）。
-         * 现在：**只有真能切的时候才出现**，而且只显示值本身（前缀去掉）；
-         * 没能力时**不占这一行**——"这台 Host 没有权限预设"这件事在设置→通用里
-         * 已经有一行如实说明（`权限模式 / 未报告` + 原因），没必要在输入区再占一格。
-         */
-        if (this.permissionLabel.length > 0
-          && (this.layoutMode !== 'single' || this.permissionSwitchableNow)) {
-          Row() {
-            NativeChip({
-              /*
-               * 非单栏：**与官方 1:1**——官方在那里显示的就是「值 + ⌄」
-               * （截图里是 `工作区内修改 ⌄` / `完全权限 ⌄`），没有「权限：」前缀。
-               * 单栏（手机）：只留值本身、且只在真能切时出现，见上面那段说明。
-               */
-              label: this.permissionLabel,
-              active: false,
-              disabled: !this.permissionSwitchableNow,
-              maxWidth: this.layoutMode === 'single' ? 84 : 160,
-              a11y: this.permissionSwitchableNow
-                ? `当前权限模式：${this.permissionLabel}，点击切换`
-                : `权限：${this.permissionLabel}。${this.permissionHint}`,
-              onTap: () => {
-                if (this.permissionSwitchableNow) {
-                  this.onPickPermission();
-                }
-              }
-            })
-            // 官方那一格带 `⌄`（可选项的形状提示）。手机端省地方，不加。
-            if (this.layoutMode !== 'single') {
-              SymbolGlyph($r('sys.symbol.chevron_down'))
-                .fontSize(Sz.TOUCH_MIN / 2)
-                .fontColor([$r('sys.color.font_tertiary')])
-            }
-          }
-          .margin({ right: Sp.XS, bottom: Sp.XS })
-        }
-
-      // ── 模型（官方把这一项放在工具行右端：`模型名 ⌄`）──
-      Row() {
-        NativeChip({
-          label: this.modelLabel(),
-          // 手机端收窄（官方桌面端给得更宽）；其他端保持与官方一致的宽度余量
-          maxWidth: this.layoutMode === 'single' ? 120 : 160,
-          a11y: `当前模型：${this.modelLabel()}，点击切换`,
-          onTap: () => {
-            this.onPickModel();
-          }
+      Text(this.layoutMode === 'single' ? '@' : '@ 引用')
+        .fontSize(DsType.SMALL_13.size)
+        .fontColor(this.panel === 'ref' ? this.palette().accent : this.palette().labelTertiary)
+        .padding({
+          left: DsSpacing.SMALL,
+          right: DsSpacing.SMALL,
+          top: DsSpacing.TINY,
+          bottom: DsSpacing.TINY
         })
-        /*
-         * 官方在模型名后面有一个 `⌄`（"这是一组可选项"的形状提示，截图里很清楚）。
-         * 图标名**已在权威清单里核过**：`chevron_down` 存在
-         * （`sdk/default/openharmony/ets/build-tools/ets-loader/sysResource.js`，7251 个符号）。
-         * 顺带记两条**不存在**的名字，免得以后有人再猜：`command` / `terminal` 都不在清单里——
-         * 所以 `/` 那个入口继续用文字（这反而更贴官方：官方的写法就是"`/` 调用指令"）。
-         */
-        SymbolGlyph($r('sys.symbol.chevron_down'))
-          .fontSize(Sz.TOUCH_MIN / 2)
-          .fontColor([$r('sys.color.font_tertiary')])
+        .borderRadius(DsShape.PILL)
+        .backgroundColor(this.panel === 'ref' ? this.palette().accentTertiary : Color.Transparent)
+        .accessibilityText('插入文件或会话引用')
+        .onClick(() => {
+          this.panel = this.panel === 'ref' ? '' : 'ref';
+          this.filter = '';
+        })
+        .margin({ right: DsSpacing.XSMALL, bottom: DsSpacing.XSMALL })
+
+      Text(this.layoutMode === 'single' ? '/' : '/ 命令')
+        .fontSize(DsType.SMALL_13.size)
+        .fontColor(this.panel === 'cmd' ? this.palette().accent : this.palette().labelTertiary)
+        .padding({
+          left: DsSpacing.SMALL,
+          right: DsSpacing.SMALL,
+          top: DsSpacing.TINY,
+          bottom: DsSpacing.TINY
+        })
+        .borderRadius(DsShape.PILL)
+        .backgroundColor(this.panel === 'cmd' ? this.palette().accentTertiary : Color.Transparent)
+        .accessibilityText('运行命令')
+        .onClick(() => {
+          this.panel = this.panel === 'cmd' ? '' : 'cmd';
+          this.filter = '';
+        })
+        .margin({ right: DsSpacing.XSMALL, bottom: DsSpacing.XSMALL })
+
+      /*
+       * ── 附件（文件）── 图标名 `paperclip` 已在 sysResource.js 核对过（E-symbol 教训：
+       * 猜一个名字会换来一个空白按钮）。
+       */
+      Stack({ alignContent: Alignment.Center }) {
+        SymbolGlyph($r('sys.symbol.paperclip'))
+          .fontSize(ICON_TOOL)
+          .fontColor([this.palette().labelSecondary])
       }
-      .margin({ bottom: Sp.XS })
+      .constraintSize({ minWidth: 32, minHeight: 32 })
+      .accessibilityText('添加附件')
+      .onClick(() => {
+        this.onAddAttachment();
+      })
+      .margin({ right: DsSpacing.XSMALL, bottom: DsSpacing.XSMALL })
+
+      /*
+       * ── 图片（P0-4）──
+       *
+       * 【为什么单独一个按钮】两条路的线上语义不同（文件=先上传拿会话作用域回执；
+       * 图片=内联 base64，官方 `serializeImages()`），失败原因也不同 ⇒ 分开才说得清。
+       */
+      Stack({ alignContent: Alignment.Center }) {
+        SymbolGlyph($r('sys.symbol.picture'))
+          .fontSize(ICON_TOOL)
+          .fontColor([this.palette().labelSecondary])
+      }
+      .constraintSize({ minWidth: 32, minHeight: 32 })
+      .accessibilityText('添加图片（随消息一起发送，不需要先上传）')
+      .onClick(() => {
+        this.onAddImage();
+      })
+      .margin({ right: DsSpacing.XSMALL, bottom: DsSpacing.XSMALL })
+
+      /*
+       * ── 计划模式（官方 ui-plan：输入区的一级 chip；E202 的判据）──
+       * 开启 = `accentTertiary` 实底 + `accent` 文字：开关型 chip 与命令/引用那类
+       * 瞬时面板 chip 在观感上可分。
+       */
+      Text('计划')
+        .fontSize(DsType.SMALL_13.size)
+        .fontColor(this.planOn() ? this.palette().accent : this.palette().labelTertiary)
+        .padding({
+          left: DsSpacing.SMALL,
+          right: DsSpacing.SMALL,
+          top: DsSpacing.TINY,
+          bottom: DsSpacing.TINY
+        })
+        .borderRadius(DsShape.PILL)
+        .backgroundColor(this.planOn() ? this.palette().accentTertiary : Color.Transparent)
+        .accessibilityText(`计划模式：${this.planOn() ? '已开启' : '已关闭'}，点击切换`)
+        .onClick(() => {
+          this.onTogglePlan();
+        })
+        .margin({ bottom: DsSpacing.XSMALL })
     }
     .width('100%')
-    /*
-     * 权限那一格在"不可切"时**不占版面**（见上面权限 chip 的说明），但"这台 Host 为什么没有权限预设"
-     * 这句话不能因此消失——把它挂到整行的无障碍文案上：看得见的地方省宽度，读屏那里仍然说清。
-     */
     .accessibilityText(this.permissionSwitchableNow
-      ? `工具行：引用、命令、附件、图片、计划、权限${this.permissionLabel}、模型${this.modelLabel()}`
-      : `工具行：引用、命令、附件、图片、计划、模型${this.modelLabel()}。${this.permissionHint}`)
+      ? `工具行：引用、命令、附件、图片、计划、权限${this.permissionLabel}`
+      : `工具行：引用、命令、附件、图片、计划。${this.permissionHint}`)
+  }
+
+  /**
+   * 底行（对照源码的 `Row(CircleAction(+), PermissionChip, Spacer, ContextMeter, Send, Stop)`）：
+   * `+` 开命令面板；权限 chip；右侧 **Send 常驻** + **运行中 Stop 并存**。
+   *
+   * ContextMeter（源码 44×6 的上下文计量条）无对应数据源，跳过——没有 `contextBreakdown`
+   * 投影可画，画一根假条比不画更糟。
+   */
+  @Builder
+  actionRow() {
+    Row({ space: DsSpacing.COMPACT }) {
+      Stack({ alignContent: Alignment.Center }) {
+        SymbolGlyph($r('sys.symbol.plus'))
+          .fontSize(ICON_SMALL)
+          .fontColor([this.palette().labelPrimary])
+      }
+      .width(ACTION_PLUS)
+      .height(ACTION_PLUS)
+      .borderRadius(ACTION_PLUS / 2)
+      .backgroundColor(this.palette().hoverSolid)
+      .accessibilityText('命令面板')
+      .onClick(() => {
+        this.panel = this.panel === 'cmd' ? '' : 'cmd';
+        this.filter = '';
+      })
+
+      /*
+       * ── 权限 chip（对照 `PermissionChip`）──
+       *
+       * 可见性沿用 v1 判定：**只有真能切的时候才出现**（单栏）——"这台 Host 没有权限预设"
+       * 这件事在设置里已有一行如实说明，没必要在输入区再占一格；非单栏与官方一致，
+       * 有值就显示。
+       */
+      if (this.permissionLabel.length > 0
+        && (this.layoutMode !== 'single' || this.permissionSwitchableNow)) {
+        Row({ space: DsSpacing.TINY }) {
+          /*
+           * 「完全权限」转警示色（源码判据：`effective == FULL_ACCESS_PRESET` 时图标
+           * `warnLabel`）——我们的 label 是宿主拼好的显示文案，取值里含「完全权限」
+           * 即视为同一档（启发式，注释如源码一样写明）。
+           */
+          SymbolGlyph($r('sys.symbol.lock_shield'))
+            .fontSize(ICON_SMALL)
+            .fontColor([this.permissionLabel.indexOf('完全权限') >= 0
+              ? this.palette().warnLabel : this.palette().labelTertiary])
+          Text(this.permissionLabel)
+            .fontSize(DsType.SMALL_13.size)
+            .fontColor(this.palette().labelSecondary)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .constraintSize({ maxWidth: this.layoutMode === 'single' ? 84 : 160 })
+          SymbolGlyph($r('sys.symbol.chevron_down'))
+            .fontSize(ICON_CHEVRON)
+            .fontColor([this.palette().labelTertiary])
+        }
+        .padding({
+          left: DsSpacing.SMALL,
+          right: DsSpacing.SMALL,
+          top: DsSpacing.TINY,
+          bottom: DsSpacing.TINY
+        })
+        .borderRadius(DsShape.CUBE)
+        .accessibilityText(this.permissionSwitchableNow
+          ? `当前权限模式：${this.permissionLabel}，点击切换`
+          : `权限：${this.permissionLabel}。${this.permissionHint}`)
+        .onClick(() => {
+          if (this.permissionSwitchableNow) {
+            this.onPickPermission();
+          }
+        })
+      }
+
+      Blank()
+
+      /*
+       * Send 常驻（源码注释：与 Stop 共槽会让运行中的会话**没有任何发送途径**——
+       * Host 本来就允许 `mode: queue|steer` 的中途提示词）。
+       * 可发 → `buttonInfoFill` + 白箭头；不可发 → `buttonPrimaryDimmed` + `labelTertiary`。
+       */
+      Stack({ alignContent: Alignment.Center }) {
+        SymbolGlyph($r('sys.symbol.arrow_up'))
+          .fontSize(ICON_TOOL)
+          .fontColor([this.canSend() ? WHITE_TINT : this.palette().labelTertiary])
+      }
+      .width(ACTION_SEND)
+      .height(ACTION_SEND)
+      .borderRadius(ACTION_SEND / 2)
+      .backgroundColor(this.canSend()
+        ? this.palette().buttonInfoFill : this.palette().buttonPrimaryDimmed)
+      .accessibilityText('发送消息')
+      .onClick(() => {
+        if (this.canSend()) {
+          this.onSend();
+        }
+      })
+
+      /*
+       * Stop 只在运行中出现，且**不占 Send 的位置**（源码注释：停止的手势永远在
+       * 老地方，发送出现在它旁边而不是已经在按停的那根拇指下面）。
+       */
+      if (this.running) {
+        Stack({ alignContent: Alignment.Center }) {
+          Column()
+            .width(STOP_SQUARE)
+            .height(STOP_SQUARE)
+            .borderRadius(STOP_RADIUS)
+            .backgroundColor(WHITE_TINT)
+        }
+        .width(ACTION_SEND)
+        .height(ACTION_SEND)
+        .borderRadius(ACTION_SEND / 2)
+        .backgroundColor(this.palette().error)
+        .accessibilityText('停止当前轮次')
+        .onClick(() => {
+          this.onStop();
+        })
+      }
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
   }
 
   @Builder
@@ -608,26 +817,58 @@ export struct Composer {
       /*
        * 面板标题：钻孔时显示**面包屑**（官方 `header()` 只对钻孔列表给 crumbs，
        * 根标签逐字取官方字典的 `crumb.root` = 工作区），否则显示原来的动作名。
+       *
+       * §FR-007：面包屑可点击回溯——点击面包屑的任意一级可导航回该层级。
        */
-      Text(this.panelTitle())
-        .fontSize(Fs.CAPTION)
-        .fontColor($r('sys.color.font_tertiary'))
+      if (this.panel === 'ref' && this.drilled) {
+        Row({ space: 2 }) {
+          ForEach(referenceCrumbs(this.filter, this.drilled), (crumb: string, idx: number) => {
+            if (idx > 0) {
+              Text(' › ')
+                .fontSize(DsType.SMALL_13.size)
+                .fontColor(this.palette().labelTertiary)
+            }
+            Text(crumb)
+              .fontSize(DsType.SMALL_13.size)
+              .fontColor(idx === referenceCrumbs(this.filter, this.drilled).length - 1
+                ? this.palette().labelPrimary
+                : this.palette().accent)
+              .onClick(() => {
+                // 点击非末级面包屑 → 回退到该层级（重新查询）
+                if (idx < referenceCrumbs(this.filter, this.drilled).length - 1) {
+                  this.drilled = idx === 0 ? false : true;
+                  // 回到工作区根级
+                  if (idx === 0) {
+                    this.filter = '';
+                  }
+                }
+              })
+          }, (crumb: string, idx: number) => `${idx}`)
+        }
         .width('100%')
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .padding({ bottom: Sp.XS })
+        .padding({ bottom: DsSpacing.XSMALL })
+      } else {
+        Text(this.panel !== 'ref' ? '运行命令' : '插入引用')
+          .fontSize(DsType.SMALL_13.size)
+          .fontColor(this.palette().labelTertiary)
+          .width('100%')
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .padding({ bottom: DsSpacing.XSMALL })
+      }
 
-      List({ space: Sp.XS }) {
+      List({ space: DsSpacing.XSMALL }) {
         if (this.panel === 'ref') {
           ForEach(this.filteredReferences(), (c: ReferenceCandidate) => {
             ListItem() {
               Column({ space: 2 }) {
-                Row({ space: Sp.S }) {
+                Row({ space: DsSpacing.SMALL }) {
                   Text(`@${c.kind}`)
-                    .fontSize(Fs.CAPTION)
-                    .fontColor($r('sys.color.brand'))
+                    .fontSize(DsType.SMALL_13.size)
+                    .fontColor(this.palette().accent)
                   Text(this.refRowName(c))
-                    .fontSize(Fs.SECONDARY)
+                    .fontSize(DsType.STD_14.size)
+                    .fontColor(this.palette().labelPrimary)
                     .layoutWeight(1)
                     .maxLines(1)
                     .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -635,16 +876,16 @@ export struct Composer {
                 .width('100%')
                 if (this.refRowDetail(c).length > 0) {
                   Text(this.refRowDetail(c))
-                    .fontSize(Fs.CAPTION)
-                    .fontColor($r('sys.color.font_tertiary'))
+                    .fontSize(DsType.SMALL_13.size)
+                    .fontColor(this.palette().labelTertiary)
                     .width('100%')
                     .maxLines(1)
                     .textOverflow({ overflow: TextOverflow.Ellipsis })
                 }
               }
               .width('100%')
-              .padding(Sp.S)
-              .borderRadius(Radius.S)
+              .padding(DsSpacing.SMALL)
+              .borderRadius(DsShape.ROW)
               .onClick(() => {
                 // 替换触发词区间（不是追加）；目录引用的未闭合引号不补空格，见 InputTrigger 的说明
                 const next: string = this.draftAfterPick(c.insert);
@@ -670,25 +911,25 @@ export struct Composer {
         } else {
           ForEach(this.filteredCommands(), (c: CommandCandidate) => {
             ListItem() {
-              Row({ space: Sp.S }) {
+              Row({ space: DsSpacing.SMALL }) {
                 Text(c.name)
-                  .fontSize(Fs.SECONDARY)
-                  .fontColor($r('sys.color.brand'))
+                  .fontSize(DsType.STD_14.size)
+                  .fontColor(this.palette().accent)
                 if (c.args.length > 0) {
                   Text(c.args)
-                    .fontSize(Fs.CAPTION)
-                    .fontColor($r('sys.color.font_tertiary'))
+                    .fontSize(DsType.SMALL_13.size)
+                    .fontColor(this.palette().labelTertiary)
                 }
                 Text(c.detail)
-                  .fontSize(Fs.CAPTION)
-                  .fontColor($r('sys.color.font_secondary'))
+                  .fontSize(DsType.SMALL_13.size)
+                  .fontColor(this.palette().labelSecondary)
                   .layoutWeight(1)
                   .maxLines(1)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
               }
               .width('100%')
-              .padding(Sp.S)
-              .borderRadius(Radius.S)
+              .padding(DsSpacing.SMALL)
+              .borderRadius(DsShape.ROW)
               .onClick(() => {
                 /*
                  * 【F24/D51 §4·§5：输入区斜杠菜单要与命令面板**同一套判定**】
@@ -719,32 +960,9 @@ export struct Composer {
       .scrollBar(BarState.Auto)
     }
     .width('100%')
-    .padding(Sp.S)
-    .borderRadius(Radius.M)
-    .backgroundColor($r('sys.color.background_secondary'))
-  }
-
-  @Builder
-  sendButton() {
-    // 主操作按钮走 P1.5 原语：按下实效/焦点框/键盘可达性由 ArkUI 的 Button 提供；
-    // 图标色用系统"底色之上"的语义色（此前写死 Color.White，换品牌色/深色模式就不一定对）。
-    NativeButton({
-      showIcon: true,
-      iconSymbol: this.running ? $r('sys.symbol.xmark') : $r('sys.symbol.arrow_up'),
-      iconSize: 18,
-      square: true,
-      emphasis: 'solid',
-      tone: this.running ? 'danger' : 'brand',
-      disabled: !(this.running || this.draft.trim().length > 0),
-      a11y: this.running ? '停止当前轮次' : '发送消息',
-      onTap: () => {
-        if (this.running) {
-          this.onStop();
-        } else {
-          this.onSend();
-        }
-      }
-    })
+    .padding(DsSpacing.SMALL)
+    .borderRadius(DsShape.BLOCK)
+    .backgroundColor(this.palette().bgModulePlatform)
   }
 
   /**
@@ -795,15 +1013,6 @@ export struct Composer {
     return token === undefined ? appendPick(this.draft, insert) : applyPick(this.draft, token, insert);
   }
 
-  /** 面板标题：钻孔时是面包屑（官方 `crumb.root`），否则是动作名 */
-  private panelTitle(): string {
-    if (this.panel !== 'ref') {
-      return '运行命令';
-    }
-    const crumbs: string[] = referenceCrumbs(this.filter, this.drilled);
-    return crumbs.length > 0 ? crumbs.join(' › ') : '插入引用';
-  }
-
   /** 引用行的主文案（官方 `fileCandidate` 的 `name`：目录名带尾斜杠） */
   private refRowName(c: ReferenceCandidate): string {
     if (c.kind === 'session') {
@@ -852,10 +1061,5 @@ export struct Composer {
       }
     }
     return out;
-  }
-
-  private modelLabel(): string {
-    const label: string = modelSelectionLabel(this.selection, this.models);
-    return this.selection.effort.length > 0 ? `${label} · ${this.selection.effort}` : label;
   }
 }

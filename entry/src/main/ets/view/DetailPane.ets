@@ -10,6 +10,7 @@
 import {
   DetailSection,
   Fs,
+  HarmonyIconSize,
   Radius,
   Sp,
   Sz
@@ -47,7 +48,7 @@ export struct DetailPane {
     Column({ space: Sp.XS }) {
       Row({ space: Sp.S }) {
         SymbolGlyph(this.sectionSymbol(section.title))
-          .fontSize(16)
+          .fontSize(HarmonyIconSize.STATUS)
           .fontColor([$r('sys.color.font_secondary')])
         Text(section.title)
           .fontSize(Fs.SECONDARY)

@@ -13,9 +13,18 @@
  *
  * ## 为什么单独一个组件
  *
- * 它自己持有"第几题 / 每题选了什么 / 填了什么"这份**逐题草稿**（与 `PendingPane` 的
+ * 它自己管"第几题 / 每题选了什么 / 填了什么"这份**逐题草稿**的**交互**（与 `PendingPane` 的
  * 审批卡是两件事），而提交只发生一次：整组答案一次性交回宿主
  * （Host 等的是**一个**答复值，见 `SessionHub.answerQuestionGroup`）。
+ *
+ * ## 草稿住哪里（T-C：受控组件）
+ *
+ * 草稿的**真值在宿主**（`PendingPane.answerDrafts` → `Index.pendingAnswerDrafts`）：
+ * 折叠屏开合会换渲染路线（PHONE ↔ DESKTOP_LIKE），那一刻原生树整体重建，
+ * 组件私有的 `@State` 会连同"用户点到一半的答案"一起消失。本组件只做两件事：
+ * 从 props 读（`draftsNow()` 是**只读派生**，见其说明）、在用户动作时经
+ * `onDraftsChange` 回传。对照 `QuestionComposer.kt`：源码用 `remember(requestKey)`
+ * 把草稿绑在"这一个请求"上，本端把同一语义搬到了活得比壳更久的宿主里。
  *
  * ## 我们**没做**的两处（如实登记，不假装）
  *
@@ -65,10 +74,25 @@ export struct QuestionGroupCard {
   onCancelGroup: (item: PendingItem) => void = () => {
   };
 
-  /** 逐题草稿（本组件状态：切题不丢、提交前校验用） */
-  @State drafts: PendingAnswerDraft[] = [];
-  /** 草稿属于哪个待决（换了卡片就重建，避免串答案） */
-  @State draftsFor: string = '';
+  /**
+   * 逐题草稿（**受控**：真值在宿主，见下）。
+   *
+   * 【为什么从 `@State` 改成 `@Prop`（T-C，FR-013）】它原本是本组件的私有状态，
+   * 而折叠屏开合会换渲染路线（PHONE ↔ DESKTOP_LIKE）⇒ 原生树整体重建 ⇒
+   * **用户点到一半的答案与写了一半的自定义答案一起消失**。
+   * 现在的归属是宿主 `Index.pendingAnswerDrafts`（活得比任何壳都久），
+   * 组件只在**用户写入时**经 `onDraftsChange` 回传（受控组件的常规纪律：
+   * 组件不自己造状态，避免"宿主那份还没到、组件已经又初始化一遍"的经典清空）。
+   *
+   * 默认值（空数组 + 空 `draftsFor`）⇒ 只传 `item` / `onSubmit` 的老调用点行为不变：
+   * `draftsNow()` 会按 `item.questions` 现场派生一份空草稿，等价于旧行为。
+   */
+  @Prop drafts: PendingAnswerDraft[] = [];
+  /** 这份草稿属于哪个待决（为空或与 `item.id` 不符 ⇒ 视为没写过，避免串答案） */
+  @Prop draftsFor: string = '';
+  /** 草稿变化（回传宿主保存；空数组 = 用户清空了） */
+  onDraftsChange: (itemId: string, drafts: PendingAnswerDraft[]) => void = () => {
+  };
   /** 当前第几题 */
   @State index: number = 0;
   /** 拦阻文案（官方那两句） */
@@ -94,12 +118,17 @@ export struct QuestionGroupCard {
   }
 
   /**
-   * 取（必要时初始化）逐题草稿。
+   * 取逐题草稿（**只读派生**，绝不回写）。
    *
-   * 【为什么按 item.id 重建】不同待决的答案绝不能互相串 —— 与 `PendingPane` 的
-   * `freeTextFor` 同一条纪律（那次是"文本串到别的卡片"的实测缺陷）。
+   * 【为什么不能像原来那样"顺手初始化并回写"】宿主那份是**受控值**：同一个帧里
+   * 写回宿主不会让本帧的 `this.drafts` 立刻变新（ArkUI 的 props 更新在下一帧），
+   * 于是下一次调用又会看到"空/长度不符"⇒ 再初始化一次 —— 用户刚填的字就被这个循环抹掉。
+   * 因此派生是纯函数：没写过就现场造一份等长的空草稿（语义与"没写过"完全相同），
+   * 真正的回写只发生在用户动作里（选选项 / 输自定义答案 / 跳过）。
+   *
+   * 【为什么按 item.id 校验】不同待决的答案绝不能互相串 —— 与宿主那份按 id 存的草稿同一条纪律。
    */
-  private ensureDrafts(): PendingAnswerDraft[] {
+  private draftsNow(): PendingAnswerDraft[] {
     if (this.draftsFor === this.item.id && this.drafts.length === this.total()) {
       return this.drafts;
     }
@@ -107,24 +136,22 @@ export struct QuestionGroupCard {
     for (let i = 0; i < this.item.questions.length; i++) {
       out.push({ questionId: this.item.questions[i].id, selected: [], custom: '', skipped: false });
     }
-    this.draftsFor = this.item.id;
-    this.drafts = out;
     return out;
   }
 
   private draftAt(at: number): PendingAnswerDraft {
-    const list: PendingAnswerDraft[] = this.ensureDrafts();
+    const list: PendingAnswerDraft[] = this.draftsNow();
     return list[at];
   }
 
-  /** 写回某一题的草稿（`drafts` 是数组引用，必须整体换新才会触发重绘） */
+  /** 写回某一题的草稿（整组一次性交回宿主：`PendingAnswerDraft[]` 是值类型快照） */
   private writeDraft(at: number, next: PendingAnswerDraft): void {
-    const list: PendingAnswerDraft[] = this.ensureDrafts();
+    const list: PendingAnswerDraft[] = this.draftsNow();
     const out: PendingAnswerDraft[] = [];
     for (let i = 0; i < list.length; i++) {
       out.push(i === at ? next : list[i]);
     }
-    this.drafts = out;
+    this.onDraftsChange(this.item.id, out);
   }
 
   private toggleSelected(at: number, label: string, on: boolean): void {
@@ -164,12 +191,12 @@ export struct QuestionGroupCard {
       this.index = at + 1;
       return;
     }
-    const blocked: string = submitBlockedText(this.ensureDrafts(), at);
+    const blocked: string = submitBlockedText(this.draftsNow(), at);
     if (blocked.length > 0) {
       this.blockText = blocked;
       return;
     }
-    this.onSubmit(this.item, answerableDrafts(this.ensureDrafts()));
+    this.onSubmit(this.item, answerableDrafts(this.draftsNow()));
   }
 
   /**
@@ -384,7 +411,7 @@ export struct QuestionGroupCard {
               if (this.index < this.total() - 1) {
                 this.index = questionIndexStep(this.index, this.total(), 1);
               } else {
-                this.onSubmit(this.item, answerableDrafts(this.ensureDrafts()));
+                this.onSubmit(this.item, answerableDrafts(this.draftsNow()));
               }
             }
           })

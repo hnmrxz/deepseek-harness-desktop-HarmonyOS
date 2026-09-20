@@ -15,7 +15,7 @@
  *  · 行渲染复用 `SettingRow`（模型域也用同一份）。
  */
 
-import { Fs, Radius, SettingGroup, SettingItem, Sp } from 'appstate';
+import { Fs, Radius, RunMode, SettingGroup, SettingItem, Sp } from 'appstate';
 import { SettingRow } from './SettingRow';
 
 
@@ -43,6 +43,8 @@ function permissionModeLabel(value: string): string {
 @Component
 export struct SettingsGeneral {
 
+  /** 当前运行模式（本机/远程） */
+  @Prop runMode: RunMode = RunMode.LOCAL;
   /** 通用段的设置分组（宿主已按官方口径策展：白名单整组 + 其他已修改项） */
   @Prop groups: SettingGroup[] = [];
   /** 当前权限模式（只读展示：官方在 General 里给新会话默认，本仓端点还不支持切换） */
@@ -64,10 +66,60 @@ export struct SettingsGeneral {
   };
   onResetSetting: (key: string) => void = () => {
   };
+  /** 切换运行模式 */
+  onSwitchRunMode: (mode: RunMode) => void = () => {
+  };
 
   // 【ArkUI 约束】组件的 build() 只能有一个根节点 ⇒ 多段内容包进 Column
   build() {
     Column({ space: Sp.L }) {
+          /*
+           * §FR-058 运行模式切换（本机 / 远程）
+           *
+           * 单栏（手机/小屏）下切到远程模式后整个 shell 会从 AppShell 切换为 RemoteShell（抽屉范式），
+           * 双栏/三栏下远程模式仅影响后端连接目标，UI 仍用三栏布局。
+           */
+          Column({ space: Sp.XS }) {
+            Text('运行模式')
+              .fontSize(Fs.BODY)
+              .width('100%')
+            Row({ space: Sp.S }) {
+              Button(this.runMode === RunMode.LOCAL ? '● 本机' : '  本机')
+                .fontSize(Fs.SECONDARY)
+                .buttonStyle(ButtonStyleMode.TEXTUAL)
+                .fontColor(this.runMode === RunMode.LOCAL
+                  ? $r('sys.color.brand')
+                  : $r('sys.color.font_secondary'))
+                .onClick(() => {
+                  if (this.runMode !== RunMode.LOCAL) {
+                    this.onSwitchRunMode(RunMode.LOCAL);
+                  }
+                })
+              Button(this.runMode === RunMode.REMOTE ? '● 远程' : '  远程')
+                .fontSize(Fs.SECONDARY)
+                .buttonStyle(ButtonStyleMode.TEXTUAL)
+                .fontColor(this.runMode === RunMode.REMOTE
+                  ? $r('sys.color.brand')
+                  : $r('sys.color.font_secondary'))
+                .onClick(() => {
+                  if (this.runMode !== RunMode.REMOTE) {
+                    this.onSwitchRunMode(RunMode.REMOTE);
+                  }
+                })
+            }
+            .width('100%')
+            if (this.runMode === RunMode.REMOTE) {
+              Text('远程模式：连接到远程 DSH Host 运行对话和工具。手机单栏下将使用抽屉式导航。')
+                .fontSize(Fs.CAPTION)
+                .fontColor($r('sys.color.font_tertiary'))
+                .width('100%')
+            }
+          }
+          .width('100%')
+          .padding(Sp.M)
+          .borderRadius(Radius.M)
+          .backgroundColor($r('sys.color.background_secondary'))
+
           /*
            * 【权限模式：只读说明，不给假档位（E116）】
            *

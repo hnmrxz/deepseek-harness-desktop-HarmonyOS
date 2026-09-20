@@ -12,6 +12,10 @@
  *    而不是重连——否则按钮点了必然失败。故按钮以 `phase === DEGRADED` 为条件。
  *    （D3 §4 把"手动重连"列为断连横幅的**必需**动作：自动重试有终点，
  *    没有手动入口时，用户在"Host 刚重启、网络刚恢复"这类可恢复场景下只能重启应用。）
+ *    §FR-037 补充：**自动重试归宿在连接层**——`ReconnectController`（Backoff 退避）在
+ *    DEGRADED 后持续重试（重试轮数耗尽后仍按固定节奏继续，不进终态）。横幅只呈现
+ *    状态与手动入口："重连"按钮调 `SessionHub.reconnect()`（断开 + 立即连，跳过退避），
+ *    适合"Host 刚重启、网络刚恢复"这类用户已知可恢复的场景。
  * 2. **保留协议旁路日志尾部**：把"连上了但列表为空"这类无法从界面区分的症状变成可读的原始轨迹（D3 §7.8）。
  *
  * ## 分工
@@ -22,7 +26,7 @@
  * "诊断"走宿主的 `onOpenDiagnostics`（那是一次导航）。
  */
 
-import { Fs, HarmonyIconSize, HubPhase, SessionHub, Sp } from 'appstate';
+import { Fs, HarmonyIconSize, HubPhase, RunMode, SessionHub, Sp } from 'appstate';
 
 @Component
 export struct HubBanner {
@@ -36,8 +40,19 @@ export struct HubBanner {
   @Prop streams: number = 0;
   /** 协议旁路日志尾部（可为空数组） */
   @Prop traceTail: string[] = [];
+  /** §FR-060：当前运行模式（远程断连时显示不同文案） */
+  @Prop runMode: RunMode = RunMode.LOCAL;
+  /**
+   * T011（US2）：是否处于桌面 Web 直载路线。true 时降级文案改为
+   * 「已加载的界面保留最后状态」的如实陈述（Web 内容没丢，只是停了），
+   * 并提供「重新输入」入口（回连接页改凭据）。
+   */
+  @Prop webRoute: boolean = false;
 
   onOpenDiagnostics: () => void = () => {
+  };
+  /** T011：重新输入连接凭据（仅 webRoute 时出现；回连接页，不打断自动重试） */
+  onReenterCredentials: () => void = () => {
   };
 
   build() {
@@ -47,14 +62,25 @@ export struct HubBanner {
           .fontSize(HarmonyIconSize.STATUS)
           .fontColor([$r('sys.color.warning')])
         Column({ space: 2 }) {
-          Text(this.errorText)
+          Text(this.runMode === RunMode.REMOTE && this.phase === HubPhase.DEGRADED
+            ? '远程连接已断开'
+            : this.errorText)
             .fontSize(Fs.CAPTION)
             .fontColor($r('sys.color.font_primary'))
             .width('100%')
-          Text(`Host ${this.authority.length > 0 ? this.authority : '未配置'} · 连接 ${this.phase} · 逻辑流 ${this.streams}`)
+          Text(`Host ${this.authority.length > 0 ? this.authority : '未配置'} · 连接 ${this.phase} · 逻辑流 ${this.streams}${this.runMode === RunMode.REMOTE ? ' · 远程模式' : ''}`)
             .fontSize(Fs.CAPTION)
             .fontColor($r('sys.color.font_tertiary'))
             .width('100%')
+          if (this.runMode === RunMode.REMOTE && this.phase === HubPhase.DEGRADED) {
+            // T011：Web 直载路线的降级陈述必须如实——Web 内容保留最后状态，不是"缓存可浏览"
+            Text(this.webRoute
+              ? '已加载的界面保留最后状态。正在自动重试连接；也可手动重连，或重新输入连接信息。'
+              : '正在自动重试连接。本地缓存仍可浏览；也可手动重连。')
+              .fontSize(Fs.CAPTION)
+              .fontColor($r('sys.color.font_tertiary'))
+              .width('100%')
+          }
         }
         .layoutWeight(1)
 
@@ -67,6 +93,15 @@ export struct HubBanner {
               // 重连是中枢自己的动作，不牵扯宿主状态 ⇒ 不经宿主
               SessionHub.shared().reconnect();
             })
+          // T011：Web 路线的专属入口——token 错/过期时重连只会重复失败，该做的是改凭据
+          if (this.webRoute) {
+            Text('重新输入')
+              .fontSize(Fs.CAPTION)
+              .fontColor($r('sys.color.brand'))
+              .onClick(() => {
+                this.onReenterCredentials();
+              })
+          }
         }
         Text('诊断')
           .fontSize(Fs.CAPTION)

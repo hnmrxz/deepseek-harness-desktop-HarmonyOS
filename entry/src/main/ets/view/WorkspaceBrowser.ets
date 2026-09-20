@@ -19,12 +19,23 @@
 
 import { HubBanner } from './HubBanner';
 import { PendingPane } from './PendingPane';
-import { PendingAnswerDraft, CoreViewState, Fs, HarmonyIconSize, HubPhase, PendingItem, Radius, isSubagentSession, sessionDisplayTitle, SessionListItem, SessionSearchRow, Sp, Sz, WorkspaceItem, formatClock, relativeTime, sessionEmptyCopy } from 'appstate';
+import { SessionSearch } from './SessionSearch';
+import { PendingAnswerDraft, PendingAnswerDrafts, CoreViewState, Fs, HarmonyIconSize, HubPhase, PendingItem, Radius, RunMode, isSubagentSession, sessionDisplayTitle, SessionListItem, SessionSearchRow, Sp, Sz, WorkspaceItem, formatClock, relativeTime, sessionEmptyCopy } from 'appstate';
 
 export interface WorkspaceBrowserFacade {
   answerPending: (item: PendingItem, drafts: PendingAnswerDraft[]) => void;
   /** 放弃整组提问（官方 nav.cancel） */
   cancelQuestion: (item: PendingItem) => void;
+  /**
+   * 待决答复草稿（**宿主所有**，FR-013）。
+   *
+   * 【为什么门面里也有一份】本组件也挂着一个 `PendingPane`（"待你决定"区块，宽/窄两版共用），
+   * 而草稿的真值只有一个（`Index.pendingAnswerDrafts`）——两处入口必须读同一份，
+   * 否则从抽屉进来与从会话里进来会看到两套半截答案。
+   */
+  pendingAnswerDrafts: PendingAnswerDrafts;
+  /** 逐题草稿变化（回传宿主保存） */
+  onPendingAnswerGroup: (itemId: string, drafts: PendingAnswerDraft[]) => void;
   archiveOpen: boolean;
   archivedSessionIds: string[];
   archivedSessions: () => SessionListItem[];
@@ -60,6 +71,8 @@ export interface WorkspaceBrowserFacade {
   sessionSearchRows: SessionSearchRow[];
   sessionSearchNote: string;
   onSearchSessions: (query: string) => void;
+  /** §FR-060：当前运行模式 */
+  runMode: RunMode;
 }
 
 @Component
@@ -74,68 +87,19 @@ export struct WorkspaceBrowser {
 
   /** 搜索关键词（**视图自己的状态**：只影响这一页显示；结果由中枢给） */
   @State query: string = '';
+  /** §FR-043：折叠的工作区路径集合（视图状态，与中枢无关） */
+  @State collapsedGroups: string[] = [];
 
   /**
    * 搜索结果区（官方 `dsh-client-ui-workspace` 的形态：**扁平的行**，不是树）。
    *
-   * 每行 = 标题 + 工作区上下文 +（可选）内容片段。有内容命中时片段在最下，
-   * 用较弱的颜色；没有片段（只按标题命中）就只画上面两行 —— 不画空块。
+   * 【T023 收尾：已搬走】这段行结构（标题 + 工作区上下文 + 内容片段）此前在这里
+   * 与 `ConversationPane` 各写一遍，现在收口到 `SessionSearch` 组件（对照
+   * `dshmobile/.../SessionSearch.kt`）——组件版多出的两处是**补全**：
+   * ① 上限提示（命中数达 `SESSION_SEARCH_LIMIT` 时说明"列表装不下了"，
+   * 对应源码 `SearchResultSet.hasMore`）；② 空查询时不再渲染退化说明。
+   * 宿主侧的调用点在下面 `workspaceHub()` 里（`SessionSearch({...})`）。
    */
-  @Builder
-  searchResults() {
-    if (this.f.sessionSearchRows.length === 0) {
-      Text(this.f.sessionSearchNote.length > 0 ? this.f.sessionSearchNote : '没有匹配的会话。')
-        .fontSize(Fs.CAPTION)
-        .fontColor($r('sys.color.font_tertiary'))
-        .width('100%')
-        .padding(Sp.M)
-        .borderRadius(Radius.M)
-        .backgroundColor($r('sys.color.background_secondary'))
-    } else {
-      if (this.f.sessionSearchNote.length > 0) {
-        // 降级说明（老 Host 没有内容搜索）**必须显示**：不说清的话，用户会以为"搜不到就是没有"
-        Text(this.f.sessionSearchNote)
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.warning'))
-          .width('100%')
-      }
-      ForEach(this.f.sessionSearchRows, (row: SessionSearchRow) => {
-        Column({ space: 2 }) {
-          Row({ space: Sp.S }) {
-            Text(row.title)
-              .fontSize(Fs.SECONDARY)
-              .layoutWeight(1)
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-            if (row.workspace.length > 0) {
-              Text(row.workspace)
-                .fontSize(Fs.CAPTION)
-                .fontColor($r('sys.color.font_tertiary'))
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-            }
-          }
-          .width('100%')
-          if (row.snippet.length > 0) {
-            Text(row.snippet)
-              .fontSize(Fs.CAPTION)
-              .fontColor($r('sys.color.font_secondary'))
-              .width('100%')
-              .maxLines(2)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-          }
-        }
-        .width('100%')
-        .padding(Sp.M)
-        .borderRadius(Radius.M)
-        .backgroundColor($r('sys.color.background_secondary'))
-        .accessibilityText(row.workspace.length > 0 ? `${row.title}，工作区 ${row.workspace}` : row.title)
-        .onClick(() => {
-          this.f.openSession(row.sessionId);
-        })
-      }, (row: SessionSearchRow) => row.sessionId)
-    }
-  }
 
   @Builder
   workspaceHub(compact: boolean) {
@@ -151,10 +115,21 @@ export struct WorkspaceBrowser {
           .padding(Sp.S)
           .borderRadius(Radius.S)
           .backgroundColor($r('sys.color.background_secondary'))
-      } else if (this.f.hubError.length > 0) {
+      /*
+       * §FR-037/060：断连横幅的可见性。除了「有错误文本」（本机/远程连接失败的
+       * 通常路径），远程 DEGRADED 还有一条**只降级、不写错误文本**的路径
+       * （socket 中断 → 传输层转入自动重试）。此时横幅由「运行模式 + 阶段 +
+       * 连接已定型（connectSettled：避开启动期中间态，见上面 E111 的说明）」
+       * 三元组兜住，文案由 HubBanner 按 runMode 区分（远程 = 自动重试 + 缓存可浏览）。
+       */
+      } else if (this.f.hubError.length > 0
+        || (this.f.runMode === RunMode.REMOTE
+        && this.f.hubPhase === HubPhase.DEGRADED
+        && this.f.connectSettled)) {
         HubBanner({
           errorText: this.f.hubError, authority: this.f.hubAuthority, phase: this.f.hubPhase,
           streams: this.f.hubStreams, traceTail: this.f.hubTraceTail(),
+          runMode: this.f.runMode,
           onOpenDiagnostics: () => {
             this.f.openDiagnostics();
           }
@@ -186,20 +161,37 @@ export struct WorkspaceBrowser {
 
       /*
        * 会话搜索（P7-1）。放在会话区域的正上方：官方 sidebar 的搜索也贴着会话列表。
-       * 输入框的字是**本组件状态**（同 `SettingsPlugins` 的过滤词），只影响这一页显示。
+       *
+       * T023 收尾：这里此前是**内联**渲染（输入框 + 一个 `searchResults()` 私有 Builder
+       * 再画一遍命中行），与 `ConversationPane` 的同名区块重复。现在换成 `SessionSearch`
+       * 组件（对照 `SessionSearch.kt`：命中行三段、上限提示、退化说明收口在一处）。
+       *
+       * 【语义保持】查询词仍是本组件的 `query`，结果仍是门面的 `sessionSearchRows` /
+       * `sessionSearchNote`（Host 的**内容命中**只有中枢拿得到），查询仍交回
+       * `f.onSearchSessions`，命中仍走 `f.openSession`。
+       * 【可见性口径不变】内联版把整个结果区挂在 `query` 非空之下，所以这里同样把
+       * `rows` / `note` 在查询为空时收成空——否则退化说明（如"Host 不支持内容搜索"）
+       * 会在用户还没搜之前就占着版面。
        */
-      TextInput({ placeholder: '搜索会话（标题或内容）' })
-        .fontSize(Fs.SECONDARY)
-        .height(Sz.TOUCH_MIN)
-        .width('100%')
-        .onChange((value: string) => {
+      SessionSearch({
+        query: this.query,
+        rows: this.query.trim().length > 0 ? this.f.sessionSearchRows : [],
+        note: this.query.trim().length > 0 ? this.f.sessionSearchNote : '',
+        closable: this.query.trim().length > 0,
+        placeholder: '搜索会话（标题或内容）',
+        onQuery: (value: string) => {
           this.query = value;
           this.f.onSearchSessions(value);
-        })
-
-      if (this.query.trim().length > 0) {
-        this.searchResults()
-      }
+        },
+        onOpenHit: (sessionId: string) => {
+          this.f.openSession(sessionId);
+        },
+        onClose: () => {
+          this.query = '';
+          this.f.onSearchSessions('');
+        }
+      })
+      .width('100%')
 
       if (this.f.pending.length > 0) {
         Column({ space: Sp.XS }) {
@@ -209,6 +201,11 @@ export struct WorkspaceBrowser {
             .width('100%')
           PendingPane({
             items: this.f.pending,
+            // T-C：答复草稿从宿主来、经宿主回（见门面字段的说明）
+            answerDrafts: this.f.pendingAnswerDrafts,
+            onAnswerGroupChange: (itemId: string, drafts: PendingAnswerDraft[]) => {
+              this.f.onPendingAnswerGroup(itemId, drafts);
+            },
             onDecide: (item: PendingItem, choiceId: string, reason: string) => {
               this.f.decidePending(item, choiceId, reason);
             },
@@ -378,6 +375,12 @@ export struct WorkspaceBrowser {
   workspaceGroup(w: WorkspaceItem) {
     Column({ space: Sp.XS }) {
       Row({ space: Sp.S }) {
+        // §FR-043：折叠/展开指示器
+        SymbolGlyph(this.isGroupCollapsed(w.path)
+          ? $r('sys.symbol.chevron_right')
+          : $r('sys.symbol.chevron_down'))
+          .fontSize(HarmonyIconSize.STATUS)
+          .fontColor([$r('sys.color.font_tertiary')])
         SymbolGlyph($r('sys.symbol.folder')).fontSize(HarmonyIconSize.STATUS)
           .fontColor([w.primary ? $r('sys.color.brand') : $r('sys.color.font_secondary')])
         Column({ space: 2 }) {
@@ -429,10 +432,16 @@ export struct WorkspaceBrowser {
         }
       }
       .width('100%')
+      // §FR-043：点击分组标题折叠/展开会话列表
+      .onClick(() => {
+        this.toggleGroupCollapse(w.path);
+      })
 
-      ForEach(this.f.sessionsOf(w), (s: SessionListItem) => {
-        this.sessionRow(s)
-      }, (s: SessionListItem) => s.id)
+      if (!this.isGroupCollapsed(w.path)) {
+        ForEach(this.f.sessionsOf(w), (s: SessionListItem) => {
+          this.sessionRow(s)
+        }, (s: SessionListItem) => s.id)
+      }
     }
     .width('100%')
     .padding(Sp.M)
@@ -470,6 +479,33 @@ export struct WorkspaceBrowser {
   private sessionTitleOf(s: SessionListItem): ResourceStr {
     const title: string = sessionDisplayTitle(s);
     return title.length > 0 ? title : $r('app.string.label_unnamed_session');
+  }
+
+  /** §FR-043：判断工作区分组是否折叠 */
+  private isGroupCollapsed(path: string): boolean {
+    for (let i = 0; i < this.collapsedGroups.length; i++) {
+      if (this.collapsedGroups[i] === path) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** §FR-043：切换工作区分组折叠/展开 */
+  private toggleGroupCollapse(path: string): void {
+    const out: string[] = [];
+    let found: boolean = false;
+    for (let i = 0; i < this.collapsedGroups.length; i++) {
+      if (this.collapsedGroups[i] === path) {
+        found = true;
+      } else {
+        out.push(this.collapsedGroups[i]);
+      }
+    }
+    if (!found) {
+      out.push(path);
+    }
+    this.collapsedGroups = out;
   }
 
   @Builder
@@ -543,6 +579,12 @@ export struct WorkspaceBrowser {
   narrowGroup(w: WorkspaceItem) {
     Column({ space: Sp.XS }) {
       Row({ space: Sp.S }) {
+        // §FR-043：折叠/展开指示器
+        SymbolGlyph(this.isGroupCollapsed(w.path)
+          ? $r('sys.symbol.chevron_right')
+          : $r('sys.symbol.chevron_down'))
+          .fontSize(HarmonyIconSize.STATUS)
+          .fontColor([$r('sys.color.font_tertiary')])
         SymbolGlyph($r('sys.symbol.folder')).fontSize(HarmonyIconSize.STATUS)
           .fontColor([w.primary ? $r('sys.color.brand') : $r('sys.color.font_secondary')])
         Text(w.name.length > 0 ? w.name : w.path)
@@ -556,43 +598,49 @@ export struct WorkspaceBrowser {
           .fontColor($r('sys.color.font_tertiary'))
       }
       .width('100%')
+      // §FR-043：点击分组标题折叠/展开会话列表
+      .onClick(() => {
+        this.toggleGroupCollapse(w.path);
+      })
 
-      Row({ space: Sp.M }) {
-        Text('+ 会话')
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.brand'))
-          .height(Sz.TOUCH_MIN)
-          .onClick(() => {
-            this.f.createSessionIn(w);
-          })
-        Text($r('app.string.action_files'))
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.brand'))
-          .height(Sz.TOUCH_MIN)
-          .onClick(() => {
-            this.f.openWorkspaceFiles(w);
-          })
-        /*
-         * E132：删除工作区（只删**注册**，不删目录）+ 两步确认。
-         * 判定与提示文案归宿主（`toggleDeleteConfirm`）——宽窄两版共用同一处，避免写两遍。
-         */
-        if (this.f.registryIdOf(w).length > 0) {
-          Text(this.f.confirmingDeletePath === w.path
-            ? $r('app.string.action_delete_confirm')
-            : $r('app.string.action_delete'))
+      if (!this.isGroupCollapsed(w.path)) {
+        Row({ space: Sp.M }) {
+          Text('+ 会话')
             .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.alert'))
+            .fontColor($r('sys.color.brand'))
             .height(Sz.TOUCH_MIN)
             .onClick(() => {
-              this.f.toggleDeleteConfirm(w);
+              this.f.createSessionIn(w);
             })
+          Text($r('app.string.action_files'))
+            .fontSize(Fs.CAPTION)
+            .fontColor($r('sys.color.brand'))
+            .height(Sz.TOUCH_MIN)
+            .onClick(() => {
+              this.f.openWorkspaceFiles(w);
+            })
+          /*
+           * E132：删除工作区（只删**注册**，不删目录）+ 两步确认。
+           * 判定与提示文案归宿主（`toggleDeleteConfirm`）——宽窄两版共用同一处，避免写两遍。
+           */
+          if (this.f.registryIdOf(w).length > 0) {
+            Text(this.f.confirmingDeletePath === w.path
+              ? $r('app.string.action_delete_confirm')
+              : $r('app.string.action_delete'))
+              .fontSize(Fs.CAPTION)
+              .fontColor($r('sys.color.alert'))
+              .height(Sz.TOUCH_MIN)
+              .onClick(() => {
+                this.f.toggleDeleteConfirm(w);
+              })
+          }
         }
-      }
-      .width('100%')
+        .width('100%')
 
-      ForEach(this.f.sessionsOf(w), (s: SessionListItem) => {
-        this.sessionRow(s)
-      }, (s: SessionListItem) => s.id)
+        ForEach(this.f.sessionsOf(w), (s: SessionListItem) => {
+          this.sessionRow(s)
+        }, (s: SessionListItem) => s.id)
+      }
     }
     .width('100%')
     .padding(Sp.M)

@@ -13,6 +13,7 @@ import {
   DiagReport,
   formatClock,
   Fs,
+  HarmonyIconSize,
   Radius,
   Sp,
   Sz
@@ -64,7 +65,7 @@ export struct DiagnosticsPane {
     Column() {
       Row({ space: Sp.S }) {
         Button() {
-          SymbolGlyph($r('sys.symbol.chevron_left')).fontSize(18)
+          SymbolGlyph($r('sys.symbol.chevron_left')).fontSize(HarmonyIconSize.NAV)
         }
         .buttonStyle(ButtonStyleMode.TEXTUAL)
         .onClick(() => {
@@ -112,7 +113,7 @@ export struct DiagnosticsPane {
   summaryCard() {
     Row({ space: Sp.M }) {
       SymbolGlyph(this.report.healthy ? $r('sys.symbol.checkmark_circle') : $r('sys.symbol.exclamationmark_triangle'))
-        .fontSize(28)
+        .fontSize(HarmonyIconSize.NAV_RAIL)
         .fontColor([this.report.healthy ? $r('sys.color.confirm') : $r('sys.color.alert')])
       Column({ space: 2 }) {
         Text(this.report.healthy ? '连接健康' : '连接存在问题')
@@ -141,7 +142,7 @@ export struct DiagnosticsPane {
         Column({ space: Sp.XS }) {
           Row({ space: Sp.S }) {
             SymbolGlyph(entry.passed ? $r('sys.symbol.checkmark_circle') : $r('sys.symbol.xmark_circle'))
-              .fontSize(16)
+              .fontSize(HarmonyIconSize.STATUS)
               .fontColor([entry.passed ? $r('sys.color.confirm') : $r('sys.color.alert')])
             Text(entry.name)
               .fontSize(Fs.SECONDARY)

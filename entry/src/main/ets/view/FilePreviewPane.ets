@@ -25,6 +25,8 @@ export struct FilePreviewPane {
   /** 「投喂」：把这个节点加进输入区（副作用归宿主） */
   onAttachFile: (node: FileNode) => void = () => {
   };
+  /** §FR-051：Web 控制器（HTML/SVG 隔离预览） */
+  private webController: WebController = new WebController();
 
   build() {
     Column() {
@@ -109,6 +111,22 @@ export struct FilePreviewPane {
       .width('100%')
       .layoutWeight(1)
       .justifyContent(FlexAlign.Center)
+    } else if (this.isHtmlOrSvg()) {
+      // §FR-051：HTML/SVG 隔离预览——使用 Web 组件禁用 JS/网络/文件访问，安全渲染
+      Web({ src: this.htmlDataUri(), controller: this.webController })
+        .width('100%')
+        .layoutWeight(1)
+        .javaScriptAccess(false)
+        .domStorageAccess(false)
+        .onlineImageAccess(false)
+        .fileAccess(false)
+        .geolocationAccess(false)
+        .mediaPlayGestureAccess(false)
+        .databaseAccess(false)
+        .mixedMode(MixedMode.All)
+        .cacheMode(CacheMode.None)
+        .darkMode(WebDarkMode.Off)
+        .accessibilityText(`HTML/SVG 预览：${this.preview!.name}`)
     } else {
       Scroll() {
         Column({ space: Sp.S }) {
@@ -132,6 +150,22 @@ export struct FilePreviewPane {
       .align(Alignment.TopStart)
       .scrollBar(BarState.Auto)
     }
+  }
+
+  /** §FR-051：判断文件是否为 HTML 或 SVG */
+  private isHtmlOrSvg(): boolean {
+    const name: string = this.preview!.name.toLowerCase();
+    return name.endsWith('.html') || name.endsWith('.htm') || name.endsWith('.svg');
+  }
+
+  /** §FR-051：将 HTML/SVG 内容编码为 data: URI 供 Web 组件安全渲染 */
+  private htmlDataUri(): string {
+    const content: string = this.preview!.text;
+    const encoded: string = encodeURIComponent(content);
+    if (this.preview!.name.toLowerCase().endsWith('.svg')) {
+      return `data:image/svg+xml;charset=utf-8,${encoded}`;
+    }
+    return `data:text/html;charset=utf-8,${encoded}`;
   }
 
   private previewMeta(): string {

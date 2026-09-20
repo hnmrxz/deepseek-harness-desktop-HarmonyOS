@@ -34,14 +34,14 @@ import type { InputSourceReading, NotifyRoute, PickedFile, PickedFolder } from '
 import type { TriggerToken } from 'appstate';
 import { detectTrigger } from 'appstate';
 import { common } from '@kit.AbilityKit';
-import { APPROVAL_CHOICE_DENY, ActionNotice, AgentPresetRow, BackAction, CommandCandidate, ComposerDrafts, CoreFact, CorePhase, CoreViewState, CredentialItem, DEFAULT_MODEL_NS, DetailPresentation, DetailSection, DiagEntry, DiagMode, DiagReport, DrawerState, FileNode, FilePreview, HostRecord, HubPhase, LayoutMode, MAIN_CONVERSATION, MAIN_WORKSPACES, ModelOption, ModelSelection, NavTab, PanelDescriptor, PanelLocation, PanelRegistry, PendingAttachment, PendingItem, PluginItem, QueuedItem, ReferenceCandidate, SHARE_TARGET_FILE, SHARE_TARGET_NONE, SHEET_NOTE_CREDENTIAL, SHEET_NOTE_STRUCT, SHEET_NOTE_TEXT, ScrollSpot, SessionHub, SessionListItem, SettingGroup, SettingKind, SettingOrigin, SettingValueType, SettingsWriteOutcome, ShareTarget, SkillRow, StackPage, Sz, TrackPresentation, TrajectoryItem, TrajectoryKind, WorkspaceItem, WorkspaceRow, activeMainPanelOf, buildCoreView, clampDetailDesired, corePhaseOfHostState, createPanelRegistry, decideBack, decideLayoutWithDetail, deliverableShareTarget, deliverablesOf, detailRoomOf, detailWidthOf, diagModeOf, draftCount, draftOf, dragDetailWidth, drillAfterPreviewClosed, dropDraft, emptyComposerDrafts, emptyCoreView, emptyDiagReport, emptyScrollSpot, enterSession, fact, flattenSources, formatTokenVolume, guessFromKeyboardForm, initialNavigationState, itemsOfKind, legacyTabOfMainPanel, mainPanelOfLegacyTab, mainPanelOfSidebarPanel, mainPanels, mergeSettingsGroups, modalityFromSources, modalityOf, modalityTrace, navigateToMain, normalizePathKey, openSettings, parseDrafts, parseNotifyRoute, parseSettingInput, parseStructInput, permissionChipLabel, permissionChoices, permissionSwitchable, permissionUnavailableHint, pluginInventoryFact, pluginRowOf, projectDetailSections, projectHosts, projectWorkspaces, putDraft, rankPluginRows, rememberScrollSpot, selectRightPanel, selectTab as decideTabSelection, serializeDrafts, setDrawer, settingsDomainOfNs, sheetDiscardNotice, sheetNoteVisible, shellTracksOf, shouldRestoreDraft, showsConversation, sidebarExpandedForMode, sidebarPanelOfMainPanel, sidebarTrackWidthOf, splitSettingKey, unionModality, unknownFact, userFacingBodyOf, workspaceNameOf } from 'appstate';
+import { APPROVAL_CHOICE_DENY, ActionNotice, AgentPresetRow, BackAction, CommandCandidate, ComposerDrafts, CoreFact, CorePhase, CoreViewState, corePhaseLabel, CredentialItem, DEFAULT_MODEL_NS, DetailPresentation, DetailSection, DiagEntry, DiagMode, DiagReport, DrawerState, DrawerTracksState, FileNode, FilePreview, HostRecord, HubPhase, HostSource, LayoutMode, MAIN_CONVERSATION, MAIN_WORKSPACES, ModelOption, ModelSelection, NavTab, PanelDescriptor, PanelLocation, PanelRegistry, PendingAttachment, PendingItem, PluginItem, QueuedItem, ReferenceCandidate, RemoteHost, RouteFormFactor, RunMode, SHARE_TARGET_FILE, SHARE_TARGET_NONE, SHEET_NOTE_CREDENTIAL, SHEET_NOTE_STRUCT, SHEET_NOTE_TEXT, ScrollSpot, SessionHub, SessionListItem, SettingGroup, SettingKind, SettingOrigin, SettingValueType, SettingsWriteOutcome, ShareTarget,   SkillRow, Speaker, StackPage, SubagentRef, subagentReferenceCandidate, Sz, TrackPresentation, TrajectoryItem, TrajectoryKind, WorkspaceItem, WorkspaceRow, activeMainPanelOf, buildCoreView, closeAllDrawers, corePhaseOfHostState, createDrawerTracksState, createPanelRegistry, createRemoteHost, decideBack, decideLayoutWithDetail, deliverableShareTarget, deliverablesOf, detailWidthOf, diagModeOf, draftCount, draftOf, drillAfterPreviewClosed, dropDraft, emptyComposerDrafts, emptyCoreView, emptyDiagReport, emptyScrollSpot, enterSession, fact, flattenSources, FormFactorTracker, formatTokenVolume, guessFromKeyboardForm, initialNavigationState, itemsOfKind, legacyTabOfMainPanel, mainPanelOfLegacyTab, mainPanels, mergeSettingsGroups, modalityFromSources, modalityOf, modalityTrace, navigateToMain, normalizePathKey, openSettings, openLeftDrawer, openRightDrawer, parseDrafts, parseNotifyRoute, parseSettingInput, parseStructInput, permissionChipLabel, permissionChoices, permissionSwitchable, permissionUnavailableHint, pluginInventoryFact, pluginRowOf, projectDetailSections, projectHosts, projectWorkspaces, putDraft, rankPluginRows, rememberScrollSpot, selectRightPanel, selectTab as decideTabSelection, serializeDrafts, setDrawer, settingsDomainOfNs, sheetDiscardNotice, sheetNoteVisible, shellTracksOf, shouldRestoreDraft, splitSettingKey, unionModality, unknownFact, userFacingBodyOf, workspaceNameOf, dropPendingAnswer, emptyPendingAnswerDrafts, putPendingAnswerGroup } from 'appstate';
 /**
  * 类型单独用 `import type` 引入。
  *
  * 原因：`HubSnapshot` / `HubSubscriber` 在 appstate 里是 `export type` 导出的类型，
  * 与值导入分开写更贴近 ArkTS 的类型/值导入区分。
  */
-import type { AttachOutcome, PendingAnswerDraft, PermissionChoice, PluginInventoryTotals, CredentialWriteResult, HubSnapshot, HubSubscriber, InputModality, LayoutDecision, LayoutInput, ModalityEvidence, NavState, NavigationState, OverlayState, PluginRow, SessionJob, SessionSearchRow, SessionStatsInput, SettingChoice, SettingInputResult, SettingItem, SettingsKeyParts, SettingsWriteResult, TabSelection } from 'appstate';
+import type { AttachOutcome, PendingAnswerDraft, PendingAnswerDrafts, PermissionChoice, PluginInventoryTotals, CredentialWriteResult, HubSnapshot, HubSubscriber, InputModality, LayoutDecision, LayoutInput, ModalityEvidence, NavState, NavigationState, OverlayState, PluginRow, SessionJob, SessionSearchRow, SessionStatsInput, SettingChoice, SettingInputResult, SettingItem, SettingsKeyParts, SettingsWriteResult, TabSelection } from 'appstate';
 import { emitter } from '@kit.BasicServicesKit';
 import { parseJson } from 'connection';
 import { EVENT_HOST_CONNECTED, EVENT_KEY_HOST_TOKEN, EVENT_KEY_HOST_URL } from 'platform';
@@ -51,8 +51,11 @@ import { CredentialSheet } from '../view/CredentialSheet';
 import { SettingStructSheet } from '../view/SettingStructSheet';
 import { SettingTextSheet } from '../view/SettingTextSheet';
 import { MainShell } from '../view/shell/MainShell';
-import { AppShell } from '../view/shell/AppShell';
-import type { AppShellFacade } from '../view/shell/AppShell';
+import { RemoteShell } from '../view/shell/RemoteShell';
+import type { RemoteShellFacade } from '../view/shell/RemoteShell';
+import { WebShell, WebShellBackController, WebHostReadyState, WebShellFormFactor } from '../view/shell/WebShell';
+import type { WebShellFacade, WebRemoteBanner } from '../view/shell/WebShell';
+import { ConnectPane } from '../view/ConnectPane';
 import type { MainShellFacade } from '../view/shell/MainShell';
 import type { RightbarFacade } from '../view/shell/RightbarShell';
 import { TabContentView } from '../view/TabContentView';
@@ -61,8 +64,6 @@ import type { WorkspaceBrowserFacade } from '../view/WorkspaceBrowser';
 import type { FileTreeFacade } from '../view/FileTreePane';
 import { RightbarShell } from '../view/shell/RightbarShell';
 import { NodeRuntime } from '../runtime/NodeRuntime';
-import { hitOfKeyEvent } from '../view/ShortcutKeys';
-import type { ShortcutHit } from '../view/ShortcutKeys';
 import { harmonySheetOptions } from '../view/NativePrimitives';
 // 端侧核心运行层（D6）：核心版本仓库与激活事务。运行时载体尚未接线，
 // 因此这里现在只用它的"仓库/状态"部分，不声称任何"已启动"。
@@ -199,6 +200,21 @@ struct Index {
   // ── 形态 ──
   @State mode: LayoutMode = LayoutMode.SINGLE;
   /**
+   * T005：路由形态（档位 → 渲染路线的投影：SINGLE→PHONE 走 DSH Mobile 原生范式，
+   * 双栏及以上→DESKTOP_LIKE 走官方 Web UI 直载）。**形态是路由的唯一维度**；
+   * runMode 只影响路线内部的行为（Web 直载的基址 / 原生范式的数据源），
+   * 不再参与顶层路由（v1 的「REMOTE+SINGLE→RemoteShell，其余→AppShell」会让
+   * 手机本机态落进 PC 三栏范式，见 deletion-manifest §10 的实证缺口）。
+   *
+   * 【唯一写入点（T029）】只有 `applyRouteFactor`（`FormFactorTracker` 的订阅回调）
+   * 会写它——即"形态翻转事件 ⇒ 路由重算"这条路。`applySize` 负责**驱动**跟踪器
+   * （`factorTracker.applyWidth`），不直接读结论回写（此前那里有一处
+   * `this.routeFactor = this.factorTracker.current()`，等于给同一件事留了第二个写入口）。
+   * 构造字段上的 `PHONE` 只是首帧前的占位，首帧由 `aboutToAppear` 里的首次 `applySize`
+   * 经同一条回调落地。
+   */
+  @State routeFactor: RouteFormFactor = RouteFormFactor.PHONE;
+  /**
    * 导航状态（P0-2：**页面 = 选中的面板**）。
    *
    * 【为什么收在这里】此前"当前是哪个页面"是 `@State tab: NavTab`，而右栏选择、设置分区、
@@ -285,20 +301,6 @@ struct Index {
    */
   @State detailWidthDesired: number = Sz.DETAIL_PANEL;
 
-  /**
-   * 侧栏展开偏好（P5-2）：`undefined` = **没存过**（按形态默认）。
-   *
-   * 【为什么偏好不能放进 `NavigationState`】它描述的不是"导航到哪儿"，而是用户的
-   * 几何偏好；更要紧的是**它的默认值随形态变**（双栏默认 rail、三栏默认 panel）——
-   * 一个 `boolean` 字段存不下"没存过"，于是双栏首启会被读成"展开"，与
-   * `shellTracksOf(DOUBLE).sidebar = RAIL` 直接矛盾。故真值只有这一份原始值，
-   * 生效值每次渲染由 `sidebarExpandedForMode(mode, stored)` 派生。
-   */
-  @State sidebarStored: boolean | undefined = undefined;
-
-  /** 一次拖拽开始时的宽度（PanGesture 的 offsetX 是**累计量**，必须用起点换算） */
-  private dragStartWidth: number = Sz.DETAIL_PANEL;
-
   /** 系统枚举到的输入设备；`null` = 枚举不可用 ⇒ 退回形态猜测（与"当前没有设备"是两件事） */
   private enumeratedModality: InputModality | null = null;
 
@@ -311,7 +313,7 @@ struct Index {
   /** 取消设备热插拔监听（页面销毁时调用） */
   private unwatchInput: (() => void) | undefined = undefined;
 
-  // ── 数据（当前来自桩数据源） ──
+  // ── 数据（全部来自 SessionHub 的真实快照；未连接时是空态） ──
   @State sessions: SessionListItem[] = [];
   @State pending: PendingItem[] = [];
   @State selectedSessionId: string = '';
@@ -512,6 +514,19 @@ struct Index {
    * **属于会话的界面状态**，由活得更久的宿主保管。
    */
   @State scrollSpot: ScrollSpot = emptyScrollSpot();
+  /**
+   * 待决答复草稿（**按待决 id** 保存的逐题答案；T-C，FR-013）。
+   *
+   * 【为什么与草稿袋（`drafts`）同一待遇】折叠屏开合会换渲染路线（`PHONE` ↔
+   * `DESKTOP_LIKE`），那一刻两条路线互斥出现，原生树（`RemoteShell` 及其全部子组件）
+   * **整体重建** —— 组件私有的 `@State` 在那一下全部作废。用户已经点选的选项、
+   * 写了一半的自定义答案因此会静默消失，而"折叠一下"在他眼里不该等于"清空"。
+   *
+   * 于是这份状态与输入区草稿一样住在宿主：经 props 下发（`MainShell` / `WorkspaceBrowser`
+   * 两条链）、经回调回传（`setPendingAnswerGroup`），答复完就丢（`dropPendingAnswer`）。
+   * 纯模型在 `appstate/model/PendingFocus.ets`（有 fixture 钉住容量与"不修改入参"）。
+   */
+  @State pendingAnswerDrafts: PendingAnswerDrafts = emptyPendingAnswerDrafts();
 
   /** 文本设置浮层打开时的**种子值**（判"用户改过没有"；P8-4） */
   private textSettingSeed: string = '';
@@ -536,11 +551,8 @@ struct Index {
   @State connectOk: boolean = false;
   @State connectAdvice: string = '';
 
-  /** 派生值：避免在循环体内读取 @State（ArkTS 性能规则） */
-  @State pendingBadge: string = '';
-
-  // ── 真实连接状态（来自 SessionHub；未连接时保持桩数据） ──
-  /** 中枢阶段；只有 LIVE 时才用中枢的数据覆盖桩数据 */
+  // ── 真实连接状态（来自 SessionHub；未连接时是空态） ──
+  /** 中枢阶段；只有真的连上时中枢快照才成为界面的数据源 */
   @State hubPhase: HubPhase = HubPhase.IDLE;
   /** 已连接 Host 的 authority（供诊断与状态条显示） */
   @State hubAuthority: string = '';
@@ -561,6 +573,33 @@ struct Index {
    * 「连上了但事件流恰好断了」的时刻又退回桩数据，等于给用户看假会话。
    */
   @State hubConnected: boolean = false;
+  /** §FR-032：运行模式（本机 / 远程） */
+  @State runMode: RunMode = RunMode.LOCAL;
+  /** §FR-034：已发现的远程主机列表（本机模式下为空） */
+  @State remoteHosts: RemoteHost[] = [];
+  /** §FR-032：当前连接的远程主机（null = 本机模式） */
+  @State activeRemoteHost: RemoteHost | null = null;
+  /**
+   * §FR-032：用户已选「远程」但尚未连上任何远程主机。
+   *
+   * 【为什么需要它】中枢的 `runMode` 只在 `switchToRemote` 成功后才变 REMOTE；
+   * 用户刚切到远程模式、还没在连接页选中主机时，中枢仍是 LOCAL——
+   * 若快照无条件回写 `runMode`，下一次中枢通知就会把界面拉回本机范式
+   * （用户刚做的选择被静默撤销）。这个标记让快照同步在「远程待选」期间让位。
+   */
+  @State remoteModePending: boolean = false;
+  /** §FR-034：LAN 扫描是否进行中（页面级瞬态，不进中枢快照） */
+  @State lanScanning: boolean = false;
+  /** §FR-022：当前会话的子代理引用列表 */
+  @State subagentRefs: SubagentRef[] = [];
+  /** §FR-012：Host 是否支持 applied diffs 的 meta 字段 */
+  @State appliedDiffsAvailable: boolean = false;
+  /** §FR-008：Host home 目录路径（空串 = 未知，~ 不展开） */
+  @State hostHome: string = '';
+  /** §FR-033：抽屉状态（手机远程模式用） */
+  @State drawerState: DrawerTracksState = createDrawerTracksState();
+  /** §FR-061：目标/Goal 文本 */
+  @State goalText: string = '';
   /**
    * 上次连上的 Host（能力层从存储读出来后经 AppStorage 发布）。
    *
@@ -635,6 +674,20 @@ struct Index {
   @State sessionSearchNote: string = '';
 
   private widthListener?: (size: window.Size) => void;
+  /** T005：形态跟踪器（appstate T003；`applySize` 驱动，翻转时同步 `routeFactor`） */
+  private factorTracker: FormFactorTracker = new FormFactorTracker(RouteFormFactor.PHONE);
+  /**
+   * T029：形态翻转的订阅句柄（`aboutToAppear` 注册、`aboutToDisappear` 注销）。
+   *
+   * 【为什么要有句柄而不是内联匿名闭包】注销必须能点名同一个函数引用；匿名闭包会让
+   * `unsubscribe` 永远匹配不上（列表越挂越长，而"退订"看起来明明调过了）。
+   */
+  private routeFactorListener: ((next: RouteFormFactor, prev: RouteFormFactor) => void) | undefined = undefined;
+  /**
+   * T005：WebShell 返回键句柄（WebShell 挂载时注册实现、卸载时复位；
+   * 页面 `onBackPress` 经它转发。模式同 `FolderPickerController`：宿主持句柄）
+   */
+  private webBack: WebShellBackController = new WebShellBackController();
   /**
    * 中枢订阅者（在 `aboutToAppear` 里构造）。
    *
@@ -668,6 +721,30 @@ struct Index {
     this.sessionSearchRows = s.searchRows;
     this.sessionSearchNote = s.searchNote;
     this.hubConnected = s.connected;
+    // §FR-032/034/022/012/008：DSH Full Parity 新增字段
+    // 【runMode 的同步要让位给"用户已选远程"】中枢只在远程连接成功后才报 REMOTE；
+    // 用户已切到远程模式但还没连上主机（remoteModePending）时，LOCAL 快照
+    // 不许把界面拉回本机范式——否则连接页还没出现就被切走了。
+    if (s.runMode === RunMode.REMOTE) {
+      this.runMode = RunMode.REMOTE;
+      this.remoteModePending = false;
+    } else if (!this.remoteModePending) {
+      this.runMode = s.runMode;
+    }
+    this.remoteHosts = s.remoteHosts;
+    this.activeRemoteHost = s.activeRemoteHost;
+    this.subagentRefs = s.subagentRefs;
+    this.appliedDiffsAvailable = s.appliedDiffsAvailable;
+    this.hostHome = s.hostHome;
+    // §FR-048：合并子代理引用到 @ 候选列表
+    // 子代理引用插入到文件/会话引用之前，与官方 @ 引用行为一致
+    {
+      const subagentRefs: ReferenceCandidate[] = [];
+      for (let i = 0; i < s.subagentRefs.length; i++) {
+        subagentRefs.push(subagentReferenceCandidate(s.subagentRefs[i]));
+      }
+      this.references = subagentRefs.concat(s.references);
+    }
     // E124：宿主报告的权限组合（真实事实，不是我们写死的默认值）
     this.permissionCurrent = s.permissionsCurrent;
     this.permissionOptions = s.permissionsOptions;
@@ -770,7 +847,6 @@ struct Index {
       this.attachments = [];
       this.queued = [];
       this.updateHosts();
-      this.recomputeDerived();
       return;
     }
     this.sessions = s.sessions;
@@ -822,7 +898,6 @@ struct Index {
     this.workspaces = projectWorkspaces(this.sessions);
     this.detailSections = projectDetailSections(this.trajectoryItems);
     this.updateHosts();
-    this.recomputeDerived();
   }
 
   /**
@@ -877,8 +952,6 @@ struct Index {
     });
     // 详情栏宽度记忆：读回用户上次拖出来的值（没有记录时保持默认）
     this.loadDetailWidth();
-    // 侧栏收起状态记忆：读回用户上次的选择（没有记录 ⇒ 默认展开）
-    this.loadSidebarExpanded();
     // 输入草稿：读回上次运行留下的每会话草稿（P8-3 的第二半："…and reloads"）
     this.loadComposerDrafts();
     // 初始值 = 空态。所有真实数据都在 `applyHubSnapshot` 到达时落地；
@@ -891,7 +964,19 @@ struct Index {
     this.localSettings = this.localPreferenceGroup();
     this.settings = this.localSettings;
     this.updateHosts();
-    this.recomputeDerived();
+    /*
+     * T029：形态翻转的订阅必须**先于**首次 `applySize`。
+     *
+     * 冷启动在平板/2in1/折叠展开上时，首次判定就是 DESKTOP_LIKE——
+     * 那一次翻转必须由订阅回调（`applyRouteFactor`）落地。若先 applySize 再订阅，
+     * 首帧的路由赋值会绕开唯一落点，于是"路由形态只可能来自形态事件"这条不变量
+     * 从第一帧起就不成立（后续任何一次核查都会看到两个写入点）。
+     */
+    const routeListener = (nf: RouteFormFactor, pf: RouteFormFactor) => {
+      this.applyRouteFactor(nf, pf);
+    };
+    this.routeFactorListener = routeListener;
+    this.factorTracker.subscribe(routeListener);
     this.applySize(initialWidthVp(), initialHeightVp());
     this.watchWindowSize();
     // 订阅中枢：多窗口下每个窗口各自订阅，但共用同一个连接与会话状态
@@ -1008,6 +1093,29 @@ struct Index {
    * 每一步都写 hilog：真机上核对"到底哪一层没退掉"时，这行日志就是答案。
    */
   onBackPress(): boolean {
+    /*
+     * T005：桌面 Web 直载路线的返回键分流（在原生阶梯**之前**）。
+     *
+     * ArkWeb 没有 onBackPressed——返回键到达的是这里。WebShell 经
+     * `webBack` 句柄消费：Web 历史可后退 → 官方 UI 内部导航；
+     * 不可后退 → 透传门面 `onBackPress`（= `consumeBack` 原生阶梯）。
+     * 远程连接页与诊断页是 Web 路线上的原生例外，返回语义各自收口。
+     */
+    if (this.routeFactor === RouteFormFactor.DESKTOP_LIKE) {
+      // 浮层（Sheet）若开着，先走原生阶梯关闭——它压在所有路线之上
+      if (this.sheetKind().length > 0) {
+        return this.consumeBack();
+      }
+      if (this.remoteModePending && this.stackPage !== StackPage.DIAGNOSTICS) {
+        // 连接页：返回 = 退出远程流程（与页面返回箭头同一语义、同一执行点）
+        this.exitRemoteConnectFlow();
+        return true;
+      }
+      if (this.stackPage === StackPage.DIAGNOSTICS) {
+        return this.consumeBack();
+      }
+      return this.webBack.handleBackPress();
+    }
     return this.consumeBack();
   }
 
@@ -1022,6 +1130,27 @@ struct Index {
    * 返回值 = **是否消费了这次返回**：`false` 表示已在根层，交给系统（最小化应用）。
    */
   private consumeBack(): boolean {
+    /*
+     * T030：「退出远程连接流程」在**双壳下同一语义**。
+     *
+     * 【为什么必须收在这里】手机壳的连接页返回走 `MainShell → backOneLayer → 这里`，
+     * 而桌面壳的连接页返回走自己的 `onBack: exitRemoteConnectFlow`。此前前者落到
+     * `decideBack` 的「二级页回主列表」（`stackPage=CONNECT → MAIN`）——它**只换页**，
+     * 不收回 `remoteModePending`，于是手机形态下"取消连接远程"会把用户留在一个
+     * 谁也不认领的待选态（中枢因该标记拒收回写 runMode，而连接页又已不在屏幕上）。
+     * 桌面壳的语义才是对的（取消 = 回到本机范式），所以把**同一个执行点**提前到这里，
+     * 两种壳、两条返回路径（系统返回键 / 界面返回箭头）从此完全一致。
+     *
+     * 【为什么判据带 `stackPage === CONNECT`】`remoteModePending` 也用于"断连横幅里
+     * 重新输入凭据"（此时用户仍在 Web 内容上，见 `remoteBannerState`），那种情况下
+     * 返回键该继续走 Web 的历史后退，不该把整个远程模式撤掉。
+     * 诊断页上则保持两级返回（诊断 → 连接页 → 退出），由 `decideBack` 先消费一级。
+     */
+    if (this.remoteModePending && this.stackPage === StackPage.CONNECT) {
+      this.exitRemoteConnectFlow();
+      hilog.info(DOMAIN, TAG, 'HDSH-BACK 退出远程连接流程（双壳统一语义）');
+      return true;
+    }
     const action: BackAction = decideBack(this.navState(), this.overlayState());
     switch (action) {
       case BackAction.CLOSE_CREDENTIAL:
@@ -1402,8 +1531,150 @@ struct Index {
       + '请在 Host 上重新获取带 token 的启动链接并粘贴到下方。';
   }
 
+  // ───────────────────────── 双模式切换（§FR-032） ─────────────────────────
+
+  /**
+   * 切换运行模式（§FR-032：设置 → 通用 → 运行模式的唯一执行点）。
+   *
+   * · 切「远程」：UI 立即进入远程范式（单栏下渲染 RemoteShell）；
+   *   已有选定主机就直接连（switchToRemote：断开本机 → 配置 → 连接认证 → 切 runMode），
+   *   没有就停在「远程待选」状态并打开连接页（LAN 发现 / 手动输入都在那里）。
+   * · 切「本机」：断开远程连接，本机 Host 重新连接（HDSH 范式恢复）。
+   *
+   * 【两侧会话状态独立（Edge case）】草稿按会话 id 存在 ComposerDrafts 里、
+   * 会话列表由各自的 Host 报告——切换只换连接目标，不清任何一侧的本地状态，
+   * 切回来时草稿与选中会话都还在。
+   */
+  private switchRunMode(mode: RunMode): void {
+    if (mode === RunMode.REMOTE) {
+      if (this.runMode === RunMode.REMOTE) {
+        return;
+      }
+      this.runMode = RunMode.REMOTE;
+      const host: RemoteHost | null = this.activeRemoteHost;
+      if (host !== null) {
+        this.connectRemoteHost(host);
+      } else {
+        // 还没有选定的远程主机：进入「远程待选」，连接页是下一步动作的落点
+        this.remoteModePending = true;
+        this.stackPage = StackPage.CONNECT;
+      }
+      return;
+    }
+    if (this.runMode === RunMode.LOCAL && !this.remoteModePending) {
+      return;
+    }
+    this.remoteModePending = false;
+    this.runMode = RunMode.LOCAL;
+    const hub: SessionHub = SessionHub.shared();
+    hub.switchToLocal().then(() => {
+      this.reconnectLocalCore();
+    }).catch((_e: Object) => {
+      // 切换失败也要试着接回本机：用户此刻的预期就是"回到本机范式"
+      this.reconnectLocalCore();
+    });
+  }
+
+  /**
+   * 连接一台远程主机（§FR-034：LAN 发现点击 / 手动输入共用这一条路径）。
+   *
+   * `switchToRemote` 内部完成：断开现有连接 → 配置地址 → 连接认证 → 切 runMode。
+   * 失败时中枢留在 LOCAL，界面保持「远程待选」——用户可以换一台主机或改用手动
+   * 输入，不会被踢回本机范式。
+   */
+  private connectRemoteHost(host: RemoteHost): void {
+    const hub: SessionHub = SessionHub.shared();
+    this.remoteModePending = true;
+    this.connectBusy = true;
+    this.connectSettled = false;
+    this.connectResult = `正在连接远程主机 ${host.hostAddress}…`;
+    this.connectAdvice = '';
+    hub.switchToRemote(host).then(() => {
+      this.connectBusy = false;
+      this.connectSettled = true;
+      const snap: HubSnapshot = hub.snapshot();
+      this.connectOk = snap.connected;
+      if (snap.connected) {
+        this.remoteModePending = false;
+        this.connectResult = `已连接远程主机 ${snap.authority}，收到 ${snap.sessions.length} 个会话`;
+        this.connectAdvice = '已进入远程模式：手机单栏下使用抽屉导航，左侧为会话列表。';
+      } else {
+        this.connectResult = snap.lastError.length > 0 ? snap.lastError : '无法连接远程主机';
+        this.connectAdvice = '请确认远程 Host 正在运行且网络可达。LAN 发现的主机不带 token：'
+          + '认证需要粘贴 Host 打印的完整启动 URL（含 ?token=…），或在地址旁单独填入 token。';
+      }
+    }).catch((e: Object) => {
+      this.connectBusy = false;
+      this.connectSettled = true;
+      this.connectOk = false;
+      this.connectResult = '连接远程主机失败：' + (e as Error).message;
+      this.connectAdvice = '请检查网络后重试，或改用手动输入地址与 token。';
+    });
+  }
+
+  /**
+   * 扫描 LAN 发现远程主机（§FR-034）。扫描本身不依赖 mux 连接；
+   * 结果由中枢缓存并经快照回到 `remoteHosts`，这里只跟踪"是否在扫"这个瞬态。
+   */
+  private startLanDiscovery(): void {
+    if (this.lanScanning) {
+      return;
+    }
+    this.lanScanning = true;
+    SessionHub.shared().scanLan().then((_hosts: RemoteHost[]) => {
+      this.lanScanning = false;
+    }).catch((_e: Object) => {
+      this.lanScanning = false;
+    });
+  }
+
+  /**
+   * 切回本机模式后重连本机核心（§FR-032"本机 Host 启动并连接"）。
+   *
+   * 【为什么直接读 host-ready URL】记住的 Host（rememberedUrl）可能指向
+   * 刚才连的远程地址；本机核心的就绪 URL（含最新 token）才是本机范式的
+   * 正确目标。核心尚未就绪时如实说明，不猜地址。
+   */
+  private reconnectLocalCore(): void {
+    const hub: SessionHub = SessionHub.shared();
+    let readyUrl: string = '';
+    const host: DshHost | null = this.host;
+    if (host !== null) {
+      try {
+        readyUrl = host.localHostReadyUrl();
+      } catch (e) {
+        readyUrl = '';
+      }
+    }
+    if (readyUrl.length === 0) {
+      this.connectResult = '本机核心尚未就绪：请在核心就绪后到「远程 Host」页重新连接本机，或重启应用。';
+      return;
+    }
+    if (!hub.configure(readyUrl, undefined)) {
+      this.connectResult = '本机核心地址无法解析，请重启应用。';
+      return;
+    }
+    this.connectBusy = true;
+    this.connectSettled = false;
+    this.connectResult = '正在重新连接本机核心…';
+    hub.connect().then((ok: boolean) => {
+      this.connectBusy = false;
+      this.connectSettled = true;
+      const snap: HubSnapshot = hub.snapshot();
+      this.connectResult = ok
+        ? `已恢复本机连接 ${snap.authority}，收到 ${snap.sessions.length} 个会话`
+        : '本机连接未恢复：请到「远程 Host」页重试，或查看连接诊断。';
+    });
+  }
+
   aboutToDisappear(): void {
     this.unwatchWindowSize();
+    // T029：注销形态监听（跟踪器是本页私有字段，注销是防"页面已销毁但回调仍被点名"的纪律）
+    const routeListener = this.routeFactorListener;
+    if (routeListener !== undefined) {
+      this.factorTracker.unsubscribe(routeListener);
+      this.routeFactorListener = undefined;
+    }
     if (this.unwatchInput !== undefined) {
       this.unwatchInput();
       this.unwatchInput = undefined;
@@ -1500,11 +1771,6 @@ struct Index {
     });
   }
 
-  private recomputeDerived(): void {
-    const n: number = this.pending.length;
-    this.pendingBadge = n <= 0 ? '' : (n > 99 ? '99+' : `${n}`);
-  }
-
   // ───────────────────── 形态判定（D3 §2.2） ─────────────────────
 
   private watchWindowSize(): void {
@@ -1542,6 +1808,18 @@ struct Index {
   private applySize(widthVp: number, heightVp: number): void {
     this.winWidthVp = widthVp;
     this.winHeightVp = heightVp;
+    /*
+     * T029：**每一次**宽度变化都驱动形态跟踪器，且必须在下面那道"档位没变就早退"之前。
+     *
+     * 【为什么顺序不能反】路由形态由窗口宽度派生（`formFactorOfWidth`），而折叠屏开合
+     * 就是一次宽度翻转。此前这一句写在「档位变化」分支里面（`if (next === this.mode) return;`
+     * 之后），于是它只在**档位**恰好变化的那一次被调用——今天两套阈值同源（SINGLE<600，
+     * 形态在 SINGLE↔DOUBLE 处翻转）所以看起来正确，但这是**巧合而非契约**：
+     * 一旦形态阈值将来与档位阈值分家，或者某一帧的宽度落在"档位没变、形态该变"的区间，
+     * 路由形态就会**永久卡在旧值**（之后每次 applySize 都在早退处返回，再也没有人问过它）。
+     * 现在形态跟踪独立成一路状态机，与档位互不依赖。
+     */
+    this.factorTracker.applyWidth(widthVp);
     // 档位与详情栏可用性都来自**一处**决策（appstate/ui/LayoutController），
     // 本文件不再自己拼断点判断——否则"什么宽度显示什么"会有两份实现，破版时两处都要查。
     const decision: LayoutDecision = this.layoutDecision();
@@ -1572,6 +1850,44 @@ struct Index {
     } else if (this.selectedSessionId.length > 0) {
       this.detailOpen = true;
     }
+  }
+
+  /**
+   * T029：形态翻转的**唯一落点**（`FormFactorTracker` 订阅回调）。
+   *
+   * ## 折叠屏开合 = 事件驱动路由重算
+   *
+   * 折叠屏闭合 → 窗口宽度落到单栏区间 → `FormFactorTracker` 判定 PHONE 并回调；
+   * 展开 → 宽度回到双栏及以上 → 回调 DESKTOP_LIKE。`build()` 顶层据此条件渲染
+   * `RemoteShell`（原生范式）或 `desktopSurface()`（官方 Web UI 直载），
+   * 即"互切"本身**只是一次状态赋值 + 一次重组**，没有第二套切换机制。
+   *
+   * ## 为什么这里**不搬运任何状态**（T029 的验收核心）
+   *
+   * "Web↔原生互切不丢状态"不靠搬运，靠归属：任何会被用户当成"还在那儿"的东西都
+   * **不住在壳里**。逐一核对（实测的持有者，不是设计意图）：
+   *   · 会话列表 / 选中会话 / 轨迹 / 待决 / 队列 / 附件 / 文件树 / 搜索命中
+   *     → `SessionHub.shared()` 单例（`HubSnapshot` → `applyHubSnapshot` 单向投影）；
+   *   · 每会话草稿 `drafts` / 滚动位 `scrollSpot` / 待发文本 / 附件草稿 / 选择器……
+   *     → 本组件顶层 `@State`；`RemoteShell`/`WebShell` 只收门面（只读快照 + 闭包）；
+   *   · 抽屉开合 `drawerState` / 运行模式 `runMode` / `remoteModePending` / 导航 `nav`+`stackPage`
+   *     → 同上，均在顶层（`RemoteShell` 实测只私有 `stackWidth`/卡片折叠/秒级刻度这三个
+   *     纯呈现态，`WebShell` 只私有 Web 自身的加载相位）。
+   * 因此两个壳**互换**时不需要（也不允许）在这里做任何状态迁移；反之，若哪天有人把
+   * 会话态搬进某个壳，它会在这一行暴露成"切一次就丢"——那时的正确修法是把状态提回本层
+   * 或中枢，而不是在这里加搬运代码（那只是把丢失的时机推后）。
+   *
+   * ## 为什么要写日志
+   *
+   * 折叠开合在真机上只有一次机会可观察（且往往只在截图里留下结果），
+   * 而"路由到底切没切、从哪切到哪"正是排查这类问题的第一现场。
+   */
+  private applyRouteFactor(next: RouteFormFactor, prev: RouteFormFactor): void {
+    if (next === this.routeFactor) {
+      return;
+    }
+    this.routeFactor = next;
+    hilog.info(DOMAIN, TAG, 'HDSH-ROUTE 形态翻转 %{public}s → %{public}s：渲染路线随之切换', prev, next);
   }
 
   /**
@@ -1672,74 +1988,9 @@ struct Index {
     this.detailOverlayOpen = false;
   }
 
-  /** 切换详情：呈现方式随档位（三栏 = 右栏，单栏/双栏 = 浮层） */
-  private toggleDetail(): void {
-    if (this.detailPresentationNow() === DetailPresentation.COLUMN) {
-      this.detailOpen = !this.detailOpen;
-      return;
-    }
-    this.detailOverlayOpen = !this.detailOverlayOpen;
-  }
-
   /** 当前档位下详情怎么呈现（真右栏 / 侧边浅层面板 / 整页） */
   private detailPresentationNow(): DetailPresentation {
     return this.layoutDecision().detailPresentation;
-  }
-
-  /**
-   * 双栏下侧边浅层面板的宽度。
-   *
-   * 复用"用户想要的宽度"与同一套夹取规则（`clampDetailDesired`）：双栏虽然不并排详情栏，
-   * 但面板仍要让列表露出来，故必须夹在可用空间内。用户拖过的宽度在这里也被尊重。
-   */
-  private sidePanelWidthVp(): number {
-    return clampDetailDesired(this.detailWidthDesired, this.detailRoomVp());
-  }
-
-  /** 当前窗口下详情栏可用的最大宽度（拖拽时在这里夹住，避免"拖宽反而跳成最窄"） */
-  private detailRoomVp(): number {
-    return detailRoomOf(this.winWidthVp, this.navWidthVp());
-  }
-
-  /** 抓手的目标尺寸：触控要 44vp 才点得准，指针 24vp 就够（与 `Sz` 的既有取舍一致） */
-  private gripHitWidth(): number {
-    return this.modality.hasPointer ? Sz.POINTER_MIN : Sz.TOUCH_MIN;
-  }
-
-  /**
-   * 开始拖拽：先**归一化**再记起点。
-   *
-   * 【为什么必须先夹一次】窗口缩小后 `detailWidthDesired`（用户意图）会大于当前可用空间，
-   * 而屏幕上显示的是被让步链夹过的宽度。此时若直接拿意图当起点，`offsetX` 从 0 开始的第一帧
-   * 就会把栏宽"刷"到夹取值——表现为**一碰把手栏就跳一下**。先夹再记，拖拽从用户看到的宽度开始。
-   * （`offsetX` 是相对手势起点的累计量，故必须用起点换算而不是逐帧累加。）
-   */
-  private beginDetailDrag(): void {
-    this.detailWidthDesired = clampDetailDesired(this.detailWidthDesired, this.detailRoomVp());
-    this.dragStartWidth = this.detailWidthDesired;
-  }
-
-  /** 拖拽中：把手在详情栏左边缘 ⇒ 往左拖是变宽（方向规则在模型里，有断言） */
-  private updateDetailDrag(deltaXVp: number): void {
-    this.detailWidthDesired = dragDetailWidth(this.dragStartWidth, deltaXVp, this.detailRoomVp());
-  }
-
-  /**
-   * 拖拽结束：把宽度记进本机偏好（下次开窗沿用）。
-   *
-   * 【落盘失败要说出来吗】它与主题不同（主题失效用户立刻看得见），但"静默不生效"正是本项目
-   * 反复批评的形态，故给一句轻提示、不阻断操作。
-   */
-  private endDetailDrag(): void {
-    const prefs: LocalPrefs = new LocalPrefs();
-    const width: number = this.detailWidthDesired;
-    prefs.attach(getContext(this) as common.UIAbilityContext).then(() => {
-      prefs.saveDetailWidth(width).then((ok: boolean) => {
-        if (!ok) {
-          this.attachNotice = '详情栏宽度这次没能记住：下次打开会回到默认宽度。';
-        }
-      });
-    });
   }
 
   /** 读回记住的宽度（没有记录/坏值 ⇒ 默认值；收窄规则在模型里，有断言） */
@@ -1748,25 +1999,6 @@ struct Index {
     await prefs.attach(getContext(this) as common.UIAbilityContext);
     const stored: number | undefined = await prefs.loadDetailWidth();
     this.detailWidthDesired = detailWidthOf(stored);
-  }
-
-  /**
-   * **布局决策里的**导航宽度（形态默认：三栏 240 / 双栏 56 / 单栏 0）。
-   *
-   * 【与 `sidebarTrackWidthVp` 的分工，不要合并】这个值是"按形态该留多少"，
-   * 让步链（`decideLayoutWithDetail`）内部用的就是它，拖拽夹取（`detailRoomOf`）
-   * 必须跟它一致，否则夹出来的宽度会被决策再收窄一次，拖动时跳变。
-   * 侧栏轨道实际画多宽是另一件事（用户可能收起了侧栏）——那一个叫
-   * `sidebarTrackWidthOf`。收起侧栏会让主区自然变宽（主区是 `layoutWeight(1)`），
-   * 详情栏的可用空间仍然按这条保守值算：偏保守只会让栏窄一点，不会重叠。
-   */
-  private navWidthVp(): number {
-    return this.layoutDecision().navWidthVp;
-  }
-
-  /** 详情栏宽度（唯一来源：布局决策，含让步链的收窄结果） */
-  private detailWidthVp(): number {
-    return this.layoutDecision().detailWidthVp;
   }
 
   // ───────────────────── 交互 ─────────────────────
@@ -2135,20 +2367,66 @@ struct Index {
     });
   }
 
-  private showsConversation(): boolean {
-    // 判据在控制器里（`NavTab.SESSIONS` 是 `WORKSPACES` 的别名这事只该写在那一处）
-    return showsConversation(this.navState());
+  /**
+   * §FR-001：编辑用户消息。
+   *
+   * 把用户消息的内容填入 Composer 的输入框，让用户修改后重发。
+   * 不是直接提交——用户可能想修改内容后再发。
+   */
+  private editMessage(item: TrajectoryItem): void {
+    if (item.body.length === 0) {
+      this.attachNotice = '这条消息没有可编辑的正文。';
+      return;
+    }
+    // 将消息内容填入 Composer 输入框
+    this.draft = userFacingBodyOf(item);
+    this.attachNotice = '已载入消息到输入框，修改后发送即可。';
+  }
+
+  /**
+   * §FR-002：重试助手回复。
+   *
+   * 查找当前会话中这条助手消息之前的用户消息，然后重发它。
+   * 等效于"重跑那一轮"——让模型对同一输入重新生成回复。
+   */
+  private retryAssistant(item: TrajectoryItem): void {
+    // 查找当前快照中此助手消息之前最近的一条用户消息
+    const hub: SessionHub = SessionHub.shared();
+    const snap: HubSnapshot = hub.snapshot();
+    const items: TrajectoryItem[] = snap.trajectory;
+    let userBody: string = '';
+    for (let i: number = items.length - 1; i >= 0; i--) {
+      if (items[i].id === item.id) {
+        // 找到了这条助手消息，往前找用户消息
+        for (let j: number = i - 1; j >= 0; j--) {
+          if (items[j].speaker === Speaker.USER) {
+            userBody = userFacingBodyOf(items[j]);
+            break;
+          }
+        }
+        break;
+      }
+    }
+    if (userBody.length === 0) {
+      this.attachNotice = '重试失败：找不到对应的用户消息。';
+      return;
+    }
+    hub.sendPrompt(userBody).then((ok: boolean) => {
+      this.attachNotice = ok ? '正在重新生成回复…' : '重试失败：消息未发出（连接或会话不可用）。';
+    }).catch((e: Object) => {
+      this.attachNotice = '重试失败：' + (e as Error).message;
+    });
   }
 
   /**
    * 当前该显示哪个浮层（**从既有状态派生，不另立状态**）。
-   *
-   * 【为什么不新增一个 `sheetKind` 字段】那会造成两个真值来源：字段说"credential"、
-   * 而 `credentialRef` 已空——两者一旦不同步，就是"浮层里内容不对/关不掉"这类疑难 bug。
-   * 这里只做**派生**：谁的状态在，就显示谁。顺序即优先级（同时满足时按此取第一个）。
-   */
+     *
+     * 【为什么不新增一个 `sheetKind` 字段】那会造成两个真值来源：字段说"credential"、
+     * 而 `credentialRef` 已空——两者一旦不同步，就是"浮层里内容不对/关不掉"这类疑难 bug。
+     * 这里只做**派生**：谁的状态在，就显示谁。顺序即优先级（同时满足时按此取第一个）。
+     */
   private sheetKind(): string {
-    // 详情仅在**整页**档位（单栏）走半模态；双栏改用侧边浅层面板（见 AppShell.buildDouble）
+    // 详情仅在**整页**档位（单栏）走半模态（v1 双栏的侧边浅层面板已随 AppShell 删除）
     if (this.detailOverlayOpen && this.detailPresentationNow() === DetailPresentation.OVERLAY) {
       return 'detail';
     }
@@ -2355,58 +2633,9 @@ struct Index {
     })
   }
 
-  /** AppFrame 轨道所需能力的门面（**每次渲染重建**：值型快照、写型 setter、方法型闭包） */
-  private buildShellFacade(): AppShellFacade {
-    const facade: AppShellFacade = {
-    activePanel: () => this.activePanel(),
-    appName: APP_NAME,    // 品牌名是宿主给的事实（同 brand 入参）
-    // 侧栏 PANEL 呈现里要挂工作区→会话树（P1）：与主区那份**同源**（同一个门面构建器）
-    browser: this.buildBrowserFacade(),
-    selectedSidebarPanel: sidebarPanelOfMainPanel(this.nav.selectedMainPanel),
-    // 侧栏展开 / 收起（P2-15）：生效值由"形态默认 + 用户偏好"派生（P5-2），视图只读结论
-    sidebarExpanded: sidebarExpandedForMode(this.mode, this.sidebarStored),
-    // 侧栏**轨道**宽度（P5-2）：跟随实际呈现（panel 240 / rail 56 / 浮层 0），
-    // 而不是形态默认——否则"收起侧栏腾出宽度"只改了呈现、没改几何
-    sidebarTrackWidthVp: (): number => sidebarTrackWidthOf(this.mode, this.sidebarStored),
-    onToggleSidebarExpanded: () => this.toggleSidebarExpanded(),
-    onSelectSidebarPanel: (panelId: string) => this.selectSidebarPanel(panelId),
-    onNewSession: () => this.newSession(),
-    panelLabel: this.selectedPanelLabel(),
-    rightbar: this.buildRightbarFacade(),
-    mobileDrawerOpen: this.nav.mobileDrawer === DrawerState.OPEN,
-    onOpenDrawer: () => this.setDrawerOpen(true),
-    onCloseDrawer: () => this.setDrawerOpen(false),
-    beginDetailDrag: () => this.beginDetailDrag(),
-    closeDetail: () => this.closeDetail(),
-    detailOpen: this.detailOpen,
-    detailOverlayOpen: this.detailOverlayOpen,
-    setDetailOverlayOpen: (value: boolean) => {
-      this.detailOverlayOpen = value;
-    },
-    detailPresentationNow: () => this.detailPresentationNow(),
-    detailSections: this.detailSections,
-    detailWidthVp: () => this.detailWidthVp(),
-    endDetailDrag: () => this.endDetailDrag(),
-    gripHitWidth: () => this.gripHitWidth(),
-    mainShell: this.buildMainFacade(),
-    mode: this.mode,
-    openDiagnostics: () => this.openDiagnostics(),
-    pendingBadge: this.pendingBadge,
-    selectedSessionTitle: this.selectedSessionTitle,
-    showsConversation: () => this.showsConversation(),
-    sidePanelWidthVp: () => this.sidePanelWidthVp(),
-    stackPage: this.stackPage,
-    // 视图里的返回箭头与系统返回键**共用**这一个执行点（P8-1，见 `consumeBack`）
-    backOneLayer: () => {
-      this.consumeBack();
-    },
-    updateDetailDrag: (deltaXVp: number) => this.updateDetailDrag(deltaXVp),
-    };
-    return facade;
-  }
-
   /**
-   * 页面根 = **浮层门户**（AppFrame 最外层）；三形态轨道布局不在这里 —— 归 `AppShell`。
+    * 页面根 = **浮层门户**（AppFrame 最外层）；两条路线（RemoteShell / desktopSurface）
+    * 的壳布局不在这里。
    *
    * 【为什么 `bindSheet` 挂在这个根节点上】它是**组件属性**、同一节点只能绑一个 ⇒ 全应用只有一个
    * 宿主：单一分派（`sheetKind()`）在结构上保证不可能同时开出两个浮层，单一复位（`closeSheet()`）
@@ -2416,10 +2645,269 @@ struct Index {
    * 模型选择、凭据、目录、整值编辑这些浮层根本打不开**（不是没做，是够不着 —— 宿主不在树的那个位置）。
    * 门户挂在页面根就与形态无关了，这正是官方 Web「portal 挂在 `App` 根、不属于任何 pane」的语义。
    */
+
+  /** §FR-061：构建远程模式门面（手机远程连接） */
+  private buildRemoteShellFacade(): RemoteShellFacade {
+    return {
+      mainShell: this.buildMainShellFacadeForRemote(),
+      rightbar: this.buildRightbarFacade(),
+      browser: this.buildBrowserFacade(),
+      drawerState: this.drawerState,
+      onOpenLeftDrawer: () => {
+        this.drawerState = openLeftDrawer(this.drawerState);
+      },
+      onOpenRightDrawer: () => {
+        this.drawerState = openRightDrawer(this.drawerState);
+      },
+      onCloseDrawers: () => {
+        this.drawerState = closeAllDrawers(this.drawerState);
+      },
+      detailSections: this.detailSections,
+      // T-D：队列行本来就是详情面板的内容（对照 DetailsPanel.kt `QueueCard`），
+      // 此前写死 [] 让队列卡只能给计数——这里接上中枢投影的真值 + 移除动作。
+      queuedItems: this.queued,
+      onRemoveQueued: (itemId: string) => {
+        SessionHub.shared().removeQueuedItem(itemId);
+      },
+      goalText: this.goalText
+    };
+  }
+
+  /** §FR-061：远程模式主区门面 */
+  private buildMainShellFacadeForRemote(): MainShellFacade {
+    // 复用现有的主 shell 门面构建逻辑
+    return this.buildMainFacade();
+  }
+
+  // ───────────────────── T005：桌面（DESKTOP_LIKE）路线装配 ─────────────────────
+
+  /** 桌面形态的分支：远程连接页 → 诊断页 → Web 直载（默认） */
+  @Builder
+  desktopSurface() {
+    if (this.remoteModePending && this.stackPage !== StackPage.DIAGNOSTICS) {
+      // T012：远程待选（已选远程但未连上 / 断连后重新输入凭据）→ 原生连接页
+      this.desktopConnectSurface()
+    } else if (this.stackPage === StackPage.DIAGNOSTICS) {
+      // 诊断页是导航（openDiagnostics 置 stackPage）：复用 MainShell 的既有装配，
+      // 返回键走 backOneLayer → consumeBack（STACK_TO_MAIN 回到来源页）。
+      // 外层补满尺寸并顶对齐：DiagnosticsPane 自身只包内容高度，
+      // 不包的话 Stack 的默认居中会让诊断页在大屏上"悬"在中间。
+      Column() {
+        MainShell({ f: this.buildMainFacade(), compact: false })
+      }
+      .width('100%')
+      .height('100%')
+      .align(Alignment.Top)
+    } else {
+      // 默认：官方 Web UI 直载（本机 127.0.0.1:3120 / 远程主机地址，T010）
+      WebShell({ f: this.buildWebShellFacade(), backController: this.webBack })
+    }
+  }
+
+  /**
+   * T012：桌面远程连接页（ConnectPane 直连装配）。
+   *
+   * 【为什么直连而不绕 MainShell】桌面路线不渲染 AppShell，`activePanel()` 的
+   * 分派没有落点；连接页的 props 本就是「宿主事实 + 方法闭包」的扁平集合，
+   * 直接装配比伪造一个只含连接面板的 MainShell 门面诚实得多。
+   * 提交路径与 MainShell 的 REMOTE 分支同源：一律 `switchToRemote` 语义
+   * （连接成功后中枢与界面一起切 REMOTE；失败留在本页可重输，spec AC4）。
+   */
+  @Builder
+  desktopConnectSurface() {
+    ConnectPane({
+      hosts: this.hosts,
+      address: this.connectAddress,
+      token: this.connectToken,
+      busy: this.connectBusy,
+      resultText: this.connectResult,
+      resultOk: this.connectOk,
+      resultAdvice: this.connectAdvice,
+      // LanDiscovery 内建（connection 层），能力恒在；无 Wi-Fi 时扫描返回空列表
+      discoveryAvailable: true,
+      discoveredHosts: this.remoteHosts,
+      scanning: this.lanScanning,
+      onAddressChange: (v: string) => {
+        this.connectAddress = v;
+      },
+      onTokenChange: (v: string) => {
+        this.connectToken = v;
+      },
+      onSubmit: () => {
+        const url: string = composeHostUrl(this.connectAddress, this.connectToken);
+        if (url.length === 0) {
+          this.connectOk = false;
+          this.connectBusy = false;
+          this.connectResult = '地址无法解析';
+          this.connectAdvice = '请填写形如 http://主机:端口 的地址；token 可单独填，也可直接粘贴完整启动链接（含 ?token=…）。';
+          return;
+        }
+        this.connectRemoteHost(createRemoteHost(url, HostSource.MANUAL));
+      },
+      onStartDiscovery: () => {
+        this.startLanDiscovery();
+      },
+      onConnectRemote: (host: RemoteHost) => {
+        // 预填地址：LAN 发现的主机不带 token，若认证失败，用户只需补上 token 重试
+        this.connectAddress = host.hostAddress;
+        this.connectRemoteHost(host);
+      },
+      onOpenDiagnostics: () => {
+        this.openDiagnostics();
+      },
+      onBack: () => {
+        this.exitRemoteConnectFlow();
+      }
+    })
+  }
+
+  /**
+   * T012：退出远程连接流程（连接页返回箭头与系统返回键共用这一个执行点）。
+   *
+   * · 从断连横幅「重新输入」进来的取消：回 Web 直载——远程连接与传输层的
+   *   自动重试都不受影响（用户只是不改凭据了，不是要断开）；
+   * · 其余（首次进入远程待选后取消）：收回待选标记并切回本机范式。
+   */
+  private exitRemoteConnectFlow(): void {
+    this.stackPage = StackPage.MAIN;
+    if (this.runMode === RunMode.REMOTE && this.hubConnected && this.activeRemoteHost !== null) {
+      this.remoteModePending = false;
+      return;
+    }
+    this.switchRunMode(RunMode.LOCAL);
+  }
+
+  /** T010：远程 Web 直载基址（activeRemoteHost 原样上送；规整归 WebShell.normalizeWebBaseUrl） */
+  private remoteWebBaseUrl(): string {
+    const host: RemoteHost | null = this.activeRemoteHost;
+    return host !== null ? host.hostAddress : '';
+  }
+
+  /**
+   * T010：host 就绪状态 → WebShell 状态机。
+   *
+   * LOCAL：中枢已连（一元可用）或核心 READY/DEGRADED → READY（host 已在伺服 Web）；
+   *   核心 FAILED → FAILED；其余（解包/启动中）→ BOOTING（WebShell 有 120s 看门狗）。
+   * REMOTE：连上即 READY；没连上（连接/认证进行中）→ BOOTING——远程握手失败由
+   *   连接页呈现（remoteModePending 留存可重输），不在这里谎报 FAILED。
+   */
+  private webHostReadyState(): WebHostReadyState {
+    if (this.runMode === RunMode.REMOTE) {
+      return this.hubConnected ? WebHostReadyState.READY : WebHostReadyState.BOOTING;
+    }
+    if (this.hubConnected) {
+      return WebHostReadyState.READY;
+    }
+    if (this.coreView.phase === CorePhase.READY || this.coreView.phase === CorePhase.DEGRADED) {
+      return WebHostReadyState.READY;
+    }
+    if (this.coreView.phase === CorePhase.FAILED) {
+      return WebHostReadyState.FAILED;
+    }
+    return WebHostReadyState.BOOTING;
+  }
+
+  /**
+   * T011：远程断连横幅事实（REMOTE 且曾连上（hubConnected）而降级 DEGRADED 时提供；
+   * 显示归 WebShell 外层，Web 内容保留最后状态，plan R&D-006）。
+   */
+  private remoteBannerState(): WebRemoteBanner | undefined {
+    if (this.runMode !== RunMode.REMOTE || !this.hubConnected || this.hubPhase !== HubPhase.DEGRADED) {
+      return undefined;
+    }
+    return {
+      authority: this.hubAuthority,
+      errorText: this.hubError,
+      streams: this.hubStreams,
+      traceTail: this.hubTraceTail(),
+      onOpenDiagnostics: () => {
+        this.openDiagnostics();
+      },
+      onReenterCredentials: () => {
+        // 回连接页重新输入：只置待选标记，远程连接与传输层的自动重试都不动
+        this.remoteModePending = true;
+      }
+    };
+  }
+
+  /** T005/T010/T011：Web 直载门面（每次渲染重建：值型快照 + 方法型闭包） */
+  private buildWebShellFacade(): WebShellFacade {
+    return {
+      /*
+       * T030：形态参数**走真实链路**（此前写死 `DESKTOP_LIKE` 字面量）。
+       *
+       * 值本身今天恒为 DESKTOP_LIKE（WebShell 只挂在 DESKTOP_LIKE 分支上），
+       * 但"写死"与"传真实值"是两件事：写死的那一份在路由条件改动（例如将来折叠展开态
+       * 允许切回原生范式）时会**继续撒谎**，而传值的那一份会立刻跟着变。
+       * 组件侧消费见 `WebShell.overlayInsetVp()`（形态差异化内边距）。
+       */
+      formFactor: webShellFormFactorOf(this.routeFactor),
+      runMode: this.runMode,
+      hostReadyState: this.webHostReadyState(),
+      // 本机基址空串 = 回退 WebShell 的 DEFAULT_LOCAL_BASE_URL（hostcore 伺服事实）
+      localBaseUrl: '',
+      remoteBaseUrl: this.remoteWebBaseUrl(),
+      remoteBanner: this.remoteBannerState(),
+      bootStatusText: this.runMode === RunMode.REMOTE
+        ? '正在连接远程主机…'
+        : corePhaseLabel(this.coreView.phase),
+      /*
+       * T030：Web 路线不可用时的**最小原生逃生梯**（桌面形态的"切远程"可见入口）。
+       *
+       * 【为什么入口在这里、而不是常驻】产品口径是"桌面/平板与官方 100% 一致"——
+       * 官方 Web UI 正常呈现时**不得**叠加任何原生按钮（那会破坏像素级一致，也会与
+       * 官方自带的界面控件打架）。而本机核心起不来/前端加载失败时，屏幕上本来就没有
+       * 官方内容（显示的是我们自己的错误页），此刻补一个"连接远程主机"既不动官方 UI，
+       * 又填上一个真实空白：桌面形态下原生设置页不在渲染树上（`desktopSurface` 只有
+       * Web / 连接页 / 诊断页三支），没有这个入口时用户**没有任何办法**切到远程模式。
+       */
+      onConnectRemote: () => {
+        /*
+         * 已在远程模式时**不能**再调 `switchRunMode(REMOTE)`：它对该模式是幂等 no-op
+         * （第一句就是 `if (this.runMode === RunMode.REMOTE) return;`），于是错误页上
+         * 那颗按钮会变成"点了没反应"——本仓的纪律是宁可不摆按钮，也不摆一颗点不动的。
+         * 远程模式下的正确语义是"回连接页重输/换台主机"（与断连横幅的
+         * `onReenterCredentials` 同一条路：只置待选标记，不动传输层的自动重试）。
+         */
+        if (this.runMode === RunMode.REMOTE) {
+          this.remoteModePending = true;
+          this.stackPage = StackPage.CONNECT;
+          return;
+        }
+        // 与设置页的「运行模式 → 远程」同一条执行点；无已选主机时留在待选态并打开连接页
+        this.switchRunMode(RunMode.REMOTE);
+      },
+      onRetry: () => {
+        // 错误页「重试」：重新探核心实况；本机未连上时顺带换新凭据
+        // （token 每次启动都换，拿旧 token 重试只会重复失败，见 F19 取证）
+        this.refreshCoreView();
+        if (this.runMode === RunMode.LOCAL && !this.hubConnected) {
+          this.adoptFreshLocalCredentialIfAny();
+        }
+      },
+      onReload: () => {
+        // 加载失败页「重新加载」：借机复探核心实况（重载本身由组件发起）
+        this.refreshCoreView();
+      },
+      onBackPress: () => this.consumeBack()
+    };
+  }
+
   build() {
-    // 轨道布局归 AppFrame：`AppShell` 拥有「窗口宽度 → 几条轨道」这件事（见 docs/ia-parity-plan.md）。
+    /*
+     * T005 路由矩阵（plan R&D-002）：**形态是唯一维度**——
+     *   PHONE（手机/折叠闭合）→ RemoteShell（DSH Mobile 原生范式，本机/远程均原生）；
+     *   DESKTOP_LIKE（平板/2in1/折叠展开）→ 官方 Web UI 直载（US1），
+     *     远程连接流程页（T012）与诊断页是这条路线上的原生例外（见 desktopSurface）。
+     * runMode 不再参与顶层路由；v1 的 AppShell 三栏装配已随 PC 原生链删除（T025，
+     * deletion-manifest §3.1）。
+     */
     Stack() {
-      AppShell({ f: this.buildShellFacade() })
+      if (this.routeFactor === RouteFormFactor.PHONE) {
+        RemoteShell({ f: this.buildRemoteShellFacade() })
+      } else {
+        this.desktopSurface()
+      }
     }
     .width('100%')
     .height('100%')
@@ -2441,177 +2929,17 @@ struct Index {
       }
     })
     /**
-     * 2in1 / 平板（外接键盘）快捷键：**声明式**那 8 个规格。
-     *
-     * 【为什么在这里声明而不是在各自的按钮上】这些动作是**全局**的（新建、切页签、
-     * 重连…），挂在某个按钮上会随该按钮的可见性一起失效（例如"新建会话"按钮只在
-     * 会话页存在，于是别的页面上 Ctrl+N 不生效）。挂在根容器上语义才是对的。
-     *
-     * 【为什么只有 8 个】另外 5 个（Enter / Esc / Alt+↑↓ / F5）`keyboardShortcut`
-     * 表达不了（见 `ShortcutKeys.ets` 的说明），走下面的 `onKeyEvent`。
-     *
-     * 【为什么不做形态门控】D3 §5.1 那一节的适用对象是"有外接键盘"的设备，
-     * 但**绑定本身在无键盘设备上无害**（手机没有 Ctrl 键，按不出来）。
-     * 真正需要按形态过滤的是"把它展示给用户看"（帮助浮层/设置页），
-     * 那部分用 `shortcutsForDesktop()`——目前尚无该浮层，故不在此假装。
+     * （T026 移除）v1 的根级桌面快捷键（8 个 `.keyboardShortcut` + Enter/Esc 等
+     * `onKeyEvent` 分发）已随 PC 原生链删除：DESKTOP_LIKE 走官方 Web UI 直载，
+     * 官方前端自带全套快捷键（原生侧保留会与之双触发，如 Ctrl+N）；PHONE 无外接
+     * 键盘快捷键范式（DSH Mobile 对照源无此交互），发送走 Composer 的发送按钮。
+     * 上面的 `.onKeyEvent` 只做输入模态证据采集，不是快捷键。
      */
-    .keyboardShortcut('n', [ModifierKey.CTRL], () => {
-      this.runShortcut('new-session');
-    })
-    .keyboardShortcut('k', [ModifierKey.CTRL], () => {
-      this.runShortcut('command-palette');
-    })
-    .keyboardShortcut('f', [ModifierKey.CTRL], () => {
-      this.runShortcut('search-in-session');
-    })
-    .keyboardShortcut('b', [ModifierKey.CTRL], () => {
-      this.runShortcut('toggle-nav');
-    })
-    .keyboardShortcut('j', [ModifierKey.CTRL], () => {
-      this.runShortcut('toggle-detail');
-    })
-    .keyboardShortcut('p', [ModifierKey.CTRL, ModifierKey.SHIFT], () => {
-      this.runShortcut('pending-inbox');
-    })
-    .keyboardShortcut('c', [ModifierKey.CTRL, ModifierKey.SHIFT], () => {
-      this.runShortcut('copy-code-block');
-    })
-    .keyboardShortcut(',', [ModifierKey.CTRL], () => {
-      this.runShortcut('open-settings');
-    })
-    .onKeyEvent((event: KeyEvent) => {
-      // 只取「按下」那一次：抬起时再分发会执行两遍（`sendDraft` 会被调用两次）
-      if (event.type !== KeyType.Down) {
-        return;
-      }
-      const shift: boolean = event.getModifierKeyState !== undefined
-        && event.getModifierKeyState(['shift']);
-      const alt: boolean = event.getModifierKeyState !== undefined
-        && event.getModifierKeyState(['alt']);
-      const hit: ShortcutHit = hitOfKeyEvent(event.keyCode, shift, alt);
-      this.dispatchKeyHit(hit);
-    })
     .bindSheet(this.sheetKind().length > 0, this.sheetContent(),
       harmonySheetOptions(() => {
         // 拖拽/遮罩/关闭按钮都走这里：先判"有没有未保存的修改"，再复位（P8-4）
         this.dismissSheetByUser();
       }, this.sheetHeight()))
-  }
-
-  /**
-   * 按键判定 → 动作。
-   *
-   * 【为什么单独抽出来】声明式绑定与 `onKeyEvent` 两条路都要落到同一处分发；
-   * 分散写会让"某个 id 忘了接"成为一件没有提示的事（而 `ShortcutKeys` 只能保证
-   * id 来自表，保证不了"每个 id 都有人处理"）。
-   */
-  private runShortcut(id: string): void {
-    if (id === 'new-session') {
-      SessionHub.shared().createSession();
-      return;
-    }
-    if (id === 'toggle-detail') {
-      // 呈现方式随档位：三栏翻右栏、单栏/双栏翻浮层。
-      // 原先这里只翻 `detailOpen` ⇒ 手机与平板上按了没有任何反应（死开关）。
-      this.toggleDetail();
-      return;
-    }
-    if (id === 'pending-inbox') {
-      this.selectTab(NavTab.PENDING);
-      return;
-    }
-    if (id === 'open-settings') {
-      // 走导航状态转移（`openSettings` 会同时校验面板可用性）；空分区 = 保持当前分区
-      this.nav = openSettings(this.nav, '', this.panelRegistry);
-      return;
-    }
-    if (id === 'reconnect') {
-      SessionHub.shared().reconnect();
-      return;
-    }
-    if (id === 'stop-turn') {
-      this.escapePressed();
-      return;
-    }
-    if (id === 'send-message') {
-      this.sendDraft();
-      return;
-    }
-    if (id === 'search-in-session') {
-      // D3 §5.1 的 Ctrl/Cmd+F：打开会话内搜索条（仅会话页有意义）
-      if (this.showsConversation()) {
-        this.searchOpen = true;
-      } else {
-        this.attachNotice = '会话内搜索需要先打开一个会话。';
-      }
-      return;
-    }
-    if (id === 'command-palette') {
-      this.paletteOpen = true;
-      SessionHub.shared().refreshCommands();
-      // E243：面板同时读目标（官方 ui-goal 的目标栏数据源；未选会话/未连接时中枢会如实说明）
-      SessionHub.shared().refreshGoal();
-      return;
-    }
-    if (id === 'toggle-nav') {
-      this.attachNotice = '导航栏的显隐当前由窗口宽度自动决定（让步链），手动折叠尚未实现。';
-      return;
-    }
-    if (id === 'copy-code-block') {
-      this.attachNotice = '「复制选中代码块」需要消息内的选中状态，尚未实现。';
-      return;
-    }
-    if (id === 'prev-next-message') {
-      this.attachNotice = '「上一条 / 下一条消息」跳转尚未实现。';
-      return;
-    }
-  }
-
-  /** `Enter`（无 Shift）与 `Shift+Enter` 的分流 */
-  private dispatchKeyHit(hit: ShortcutHit): void {
-    if (hit.id.length === 0) {
-      return;
-    }
-    if (hit.id === 'send-message' && hit.delta < 0) {
-      // Shift+Enter = 换行：交给输入框自己处理，页面**不**拦截
-      return;
-    }
-    this.runShortcut(hit.id);
-  }
-
-  /**
-   * `Esc`：先关浮层，再停轮次（D3 §5.1「停止当前轮次（弹二次确认）/ 关闭弹层」）。
-   *
-   * 顺序不能反：有浮层时按 Esc 的意图是"关掉它"，而不是把正在跑的轮次停掉——
-   * 后者是有副作用的破坏性动作，绝不能被"我只是想关个弹窗"触发。
-   */
-  private escapePressed(): void {
-    if (this.folderPickerOpen) {
-      // 与返回键同一条复位：选择器的真值在组件内，故走控制器（E354）
-      this.folderPicker.close();
-      this.folderPickerOpen = false;
-      return;
-    }
-    if (this.choosing !== undefined) {
-      this.choosing = undefined;
-      return;
-    }
-    if (this.credentialRef.length > 0) {
-      this.credentialRef = '';
-      return;
-    }
-    if (this.textSettingKey.length > 0) {
-      this.textSettingKey = '';
-      return;
-    }
-    if (this.structSettingKey.length > 0) {
-      this.structSettingKey = '';
-      return;
-    }
-    if (this.running && this.hubConnected) {
-      SessionHub.shared().cancelTurn();
-    }
-    this.running = false;
   }
 
   // ───────────────────── 枚举选择浮层 ─────────────────────
@@ -3053,7 +3381,21 @@ struct Index {
     setConnectToken: (value: string) => {
       this.connectToken = value;
     },
+    // §FR-032/034：双模式与 LAN 发现（远程连接页所需的事实与动作）
+    runMode: this.runMode,
+    discoveredHosts: this.remoteHosts,
+    lanScanning: this.lanScanning,
+    // LanDiscovery 内建（connection 层），能力恒在；无 Wi-Fi 时扫描返回空列表
+    lanDiscoveryAvailable: true,
+    onStartLanDiscovery: () => this.startLanDiscovery(),
+    onConnectRemoteHost: (host: RemoteHost) => this.connectRemoteHost(host),
+    onConnectRemoteByUrl: (url: string) => this.connectRemoteHost(createRemoteHost(url, HostSource.MANUAL)),
     decidePending: (item: PendingItem, choiceId: string, reason: string) => this.decidePending(item, choiceId, reason),
+    // T-C：待决答复草稿（宿主所有；折叠开合换渲染路线时不丢，见 pendingAnswerDrafts 的说明）
+    pendingAnswerDrafts: this.pendingAnswerDrafts,
+    onPendingAnswerGroup: (itemId: string, drafts: PendingAnswerDraft[]) => {
+      this.setPendingAnswerGroup(itemId, drafts);
+    },
     detailOverlayOpen: this.detailOverlayOpen,
     setDetailOverlayOpen: (value: boolean) => {
       this.detailOverlayOpen = value;
@@ -3106,6 +3448,8 @@ struct Index {
     quoteIntoDraft: (item: TrajectoryItem) => this.quoteIntoDraft(item),
     references: this.references,
     resendMessage: (item: TrajectoryItem) => this.resendMessage(item),
+    editMessage: (item: TrajectoryItem) => this.editMessage(item),
+    retryAssistant: (item: TrajectoryItem) => this.retryAssistant(item),
     runDiagnostics: () => this.runDiagnostics(),
     running: this.running,
     setRunning: (value: boolean) => {
@@ -3115,7 +3459,16 @@ struct Index {
     setSearchOpen: (value: boolean) => {
       this.searchOpen = value;
     },
+    // §FR-005：会话级搜索
+    sessionSearchRows: this.sessionSearchRows,
+    sessionSearchNote: this.sessionSearchNote,
+    onSearchSessions: (query: string) => {
+      SessionHub.shared().searchSessions(query).catch(() => {
+        // 失败已由中枢写进搜索说明并随快照到达
+      });
+    },
     selectedSessionId: this.selectedSessionId,
+    openSession: (id: string) => this.openSession(id),
     // 会话头上下文行（P2-7）：工作区名从选中会话的 cwd 派生（拿不到就空串 ⇒ 界面不显示那段）
     sessionWorkspaceName: this.selectedSessionWorkspaceName(),
     appName: APP_NAME,
@@ -3170,6 +3523,8 @@ struct Index {
     if (!this.hubConnected) {
       return;
     }
+    // T-C：这条待决已经答复 ⇒ 它的"半截草稿"用掉了，丢掉（否则下次同 id 的待决会看到旧答案）
+    this.pendingAnswerDrafts = dropPendingAnswer(this.pendingAnswerDrafts, item.id);
     // 【已知缺口】拒绝理由目前**无法随审批应答上传**：上游的审批 outcome 只是一个
     // 封闭词汇里的字符串（`allowed-once | rejected | cancelled | unavailable`），
     // 没有承载理由的字段。用户填的理由因此只能留在本地。
@@ -3225,7 +3580,20 @@ struct Index {
     if (!this.hubConnected) {
       return;
     }
+    // T-C：整组答案已经交上去 ⇒ 丢掉这份"半截草稿"（否则同 id 的待决会看到上一轮的答案）
+    this.pendingAnswerDrafts = dropPendingAnswer(this.pendingAnswerDrafts, item.id);
     SessionHub.shared().answerQuestionGroup(item.id, drafts);
+  }
+
+  /**
+   * 逐题草稿变化（`QuestionGroupCard` 的回传通道；T-C）。
+   *
+   * 【为什么只有它、没有"审批理由"的写入】审批卡的 `reason` 本端没有任何输入点，
+   * 而且它无法随应答上传（上游 outcome 是封闭词表，见 `decidePending` 的登记）⇒
+   * 为它建一份状态就是死管道。真正会丢的是提问卡的逐题草稿，故此一个出口。
+   */
+  private setPendingAnswerGroup(itemId: string, drafts: PendingAnswerDraft[]): void {
+    this.pendingAnswerDrafts = putPendingAnswerGroup(this.pendingAnswerDrafts, itemId, drafts);
   }
 
   /**
@@ -4119,40 +4487,6 @@ struct Index {
   /** 侧栏席位被按下：翻译成"切到哪个主区面板"，再走既有的页签切换（归一化/清栈等决策不重写） */
   /** 开合手机侧栏抽屉（模型 `setDrawer`；它是唯一真值，视图不自持一份） */
   /**
-   * 收起 / 展开侧栏（P2-15）。
-   *
-   * 【为什么这个动作此前不存在】侧栏呈现完全由形态决定（`shellTracksOf(mode)`），
-   * 而 `NavigationState.sidebarExpanded` 这个字段**没有任何控制点** ——
-   * 于是官方 AppFrame 那个"收起侧栏腾出宽度"的动作在本仓做不到（功能缺口，不是字段冗余）。
-   * 现在：形态给默认（双栏 rail / 三栏 panel），用户展开或收起给偏好。
-   */
-  private toggleSidebarExpanded(): void {
-    // 翻的是**当前生效值**（用户看到的那个），存的是显式偏好 ⇒ 三态收敛为两态
-    const next: boolean = !sidebarExpandedForMode(this.mode, this.sidebarStored);
-    this.sidebarStored = next;
-    // 落盘：下次启动沿用它（与详情栏宽度同一套做法）。
-    // 【失败不弹提示】与宽度记忆同类：下次启动回到默认展开，不值得打断用户；
-    // 真要看落盘结果时去设置里的诊断。
-    const prefs: LocalPrefs = new LocalPrefs();
-    prefs.attach(getContext(this) as common.UIAbilityContext).then(() => {
-      prefs.saveSidebarExpanded(next);
-    });
-  }
-
-  /**
-   * 读回记住的侧栏展开偏好。
-   *
-   * 【原样存，不在这里解析】"没存过 ⇒ 展开"曾在这里被判成 `true`，于是双栏首启拿到的是
-   * "展开"（与形态默认矛盾）。现在这一层只搬运原始值（`boolean | undefined`），
-   * "没存过用什么"交给纯函数 `sidebarExpandedForMode`（有 fixture，且随形态变）。
-   */
-  private async loadSidebarExpanded(): Promise<void> {
-    const prefs: LocalPrefs = new LocalPrefs();
-    await prefs.attach(getContext(this) as common.UIAbilityContext);
-    this.sidebarStored = await prefs.loadSidebarExpanded();
-  }
-
-  /**
    * 读回上次运行留下的**每会话草稿**（P8-3；官方 `views.d.ts`："…survives … reloads"）。
    *
    * 【为什么读进"袋子"而不是直接填输入框】启动时还没有会话（选中哪一个是用户的事），
@@ -4273,12 +4607,6 @@ struct Index {
     this.nav = selectRightPanel(this.nav, panelId, this.panelRegistry);
   }
 
-  private selectSidebarPanel(panelId: string): void {
-    // 席位 id → 主区面板 id → 旧页签取值：双跳是迁移期的形状（控制器仍说 NavTab），
-    // 好处是"归一化 / 清栈 / 是否清会话选择"这些决策一条都不用重新实现。
-    this.selectTab(legacyTabOfMainPanel(mainPanelOfSidebarPanel(panelId)) as NavTab);
-  }
-
   /**
    * 新建会话（侧栏一级入口与 Ctrl+N 走同一条路）。
    *
@@ -4291,15 +4619,6 @@ struct Index {
    * 现在：拿到 id 就交给 `enterCreatedSession()`（与 `createSessionIn` 共用同一条尾），
    * 两条入口的行为**由此一致**。
    */
-  private newSession(): void {
-    SessionHub.shared().createSession().then((sid: string | undefined) => {
-      this.enterCreatedSession(sid);
-    }).catch((e: Object) => {
-      const err = e as Error;
-      this.attachNotice = `新建会话失败：${err.message}`;
-    });
-  }
-
   /**
    * 新建成功后的**共同尾**：切到那条新会话（F4）。
    *
@@ -4314,12 +4633,6 @@ struct Index {
       return;
     }
     this.openSession(sid);
-  }
-
-  /** 选中面板的中文名（页头标题用；注册表找不到时给空串，由视图兜底） */
-  private selectedPanelLabel(): string {
-    const d: PanelDescriptor | undefined = this.panelRegistry.find(this.nav.selectedMainPanel);
-    return d !== undefined ? d.label : '';
   }
 
   private toggleDeleteConfirm(w: WorkspaceItem): void {
@@ -4417,6 +4730,11 @@ struct Index {
     coreView: this.coreView,
     createSessionIn: (w: WorkspaceItem) => this.createSessionIn(w),
     decidePending: (item: PendingItem, choiceId: string, reason: string) => this.decidePending(item, choiceId, reason),
+    // T-C：同一条草稿袋也供工作区浏览器的"待你决定"区块（两处入口读同一份真值）
+    pendingAnswerDrafts: this.pendingAnswerDrafts,
+    onPendingAnswerGroup: (itemId: string, drafts: PendingAnswerDraft[]) => {
+      this.setPendingAnswerGroup(itemId, drafts);
+    },
     hubAuthority: this.hubAuthority,
     hubError: this.hubError,
     hubPhase: this.hubPhase,
@@ -4434,6 +4752,8 @@ struct Index {
       this.archiveOpen = value;
     },
     workspaces: this.workspaces,
+    // §FR-060：断连横幅按运行模式区分文案（远程断连 = 自动重试 + 本地缓存可浏览）
+    runMode: this.runMode,
     // 会话搜索（P7-1）：读中枢合并后的扁平结果；查询交给中枢（只有它能问 Host 要内容命中）
     sessionSearchRows: this.sessionSearchRows,
     sessionSearchNote: this.sessionSearchNote,
@@ -4564,10 +4884,30 @@ struct Index {
     backOneLayer: () => {
       this.consumeBack();
     },
+    // §FR-058：运行模式与切换
+    runMode: this.runMode,
+    onSwitchRunMode: (mode: RunMode) => {
+      this.switchRunMode(mode);
+    },
     };
     return facade;
   }
 
+}
+
+/**
+ * 路由形态（`appstate` 的判定结论）→ Web 壳契约形态（`WebShell.ets` 的入参枚举）。
+ *
+ * 【为什么要显式映射，而不是把 `this.routeFactor` 直接塞进去】两个枚举的取值**今天**
+ * 恰好是同形字符串（`'phone'` / `'desktop-like'`），但那是巧合：一个是 appstate
+ * 的**路由判定**，一个是 entry 壳的**契约入参**。靠字符串相等互通意味着上游改一个取值
+ * 就会静默错配（编译不报、运行时落进 else 分支），所以这里逐值映射一次——
+ * 改任一方的取值都会在这三行里立刻显形。
+ */
+function webShellFormFactorOf(factor: RouteFormFactor): WebShellFormFactor {
+  return factor === RouteFormFactor.PHONE
+    ? WebShellFormFactor.PHONE
+    : WebShellFormFactor.DESKTOP_LIKE;
 }
 
 /** 用 display 推导初始窗口宽度（vp）；失败时给一个安全的手机宽度 */

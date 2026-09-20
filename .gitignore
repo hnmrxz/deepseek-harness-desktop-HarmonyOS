@@ -70,3 +70,6 @@ entry/src/main/cpp/node-headers/
 # koffi 3.x 源码与生成物（由 `node tools/fetch-koffi.mjs` 取到 third_party/koffi/）。
 # 【为什么要自建】dsh 要 `koffi ^3.1.0`，鸿蒙只有 2.16.2 移植版；详见 D6 E47/E50。
 third_party/
+
+# hvigor 增量构建的 tsbuildinfo 缓存（每次构建重建，纯噪声）
+.cache/

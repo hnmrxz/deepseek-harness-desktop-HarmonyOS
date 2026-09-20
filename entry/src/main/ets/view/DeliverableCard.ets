@@ -36,6 +36,9 @@ export struct DeliverableCard {
   /** 点「分享」：宿主负责拉起系统分享面板（失败要给回执） */
   onShare: () => void = () => {
   };
+  /** §FR-015：点击文件名跳转预览 */
+  onOpenFile: () => void = () => {
+  };
 
   build() {
     // 【ArkUI 约束】组件的 `build()` 只能有一个根节点（`@Builder` 可以多个）⇒ 两行包进 Column
@@ -51,6 +54,10 @@ export struct DeliverableCard {
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
+          .fontColor($r('sys.color.brand'))
+          .onClick(() => {
+            this.onOpenFile();
+          })
         Text(formatBytes(this.item.fileSize))
           .fontSize(Fs.CAPTION)
           .fontColor($r('sys.color.font_tertiary'))
@@ -93,7 +100,7 @@ export struct DeliverableCard {
       id: 'save',
       label: '保存',
       disabled: true,
-      a11y: '保存到本地：尚未接线（当前平台未提供文件保存能力）'
+      a11y: '保存到本地：HarmonyOS 沙箱限制，当前平台未提供文件保存能力'
     });
     /*
      * ── 「分享」：P9-7 起是真动作 ──

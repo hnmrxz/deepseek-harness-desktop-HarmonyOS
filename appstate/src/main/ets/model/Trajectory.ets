@@ -86,8 +86,12 @@ export interface TrajectoryItem {
   toolState: ToolState;
   /** 工具输出（仅 TOOL；大输出由 UI 截断，D3 §3.3） */
   toolOutput: string;
+  /** 工具元数据 JSON（仅 TOOL；`tool/result` 的 `meta` 字段，含 applied diffs 等） */
+  toolMeta: string;
   /** 子代理名称（仅 SUBAGENT） */
   subagentName: string;
+  /** §FR-022：子代理状态（仅 SUBAGENT；默认 UNKNOWN，由中枢从 SubagentRef 更新） */
+  subagentStatus: string;
   /** 交付物文件名（仅 DELIVERABLE） */
   fileName: string;
   /** 交付物大小（字节；0 = 未知） */
@@ -192,7 +196,9 @@ export function makeItem(id: string, kind: TrajectoryKind, at: number): Trajecto
     toolArgs: '',
     toolState: ToolState.PENDING,
     toolOutput: '',
+    toolMeta: '',
     subagentName: '',
+    subagentStatus: '',
     fileName: '',
     fileSize: 0,
     title: '',
@@ -241,6 +247,7 @@ export function mergeTrajectoryItem(previous: TrajectoryItem, next: TrajectoryIt
   // PENDING 是「这帧没解析出状态」的占位，此时保留另一侧的真实状态
   merged.toolState = next.toolState === ToolState.PENDING ? previous.toolState : next.toolState;
   merged.subagentName = next.subagentName.length > 0 ? next.subagentName : previous.subagentName;
+  merged.subagentStatus = next.subagentStatus.length > 0 ? next.subagentStatus : previous.subagentStatus;
   merged.fileName = next.fileName.length > 0 ? next.fileName : previous.fileName;
   merged.fileSize = next.fileSize > 0 ? next.fileSize : previous.fileSize;
   merged.title = next.title.length > 0 ? next.title : previous.title;

@@ -73,6 +73,13 @@ export struct MessageImages {
   /** 灯箱内容区的实测尺寸（vp）：`lightboxFit` 要用它算"装得进且不放大"的尺寸 */
   @State viewportW: number = 0;
   @State viewportH: number = 0;
+  /**
+   * 「保存不可用」的说明是否已展开（T029）。
+   *
+   * 无障碍文案**常驻**带原因（读屏用户点不到也知道为什么）；可视提示**点了才出现**——
+   * 一进灯箱就摆一行"保存不了"会把能力缺口变成噪音。每次打开灯箱都复位。
+   */
+  @State saveNoticeVisible: boolean = false;
 
   /** 一张图的显示规格（官方 `variant === 'single'` 时按 `singleFit`，否则 64×64 方图） */
   private boxOf(image: ImageAttachmentRefValue, index: number): ImageBox {
@@ -151,55 +158,91 @@ export struct MessageImages {
    * 【点哪里都能关】官方 "closes on … backdrop press"：整块内容区挂 `onClick` 关闭，
    * 关闭按钮另外给一个显式的（尺寸取本仓的触控下限 `Sz.TOUCH_MIN`，见下面的说明）。
    * 系统返回键由 `bindContentCover` 自己接管（`onDisappear` 里复位状态）。
+   *
+   * 【底部一行「保存」（T029）】官方灯箱没有保存动作，但端侧用户对"看到一张图"
+   * 的第一反应就是存下来；能力真的没有（平台层只有选择器与分享，没有"另存为"，
+   * 见 `DeliverableCard` 的同款说明）。动作保留在原位——禁用是假入口的另一种形态，
+   * 这里选**可点但如实告知**：点按后展开一行说明。无障碍文案常驻带原因
+   * （与 `DeliverableCard` 的措辞一致），读屏用户不用点也能知道。
+   *
+   * 【为什么外层从 Stack 换成 Column】要在大图下面加一行 footer，大图区改为
+   * `layoutWeight(1)` 占满余下空间。`onAreaChange` 测的是大图区，footer 出现时
+   * 它只会**变小**——`lightboxFit` 按更小的空间算尺寸，是安全方向。
    */
   @Builder
   lightbox(image: ImageAttachmentRefValue, index: number) {
-    Stack({ alignContent: Alignment.TopEnd }) {
-      Column() {
-        if (this.urlOf(image).length > 0) {
-          Image(this.urlOf(image))
-            .width(lightboxFit(this.viewportW, this.viewportH, image.width, image.height).width)
-            .height(lightboxFit(this.viewportW, this.viewportH, image.width, image.height).height)
-            .objectFit(ImageFit.Contain)
-            .borderRadius(Radius.L)
-            .accessibilityText(imageOpenOriginalLabel(this.a11yOf(image, index)))
-        } else {
-          Text('图片还没读到：请稍后重试')
-            .fontSize(Fs.SECONDARY)
-            .fontColor(HarmonyColor.TEXT_TERTIARY)
+    Column() {
+      Stack({ alignContent: Alignment.TopEnd }) {
+        Column() {
+          if (this.urlOf(image).length > 0) {
+            Image(this.urlOf(image))
+              .width(lightboxFit(this.viewportW, this.viewportH, image.width, image.height).width)
+              .height(lightboxFit(this.viewportW, this.viewportH, image.width, image.height).height)
+              .objectFit(ImageFit.Contain)
+              .borderRadius(Radius.L)
+              .accessibilityText(imageOpenOriginalLabel(this.a11yOf(image, index)))
+          } else {
+            Text('图片还没读到：请稍后重试')
+              .fontSize(Fs.SECONDARY)
+              .fontColor(HarmonyColor.TEXT_TERTIARY)
+          }
         }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+        .padding(LIGHTBOX_PADDING)
+        .onAreaChange((_oldArea: Area, newArea: Area) => {
+          // 实测可用空间：`lightboxFit` 据此算"装得进且不放大"的尺寸
+          this.viewportW = newArea.width as number;
+          this.viewportH = newArea.height as number;
+        })
+        .onClick(() => {
+          // 点遮罩关闭（官方行为）
+          this.viewerIndex = -1;
+        })
+
+        Button() {
+          SymbolGlyph($r('sys.symbol.xmark')).fontSize(HarmonyIconSize.NAV)
+        }
+        /*
+         * 【为什么是 44 而不是官方的 36】官方 CSS 是 36×36，但那是**网页鼠标**的尺寸；
+         * 本仓的无障碍下限是 `Sz.TOUCH_MIN = 44`（手指点得中），且这一条比"逐字对齐 CSS"
+         * 更重要——关闭按钮点不中会让用户困在灯箱里。差异登记在矩阵的 `attachment` 行。
+         */
+        .width(Sz.TOUCH_MIN)
+        .height(Sz.TOUCH_MIN)
+        .buttonStyle(ButtonStyleMode.TEXTUAL)
+        .margin({ top: Sp.M, right: Sp.M })
+        .accessibilityText(IMAGE_CLOSE_PREVIEW)
+        .onClick(() => {
+          this.viewerIndex = -1;
+        })
       }
       .width('100%')
-      .height('100%')
-      .justifyContent(FlexAlign.Center)
-      .alignItems(HorizontalAlign.Center)
-      .padding(LIGHTBOX_PADDING)
-      .onAreaChange((_oldArea: Area, newArea: Area) => {
-        // 实测可用空间：`lightboxFit` 据此算"装得进且不放大"的尺寸
-        this.viewportW = newArea.width as number;
-        this.viewportH = newArea.height as number;
-      })
-      .onClick(() => {
-        // 点遮罩关闭（官方行为）
-        this.viewerIndex = -1;
-      })
+      .layoutWeight(1)
 
-      Button() {
-        SymbolGlyph($r('sys.symbol.xmark')).fontSize(HarmonyIconSize.NAV)
+      // ── 底部：保存动作（不可用的能力如实说，见方法头注释） ──
+      Column({ space: Sp.XS }) {
+        if (this.saveNoticeVisible) {
+          Text('保存到本地暂不可用：HarmonyOS 沙箱限制，当前平台未提供文件保存能力。')
+            .fontSize(Fs.CAPTION_XS)
+            .fontColor(HarmonyColor.TEXT_TERTIARY)
+            .textAlign(TextAlign.Center)
+        }
+        Button('保存')
+          .fontSize(Fs.SECONDARY)
+          .fontColor(HarmonyColor.TEXT_EMPHASIZE)
+          .buttonStyle(ButtonStyleMode.TEXTUAL)
+          .height(Sz.TOUCH_MIN)
+          .accessibilityText('保存到本地：HarmonyOS 沙箱限制，当前平台未提供文件保存能力')
+          .onClick(() => {
+            this.saveNoticeVisible = true;
+          })
       }
-      /*
-       * 【为什么是 44 而不是官方的 36】官方 CSS 是 36×36，但那是**网页鼠标**的尺寸；
-       * 本仓的无障碍下限是 `Sz.TOUCH_MIN = 44`（手指点得中），且这一条比"逐字对齐 CSS"
-       * 更重要——关闭按钮点不中会让用户困在灯箱里。差异登记在矩阵的 `attachment` 行。
-       */
-      .width(Sz.TOUCH_MIN)
-      .height(Sz.TOUCH_MIN)
-      .buttonStyle(ButtonStyleMode.TEXTUAL)
-      .margin({ top: Sp.M, right: Sp.M })
-      .accessibilityText(IMAGE_CLOSE_PREVIEW)
-      .onClick(() => {
-        this.viewerIndex = -1;
-      })
+      .width('100%')
+      .alignItems(HorizontalAlign.Center)
+      .padding({ left: Sp.M, right: Sp.M, bottom: Sp.M })
     }
     .width('100%')
     .height('100%')
@@ -231,6 +274,7 @@ export struct MessageImages {
         .accessibilityText(`${imageOpenOriginalLabel(this.a11yOf(image, index))}`)
         // 单图与方图**都**能点开灯箱（官方：点缩略图打开原图预览）
         .onClick(() => {
+          this.saveNoticeVisible = false;
           this.viewerIndex = index;
         })
         /*

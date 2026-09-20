@@ -28,9 +28,22 @@
  * 3. **命中判定（`hitIds`）** 由父组件给：它扫的是整条过程流（含另一个视图的条目），
  *    而这里只看得到一条回合。「这条回合有没有命中」的**色条**判定同样在父组件
  *    （列表项是它画的，命中集合也在它手里）。
+ *
+ * ## v2 T013：按 DSH Mobile 源码级对照重塑（视觉/交互层）
+ *
+ * 【对照源文件】`.research/deepseek-harness-mobile/app/src/main/java/com/labteto/dshmobile/ui/screens/main/ChatTranscript.kt`
+ * （节点间距 `spacedBy(4.dp, Bottom)` → 回合内条目间距 `DsSpacing.TINY`）与
+ * `ChatNodeItem.kt`（错误行 = `StateDot(Error)` 8dp + 错误色文本，**无卡片容器**）。
+ *
+ * · 回合内条目间距从 12 收到 4（源码 `Arrangement.spacedBy(4.dp)`，列表整体节奏更密）；
+ * · `errorItem` 重塑为「状态点 + 文本」行（对照 `ChatNodeItem` 的错误节点形态），
+ *   保留 v1 的「查看诊断」真实入口（P7-18：不放假按钮）；
+ * · 消息行归 `MessageRow`（本轮已对照重塑）、工具/思考/命令/重试行与产出文件行
+ *   保留既有组件与接线——它们不在本轮领地，只换它们之间的**摆法**；
+ * · 明暗色板：`mediaquery('(prefers-color-scheme: dark)')` + `dsPaletteOf(SYSTEM, dark)`。
  */
 
-import { ActionNotice, FeedbackRow, Fs, Radius, SHARE_TARGET_NONE, SessionHub, ShareTarget, Sp, Speaker, TrajectoryItem, TrajectoryKind, Turn, baseNameOf, defaultExpanded, parseMarkdown, plainTextOf, changeStatText, producedFilesOf, turnChangeStatOf, resolveProducedMention, userFacingBodyOf } from 'appstate';
+import { ActionNotice, DsPalette, DsSpacing, DsThemePreference, DsType, FeedbackRow, SHARE_TARGET_NONE, SessionHub, ShareTarget, Speaker, TrajectoryItem, TrajectoryKind, Turn, baseNameOf, defaultExpanded, parseMarkdown, plainTextOf, changeStatText, producedFilesOf, turnChangeStatOf, resolveProducedMention, userFacingBodyOf, dsPaletteOf } from 'appstate';
 import type { ProducedFile } from 'appstate';
 import { presentTool, toolStateLabel } from 'appstate';
 import { NativeCard } from './NativePrimitives';
@@ -43,6 +56,7 @@ import { ToolCard } from './ToolCard';
 import { CommandRow } from './CommandRow';
 import { RetryRow } from './RetryRow';
 import { ProducedFilesRow } from './ProducedFilesRow';
+import { mediaquery } from '@kit.ArkUI';
 
 /**
  * 把"全部展开 / 收起全部"从回合渲染里接出去（E351）。
@@ -135,6 +149,12 @@ export struct TurnView {
   };
   onResendMessage: (item: TrajectoryItem) => void = () => {
   };
+  /** §FR-001：编辑用户消息（把内容填入 Composer 的输入框供修改后重发） */
+  onEditMessage: (item: TrajectoryItem) => void = () => {
+  };
+  /** §FR-002：重试助手回复（重发上一条用户消息以重新生成回复） */
+  onRetryAssistant: (item: TrajectoryItem) => void = () => {
+  };
   /** 错误块里的「查看诊断」（导航由父组件做——视图不自己跳页） */
   onOpenDetail: () => void = () => {
   };
@@ -146,6 +166,16 @@ export struct TurnView {
   onCloseFeedback: () => void = () => {
   };
 
+  /** 系统是否深色（`prefers-color-scheme`；MobileTheme 色板的解析输入） */
+  @State dark: boolean = false;
+  /** 深色模式监听（aboutToDisappear 必须注销） */
+  private darkQuery: mediaquery.MediaQueryListener | null = null;
+
+  /** 当前语义色板（MobileTheme 唯一视觉 token 源；SYSTEM 偏好随系统明暗切换） */
+  private palette(): DsPalette {
+    return dsPaletteOf(DsThemePreference.SYSTEM, this.dark);
+  }
+
   /** 控制器注册：把"全部展开 / 收起全部"交给父组件的会话头按钮 */
   aboutToAppear(): void {
     this.controller.register(() => {
@@ -153,6 +183,16 @@ export struct TurnView {
     }, () => {
       this.onExpandedChange([]);
     });
+    this.darkQuery = mediaquery.matchMediaSync('(prefers-color-scheme: dark)');
+    this.dark = this.darkQuery.matches;
+    this.darkQuery.on('change', (result: mediaquery.MediaQueryResult) => {
+      this.dark = result.matches;
+    });
+  }
+
+  aboutToDisappear(): void {
+    this.darkQuery?.off('change');
+    this.darkQuery = null;
   }
 
   /**
@@ -214,7 +254,7 @@ export struct TurnView {
   }
 
   build() {
-    Column({ space: Sp.M }) {
+    Column({ space: DsSpacing.TINY }) {
       this.turnBlock(this.turn)
     }
     .width('100%')
@@ -227,7 +267,7 @@ export struct TurnView {
    */
   @Builder
   turnBlock(turn: Turn) {
-    Column({ space: Sp.M }) {
+    Column({ space: DsSpacing.TINY }) {
       if (turn.user !== undefined) {
         this.trajectoryItem(turn.user)
       }
@@ -483,17 +523,27 @@ export struct TurnView {
     })
   }
 
+  /**
+   * 错误块（对照 `ChatNodeItem.kt` 的错误节点：`StateDot(Error)` + 错误色文本，
+   * **无卡片容器**——错误是"这一行的事"，不该在列表里浮起一块底色）。
+   */
   @Builder
   errorItem(item: TrajectoryItem) {
-    Row({ space: Sp.S }) {
-      Divider().vertical(true).color($r('sys.color.alert')).height('100%')
-      Column({ space: 2 }) {
+    Row({ space: DsSpacing.XSMALL }) {
+      // StateDot 规格同源码：8dp 圆点 + 同色 10% 光晕（这里以描边近似光晕层次）
+      Circle({ width: 8, height: 8 })
+        .fill(this.palette().error)
+      Column({ space: DsSpacing.TINY }) {
         Text('出错了')
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.alert'))
+          .fontSize(DsType.SMALL_13.size)
+          .lineHeight(DsType.SMALL_13.lineHeight)
+          .fontWeight(DsType.SMALL_13.weight)
+          .fontColor(this.palette().error)
           .width('100%')
         Text(item.body)
-          .fontSize(Fs.SECONDARY)
+          .fontSize(DsType.SMALL_13.size)
+          .lineHeight(DsType.SMALL_13.lineHeight)
+          .fontColor(this.palette().labelSecondary)
           .width('100%')
           .textAlign(TextAlign.Start)
         /*
@@ -503,10 +553,11 @@ export struct TurnView {
          * 真正要重发一条消息，走消息行自己的「重发」（那条路有真实协议面）；
          * 模型请求的自动重试由 Host 负责，界面上不该给一个假的"手动重试"。
          */
-        Row({ space: Sp.L }) {
+        Row({ space: DsSpacing.MEDIUM }) {
           Text('查看诊断')
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.brand'))
+            .fontSize(DsType.SMALL_13.size)
+            .lineHeight(DsType.SMALL_13.lineHeight)
+            .fontColor(this.palette().accent)
             .onClick(() => {
               this.onOpenDetail();
             })
@@ -516,9 +567,6 @@ export struct TurnView {
       .layoutWeight(1)
     }
     .width('100%')
-    .padding(Sp.M)
-    .borderRadius(Radius.M)
-    .backgroundColor($r('sys.color.background_secondary'))
     .accessibilityText(`错误：${item.body}`)
   }
 
@@ -561,6 +609,12 @@ export struct TurnView {
       // 【为什么只给用户消息】"重发"对用户消息是**把同一句再发一次**（有真实协议面：
       // `session/prompt`）；对助手消息则是"重跑那一轮"，本仓没有对应端点 ⇒ 不给，避免假入口。
       out.push({ id: 'resend', label: '重发', a11y: '重新发送这条消息' });
+      // §FR-001：用户消息"编辑"按钮——通过 session/updateQueue 编辑队列项后重发
+      out.push({ id: 'edit', label: '编辑', a11y: '编辑这条消息后重发' });
+    }
+    if (item.speaker === Speaker.ASSISTANT) {
+      // §FR-002：助手消息"重试"按钮——重发上一条用户消息（即重跑那一轮）
+      out.push({ id: 'retry', label: '重试', a11y: '重试生成这条回复' });
     }
     // 已评才给"撤回"：没评就没有可撤的（按钮不该假装有事可做）
     if (this.myRating(item.id).length > 0) {
@@ -581,6 +635,10 @@ export struct TurnView {
       this.onQuoteMessage(item);
     } else if (id === 'resend') {
       this.onResendMessage(item);
+    } else if (id === 'edit') {
+      this.onEditMessage(item);
+    } else if (id === 'retry') {
+      this.onRetryAssistant(item);
     } else if (id === 'withdraw') {
       SessionHub.shared().clearFeedback(item.id).then((n: ActionNotice) => {
         this.onFeedbackNote(this.feedbackNoticeText(n));

@@ -274,3 +274,100 @@ export function decideLayoutWithDetail(input: LayoutInput, desiredDetailVp: numb
     pointerRich: input.hasKeyboard && input.hasPointer
   };
 }
+
+// ───────────────────────── 路由形态判定（v2 T003，spec R&D-002） ─────────────────────────
+
+/**
+ * 路由形态：v2 双渲染路线（Web 直载 / DSH Mobile 原生范式）的判定维度。
+ *
+ * 【与 `LayoutMode` 的关系】档位是**几何**概念（单/双/三栏），路由形态是**渲染路线**概念；
+ * 后者由前者**纯函数派生**，形态判定仍只有窗口断点这一处真值（D3 §2.2 硬规则不破）。
+ *
+ * 【为什么叫 `RouteFormFactor` 而不是 `FormFactor`】`platform/system/DeviceFacts.ets` 已有
+ * 一个 `FormFactor`（**设备族**：PHONE/TABLET/DESKTOP，来自 deviceType 枚举，只用于门控
+ * 系统能力）。本枚举是**路由用途**的二元判定（含折叠开合的窗口宽度派生），语义不同；
+ * 同名会让 entry 层 import 两个 `FormFactor` 打架。
+ */
+export enum RouteFormFactor {
+  /** 手机 / 折叠屏闭合（单栏 < 600vp）→ DSH Mobile 范式原生 Shell */
+  PHONE = 'phone',
+  /** 平板 / 2in1 / 折叠屏展开（双栏及以上 ≥ 600vp）→ Web 直载官方 UI */
+  DESKTOP_LIKE = 'desktop-like'
+}
+
+/**
+ * 档位 → 路由形态（纯函数）。
+ *
+ * 【为什么 PHONE 只认单栏】折叠屏闭合即单栏、展开即双栏及以上——窗口宽度是折叠开合的
+ * 直接投影，无需另接折叠态事件；600vp 边界与 `Breakpoint.MD` 同源，不另立阈值。
+ */
+export function formFactorOf(mode: LayoutMode): RouteFormFactor {
+  if (mode === LayoutMode.SINGLE) {
+    return RouteFormFactor.PHONE;
+  }
+  return RouteFormFactor.DESKTOP_LIKE;
+}
+
+/** 窗口宽度 → 路由形态（便捷入口：内部先走 `layoutModeOf`，断点真值仍只有一处）。 */
+export function formFactorOfWidth(widthVp: number): RouteFormFactor {
+  return formFactorOf(layoutModeOf(widthVp));
+}
+
+/** 形态变化监听器：`(next, prev)`——next=新形态，prev=变化前形态（折叠开合一次恰好回调一次） */
+export type FormFactorListener = (next: RouteFormFactor, prev: RouteFormFactor) => void;
+
+/**
+ * 路由形态跟踪器：把「窗口宽度变化 → 路由形态可能翻转 → 通知订阅者」收在一处。
+ *
+ * 【为什么是"订阅器"而不是让 entry 自己 diff】折叠屏开合（v2 US6/T029）要求路由切换
+ * **由形态事件驱动**；若各消费点自己比对两次宽度，"开合瞬间恰好错过一次回调"这类缺陷
+ * 会散落多处。模式沿用 `SessionHub.subscribe/unsubscribe`（本工程既有惯例）。
+ *
+ * 【用法】entry 在窗口尺寸变化处调用 `applyWidth(新宽度)`；仅当路由形态**真的翻转**时
+ * 才通知监听器并返回 true——同一形态内的宽度变化（如 700→800 都是 DESKTOP_LIKE）不打扰。
+ */
+export class FormFactorTracker {
+  private currentFactor: RouteFormFactor;
+  private listeners: FormFactorListener[];
+
+  constructor(initial: RouteFormFactor) {
+    this.currentFactor = initial;
+    this.listeners = [];
+  }
+
+  /** 当前路由形态（初始值来自构造参数；之后只被 `applyWidth` 更新） */
+  current(): RouteFormFactor {
+    return this.currentFactor;
+  }
+
+  subscribe(listener: FormFactorListener): void {
+    this.listeners.push(listener);
+  }
+
+  unsubscribe(listener: FormFactorListener): void {
+    const next: FormFactorListener[] = [];
+    for (let i = 0; i < this.listeners.length; i++) {
+      if (this.listeners[i] !== listener) {
+        next.push(this.listeners[i]);
+      }
+    }
+    this.listeners = next;
+  }
+
+  /**
+   * 用最新窗口宽度驱动判定；形态翻转时按注册序通知全部监听器。
+   * @returns 是否发生了形态翻转（false = 宽度变了但路由形态没变）
+   */
+  applyWidth(widthVp: number): boolean {
+    const next: RouteFormFactor = formFactorOfWidth(widthVp);
+    if (next === this.currentFactor) {
+      return false;
+    }
+    const prev: RouteFormFactor = this.currentFactor;
+    this.currentFactor = next;
+    for (let i = 0; i < this.listeners.length; i++) {
+      this.listeners[i](next, prev);
+    }
+    return true;
+  }
+}

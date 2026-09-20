@@ -24,7 +24,7 @@
 
 import { ToolState, TrajectoryItem } from './Trajectory';
 
-/** 工具类别（§11 点名的那些 + 两个本仓实际会遇到的面） */
+/** 工具类别（§11 点名的那些 + 两个本仓实际会遇到的面 + 技能调用） */
 export enum ToolKind {
   TERMINAL = 'terminal',
   READ = 'read',
@@ -34,6 +34,8 @@ export enum ToolKind {
   WEB = 'web',
   IMAGE = 'image',
   ASK = 'ask',
+  /** 技能调用工具行（§FR-014：官方 dsh-client-ui-tool 的 skill 类别） */
+  SKILL = 'skill',
   GENERIC = 'generic'
 }
 
@@ -71,6 +73,9 @@ export function toolKindOf(toolName: string): ToolKind {
   if (n.indexOf('ask_user') >= 0 || n.indexOf('question') >= 0) {
     return ToolKind.ASK;
   }
+  if (n.indexOf('skill') >= 0 || n.indexOf('plugin_exec') >= 0) {
+    return ToolKind.SKILL;
+  }
   return ToolKind.GENERIC;
 }
 
@@ -99,6 +104,9 @@ export function toolKindLabel(kind: ToolKind): string {
   }
   if (kind === ToolKind.ASK) {
     return '提问';
+  }
+  if (kind === ToolKind.SKILL) {
+    return '技能';
   }
   return '工具';
 }
@@ -305,4 +313,86 @@ function pathHint(rawArgs: string, usedKey: string): string {
   }
   const p: string = collapse(valueOfKey(rawArgs, 'path'));
   return p;
+}
+
+/* ───────────────────────── 图片/技能结果提取（§FR-013/FR-014） ───────────────────────── */
+
+/**
+ * 从工具结果中提取图片 URL（§FR-013）。
+ *
+ * 图片类型工具结果可能以多种形式出现：
+ *   - output 里直接是图片 URL 字符串
+ *   - output 是结构化对象，含 image/url/data 字段
+ *
+ * 返回 null = 不是图片结果（界面不渲染缩略图）。
+ */
+export function imageResultOf(item: TrajectoryItem): string | null {
+  if (toolKindOf(item.toolName) !== ToolKind.IMAGE) {
+    return null;
+  }
+  const output: string = item.body;
+  if (output.length === 0) {
+    return null;
+  }
+  // 简单判定：如果是 URL 格式（http/https/data:），直接返回
+  const trimmed: string = output.trim();
+  if (trimmed.indexOf('http://') === 0 || trimmed.indexOf('https://') === 0
+    || trimmed.indexOf('data:image/') === 0 || trimmed.indexOf('/') === 0) {
+    return trimmed;
+  }
+  // 尝试从 JSON 结构中提取 URL
+  try {
+    const parsed: Record<string, Object> = JSON.parse(trimmed) as Record<string, Object>;
+    const url: Object | undefined = parsed['url'];
+    if (typeof url === 'string' && (url as string).length > 0) {
+      return url as string;
+    }
+    const data: Object | undefined = parsed['data'];
+    if (typeof data === 'string' && (data as string).indexOf('data:image/') === 0) {
+      return data as string;
+    }
+    const image: Object | undefined = parsed['image'];
+    if (typeof image === 'string' && (image as string).length > 0) {
+      return image as string;
+    }
+  } catch (e) {
+    // 非 JSON：如果看起来像路径，也返回
+    if (trimmed.length < 500 && trimmed.indexOf('.') >= 0) {
+      return trimmed;
+    }
+  }
+  return null;
+}
+
+/**
+ * 从工具结果中提取技能名称（§FR-014）。
+ *
+ * 技能调用工具的参数里通常包含技能名（name/skillName/id）。
+ * 返回 null = 不是技能调用。
+ */
+export function skillNameOf(item: TrajectoryItem): string | null {
+  if (toolKindOf(item.toolName) !== ToolKind.SKILL) {
+    return null;
+  }
+  // 从工具名中提取技能名（技能工具名格式通常为 skill_<name> 或 <name>_skill）
+  const name: string = item.toolName;
+  if (name.indexOf('skill_') === 0) {
+    return name.substring(6);
+  }
+  if (name.indexOf('_skill') >= 0) {
+    return name.substring(0, name.indexOf('_skill'));
+  }
+  // 从参数中提取
+  const rawArgs: string = item.toolArgs;
+  if (rawArgs.length > 0) {
+    const skillKey: string = collapse(valueOfKey(rawArgs, 'name'));
+    if (skillKey.length > 0) {
+      return skillKey;
+    }
+    const skillNameKey: string = collapse(valueOfKey(rawArgs, 'skillName'));
+    if (skillNameKey.length > 0) {
+      return skillNameKey;
+    }
+  }
+  return name;
 }

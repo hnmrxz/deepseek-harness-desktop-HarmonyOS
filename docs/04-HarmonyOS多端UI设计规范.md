@@ -2,21 +2,27 @@
 
 ## 1. 设计原则
 
-Web 语义一致、HarmonyOS 表达原生、多形态不是缩放版。
+**适用范围（2026-09-20 v2 修订）**：本规范约束**手机 / 折叠闭合形态的原生链**（以 DSH Mobile 克隆源码逐屏对照复刻，视觉 token 以 `MobileTheme` 为唯一来源）。**PC / 平板 / 2in1 / 折叠展开**形态**不再由原生链表达**——这些形态以 Web 组件直载官方 Web UI（见 `docs/01` §1.1），视觉与交互由官方产物决定，本规范对其**不适用**（只要求宿主不遮挡、不与官方 UI 双触发）。
 
-当前工程链路：`Tokens → HarmonyTheme → NativePrimitives`；布局链路：`Breakpoints → LayoutController → NavigationController`。页面不得自行复制断点、间距或返回优先级。
+手机原生链原则：语义对照 DSH Mobile 源码、表达按源码逐屏复刻、多形态不是缩放版。
+
+当前工程链路（手机链）：`MobileTheme`（DSH Mobile token 移植层）→ `NativePrimitives`（含 `Ds*` 基元族）；`Tokens` / `HarmonyTheme` 仅存续于未迁移的共用组件。布局链路：`Breakpoints → LayoutController → NavigationController`。页面不得自行复制断点、间距或返回优先级。
 
 ## 2. 四形态
 
-| 形态 | 默认表达 | 重点 |
-|---|---|---|
-| 手机 | 单栏 + 底部操作/抽屉 | 单手、返回、键盘、滚动 |
-| 折叠闭合 | 手机单栏 | 上下文连续 |
-| 折叠展开 | 双栏/主从 | 保留会话与选择 |
-| 平板 | 导航 + 内容 + 条件详情 | 少弹层、多并排 |
-| 2in1 | 多栏/多窗 | 键鼠、hover、右键、快捷键、拖拽 |
+| 形态 | 渲染路线 | 默认表达 | 重点 |
+|---|---|---|---|
+| 手机 | **原生**（`RemoteShell`） | 单栏 + 底部操作/抽屉 | 单手、返回、键盘、滚动 |
+| 折叠闭合 | **原生**（同手机） | 手机单栏 | 上下文连续 |
+| 折叠展开 | **Web 直载**（`WebShell`） | 官方 Web UI | 保留会话与选择 |
+| 平板 | **Web 直载**（`WebShell`） | 官方 Web UI | 键鼠、hover、多栏 |
+| 2in1 | **Web 直载**（`WebShell`） | 官方 Web UI | 键鼠、hover、右键、快捷键、拖拽 |
 
-**对标口径（见 `docs/01` §1.1）**：手机形态对标 [DSH Mobile](https://github.com/sorsama/deepseek-harness-mobile) 的移动交互范式（抽屉导航、工具卡、队列/目标 dock、轨迹台账）；折叠展开 / 平板 / 2in1 复刻 dsh 官方最新原版（官方 Web/Desktop）的信息架构与布局，逐行登记在 `docs/parity-matrix.md`。
+> 路由由 `pages/Index.ets` 按**形态 × 模式**矩阵决定：`PHONE`（手机 / 折叠闭合，本机与远程皆）→ `RemoteShell` 原生范式；`DESKTOP_LIKE`（平板 / 2in1 / 折叠展开）→ `WebShell` 直载官方 Web UI。
+
+**对标口径（见 `docs/01` §1.1）**：手机 / 折叠闭合形态以 [DSH Mobile](https://github.com/sorsama/deepseek-harness-mobile) 克隆源码为**唯一参照逐屏原生复刻**（抽屉导航、工具卡、队列/目标 dock、轨迹台账、Sheet 系列），设计 token 对照其 `ui/theme/` 逐值移植（`MobileTheme`）；折叠展开 / 平板 / 2in1 形态以 Web 组件**直载官方 Web UI**（与官方同一前端产物，像素级一致），视觉与交互由官方产物决定，能力对等逐行登记在 `docs/parity-matrix.md`。
+
+> **§3–§12 的条款（页面层级 / 返回 / 视觉 / 会话页 / 首页 / 设置 / 状态反馈 / Sheet / 无障碍）约束对象均为手机 / 折叠闭合原生链**；PC / 平板 / 2in1 / 折叠展开形态走官方 Web UI 直载，这些条款对其不适用。
 
 ## 3. 页面层级
 
@@ -75,7 +81,7 @@ Header、消息流、轨迹、目标、输入区形成稳定纵向节奏。
 
 ## 11. 无障碍与输入
 
-触控热区、动态字体、对比度、语义标签、键盘焦点、hover/右键/快捷键与视觉同时验收。
+手机链：触控热区、动态字体、对比度、语义标签、键盘焦点与视觉同时验收。（hover / 右键 / 快捷键属桌面形态，由直载的官方 Web UI 自带，不在本规范约束内。）
 
 ## 12. 完成定义
 

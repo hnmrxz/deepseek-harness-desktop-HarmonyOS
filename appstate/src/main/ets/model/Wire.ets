@@ -2390,6 +2390,26 @@ export interface CommandCandidate {
   args: string;
   /** 说明（Host 未提供时为空串） */
   detail: string;
+  /**
+   * 命令类型：`'run'`（直接执行）/ `'popupSelect'`（展示选项列表供用户选择）。
+   *
+   * §FR-006：官方客户端用 `CommandDecoration.popupSelect` 为需要选值的命令（如 `/model`、`/permission`）
+   * 提供选项列表，避免用户打错参数。本仓取最小等价物：Host 未声明时默认 `'run'`。
+   */
+  kind: string;
+  /**
+   * popupSelect 命令的选项列表（仅 `kind === 'popupSelect'` 时有值）。
+   *
+   * 每个选项是 `{ label: string, value: string }` 的结构，
+   * 用户点击后以 `value` 作为命令参数执行。
+   */
+  options: CommandOption[];
+}
+
+/** popupSelect 命令的一个选项 */
+export interface CommandOption {
+  label: string;
+  value: string;
 }
 
 /** 输入区 `@` 引用候选 */
@@ -2526,11 +2546,56 @@ export function projectCommands(value: Object | undefined): CommandCandidate[] {
     }
     const name: string = raw.startsWith('/') ? raw : `/${raw}`;
     const input: Object | undefined = getRecord(item, 'input');
+    const kind: string = readCommandKind(item);
+    const options: CommandOption[] = readCommandOptions(item);
     out.push({
       name: name,
       args: input !== undefined ? readString(input, 'hint') : '',
-      detail: readString(item, 'description')
+      detail: readString(item, 'description'),
+      kind: kind,
+      options: options
     });
+  }
+  return out;
+}
+
+/** 读取命令类型（默认 'run'；显式声明 'popupSelect' 时返回 'popupSelect'） */
+function readCommandKind(item: Object | undefined): string {
+  if (item === undefined) {
+    return 'run';
+  }
+  const decoration: Object | undefined = getRecord(item, 'decoration');
+  if (decoration === undefined) {
+    return 'run';
+  }
+  const kind: string = readString(decoration, 'kind');
+  if (kind === 'popupSelect') {
+    return 'popupSelect';
+  }
+  return 'run';
+}
+
+/** 读取 popupSelect 命令的选项列表 */
+function readCommandOptions(item: Object | undefined): CommandOption[] {
+  const out: CommandOption[] = [];
+  if (item === undefined) {
+    return out;
+  }
+  const decoration: Object | undefined = getRecord(item, 'decoration');
+  if (decoration === undefined) {
+    return out;
+  }
+  const options: Object[] | undefined = getArray(decoration, 'options');
+  if (options === undefined) {
+    return out;
+  }
+  for (let i = 0; i < options.length; i++) {
+    const opt: Object = options[i];
+    const label: string = readString(opt, 'label');
+    const value: string = readString(opt, 'value');
+    if (label.length > 0 || value.length > 0) {
+      out.push({ label: label.length > 0 ? label : value, value: value.length > 0 ? value : label });
+    }
   }
   return out;
 }

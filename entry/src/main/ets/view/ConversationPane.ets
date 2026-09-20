@@ -4,13 +4,25 @@
  * 轨迹条目类型（D3 §3.2）：用户/助手消息、思考折叠、工具调用卡、子代理、交付物、
  * 目标、任务、错误。工具调用卡按 §3.3 的徽标与默认展开规则呈现。
  *
- * 数据来源：宿主注入（当前为桩数据源）。本组件不直接调用协议层，
- * 所有动作通过回调上报宿主，便于接入真实连接时只改宿主。
+ * 数据来源：宿主注入（`SessionHub` 的真实快照；未连接时是**空态**，没有桩数据）。
+ * 本组件不直接调用协议层，所有动作通过回调上报宿主。
+ *
+ * ## v2 T013：按 DSH Mobile 源码级对照重塑（视觉/交互层）
+ *
+ * 【对照源文件】`.research/deepseek-harness-mobile/app/src/main/java/com/labteto/dshmobile/ui/screens/main/ChatTranscript.kt`
+ * （`ChatTranscript` 的列表节奏：`contentPadding(12, 8)` + `spacedBy(4, Bottom)`；
+ * 空态 `EmptyHero` 的居中品牌区）。
+ *
+ * · 列表内边距 12/8、行距 4（源码同值；token 化为 `DsSpacing.MEDIUM`/`SMALL`/`TINY`）；
+ * · 空态按 `EmptyHero` 形态：大留白居中、`HERO_26` 品牌 + `SMALL_13` 副题；
+ * · 根底色 `bgBase`；命中/聚焦色条、搜索块、待决块全部换 MobileTheme token；
+ * · 数据流与 Facade 契约不动（SessionHub 订阅、`scrollSpot` 跟随、`focusPending` 接管、
+ *   命中跳转），只重塑视觉层。
  */
 
-import { Border, CommandCandidate, FeedbackRow, FollowSignal, Fs, ModelOption, ModelSelection, PendingAttachment, PendingItem, QueuedItem, Radius, ReferenceCandidate, SHARE_TARGET_NONE, ScrollSpot, SessionHub, ShareTarget, Sp, Speaker, TrajectoryItem, TrajectoryKind, cellIdForListIndex, chatRowOfItemIndex, chatVisibleItems, defaultExpanded, emptyScrollSpot, followTimerShouldRun, groupTurns, jobTickerNeeded, listIndexForCell, matchConversationIndices, matchTrajectoryIndices, modelSelectionLabel, nextFollowing, parseMarkdown, pendingElsewhere, pendingForSession, plainTextOf, presentTool, scrollRestoreTarget, shouldJumpOnNewItems, stepMatch, takeoverCommand, takeoverHeadline, takeoverStripText, toolStateLabel, userFacingBodyOf } from 'appstate';
+import { CommandCandidate, DsPalette, DsShape, DsSpacing, DsThemePreference, DsType, FeedbackRow, FollowSignal, ModelOption, ModelSelection, PendingAttachment, PendingItem, QueuedItem, ReferenceCandidate, SHARE_TARGET_NONE, ScrollSpot, SessionHub, SessionSearchRow, ShareTarget, Speaker, TrajectoryItem, TrajectoryKind, cellIdForListIndex, chatRowOfItemIndex, chatVisibleItems, defaultExpanded, dsPaletteOf, emptyPendingAnswerDrafts, emptyScrollSpot, followTimerShouldRun, groupTurns, jobTickerNeeded, listIndexForCell, matchConversationIndices, matchTrajectoryIndices, modelSelectionLabel, nextFollowing, parseMarkdown, pendingElsewhere, pendingForSession, plainTextOf, presentTool, scrollRestoreTarget, shouldJumpOnNewItems, stepMatch, takeoverCommand, takeoverHeadline, takeoverStripText, toolStateLabel, userFacingBodyOf } from 'appstate';
 /** 类型单独 import type（本仓约定：值与类型分开写） */
-import type { PendingAnswerDraft, ActionNotice, SessionJob, SessionStatsInput, Turn } from 'appstate';
+import type { PendingAnswerDraft, PendingAnswerDrafts, ActionNotice, SessionJob, SessionStatsInput, Turn } from 'appstate';
 import type { NativeAction } from './NativePrimitives';
 import { NativeCard } from './NativePrimitives';
 import { Composer } from './Composer';
@@ -22,6 +34,17 @@ import { ReasoningRow } from './ReasoningRow';
 import { ConversationHeader } from './ConversationHeader';
 import { TurnView, TurnViewController } from './TurnView';
 import { PendingPane } from './PendingPane';
+import { SessionSearch } from './SessionSearch';
+import { mediaquery } from '@kit.ArkUI';
+
+/**
+ * 命中/聚焦左色条的宽度。
+ *
+ * 【保留 v1 语义，只换 token 色】DSH Mobile 的 `ChatTranscript` 没有这条色条——
+ * 它是本仓"搜索命中/时间线聚焦要能在长列表里一眼找到"的既有导航语义（v1 已上线），
+ * 删掉是功能回退；宽度维持既有 3vp，颜色改从 MobileTheme 调色板取。
+ */
+const HIT_BAR_WIDTH: number = 3;
 
 @Component
 export struct ConversationPane {
@@ -124,6 +147,15 @@ export struct ConversationPane {
 
   @State expanded: string[] = [];
 
+  /** 深色模式（MobileTheme 调色板按它取深浅两套） */
+  @State dark: boolean = false;
+  private darkQuery: mediaquery.MediaQueryListener | undefined = undefined;
+
+  /** 当前调色板（v2 T013 起唯一取色入口；颜色不再走 sys.color 资源） */
+  private palette(): DsPalette {
+    return dsPaletteOf(DsThemePreference.SYSTEM, this.dark);
+  }
+
   /**
    * 消息操作条（§10）的反馈面板状态。
    *
@@ -183,11 +215,49 @@ export struct ConversationPane {
   /** 复制消息正文（剪贴板是平台能力，由宿主传入回调——视图层不直接依赖 platform） */
   onCopyMessage: (text: string) => void = () => {
   };
-  /** 引用到输入框 / 重发（都由宿主执行：草稿与发送都在宿主手里） */
+  /** 引用到输入框 / 重发 / 编辑 / 重试（都由宿主执行：草稿与发送都在宿主手里） */
   onQuoteMessage: (item: TrajectoryItem) => void = () => {
   };
   onResendMessage: (item: TrajectoryItem) => void = () => {
   };
+  /** §FR-001：编辑用户消息——把内容填入 Composer 供修改后重发 */
+  onEditMessage: (item: TrajectoryItem) => void = () => {
+  };
+  /** §FR-002：重试助手回复——重发上一条用户消息以重新生成回复 */
+  onRetryAssistant: (item: TrajectoryItem) => void = () => {
+  };
+
+  /** §FR-005：会话级搜索——搜索结果点击跳转对应会话 */
+  @Prop sessionSearchRows: SessionSearchRow[] = [];
+  @Prop sessionSearchNote: string = '';
+  onSearchSessions: (query: string) => void = () => {
+  };
+  /** 点击搜索结果中的会话跳转 */
+  onOpenSessionFromSearch: (sessionId: string) => void = () => {
+  };
+  /** 会话搜索栏是否展开 */
+  @State sessionSearchOpen: boolean = false;
+  /**
+   * 待决答复草稿（**宿主所有**，FR-013）。
+   *
+   * 【为什么一路传到这儿】`PendingPane` 里的提问卡需要它（逐题选项 + 自定义答案），
+   * 而草稿的真值在 `Index`（活得比壳久）——中间这一层只做"透传"，不持有、不改写。
+   * 默认空袋 ⇒ 老调用点行为不变。
+   */
+  @Prop answerDrafts: PendingAnswerDrafts = emptyPendingAnswerDrafts();
+  /** 逐题草稿变化（回传宿主） */
+  onAnswerGroupChange: (itemId: string, drafts: PendingAnswerDraft[]) => void = () => {
+  };
+
+  /**
+   * 会话（跨会话）搜索框里的字。
+   *
+   * 【为什么必须由本组件持有】`SessionSearch` 的输入框是**受控**的（`query` 是 `@Prop`，
+   * 组件只报 `onQuery`）。此前内联那块是 `TextInput({ placeholder })` —— 不带 `text`，
+   * 属于**非受控**：没人在乎用户打了什么，重建一次即回空。受控之后宿主必须有一个真值，
+   * 且这个真值正好是"合并命中的查询词"的天然归属（中枢只回命中，不回查询词）。
+   */
+  @State sessionSearchQuery: string = '';
 
   /**
    * 毫秒时间戳 → **钟点**（E204，官方 `ui-trajectory` 的 `toolbar.actualTime`「实际时间」）。
@@ -409,6 +479,12 @@ export struct ConversationPane {
   }
 
   aboutToAppear(): void {
+    // 深色跟随系统（MobileTheme 的深浅两套调色板按它切换）
+    this.darkQuery = mediaquery.matchMediaSync('(prefers-color-scheme: dark)');
+    this.dark = this.darkQuery.matches;
+    this.darkQuery.on('change', (m: mediaquery.MediaQueryResult) => {
+      this.dark = m.matches;
+    });
     /*
      * 【P9-6：回到**同一个**会话时回到原处】此前一律贴底 ⇒ 去设置页看两眼再回来、
      * 或去看一眼产出文件再回来，正在读的那段历史就没了（长会话里要重新翻很久）。
@@ -426,6 +502,10 @@ export struct ConversationPane {
   }
 
   aboutToDisappear(): void {
+    if (this.darkQuery !== undefined) {
+      this.darkQuery.off('change');
+      this.darkQuery = undefined;
+    }
     // 离开前记下位置：回到同一个会话时用它把用户放回原处（P9-6）
     this.rememberOnLeave();
     if (this.followTimer >= 0) {
@@ -584,27 +664,23 @@ export struct ConversationPane {
   @Builder
   flatError(item: TrajectoryItem) {
     /*
-     * 【F20 的同类：竖条不要用 `height('100%')`】
-     *
-     * 这里原来是 `Divider().vertical(true)…height('100%')` —— 与 F20 那条引用竖条
-     * **同一个机理**：`Row` 的高度本来是文字撑出来的（内容决定），
-     * 而 `height('100%')` 要去父链上找一个确定高度；找错了就会把行拉高、
-     * 把后面的内容一起推下去（F20 真机读数就是 21 倍高）。
-     *
-     * 改用**左边框**：边框天然跟着内容高度走，不依赖父高度。
-     * 这是本轮扫出的唯一一处同类（其余 40 多处 `height('100%')` 都是页面根节点，
-     * 父高度确定，属于正常用法）。
+     * 【v2 T013：StateDot 风格，与 `TurnView.errorItem` 同形】
+     * 旧实现是"左边框 + 背景块"的卡片壳；DSH Mobile 的错误行没有卡壳——
+     * 一枚 error 色圆点 + 同色正文，安静地混在时间线里。
+     * （此处也不再需要旧注释里 F20 的左边框方案：没有边框了。）
      */
-    Text(`出错了：${item.body}`)
-      .fontSize(Fs.CAPTION)
-      .fontColor($r('sys.color.alert'))
-      .width('100%')
-      .padding({ left: Sp.S })
-      .borderWidth({ left: Border.HAIRLINE * 3 })
-      .borderColor({ left: $r('sys.color.alert') })
-      .borderRadius(Radius.S)
-      .backgroundColor($r('sys.color.background_secondary'))
-      .accessibilityText(`错误：${item.body}`)
+    Row({ space: DsSpacing.COMPACT }) {
+      Circle({ width: 8, height: 8 }) // token-exempt: 状态点几何（StateDot.kt 同尺寸）
+        .fill(this.palette().error)
+      Text(`出错了：${item.body}`)
+        .fontSize(DsType.SMALL_13.size)
+        .lineHeight(DsType.SMALL_13.lineHeight)
+        .fontColor(this.palette().error)
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Top)
+    .accessibilityText(`错误：${item.body}`)
   }
 
   /** 某条目是否已展开（轨迹视图的展开集合也在这里：轨迹是条目级台账，没有回合外壳） */
@@ -675,8 +751,13 @@ export struct ConversationPane {
     }
     out.push({ id: 'quote', label: '引用', a11y: '把这条消息引用到输入框' });
     if (item.speaker === Speaker.USER) {
-      // 只有用户消息能"重发"（助手消息重发需要"重跑那一轮"的端点，本仓没有 ⇒ 不给假入口）
       out.push({ id: 'resend', label: '重发', a11y: '重新发送这条消息' });
+      // §FR-001：用户消息"编辑"按钮
+      out.push({ id: 'edit', label: '编辑', a11y: '编辑这条消息后重发' });
+    }
+    if (item.speaker === Speaker.ASSISTANT) {
+      // §FR-002：助手消息"重试"按钮
+      out.push({ id: 'retry', label: '重试', a11y: '重试生成这条回复' });
     }
     if (this.storedRatingOf(item.id).length > 0) {
       out.push({ id: 'withdraw', label: '撤回评价', a11y: '撤回这条消息的反馈' });
@@ -693,6 +774,10 @@ export struct ConversationPane {
       this.onQuoteMessage(item);
     } else if (id === 'resend') {
       this.onResendMessage(item);
+    } else if (id === 'edit') {
+      this.onEditMessage(item);
+    } else if (id === 'retry') {
+      this.onRetryAssistant(item);
     } else if (id === 'withdraw') {
       SessionHub.shared().clearFeedback(item.id).then((n: ActionNotice) => {
         this.fbNote2 = this.feedbackNoticeTextOf(n);
@@ -890,8 +975,25 @@ export struct ConversationPane {
         workspaceName: this.workspaceName,
         sessionUpdatedAt: this.sessionUpdatedAt,
         modelLabel: modelSelectionLabel(this.selection, this.models),
+        running: this.running,
         onPickView: (value: string) => {
           this.view = value;
+        },
+        /*
+         * ModelChip（v2 T014 从 contextLine 上移为头图 leading 位）点按 → 宿主既有的
+         * 模型选择流程（`onPickModel` 契约不变，只是入口从 Composer 挪到了会话头）。
+         */
+        onPickModel: () => {
+          this.onPickModel();
+        },
+        // T-B：跨会话搜索的开合（真值在本组件，见 `sessionSearchOpen` 的说明）
+        sessionSearchOpen: this.sessionSearchOpen,
+        onToggleSessionSearch: () => {
+          this.sessionSearchOpen = !this.sessionSearchOpen;
+        },
+        /* info 钮 → 宿主既有的「打开详情栏」动作（真实宿主动作，不是装饰） */
+        onOpenDetail: () => {
+          this.onOpenDetail();
         },
         onExpandAll: () => {
           this.turnController.expandAll();
@@ -929,7 +1031,50 @@ export struct ConversationPane {
         }
       })
 
-      List({ space: Sp.M, scroller: this.scroller }) {
+      // §FR-005：会话级搜索栏——搜索标题+内容，结果点击跳转对应会话
+      if (this.sessionSearchOpen) {
+        /*
+         * T023 收尾：这里此前是**内联**渲染（输入框 + 命中行 + 退化说明各写一遍），
+         * 与 `WorkspaceBrowser` 里的同名区块重复。现在换成 `SessionSearch` 组件
+         * （对照 `SessionSearch.kt` 的行结构 / 上限提示 / 退化说明），宿主只给数据与回调。
+         *
+         * 【语义保持】数据源仍是门面的 `sessionSearchRows` / `sessionSearchNote`
+         * （中枢合并本地标题命中与 Host 内容命中），命中点击仍是
+         * `onOpenSessionFromSearch` + 收起搜索栏；组件多出的两处都是**补全**而非改义：
+         * ① 命中行补上工作区名（源文件 `SearchHit` 三段里的第二段）；
+         * ② 命中数达上游上限时说明"列表装不下了"（`SearchResultSet.hasMore` 的读法）。
+         *
+         * 【T-B：可达性缺口已闭合】`sessionSearchOpen` 此前**只有关没有开**（打开入口原本
+         * 挂在 PC 侧栏的搜索钮上，随 PC 原生链一起消失）⇒ 组件已接线但用户够不着。
+         * 现在由会话头的「跨会话搜索」钮（`ConversationHeader.sessionSearchOpen` +
+         * `onToggleSessionSearch`）开合，单栏可见；抽屉里那份搜索（`DrawerNav`）过滤的是
+         * 会话列表，与此处"按内容跨会话命中并跳转"（§FR-005）是两件事，不重复。
+         */
+        Column() {
+          SessionSearch({
+            query: this.sessionSearchQuery,
+            rows: this.sessionSearchRows,
+            note: this.sessionSearchNote,
+            closable: true,
+            placeholder: '搜索会话…',
+            onQuery: (q: string) => {
+              this.sessionSearchQuery = q;
+              this.onSearchSessions(q);
+            },
+            onOpenHit: (sessionId: string) => {
+              this.onOpenSessionFromSearch(sessionId);
+              this.sessionSearchOpen = false;
+            },
+            onClose: () => {
+              this.sessionSearchOpen = false;
+            }
+          })
+        }
+        .width('100%')
+        .padding({ left: DsSpacing.MEDIUM, right: DsSpacing.MEDIUM, bottom: DsSpacing.TINY })
+      }
+
+      List({ space: DsSpacing.TINY, scroller: this.scroller }) {
         /*
          * 【空态（2026-09-17，对标官方）】
          *
@@ -944,19 +1089,22 @@ export struct ConversationPane {
          */
         if (this.itemCount === 0) {
           ListItem() {
-            Column({ space: Sp.S }) {
+            // EmptyHero 形态（ChatTopBar.kt 的空态品牌区同义）：大留白 + 品牌 + 一行状态
+            Column({ space: DsSpacing.SMALL }) {
               Text(this.appName)
-                .fontSize(Fs.TITLE_L)
-                .fontWeight(FontWeight.Bold)
-                .fontColor($r('sys.color.font_primary'))
+                .fontSize(DsType.HERO_26.size)
+                .lineHeight(DsType.HERO_26.lineHeight)
+                .fontWeight(DsType.HERO_26.weight)
+                .fontColor(this.palette().labelPrimary)
               Text(this.workspaceName.length > 0
                 ? `工作区 ${this.workspaceName}`
                 : $r('app.string.empty_conversation_hint'))
-                .fontSize(Fs.CAPTION)
-                .fontColor($r('sys.color.font_tertiary'))
+                .fontSize(DsType.SMALL_13.size)
+                .lineHeight(DsType.SMALL_13.lineHeight)
+                .fontColor(this.palette().labelTertiary)
             }
             .width('100%')
-            .height(240)
+            .height(240) // token-exempt: 空态品牌区的大留白高度（近似源码 fillMaxSize 的居中占比）
             .justifyContent(FlexAlign.Center)
           }
         }
@@ -975,9 +1123,9 @@ export struct ConversationPane {
              * 两者同时成立时以聚焦为准：聚焦是用户刚刚做的动作。
              */
             .border({
-              width: { left: this.focusedCellId === item.id || this.isHit(item) ? 3 : 0 },
+              width: { left: this.focusedCellId === item.id || this.isHit(item) ? HIT_BAR_WIDTH : 0 },
               color: this.focusedCellId === item.id
-                ? $r('sys.color.font_emphasize') : $r('sys.color.brand')
+                ? this.palette().labelPrimary : this.palette().accent
             })
           }, (item: TrajectoryItem) => item.id)
         } else {
@@ -1013,6 +1161,12 @@ export struct ConversationPane {
                 onResendMessage: (it: TrajectoryItem) => {
                   this.onResendMessage(it);
                 },
+                onEditMessage: (it: TrajectoryItem) => {
+                  this.onEditMessage(it);
+                },
+                onRetryAssistant: (it: TrajectoryItem) => {
+                  this.onRetryAssistant(it);
+                },
                 onOpenFeedback: (itemId: string, rating: string) => {
                   this.fbFor = itemId;
                   this.fbRating = rating;
@@ -1030,8 +1184,8 @@ export struct ConversationPane {
                 }
               })
             }
-            .border({ width: { left: this.turnHasHit(turn) ? 3 : 0 },
-              color: $r('sys.color.brand') })
+            .border({ width: { left: this.turnHasHit(turn) ? HIT_BAR_WIDTH : 0 },
+              color: this.palette().accent })
           }, (turn: Turn) => turn.id)
         }
       }
@@ -1041,7 +1195,7 @@ export struct ConversationPane {
       .onScrollIndex((firstVisible: number) => {
         this.focusFromListIndex(firstVisible);
       })
-      .padding({ left: Sp.M, right: Sp.M, top: Sp.M })
+      .padding({ left: DsSpacing.MEDIUM, right: DsSpacing.MEDIUM, top: DsSpacing.SMALL })
       // E113：可见区间决定"是否跟随最新"；贴底跟随由 `stickToBottom` + 定时器实现
       .onScrollIndex((start: number, end: number) => {
         this.topVisible = start;
@@ -1059,7 +1213,10 @@ export struct ConversationPane {
       })
       .scrollBar(BarState.Auto)
 
-      Divider().color($r('sys.color.comp_divider'))
+      /*
+       * 【v2 T013：不再画分隔线】v1 在列表与输入区之间有一条整宽 Divider；
+       * DSH Mobile 的输入区是一张**悬浮面**（有边框与圆角），上下都不压线。
+       */
 
       /*
        * 【审批弹在会话里（E115）】以前审批/提问只在「待决」页签里，用户得先切页签再点，
@@ -1068,45 +1225,58 @@ export struct ConversationPane {
        * 只在这一轮真的有待决时出现，平时不占一行。
        */
       if (this.focusPending() !== undefined) {
-        Column({ space: Sp.XS }) {
+        Column({ space: DsSpacing.TINY }) {
           /* 状态带（官方 strip：圆点 + 文案 + 警示语气） */
-          Row({ space: Sp.S }) {
+          Row({ space: DsSpacing.SMALL }) {
             Circle({ width: 8, height: 8 })   // token-exempt: 状态点几何（与官方 strip 的圆点同义）
-              .fill($r('sys.color.warning'))
+              .fill(this.palette().warnLabel)
             Text(takeoverStripText(this.focusPending()!))
-              .fontSize(Fs.CAPTION)
-              .fontColor($r('sys.color.warning'))
+              .fontSize(DsType.SMALL_13.size)
+              .lineHeight(DsType.SMALL_13.lineHeight)
+              .fontColor(this.palette().warnLabel)
               .layoutWeight(1)
           }
           .width('100%')
-          .padding({ left: Sp.M, right: Sp.M, top: Sp.S, bottom: Sp.S })
-          .backgroundColor($r('sys.color.background_secondary'))
-          .borderRadius(Radius.S)
+          .padding({
+            left: DsSpacing.MEDIUM, right: DsSpacing.MEDIUM,
+            top: DsSpacing.SMALL, bottom: DsSpacing.SMALL
+          })
+          .backgroundColor(this.palette().bgModulePlatform)
+          .borderRadius(DsShape.BLOCK)
 
           /* 标题（官方 headline）：审批是「工具 X 请求越权执行」，提问是问题正文 */
           Text(takeoverHeadline(this.focusPending()!))
-            .fontSize(Fs.BODY)
-            .fontWeight(FontWeight.Medium)
+            .fontSize(DsType.BASE_16.size)
+            .lineHeight(DsType.BASE_16.lineHeight)
+            .fontWeight(DsType.BASE_16_STRONG.weight)
+            .fontColor(this.palette().labelPrimary)
             .width('100%')
 
           /* 原始请求（官方 command：等宽、可换行）——只对审批给 */
           if (takeoverCommand(this.focusPending()!).length > 0) {
             Text(takeoverCommand(this.focusPending()!))
-              .fontSize(Fs.CAPTION)
-              .fontColor($r('sys.color.font_tertiary'))
+              .fontSize(DsType.SMALL_13.size)
+              .lineHeight(DsType.SMALL_13.lineHeight)
+              .fontColor(this.palette().labelTertiary)
               .fontFamily('monospace')
               .width('100%')
           }
 
           if (pendingElsewhere(this.pending, this.sessionId) > 0) {
             Text(`其它会话还有 ${pendingElsewhere(this.pending, this.sessionId)} 项待决，可在「待决」页查看。`)
-              .fontSize(Fs.CAPTION)
-              .fontColor($r('sys.color.font_tertiary'))
+              .fontSize(DsType.SMALL_13.size)
+              .lineHeight(DsType.SMALL_13.lineHeight)
+              .fontColor(this.palette().labelTertiary)
               .width('100%')
           }
 
           PendingPane({
             items: [this.focusPending()!],
+            // T-C：答复草稿从宿主来、经宿主回（折叠开合不丢，见 answerDrafts 的说明）
+            answerDrafts: this.answerDrafts,
+            onAnswerGroupChange: (itemId: string, drafts: PendingAnswerDraft[]) => {
+              this.onAnswerGroupChange(itemId, drafts);
+            },
             onDecide: (item: PendingItem, choiceId: string, reason: string) => {
               this.onDecidePending(item, choiceId, reason);
             },
@@ -1138,7 +1308,7 @@ export struct ConversationPane {
          * 又给对话留出了大部分空间。
          */
         .height(260)
-        .padding({ left: Sp.M, right: Sp.M, bottom: Sp.S })
+        .padding({ left: DsSpacing.MEDIUM, right: DsSpacing.MEDIUM, bottom: DsSpacing.SMALL })
       }
 
       /*
@@ -1157,8 +1327,6 @@ export struct ConversationPane {
         queuedCount: this.queuedCount,
         attachments: this.attachments,
         queued: this.queued,
-        models: this.models,
-        selection: this.selection,
         references: this.references,
         commands: this.commands,
         notice: this.notice,
@@ -1179,7 +1347,6 @@ export struct ConversationPane {
         permissionSwitchableNow: this.permissionSwitchableNow,
         permissionHint: this.permissionHint,
         onPickPermission: this.onPickPermission,
-        onPickModel: this.onPickModel,
         onTogglePlan: this.onTogglePlan,
         onReferenceQuery: this.onReferenceQuery,
         onPullQueued: this.onPullQueued,
@@ -1189,6 +1356,7 @@ export struct ConversationPane {
     }
     .width('100%')
     .height('100%')
+    .backgroundColor(this.palette().bgBase)
   }
 
   // ───────────────────── 轨迹条目 ─────────────────────

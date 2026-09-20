@@ -37,6 +37,9 @@ const OUT = join(WORK, 'out');
 const PURE_FILES = [
   'appstate/src/main/ets/ui/ShellTracks.ets',
   'appstate/src/main/ets/ui/Tokens.ets',
+  // 手机链 token 层（v2 T001）：**零依赖**（纯数据，无 import），因此可以当 TS 直接编译；
+  // 收进本表是为了让"逐值移植的色板/字阶/圆角"至少过一遍 tsc（原先只有 ArkTS 构建碰它）。
+  'appstate/src/main/ets/ui/MobileTheme.ets',
   'appstate/src/main/ets/ui/Breakpoints.ets',
   'appstate/src/main/ets/ui/LayoutController.ets',
   'appstate/src/main/ets/ui/NavigationController.ets',
@@ -101,6 +104,10 @@ const PURE_FILES = [
   'appstate/src/main/ets/model/Follow.ets',
   'appstate/src/main/ets/model/InputPolicy.ets',
   'appstate/src/main/ets/model/ToolPresentation.ets',
+  // applied diffs 投影（T014）：ToolDiff 的 appliedDiffOf 从 tool/result 的 meta.diffs 取字段，
+  // 用的是 connection 层的 JSON 安全取值工具（getField）——因此这里也要把 JsonValue 编进来
+  // （见下面 tsc 的 `paths` 映射：`connection` → 只转出 JsonValue 的垫片）。
+  'connection/src/main/ets/protocol/JsonValue.ets',
   'appstate/src/main/ets/model/ToolDiff.ets',
   'appstate/src/main/ets/model/InputFacts.ets',
   'appstate/src/main/ets/model/Timeline.ets',
@@ -187,9 +194,16 @@ function buildAndLoad() {
    * 目录、没有模块解析映射 ⇒ tsc 报 `Cannot find module 'dshcompat'`。
    * 这里生成一个**只转出错误码**的垫片并映射 `dshcompat` → 它：既不拉进整个 dshcompat，
    * 也让"码来自上游那一层"这件事在测试里保持成立。
+   *
+   * 【2026-09-20（T014 applied diffs）】`model/ToolDiff.ets` 的 `appliedDiffOf` 从
+   * `meta.diffs` 提取字段，用的是 connection 层的 `getField`（JSON 安全取值）。
+   * 同理生成一个**只转出 JsonValue** 的垫片并映射 `connection` → 它：
+   * 不拉进整个 connection（那层还有 @ohos.net.* 依赖，进不了本表），取值语义仍是同一份实现。
    */
   const shim = join(SRC, 'dshcompat.ts');
   writeFileSync(shim, "export * from './ErrorCodes';\n", 'utf8');
+  const connShim = join(SRC, 'connection.ts');
+  writeFileSync(connShim, "export * from './JsonValue';\n", 'utf8');
   const config = {
     compilerOptions: {
       target: 'ES2020',
@@ -198,11 +212,11 @@ function buildAndLoad() {
       outDir: OUT,
       rootDir: SRC,
       baseUrl: SRC,
-      paths: { dshcompat: ['dshcompat.ts'] },
+      paths: { dshcompat: ['dshcompat.ts'], connection: ['connection.ts'] },
       skipLibCheck: true,
       strict: false
     },
-    files: [...tsFiles, globals, shim]
+    files: [...tsFiles, globals, shim, connShim]
   };
   const configPath = join(WORK, 'tsconfig.json');
   writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
@@ -226,6 +240,12 @@ function buildAndLoad() {
   mkdirSync(shimDir, { recursive: true });
   writeFileSync(join(shimDir, 'package.json'),
     JSON.stringify({ name: 'dshcompat', version: '0.0.0', main: '../../dshcompat.js' }, null, 2) + '\n',
+    'utf8');
+  // `connection` 的运行时垫片同理（编译期 paths 只管编译，产出 JS 里仍是 require('connection')）
+  const connShimDir = join(OUT, 'node_modules', 'connection');
+  mkdirSync(connShimDir, { recursive: true });
+  writeFileSync(join(connShimDir, 'package.json'),
+    JSON.stringify({ name: 'connection', version: '0.0.0', main: '../../connection.js' }, null, 2) + '\n',
     'utf8');
 
   // 运行时垫片：`Tokens.ets` 在**模块顶层**就调 ArkUI 全局 `$r(...)` 取系统资源，
@@ -3109,6 +3129,63 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
     }))), COMPOSER_DRAFT_MAX);
 }
 
+// ── T-C / FR-013：待决答复草稿（折叠开合换渲染路线时，用户点到一半的答案必须活着） ──
+{
+  const {
+    emptyPendingAnswerDrafts, pendingAnswerGroupOf, putPendingAnswerGroup, dropPendingAnswer,
+    PENDING_ANSWER_MAX
+  } = PF;
+
+  /** 一题一草稿（构造函数：`PendingAnswerDraft` 是值类型，逐字段写全） */
+  const d = (qid, selected, custom, skipped) => ({
+    questionId: qid, selected: selected, custom: custom, skipped: skipped
+  });
+
+  let bag = emptyPendingAnswerDrafts();
+  t.eq('空袋子：任何待决都取不到草稿（空数组，不是 undefined）',
+    pendingAnswerGroupOf(bag, 'p-1').length, 0);
+  t.eq('没有待决 id 时不存（宿主此时把它当界面临时状态）',
+    putPendingAnswerGroup(bag, '', [d('q1', ['甲'], '', false)]).entries.length, 0);
+
+  // ① 缺陷原形：待决 A 里点了一半，切到待决 B —— 两边不许串台
+  bag = putPendingAnswerGroup(bag, 'A', [d('q1', ['甲'], '补充', false)]);
+  bag = putPendingAnswerGroup(bag, 'B', [d('q-1', ['乙'], '', false)]);
+  t.eq('A 的草稿是 A 的', pendingAnswerGroupOf(bag, 'A')[0].selected[0], '甲');
+  t.eq('自定义答案也在', pendingAnswerGroupOf(bag, 'A')[0].custom, '补充');
+  t.eq('B 的草稿是 B 的（**这就是原来会串台的地方**）', pendingAnswerGroupOf(bag, 'B')[0].questionId, 'q-1');
+  t.eq('两个待决各占一条', bag.entries.length, 2);
+
+  // ② 空数组 = 删条目（不留空壳）
+  bag = putPendingAnswerGroup(bag, 'A', []);
+  t.eq('清空某个待决 ⇒ 条目被删掉', bag.entries.length, 1);
+  t.eq('删掉之后取回是空数组', pendingAnswerGroupOf(bag, 'A').length, 0);
+  t.eq('别的待决不受影响', pendingAnswerGroupOf(bag, 'B').length, 1);
+
+  // ③ 最近写过的排在最前（与输入草稿同一套淘汰口径）
+  bag = putPendingAnswerGroup(bag, 'A', [d('q1', [], 'ji', false)]);
+  t.eq('重新写入 ⇒ 排到最前', bag.entries[0].itemId, 'A');
+
+  // ④ 上限：超出丢最久没写的
+  let many = emptyPendingAnswerDrafts();
+  for (let i = 0; i < PENDING_ANSWER_MAX + 3; i++) {
+    many = putPendingAnswerGroup(many, `p${i}`, [d(`q${i}`, [], `t${i}`, false)]);
+  }
+  t.eq('条目数被上限夹住', many.entries.length, PENDING_ANSWER_MAX);
+  t.eq('最新那条在', pendingAnswerGroupOf(many, `p${PENDING_ANSWER_MAX + 2}`)[0].custom,
+    `t${PENDING_ANSWER_MAX + 2}`);
+  t.eq('最久没写的那条被丢掉', pendingAnswerGroupOf(many, 'p0').length, 0);
+
+  // ⑤ 值类型：不修改入参（@State 才认得出"换了新对象"）
+  const before = putPendingAnswerGroup(emptyPendingAnswerDrafts(), 'A', [d('q1', ['甲'], '', false)]);
+  const after = putPendingAnswerGroup(before, 'A', [d('q1', ['甲'], '改过', false)]);
+  t.eq('写入**不修改**入参', pendingAnswerGroupOf(before, 'A')[0].custom, '');
+  t.eq('新对象带着新值', pendingAnswerGroupOf(after, 'A')[0].custom, '改过');
+
+  // ⑥ dropPendingAnswer：答复成功后把这条草稿用掉
+  t.eq('答复成功后该待决的草稿被丢弃', pendingAnswerGroupOf(dropPendingAnswer(after, 'A'), 'A').length, 0);
+  t.eq('丢弃不存在的条目是幂等的', dropPendingAnswer(emptyPendingAnswerDrafts(), 'nope').entries.length, 0);
+}
+
 // ── P8-6：重试行的文案（官方 `message.retry.status` 一行模板）与「整条链一条」 ──
 {
   const { retryStatusLine, retrySecondsOf, RETRY_LABEL_SCHEDULED, RETRY_LABEL_ACTIVE,
@@ -3158,7 +3235,8 @@ console.log('\n## P0 页面框架：面板注册表 + 导航状态（页面 ≠ 
   const chain = (id, attempt, state, extra) => Object.assign({
     id: `ev-retry-chain-${id}`, kind: 'error', at: 1000 * attempt, body: `失败 ${attempt}`,
     reasoning: '', speaker: 'assistant', model: '', elapsedMs: 0, toolName: '', callId: '',
-    toolArgs: '', toolState: 'pending', toolOutput: '', subagentName: '', fileName: '', fileSize: 0,
+    toolArgs: '', toolState: 'pending', toolOutput: '', toolMeta: '', subagentName: '',
+    subagentStatus: '', fileName: '', fileSize: 0,
     title: '', progress: '', percent: -1, streaming: false, expanded: true, internal: false,
     images: [], commandId: '', commandKind: '', retryAttempt: attempt, retryMax: 5,
     retryDelayMs: 8000, retryState: state, retryChainId: id,

@@ -182,6 +182,7 @@ export {
   referenceQueryOf,
   referenceSessionRowDetail,
   referenceSessionRowName,
+  tildeExpand,
   TriggerKind,
   appendPick,
   applyPick,
@@ -205,6 +206,15 @@ export type { OptionLabelDisplay, PendingAnswerDraft, PendingQuestion, PlanRevie
 // 会话搜索（官方 sidebar 的 search：Host 内容命中 + 本地标题命中合并成扁平结果）
 // 输入区接管的焦点规则（P7-2，对齐官方 approval/user-questions 的 composer takeover）
 export { pendingElsewhere, pendingForSession, takeoverCommand, takeoverHeadline, takeoverStripText } from './model/PendingFocus';
+// 待决答复草稿（FR-013：折叠开合换渲染路线时，用户点到一半的答案必须活着）
+export {
+  PENDING_ANSWER_MAX,
+  dropPendingAnswer,
+  emptyPendingAnswerDrafts,
+  pendingAnswerGroupOf,
+  putPendingAnswerGroup
+} from './model/PendingFocus';
+export type { PendingAnswerDrafts, PendingAnswerEntry } from './model/PendingFocus';
 
 export { SESSION_SEARCH_LIMIT, localOnlySearchNote, mergeSessionSearch } from './model/SessionSearch';
 export type { SessionSearchHit, SessionSearchLocal, SessionSearchRow } from './model/SessionSearch';
@@ -319,10 +329,40 @@ export {
   NavPresentation,
   NavTab,
   LayoutMode,
-  settingsSectionLabelRes,
-  sidebarPanelLabelRes,
-  sidebarPanelSymbol
+  RunMode,
+  settingsSectionLabelRes
 } from './ui/Breakpoints';
+
+// ── 远程主机发现/认证模型（DSH Full Parity §FR-032–037） ──
+export {
+  createRemoteHost,
+  hostReadyStateLabel,
+  HostAuthState,
+  HostReadyState,
+  HostSource
+} from './model/RemoteHost';
+export type { RemoteHost } from './model/RemoteHost';
+
+// ── 子代理引用模型（DSH Full Parity §FR-022–025） ──
+export {
+  subagentCanInterrupt,
+  subagentCanPrompt,
+  subagentStatusLabel,
+  subagentReferenceCandidate,
+  SubagentStatus
+} from './model/Subagent';
+export type { SubagentRef } from './model/Subagent';
+
+// ── 抽屉轨道几何模型（DSH Full Parity §FR-033） ──
+export {
+  closeAllDrawers,
+  createDrawerTracksState,
+  DRAWER_LEFT_WIDTH,
+  DRAWER_RIGHT_WIDTH,
+  openLeftDrawer,
+  openRightDrawer
+} from './model/DrawerTracks';
+export type { DrawerTracksState } from './model/DrawerTracks';
 
 // ── 设计令牌 ──
 export { Border, Breakpoint, Dur, Fs, Lh, Radius, SemanticColor, Sp, Sz } from './ui/Tokens';
@@ -336,13 +376,15 @@ export {
   toolKindLabel,
   toolKindOf,
   toolSummaryOf,
-  toolToneOf
+  toolToneOf,
+  imageResultOf,
+  skillNameOf
 } from './model/ToolPresentation';
 export { parseMarkdown, parseInline, plainTextOf, MdBlock, MdBlockKind, MdSpan } from './model/Markdown';
 export type { ToolPresentation } from './model/ToolPresentation';
 
 // ── 改动对照（P2 §11：编辑类工具出"改了什么"；纯函数，可本机直接测） ──
-export { collapseContext, diffLines, diffStatOf, DiffLineKind, intendedDiffOf, presentDiff } from './model/ToolDiff';
+export { collapseContext, diffLines, diffStatOf, DiffLineKind, intendedDiffOf, presentDiff, appliedDiffOf, hasAppliedDiff, presentAppliedDiffs } from './model/ToolDiff';
 export type { DiffLine, DiffPresentation, DiffStat, ToolDiff } from './model/ToolDiff';
 
 // ── 输入模态策略（P1/P3：触控+鼠标+键盘同一套语义；纯函数，可本机直接测） ──
@@ -503,6 +545,29 @@ export {
 } from './ui/HarmonyTheme';
 export type { ShadowLevel, TypeRole, WebTokenMapping } from './ui/HarmonyTheme';
 
+// ── MobileTheme（v2 T001：DSH Mobile 设计 token 移植层——手机链唯一视觉 token 源） ──
+// 对照源码：.research/deepseek-harness-mobile/app/src/main/java/com/labteto/dshmobile/ui/theme/
+// （Color.kt/Theme.kt/Spacing.kt/Shape.kt/Type.kt/Animation.kt，逐值移植，见 MobileTheme.ets 头注释）
+export {
+  DS_EASING_FAST_OUT_SLOW_IN,
+  DS_MATERIAL_DARK,
+  DS_MATERIAL_LIGHT,
+  DS_PALETTE_DARK,
+  DS_PALETTE_LIGHT,
+  DsAnimation,
+  DsColor,
+  DsMaterialShapes,
+  DsScale,
+  DsShape,
+  DsSpacing,
+  DsThemePreference,
+  DsType,
+  DsTypography,
+  dsMaterialSchemeOf,
+  dsPaletteOf
+} from './ui/MobileTheme';
+export type { DsMaterialScheme, DsPalette, DsSpringSpec, DsTweenSpec, DsTypeRole } from './ui/MobileTheme';
+
 // ── 布局决策（P1：形态/几何决策的唯一落点，见 LayoutController 的说明） ──
 export {
   clampDetailDesired,
@@ -514,11 +579,15 @@ export {
   detailWidthOf,
   dragDetailWidth,
   DetailPresentation,
+  formFactorOf,
+  formFactorOfWidth,
+  FormFactorTracker,
   MAIN_MIN_VP,
   navWidthOf,
-  ConcessionStep
+  ConcessionStep,
+  RouteFormFactor
 } from './ui/LayoutController';
-export type { DetailCapacity, LayoutDecision, LayoutInput } from './ui/LayoutController';
+export type { DetailCapacity, FormFactorListener, LayoutDecision, LayoutInput } from './ui/LayoutController';
 
 // ── 导航状态机（P1：返回键优先级阶梯与页签归一化，见 NavigationController 的说明） ──
 export {
@@ -587,7 +656,6 @@ export {
 
 // ── 2in1 快捷键表（D3 §5.1：规范 11 行 → 13 个规格；数据 + 纯函数） ──
 export {
-  findShortcut,
   keyboardShortcutSpecs,
   keyEventSpecs,
   SHORTCUTS,
@@ -639,6 +707,9 @@ export {
   sessionCursorOf,
   sessionPageEndpoint,
   sessionPagePayload,
+  // 普通会话的地址（`session/page` 的调用方在拿不到会话项时的显式构造：
+  // 契约是联合 `SessionAddressWire`，字面量必须带类型上下文，故由本层提供构造函数）
+  sessionPageAddress,
   projectQueuedItems,
   queuedItemsOf,
   projectSessionRename,
@@ -689,6 +760,7 @@ export type {
   AskUserQuestionRequest,
   ApprovalRequestPayload,
   CommandCandidate,
+  CommandOption,
   ControlBaseline,
   ControlFrame,
   EventResultArgs,

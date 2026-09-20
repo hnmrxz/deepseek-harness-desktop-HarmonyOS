@@ -80,3 +80,11 @@ export type {
   RetryProgress,
   StreamSink
 } from './protocol/Types';
+
+export {
+  scanLanHosts,
+  scanSubnet,
+  probeReadiness,
+  authenticate
+} from './protocol/LanDiscovery';
+export type { LanHostRecord } from './protocol/LanDiscovery';

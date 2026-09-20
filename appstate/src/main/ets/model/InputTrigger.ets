@@ -460,3 +460,26 @@ export function referenceSessionRowName(label: string): string {
   }
   return label;
 }
+
+/**
+ * §FR-008：将路径中的 `~` 展开为 Host 主目录。
+ *
+ * 官方 `dsh-client-ui-input-trigger` 对 `@~/path` 引用中的 `~` 做 tilde 展开：
+ * `~` → Host 的 `home` 目录（从 `HostFacts.home` 获取）。
+ *
+ * - `hostHome` 为空串时不展开（未知主目录 ⇒ 保持 `~`，由 Host 解析）
+ * - 只替换路径开头的 `~` 或 `~/`（中间的 `~` 不是 tilde 展开）
+ * - `~` 后无 `/` 时展开为 `hostHome`；有 `/` 时展开为 `hostHome/`
+ */
+export function tildeExpand(path: string, hostHome: string): string {
+  if (hostHome.length === 0) {
+    return path;
+  }
+  if (path === '~') {
+    return hostHome;
+  }
+  if (path.indexOf('~/') === 0) {
+    return `${hostHome}${path.substring(1)}`;
+  }
+  return path;
+}

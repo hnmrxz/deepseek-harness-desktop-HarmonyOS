@@ -26,6 +26,7 @@ import { picker } from '@kit.CoreFileKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { fileUri } from '@kit.CoreFileKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
+import { image } from '@kit.ImageKit';
 import { util } from '@kit.ArkTS';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
@@ -50,6 +51,29 @@ const HEAD_BYTES: number = 12;
  * 后者在用户看来只是「发送卡住了」。
  */
 export const MAX_ATTACHMENT_BYTES: number = 16 * 1024 * 1024;
+
+/**
+ * 图片**降尺度**的目标长边（像素，T028）。
+ *
+ * 【为什么要降】内联图片走 `appstate/model/InputAttachment` 的 12 MiB 上限（塞进一条
+ * JSON RPC），而手机主摄直出普遍 4000–8000px / 3–15 MiB。没有这一步时，用户发一张
+ * 大照片得到的是"请先压缩再发送"——把压缩这个动作推给用户，等于这条功能没做完。
+ *
+ * 【为什么是 2048】聊天场景里 2048px 长边在手机屏上已无可见差异，而 JPEG 重编码后
+ * 通常落在几百 KiB——一次把"超大被拒"与"发送超时"两类失败都消掉。
+ */
+const IMAGE_DOWNSCALE_MAX_EDGE: number = 2048;
+
+/**
+ * 触发**重编码**的体积门槛（字节，T028）。
+ *
+ * 低于这个体积的图片原样通过：重编码是有损操作，对几百 KiB 的图做 JPEG 化
+ * 省不了多少体积，却白白损失一次画质。只对"大到值得"的图动手。
+ */
+const IMAGE_REENCODE_TRIGGER_BYTES: number = 1024 * 1024;
+
+/** 重编码的 JPEG 质量（0–100）。85 是"肉眼无感、体积显著下降"的常用平衡点。 */
+const IMAGE_REENCODE_QUALITY: number = 85;
 
 /** 选择的三种明确结果 + 一个「用户取消」 */
 export enum PickOutcome {
@@ -221,6 +245,12 @@ function headBytesOf(bytes: Uint8Array): number[] {
  *
  * ⚠️ **未真机验收**：媒体 URI 与文档 URI 都由 `fileIo` 支持，但**授权方式不同**，
  * 这一步在真机上的成败记在 `docs/device-validation.md` 的 D31；在那之前不得宣称可用。
+ *
+ * ───────── 降尺度（T028） ─────────
+ * 图库是**相机直出图**的主要来源，也是最容易撞上内联 12 MiB 上限的地方，因此这里
+ * 打开降尺度：超过 1 MiB 的 PNG/JPEG/WEBP 会被缩到长边 ≤2048 并重编码为 JPEG
+ * （产物更小才采纳，失败原样放行，GIF 不动）。`pickDocument` 不开：从文件管理器
+ * 选的图片里可能有用户明确要保持原样的素材，降尺度只服务"拍照/截图发出去"这一条链。
  */
 export async function pickImage(context: common.Context): Promise<PickedFile> {
   let uris: string[] = [];
@@ -241,11 +271,11 @@ export async function pickImage(context: common.Context): Promise<PickedFile> {
   if (uris.length === 0) {
     return outcomeOf(PickOutcome.CANCELLED, '', '');
   }
-  return await readPickedFile(uris[0]);
+  return await readPickedFile(uris[0], true);
 }
 
 /** 读取一个已选中的 URI 并把内容编码成 base64。 */
-async function readPickedFile(uri: string): Promise<PickedFile> {
+async function readPickedFile(uri: string, downscale: boolean = false): Promise<PickedFile> {
   const name: string = nameOfUri(uri);
   let file: fs.File | undefined = undefined;
   try {
@@ -263,11 +293,26 @@ async function readPickedFile(uri: string): Promise<PickedFile> {
     // 只编码**实际读到**的字节：`stat` 与 `read` 之间文件可能被改动，
     // 按 size 编码会在尾部带上未写入的 0，产生一个「能上传但内容坏了」的附件。
     const bytes: Uint8Array = new Uint8Array(buffer, 0, read);
+    let payload: Uint8Array = bytes;
+    let mediaType: string = mediaTypeOf(name);
+    let head: number[] = headBytesOf(bytes);
+    if (downscale) {
+      const shrunk: Uint8Array | undefined = await tryDownscaleImage(bytes);
+      if (shrunk !== undefined) {
+        payload = shrunk;
+        // 重编码后字节就是 JPEG：mediaType 与 head 必须跟着改。
+        // 【为什么不能留给上层推断】`resolveImageMediaType` 是**名字优先**的，
+        // 一个叫 photo.png 的文件重编码后若仍声明 image/png，会形成
+        // "声明与字节不符"的附件——上游按声明解码就是坏图。
+        mediaType = 'image/jpeg';
+        head = headBytesOf(shrunk);
+      }
+    }
     const helper: util.Base64Helper = new util.Base64Helper();
-    const base64: string = helper.encodeToStringSync(bytes);
+    const base64: string = helper.encodeToStringSync(payload);
     return {
-      outcome: PickOutcome.PICKED, uri: uri, name: name, mediaType: mediaTypeOf(name),
-      bytes: read, base64: base64, head: headBytesOf(bytes), reason: ''
+      outcome: PickOutcome.PICKED, uri: uri, name: name, mediaType: mediaType,
+      bytes: payload.length, base64: base64, head: head, reason: ''
     };
   } catch (err) {
     const e = err as BusinessError;
@@ -280,6 +325,123 @@ async function readPickedFile(uri: string): Promise<PickedFile> {
       } catch (closeErr) {
         // 关闭失败不影响已读到的数据，仅记录
         hilog.warn(DOMAIN, TAG, 'close failed');
+      }
+    }
+  }
+}
+
+/**
+ * 从头部字节认出**可降尺度**的图片类型（`''` = 不适合降尺度）。
+ *
+ * 只认 PNG / JPEG / WEBP 三种静态容器。**GIF 是刻意排除的**：它的动画由多帧组成，
+ * `createPixelMap` 只取首页、JPEG 重编码丢掉全部动画——"把动图变成静图"不是降尺度，
+ * 是毁数据，宁可让它原样走（大 GIF 会被体积上限如实拒绝并说明）。
+ *
+ * 【为什么在这里再写一份魔数判定】`appstate/model/InputAttachment.sniffImageMediaType`
+ * 是同一套判定，但依赖方向是 appstate → platform，这里反向 import 会把分层倒过来。
+ * 魔数是公开且稳定的容器签名，镜像一份比反向依赖干净。
+ */
+function sniffDownscalableType(head: number[]): string {
+  if (head.length >= 8 && head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4E && head[3] === 0x47
+    && head[4] === 0x0D && head[5] === 0x0A && head[6] === 0x1A && head[7] === 0x0A) {
+    return 'image/png';
+  }
+  if (head.length >= 3 && head[0] === 0xFF && head[1] === 0xD8 && head[2] === 0xFF) {
+    return 'image/jpeg';
+  }
+  if (head.length >= 12 && head[0] === 0x52 && head[1] === 0x49 && head[2] === 0x46 && head[3] === 0x46
+    && head[8] === 0x57 && head[9] === 0x45 && head[10] === 0x42 && head[11] === 0x50) {
+    return 'image/webp';
+  }
+  return '';
+}
+
+/**
+ * 尝试把一张**过大的静态图**降尺度/重编码成更小的 JPEG（T028）。
+ *
+ * 触发条件（两条都满足才动手）：
+ *   · 类型是 PNG / JPEG / WEBP（GIF 见 `sniffDownscalableType` 的说明）；
+ *   · 体积超过 `IMAGE_REENCODE_TRIGGER_BYTES`（小图不值得有损重编码）。
+ *
+ * 长边超过 `IMAGE_DOWNSCALE_MAX_EDGE` 时按比例缩到 2048；否则只做 JPEG 重编码
+ * （一张 8 MiB 的全尺寸 PNG 重编码后往往只剩几百 KiB，同样受益）。
+ *
+ * 【采纳判据】产物**必须比原文件小**才返回；否则返回 `undefined`（原样用原文件）。
+ * 任何一步失败同样返回 `undefined`——降尺度是**优化**，不允许把"优化失败"变成"发送失败"。
+ */
+async function tryDownscaleImage(bytes: Uint8Array): Promise<Uint8Array | undefined> {
+  const sniffed: string = sniffDownscalableType(headBytesOf(bytes));
+  if (sniffed.length === 0) {
+    return undefined;
+  }
+  if (bytes.length <= IMAGE_REENCODE_TRIGGER_BYTES) {
+    return undefined;
+  }
+  let source: image.ImageSource | undefined = undefined;
+  let packer: image.ImagePacker | undefined = undefined;
+  let pixelMap: image.PixelMap | undefined = undefined;
+  try {
+    // `bytes` 可能是某个更大 ArrayBuffer 的前缀视图（`stat` 与 `read` 之间文件可能变小），
+    // 解码器要的是**恰好这么多字节**的缓冲，切片拷贝一次，不带尾部脏数据。
+    const exact: ArrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length);
+    source = image.createImageSource(exact);
+    const info: image.ImageInfo = await source.getImageInfo();
+    const width: number = info.size.width;
+    const height: number = info.size.height;
+    if (width <= 0 || height <= 0) {
+      return undefined;
+    }
+    const longEdge: number = width > height ? width : height;
+    let options: image.DecodingOptions | undefined = undefined;
+    if (longEdge > IMAGE_DOWNSCALE_MAX_EDGE) {
+      const scale: number = IMAGE_DOWNSCALE_MAX_EDGE / longEdge;
+      const targetWidth: number = Math.max(1, Math.round(width * scale));
+      const targetHeight: number = Math.max(1, Math.round(height * scale));
+      const target: image.Size = { width: targetWidth, height: targetHeight };
+      const decoding: image.DecodingOptions = { desiredSize: target };
+      options = decoding;
+    }
+    pixelMap = await source.createPixelMap(options);
+    packer = image.createImagePacker();
+    const packOptions: image.PackingOption = {
+      format: 'image/jpeg',
+      quality: IMAGE_REENCODE_QUALITY
+    };
+    const packed: ArrayBuffer = await packer.packing(pixelMap, packOptions);
+    if (packed.byteLength >= bytes.length) {
+      // 重编码反而更大（典型于本来就已高度压缩的小分辨率 JPEG）：保留原文件
+      return undefined;
+    }
+    hilog.info(DOMAIN, TAG,
+      'downscale: %{public}d -> %{public}d bytes, edge %{public}d -> %{public}d (jpeg q%{public}d)',
+      bytes.length, packed.byteLength, longEdge,
+      longEdge > IMAGE_DOWNSCALE_MAX_EDGE ? IMAGE_DOWNSCALE_MAX_EDGE : longEdge, IMAGE_REENCODE_QUALITY);
+    return new Uint8Array(packed);
+  } catch (err) {
+    const e = err as BusinessError;
+    // 解码/编码失败一律按"跳过降尺度"处理：原图仍然完整可用
+    hilog.info(DOMAIN, TAG, 'downscale skipped: code=%{public}d %{public}s', e.code, e.message);
+    return undefined;
+  } finally {
+    if (pixelMap !== undefined) {
+      try {
+        await pixelMap.release();
+      } catch (releaseErr) {
+        hilog.warn(DOMAIN, TAG, 'pixelMap release failed');
+      }
+    }
+    if (packer !== undefined) {
+      try {
+        await packer.release();
+      } catch (releaseErr) {
+        hilog.warn(DOMAIN, TAG, 'packer release failed');
+      }
+    }
+    if (source !== undefined) {
+      try {
+        await source.release();
+      } catch (releaseErr) {
+        hilog.warn(DOMAIN, TAG, 'source release failed');
       }
     }
   }

@@ -68,6 +68,8 @@ export enum ContentSlot {
   TOOL_ERROR_NAME = 'tool-error-name',
   /** 工具结果内层的 `isError` 布尔（实测存在，与 `error` 同时出现） */
   TOOL_IS_ERROR = 'tool-is-error',
+  /** 工具元数据（`tool/result` 的 `meta` 字段；含 applied diffs 等扩展信息） */
+  TOOL_META = 'tool-meta',
   /** 工具调用 id（用于把 `tool/result` 配回 `tool/call`） */
   CALL_ID = 'call-id',
   /** 子代理名称 */
@@ -252,7 +254,8 @@ export const SESSION_EVENT_SHAPES: SessionEventShape[] = [
       { slot: ContentSlot.CALL_ID, path: 'message.source.callId' },
       { slot: ContentSlot.TOOL_IS_ERROR, path: 'message.content.0.isError' },
       { slot: ContentSlot.TOOL_ERROR_CODE, path: 'error.code' },
-      { slot: ContentSlot.TOOL_ERROR_NAME, path: 'error.name' }
+      { slot: ContentSlot.TOOL_ERROR_NAME, path: 'error.name' },
+      { slot: ContentSlot.TOOL_META, path: 'meta' }
     ]
   },
   // ── 交付物 ────────────────────────────────────────────────────────

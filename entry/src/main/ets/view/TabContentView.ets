@@ -21,7 +21,7 @@
  * 而它**已经是组件 `HubBanner`**，故这里直接渲染组件。
  */
 
-import { ActionNotice, AgentPresetRow, CoreViewState, CredentialItem, FileNode, FilePreview, Fs, HostRecord, HubPhase, LayoutMode, ModelOption, ModelSelection, NavTab, PendingItem, PluginItem, SessionHub, SessionListItem, SettingGroup, SkillRow, Sp, StackPage, WorkspaceItem, aboutInfo, projectGeneralGroups } from 'appstate';
+import { ActionNotice, AgentPresetRow, CoreViewState, CredentialItem, FileNode, FilePreview, Fs, HostRecord, HubPhase, LayoutMode, ModelOption, ModelSelection, NavTab, PendingItem, PluginItem, RunMode, SessionHub, SessionListItem, SettingGroup, SkillRow, Sp, StackPage, WorkspaceItem, aboutInfo, projectGeneralGroups } from 'appstate';
 import type { PendingAnswerDraft, PanelDescriptor, SettingChoice, SettingItem } from 'appstate';
 import { SettingsPane } from './SettingsPane';
 import { WorkspacePane } from './WorkspacePane';
@@ -133,6 +133,10 @@ export interface TabContentFacade {
    * 现在箭头只表达意图（我要退一层），怎么退由宿主的返回阶梯决定。
    */
   backOneLayer: () => void;
+  /** §FR-058：当前运行模式 */
+  runMode: RunMode;
+  /** §FR-058：切换运行模式 */
+  onSwitchRunMode: (mode: RunMode) => void;
 }
 
 @Component
@@ -343,6 +347,10 @@ export struct TabContentView {
         },
         onOpenDiagnostics: () => {
           this.f.openDiagnostics();
+        },
+        runMode: this.f.runMode,
+        onSwitchRunMode: (mode: RunMode) => {
+          this.f.onSwitchRunMode(mode);
         }
       })
     }

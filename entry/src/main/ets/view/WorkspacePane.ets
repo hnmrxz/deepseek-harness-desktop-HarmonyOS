@@ -15,6 +15,7 @@ import {
   FileNode,
   FilePreview,
   Fs,
+  HarmonyIconSize,
   Radius,
   Sp,
   Sz,
@@ -112,7 +113,7 @@ export struct WorkspacePane {
       } else if (this.drillLevel === 1) {
         Row({ space: Sp.S }) {
           Button() {
-            SymbolGlyph($r('sys.symbol.chevron_left')).fontSize(18)
+            SymbolGlyph($r('sys.symbol.chevron_left')).fontSize(HarmonyIconSize.NAV)
           }
           .buttonStyle(ButtonStyleMode.TEXTUAL)
           .onClick(() => {
@@ -128,7 +129,7 @@ export struct WorkspacePane {
       } else {
         Row({ space: Sp.S }) {
           Button() {
-            SymbolGlyph($r('sys.symbol.chevron_left')).fontSize(18)
+            SymbolGlyph($r('sys.symbol.chevron_left')).fontSize(HarmonyIconSize.NAV)
           }
           .buttonStyle(ButtonStyleMode.TEXTUAL)
           .onClick(() => {
@@ -181,7 +182,7 @@ export struct WorkspacePane {
           ListItem() {
             Column({ space: 2 }) {
               Row({ space: Sp.S }) {
-                SymbolGlyph($r('sys.symbol.folder')).fontSize(16)
+                SymbolGlyph($r('sys.symbol.folder')).fontSize(HarmonyIconSize.STATUS)
                   .fontColor([w.primary ? $r('sys.color.brand') : $r('sys.color.font_secondary')])
                 Text(w.name)
                   .fontSize(Fs.SECONDARY)
@@ -194,7 +195,7 @@ export struct WorkspacePane {
                     .fontSize(Fs.CAPTION)
                     .fontColor($r('sys.color.brand'))
                     .padding({ left: 5, right: 5 })
-                    .borderRadius(5)
+                    .borderRadius(Radius.XS)
                     .backgroundColor($r('sys.color.background_primary'))
                 }
               }

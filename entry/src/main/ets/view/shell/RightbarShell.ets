@@ -26,7 +26,7 @@
  * 而不是继续吃一份 sections）。
  */
 
-import { DetailPresentation, DetailSection, Fs, HarmonyIconSize, HarmonySpacing, PANEL_RIGHT_DELIVERABLES, PANEL_RIGHT_DETAIL, PANEL_RIGHT_FILES, PANEL_RIGHT_PREVIEW, PANEL_RIGHT_SUBAGENT, PANEL_RIGHT_TOOL, PANEL_RIGHT_TRAJECTORY, Sp, Sz, presentTool, toolStateLabel } from 'appstate';
+import { DetailPresentation, DetailSection, Dur, Fs, HarmonyIconSize, HarmonySpacing, PANEL_RIGHT_DELIVERABLES, PANEL_RIGHT_DETAIL, PANEL_RIGHT_FILES, PANEL_RIGHT_PREVIEW, PANEL_RIGHT_SUBAGENT, PANEL_RIGHT_TOOL, PANEL_RIGHT_TRAJECTORY, Sp, Sz, presentTool, toolStateLabel } from 'appstate';
 import type { FileNode, FilePreview, PanelDescriptor, SessionStatsInput, TrajectoryItem } from 'appstate';
 
 import { DetailPane } from '../DetailPane';
@@ -437,6 +437,11 @@ export struct RightbarShell {
     .width(this.widthVp)
     .height('100%')
     .backgroundColor($r('sys.color.background_secondary'))
+    // §FR-041：拖拽结束后宽度变化带弹性动画过渡
+    .animation({
+      duration: Dur.NORMAL,
+      curve: Curve.FastOutSlowIn
+    })
   }
 
   /** 单栏：Sheet 内容（关闭由原生 Sheet 提供，标题用区块标题而不是自造一行） */

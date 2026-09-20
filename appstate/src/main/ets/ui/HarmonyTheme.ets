@@ -88,6 +88,8 @@ export interface TypeRole {
 }
 
 export class HarmonyType {
+  /** 展示级标题（页面大标题；对齐 --dsw-font-display） */
+  static readonly DISPLAY: TypeRole = { size: Fs.DISPLAY, lineHeight: Fs.DISPLAY * Lh.TIGHT, weight: 600 };
   /** 页面级标题 */
   static readonly TITLE: TypeRole = { size: Fs.TITLE_L, lineHeight: Fs.TITLE_L * Lh.TIGHT, weight: 600 };
   /** 区块标题 */
@@ -100,6 +102,8 @@ export class HarmonyType {
   static readonly LABEL: TypeRole = { size: Fs.CAPTION, lineHeight: Fs.CAPTION * Lh.TIGHT, weight: 500 };
   /** 最小可读档（徽标计数、等宽日志行） */
   static readonly OVERLINE: TypeRole = { size: Fs.CAPTION_XS, lineHeight: Fs.CAPTION_XS * Lh.TIGHT, weight: 400 };
+  /** 等宽代码行（对齐 --dsw-font-code；区别于 OVERLINE 在于字号更大且用于代码块） */
+  static readonly CODE: TypeRole = { size: Fs.CODE, lineHeight: Fs.CODE * Lh.BODY, weight: 400 };
 }
 
 // ───────────────────────── ③ 空间 / 圆角 / 描边 ─────────────────────────
@@ -187,6 +191,8 @@ export class HarmonyElevation {
   static readonly RAISED: ShadowLevel = { radius: 12, offsetY: 4, alpha: 0.10 };
   /** 悬浮（Popup / 菜单 / Sheet） */
   static readonly OVERLAY: ShadowLevel = { radius: 24, offsetY: 8, alpha: 0.16 };
+  /** 高悬浮（模态对话框 / 全屏 Sheet；对齐 DSH --dsw-shadow-3） */
+  static readonly MODAL: ShadowLevel = { radius: 32, offsetY: 12, alpha: 0.22 };
 }
 
 // ───────────────────────── ③b 材质（Material） ─────────────────────────
@@ -248,25 +254,111 @@ export interface WebTokenMapping {
 
 // dead-exempt: 文档化数据（官方 --dsw-* → 本仓令牌的逐条对照）；parity-matrix 已登记"还没有强制门禁"，给它与人与文档核对用
 export const WEB_TOKEN_MAP: WebTokenMapping[] = [
+  // ── 色板 ──
   { web: '--dsw-color-bg', harmony: 'HarmonyColor.SURFACE', note: '页面底色 → 系统 background_primary（深浅色自动）' },
   { web: '--dsw-color-bg-elevated', harmony: 'HarmonyColor.SURFACE_RAISED', note: '抬起的栏/卡片 → background_secondary' },
+  { web: '--dsw-color-bg-secondary', harmony: 'HarmonyColor.SURFACE_TERTIARY', note: '次级背景 → comp_background_tertiary' },
+  { web: '--dsw-color-bg-inverse', harmony: 'HarmonyColor.BRAND', note: '反色背景（Toast/高亮条）→ 品牌色' },
   { web: '--dsw-color-text', harmony: 'HarmonyColor.TEXT_PRIMARY', note: '正文主色 → font_primary' },
   { web: '--dsw-color-text-weak', harmony: 'HarmonyColor.TEXT_SECONDARY', note: '次要信息 → font_secondary' },
   { web: '--dsw-color-text-faint', harmony: 'HarmonyColor.TEXT_TERTIARY', note: '最弱信息（提示/占位）→ font_tertiary' },
+  { web: '--dsw-color-text-inverse', harmony: 'HarmonyColor.ON_BRAND_TEXT', note: '反色背景上的文字 → font_on_primary' },
+  { web: '--dsw-color-text-on-brand', harmony: 'HarmonyColor.ON_BRAND_TEXT', note: '品牌色上的文字 → font_on_primary' },
+  { web: '--dsw-color-icon-on-brand', harmony: 'HarmonyColor.ON_BRAND_ICON', note: '品牌色上的图标 → icon_on_primary' },
   { web: '--dsw-color-border', harmony: 'HarmonyColor.DIVIDER', note: '分隔线 → comp_divider（鸿蒙的分隔语义只有一档）' },
+  { web: '--dsw-color-border-weak', harmony: 'HarmonyColor.DIVIDER', note: '弱分隔线 → comp_divider（鸿蒙不分强弱分隔）' },
   { web: '--dsw-color-brand', harmony: 'HarmonyColor.BRAND', note: '品牌色 → sys.color.brand（跟随系统主题）' },
   { web: '--dsw-color-danger', harmony: 'HarmonyColor.ALERT', note: '危险 → alert' },
   { web: '--dsw-color-warning', harmony: 'HarmonyColor.WARNING', note: '警告 → warning' },
   { web: '--dsw-color-success', harmony: 'HarmonyColor.CONFIRM', note: '成功 → confirm' },
-  { web: '--dsw-font-body', harmony: 'HarmonyType.BODY', note: '正文字号+行高+字重**成套**映射（Web 是三属性，鸿蒙这里是一个角色）' },
+  { web: '--dsw-color-info', harmony: 'HarmonyColor.BRAND', note: '信息 → brand（鸿蒙无独立 info 色）' },
+  { web: '--dsw-color-surface-dim', harmony: 'HarmonyColor.SURFACE', note: '低亮度表面 → background_primary' },
+  { web: '--dsw-color-surface-bright', harmony: 'HarmonyColor.SURFACE_RAISED', note: '高亮度表面 → background_secondary' },
+  { web: '--dsw-color-surface-container', harmony: 'HarmonyColor.SURFACE_TERTIARY', note: '容器表面 → comp_background_tertiary' },
+  { web: '--dsw-color-surface-container-low', harmony: 'HarmonyColor.SURFACE', note: '低层级容器 → background_primary' },
+  { web: '--dsw-color-surface-container-high', harmony: 'HarmonyColor.SURFACE_RAISED', note: '高层级容器 → background_secondary' },
+  { web: '--dsw-color-on-surface', harmony: 'HarmonyColor.TEXT_PRIMARY', note: '表面上文字 → font_primary' },
+  { web: '--dsw-color-on-surface-variant', harmony: 'HarmonyColor.TEXT_SECONDARY', note: '表面上次要文字 → font_secondary' },
+  { web: '--dsw-color-outline', harmony: 'HarmonyColor.DIVIDER', note: '描边/轮廓 → comp_divider' },
+  { web: '--dsw-color-outline-variant', harmony: 'HarmonyColor.DIVIDER', note: '弱描边 → comp_divider' },
+  { web: '--dsw-color-error', harmony: 'HarmonyColor.ALERT', note: '错误 → alert' },
+  { web: '--dsw-color-on-error', harmony: 'HarmonyColor.ON_BRAND_TEXT', note: '错误上的文字 → font_on_primary' },
+  { web: '--dsw-color-chip-bg', harmony: 'HarmonyColor.SURFACE_TERTIARY', note: 'Chip 背景 → comp_background_tertiary' },
+  { web: '--dsw-color-chip-border', harmony: 'HarmonyColor.DIVIDER', note: 'Chip 描边 → comp_divider' },
+  { web: '--dsw-color-chip-text', harmony: 'HarmonyColor.TEXT_PRIMARY', note: 'Chip 文字 → font_primary' },
+  { web: '--dsw-color-badge-bg', harmony: 'HarmonyColor.BRAND', note: '徽标背景 → brand' },
+  { web: '--dsw-color-badge-text', harmony: 'HarmonyColor.ON_BRAND_TEXT', note: '徽标文字 → font_on_primary' },
+  { web: '--dsw-color-toolbar-bg', harmony: 'HarmonyColor.SURFACE', note: '工具栏背景 → background_primary' },
+  { web: '--dsw-color-input-bg', harmony: 'HarmonyColor.SURFACE_RAISED', note: '输入框背景 → background_secondary' },
+  { web: '--dsw-color-input-border', harmony: 'HarmonyColor.DIVIDER', note: '输入框描边 → comp_divider' },
+  { web: '--dsw-color-code-bg', harmony: 'HarmonyColor.SURFACE_TERTIARY', note: '代码块背景 → comp_background_tertiary' },
+  { web: '--dsw-color-scrollbar', harmony: 'HarmonyColor.TEXT_TERTIARY', note: '滚动条 → font_tertiary（低对比度）' },
+  { web: '--dsw-color-selection', harmony: 'HarmonyColor.BRAND', note: '选区 → brand' },
+  { web: '--dsw-color-hover', harmony: 'HarmonyColor.SURFACE_TERTIARY', note: '悬浮态 → comp_background_tertiary' },
+  { web: '--dsw-color-active', harmony: 'HarmonyColor.SURFACE_RAISED', note: '激活态 → background_secondary' },
+  { web: '--dsw-color-focus-ring', harmony: 'HarmonyColor.BRAND', note: '焦点环 → brand' },
+
+  // ── 排版 ──
+  { web: '--dsw-font-display', harmony: 'HarmonyType.DISPLAY', note: '展示级标题（新增 DISPLAY 角色覆盖 --dsw-font-display）' },
   { web: '--dsw-font-title', harmony: 'HarmonyType.TITLE', note: '标题' },
+  { web: '--dsw-font-subtitle', harmony: 'HarmonyType.SUBTITLE', note: '区块标题 → SUBTITLE' },
+  { web: '--dsw-font-body', harmony: 'HarmonyType.BODY', note: '正文字号+行高+字重**成套**映射（Web 是三属性，鸿蒙这里是一个角色）' },
+  { web: '--dsw-font-body-small', harmony: 'HarmonyType.CAPTION', note: '小号正文 → CAPTION' },
   { web: '--dsw-font-label', harmony: 'HarmonyType.LABEL', note: '标签/徽标；鸿蒙侧字重更高（小字号下更清晰）' },
+  { web: '--dsw-font-overline', harmony: 'HarmonyType.OVERLINE', note: '标注/overline → OVERLINE' },
+  { web: '--dsw-font-caption', harmony: 'HarmonyType.OVERLINE', note: '辅助说明 → OVERLINE（同 overline 档位）' },
+  { web: '--dsw-font-code', harmony: 'HarmonyType.CODE', note: '等宽代码 → CODE（新增 CODE 角色，字号 Fs.CODE）' },
+  { web: '--dsw-font-size-display', harmony: 'Fs.DISPLAY', note: '展示字号原语 → 24' },
+  { web: '--dsw-font-size-title', harmony: 'Fs.TITLE_L', note: '标题字号原语 → 20' },
+  { web: '--dsw-font-size-body', harmony: 'Fs.BODY', note: '正文字号原语 → 16' },
+  { web: '--dsw-font-size-small', harmony: 'Fs.SECONDARY', note: '小字号原语 → 14' },
+  { web: '--dsw-font-size-caption', harmony: 'Fs.CAPTION', note: '说明字号原语 → 12' },
+  { web: '--dsw-font-size-overline', harmony: 'Fs.CAPTION_XS', note: '最小字号原语 → 10' },
+  { web: '--dsw-font-size-code', harmony: 'Fs.CODE', note: '代码字号原语 → 13' },
+  { web: '--dsw-line-height-tight', harmony: 'Lh.TIGHT', note: '紧凑行高 → 1.3' },
+  { web: '--dsw-line-height-normal', harmony: 'Lh.BODY', note: '常规行高 → 1.5' },
+
+  // ── 间距 ──
+  { web: '--dsw-space-0', harmony: 'Sp.XXS', note: '0/1px 极小间距 → 1' },
+  { web: '--dsw-space-1', harmony: 'Sp.XXS', note: '1/4 基础间距 → 4' },
+  { web: '--dsw-space-2', harmony: 'HarmonySpacing.INLINE', note: '行内间隙 → 4（Sp.XS）' },
+  { web: '--dsw-space-3', harmony: 'HarmonySpacing.CONTROL_INNER', note: '控件内距 → 8（Sp.S）' },
+  { web: '--dsw-space-4', harmony: 'HarmonySpacing.CONTAINER', note: '容器内距 → 12（Sp.M）' },
+  { web: '--dsw-space-5', harmony: 'Sp.L', note: '中等间距 → 16' },
+  { web: '--dsw-space-6', harmony: 'Sp.XL', note: '较大间距 → 24' },
+  { web: '--dsw-space-8', harmony: 'Sp.XXL', note: '大间距 → 32' },
+  { web: '--dsw-space-10', harmony: 'Sp.XXXL', note: '超大间距 → 48' },
+
+  // ── 圆角 ──
+  { web: '--dsw-radius-none', harmony: 'Radius.NONE', note: '无圆角 → 0' },
+  { web: '--dsw-radius-xs', harmony: 'Radius.XS', note: '极小圆角 → 6' },
+  { web: '--dsw-radius-sm', harmony: 'HarmonyRadius.CHIP', note: '小圆角/药丸 → 6（Radius.XS）' },
   { web: '--dsw-radius-md', harmony: 'HarmonyRadius.SURFACE', note: 'Web 的中圆角 → 鸿蒙卡片圆角' },
+  { web: '--dsw-radius-lg', harmony: 'HarmonyRadius.PANEL', note: '大圆角 → 面板圆角' },
   { web: '--dsw-radius-pill', harmony: 'HarmonyRadius.CHIP', note: '药丸 → chip 圆角' },
-  { web: '--dsw-space-2', harmony: 'HarmonySpacing.INLINE', note: '行内间隙' },
-  { web: '--dsw-space-3', harmony: 'HarmonySpacing.CONTROL_INNER', note: '控件内距' },
-  { web: '--dsw-space-4', harmony: 'HarmonySpacing.CONTAINER', note: '容器内距' },
+  { web: '--dsw-radius-full', harmony: 'Radius.XXL', note: '全圆角 → 24' },
+
+  // ── 阴影 ──
+  { web: '--dsw-shadow-0', harmony: 'HarmonyElevation.FLAT', note: '无阴影 → 贴地' },
   { web: '--dsw-shadow-1', harmony: 'HarmonyElevation.RAISED', note: 'Web 的 box-shadow 层级 → 鸿蒙阴影层级（更克制）' },
-  { web: '--dsw-duration-fast', harmony: 'HarmonyMotion.STATE', note: '状态切换时长' },
-  { web: '--dsw-duration-normal', harmony: 'HarmonyMotion.TRANSITION', note: '常规过渡时长' }
+  { web: '--dsw-shadow-2', harmony: 'HarmonyElevation.RAISED', note: 'Web 二级阴影 → 鸿蒙 RAISED（比 Web 更克制）' },
+  { web: '--dsw-shadow-3', harmony: 'HarmonyElevation.OVERLAY', note: 'Web 三级阴影 → 鸿蒙 OVERLAY' },
+
+  // ── 动效 ──
+  { web: '--dsw-duration-instant', harmony: 'Dur.INSTANT', note: '瞬时 → 50ms' },
+  { web: '--dsw-duration-fast', harmony: 'HarmonyMotion.STATE', note: '状态切换时长 → 150ms' },
+  { web: '--dsw-duration-normal', harmony: 'HarmonyMotion.TRANSITION', note: '常规过渡时长 → 200ms' },
+  { web: '--dsw-duration-slow', harmony: 'Dur.SLOW', note: '慢速过渡 → 350ms' },
+
+  // ── 描边 ──
+  { web: '--dsw-border-width', harmony: 'HarmonyBorder.HAIRLINE', note: '常规描边宽度 → 1' },
+
+  // ── 尺寸 ──
+  { web: '--dsw-icon-inline', harmony: 'HarmonyIconSize.INLINE', note: '行内图标 → 14' },
+  { web: '--dsw-icon-nav', harmony: 'HarmonyIconSize.NAV', note: '导航图标 → 20' },
+  { web: '--dsw-touch-min', harmony: 'Sz.TOUCH_MIN', note: '最小触控目标 → 44' },
+  { web: '--dsw-pointer-min', harmony: 'Sz.POINTER_MIN', note: '最小指针目标 → 24' },
+  { web: '--dsw-nav-rail-width', harmony: 'Sz.NAV_RAIL', note: '导航栏收为图标条时的宽度 → 56' },
+  { web: '--dsw-nav-panel-width', harmony: 'Sz.NAV_PANEL', note: '导航栏展开宽度 → 240' },
+  { web: '--dsw-detail-panel-width', harmony: 'Sz.DETAIL_PANEL', note: '详情栏默认宽度 → 320' }
 ];

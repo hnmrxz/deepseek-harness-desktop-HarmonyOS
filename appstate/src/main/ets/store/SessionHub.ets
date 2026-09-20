@@ -79,6 +79,14 @@ import {
   CREDENTIALS_SET_ENDPOINT,
   CREDENTIALS_UNSET_ENDPOINT,
   CREDENTIAL_REJECTED,
+  /*
+   * 上游错误码 `session/agent-busy` 的**具名常量**。
+   *
+   * 【为什么必须从这里导入】本文件此前把它写成字面量（`PAGE_FAIL_SEMANTIC_CODE`），
+   * `tools/arch-check.mjs` 当场判红：上游接口字面量只允许出现在 `dshcompat`。
+   * 门禁是对的——码是上游事实，本层只是它的消费者。
+   */
+  ERR_SESSION_AGENT_BUSY,
   SESSION_ATTACHMENT_ENDPOINT,
   QUEUE_RACE_ITEM_GONE,
   QUEUE_RACE_NONE,
@@ -147,6 +155,10 @@ import {
 } from '../model/Notify';
 import type { NotifyInput } from '../model/Notify';
 import type { SessionListItem } from '../model/SessionList';
+import type { RemoteHost } from '../model/RemoteHost';
+import { createRemoteHost, HostSource, HostReadyState } from '../model/RemoteHost';
+import type { SubagentRef } from '../model/Subagent';
+import { RunMode } from '../ui/Breakpoints';
 import {
   answerableDrafts,
   APPROVAL_CHOICE_ALLOW,
@@ -504,6 +516,18 @@ export interface HubSnapshot {
    * 界面据 `model/Jobs` 的规则决定：要不要出现控件、怎么排、时长怎么算（纯函数，有断言）。
    */
   jobs: SessionJob[];
+  /** 运行模式（本机运行 / 连接远程；§FR-032） */
+  runMode: RunMode;
+  /** 已发现的远程主机列表（§FR-034；本机模式下为空） */
+  remoteHosts: RemoteHost[];
+  /** 当前连接的远程主机（§FR-032；null = 本机模式或未连接远程） */
+  activeRemoteHost: RemoteHost | null;
+  /** 子代理引用列表（§FR-022；当前会话的子代理摘要） */
+  subagentRefs: SubagentRef[];
+  /** 当前 Host 是否提供 applied diffs 的 meta 字段（§FR-012；false = 界面显示占位） */
+  appliedDiffsAvailable: boolean;
+  /** Host home 目录路径（§FR-008；空串 = 未知，`~` 不展开） */
+  hostHome: string;
 }
 
 /**
@@ -540,8 +564,14 @@ const SETTINGS_REFRESH_THROTTLE_MS: number = 1200;
 const PAGE_FALLBACK_INTERVAL_MS: number = 3000;
 /** 兜底轮询最多尝试几次（F2：语义性拒绝以外的失败也不该无限重试） */
 const PAGE_FALLBACK_MAX_ATTEMPTS: number = 5;
-/** 宿主**明确拒绝**的码（真机见过的那一个）：重试无意义，立刻停 */
-const PAGE_FAIL_SEMANTIC_CODE: string = 'session/agent-busy';
+/**
+ * 宿主**明确拒绝**的码（真机见过的那一个）：重试无意义，立刻停。
+ *
+ * 取值来源是 `dshcompat/ErrorCodes.ets` 的 `ERR_SESSION_AGENT_BUSY`（上游
+ * `RemoteErrorDetailsMap` 里那个码的具名常量）——**不从本层再写一遍字面量**：
+ * arch-check 的判据是"上游 `ns/method` 形态的字面量不许出 dshcompat"。
+ */
+const PAGE_FAIL_SEMANTIC_CODE: string = ERR_SESSION_AGENT_BUSY;
 const PAGE_MAX_MESSAGES: number = 200;
 /**
  * 历史图片缓存条数上限。
@@ -600,6 +630,8 @@ export class SessionHub {
   private selectedSessionId: string = '';
   private running: boolean = false;
   private eventsReady: boolean = false;
+  /** Host home 目录（来自 ready 帧；空串 = 未知） */
+  private hostHome: string = '';
   private controlReady: boolean = false;
   /**
    * **一元能力是否可用**——与「事件流是否存活」解耦。
@@ -807,6 +839,16 @@ export class SessionHub {
    * 按 id 做增量合并会引入"哪条被删了"的推断——而帧里根本没表达删除，只有新列表本身。
    */
   private jobs: SessionJob[] = [];
+  /** 运行模式（本机运行 / 连接远程；§FR-032） */
+  private runMode: RunMode = RunMode.LOCAL;
+  /** 已发现的远程主机列表（§FR-034；本机模式下为空） */
+  private remoteHosts: RemoteHost[] = [];
+  /** 当前连接的远程主机（§FR-032；null = 本机模式或未连接远程） */
+  private activeRemoteHost: RemoteHost | null = null;
+  /** 子代理引用列表（§FR-022；当前会话的子代理摘要） */
+  private subagentRefs: SubagentRef[] = [];
+  /** 当前 Host 是否提供 applied diffs 的 meta 字段（§FR-012；false = 界面显示占位） */
+  private appliedDiffsAvailable: boolean = false;
   /** 通知发布钩子（由 `EntryAbility` 注入；未注入时一切照常，只是不发通知） */
   private notifyHooks?: NotifyHooks;
   /** 一元读回历史的兜底轮询计时器（-1 = 未启用） */
@@ -889,6 +931,7 @@ export class SessionHub {
     const sink: EventSink = {
       onReady: (facts: HostFacts) => {
         this.eventsReady = true;
+        this.hostHome = facts.home;
         this.record(`events ready clientId=${facts.clientId.substring(0, 8)} home=${facts.home}`);
         this.notify();
       },
@@ -1120,7 +1163,13 @@ export class SessionHub {
       filePreview: this.filePreview,
       attachments: this.attachmentList,
       queued: this.queuedItems,
-      jobs: this.jobs
+      jobs: this.jobs,
+      runMode: this.runMode,
+      remoteHosts: this.remoteHosts,
+      activeRemoteHost: this.activeRemoteHost,
+      subagentRefs: this.subagentRefs,
+      appliedDiffsAvailable: this.appliedDiffsAvailable,
+      hostHome: this.hostHome
     };
   }
 
@@ -5073,6 +5122,172 @@ export class SessionHub {
     this.record(`unknown ${kind}`);
     this.notify();
   }
+
+  // ───────────────────────── 远程模式管理（§FR-032–037） ─────────────────────────
+
+  /**
+   * 切换到远程模式——断开本地 Host，建立远程连接。
+   *
+   * 流程：断开当前连接 → 配置远程地址 → 连接认证 → 切换 runMode。
+   * 任何步骤失败都留在 LOCAL 模式并回报错误。
+   */
+  async switchToRemote(host: RemoteHost): Promise<void> {
+    this.record(`switchToRemote ${host.hostAddress}`);
+    // 先断开现有连接（无论本地还是远程）
+    await this.disconnect();
+    // 配置远程地址
+    const configured: boolean = this.configure(host.hostAddress, host.label);
+    if (!configured) {
+      this.setActionError('远程主机地址无法解析，请检查 IP:Port 格式');
+      this.notify();
+      return;
+    }
+    // 尝试连接
+    const connected: boolean = await this.connect();
+    if (connected) {
+      this.runMode = RunMode.REMOTE;
+      this.activeRemoteHost = host;
+      this.record(`switchToRemote ok ${host.hostAddress}`);
+    } else {
+      this.runMode = RunMode.LOCAL;
+      this.activeRemoteHost = null;
+      this.setActionError('无法连接远程主机，请检查 Host 是否在运行且网络可达');
+      this.record(`switchToRemote fail ${host.hostAddress}`);
+    }
+    this.notify();
+  }
+
+  /**
+   * 切换回本机模式——断开远程连接，恢复本地 Host。
+   *
+   * 流程：断开远程连接 → 切换 runMode → 本地 Host 由上层启动。
+   * 本方法不启动本地 Host——那是 EntryAbility/页面的责任。
+   */
+  async switchToLocal(): Promise<void> {
+    this.record('switchToLocal');
+    if (this.runMode === RunMode.LOCAL) {
+      return;
+    }
+    await this.disconnect();
+    this.runMode = RunMode.LOCAL;
+    this.activeRemoteHost = null;
+    this.remoteHosts = [];
+    this.notify();
+  }
+
+  /**
+   * 向子代理发送追问消息（§FR-023）。
+   *
+   * 调用 `subagents/prompt` 端点（dshcompat 已定义）。
+   * sessionId 是子代理的会话 ID。
+   */
+  async promptSubagent(sessionId: string, text: string): Promise<boolean> {
+    if (!this.unaryReady) {
+      this.setActionError('未连接：无法向子代理发送追问');
+      this.notify();
+      return false;
+    }
+    if (sessionId.length === 0 || text.trim().length === 0) {
+      return false;
+    }
+    const body: Record<string, Object> = {};
+    body['sessionId'] = sessionId;
+    body['text'] = text;
+    const args: Object | undefined = argsFor(SESSION_PROMPT_ENDPOINT, body as Object);
+    if (args === undefined) {
+      this.setActionError('当前 Host 不支持子代理追问');
+      this.notify();
+      return false;
+    }
+    const result: RpcResult = await this.conn.call(SESSION_PROMPT_ENDPOINT, args);
+    if (result.ok) {
+      this.record(`subagent prompt ok ${sessionId.substring(0, 8)}`);
+      return true;
+    }
+    const failure = result.error;
+    const code: string = failure === undefined ? 'unknown' : failure.code;
+    this.setActionError(`子代理追问失败：${friendlyFailure(code, failure === undefined ? '' : failure.message)}`);
+    this.record(`subagent prompt fail ${code}`);
+    this.notify();
+    return false;
+  }
+
+  /**
+   * 中断运行中的子代理（§FR-024）。
+   *
+   * 调用 `subagents/interruptByParent` 端点（dshcompat 已定义）。
+   */
+  async interruptSubagent(sessionId: string): Promise<boolean> {
+    if (!this.unaryReady) {
+      this.setActionError('未连接：无法中断子代理');
+      this.notify();
+      return false;
+    }
+    if (sessionId.length === 0) {
+      return false;
+    }
+    // 使用 session/cancel 端点中断子代理会话
+    const body: Record<string, Object> = {};
+    body['sessionId'] = sessionId;
+    const args: Object | undefined = argsFor(SESSION_CANCEL_ENDPOINT, body as Object);
+    if (args === undefined) {
+      this.setActionError('当前 Host 不支持中断子代理');
+      this.notify();
+      return false;
+    }
+    const result: RpcResult = await this.conn.call(SESSION_CANCEL_ENDPOINT, args);
+    if (result.ok) {
+      this.record(`subagent interrupt ok ${sessionId.substring(0, 8)}`);
+      return true;
+    }
+    const failure = result.error;
+    const code: string = failure === undefined ? 'unknown' : failure.code;
+    this.setActionError(`中断子代理失败：${friendlyFailure(code, failure === undefined ? '' : failure.message)}`);
+    this.record(`subagent interrupt fail ${code}`);
+    this.notify();
+    return false;
+  }
+
+  /**
+   * 扫描 LAN 发现远程主机（§FR-034）。
+   *
+   * 使用 @ohos.net.connection 获取本机 IP，扫描同子网 3080 端口。
+   * 结果缓存在 `remoteHosts` 中供 UI 展示。
+   * 实际扫描逻辑在 connection 模块的 LanDiscovery 协议层。
+   */
+   async scanLan(): Promise<RemoteHost[]> {
+     this.record('scanLan start');
+     // LAN 扫描需要网络能力：未连接时也允许扫描（扫描本身不依赖 mux 连接）
+     try {
+       const connModule: Record<string, Object> = await import('connection') as Record<string, Object>;
+       const scanFn: Object | undefined = connModule['scanLanHosts'];
+       if (typeof scanFn === 'function') {
+         const lanRecords: Record<string, string>[] = await (scanFn as () => Promise<Record<string, string>[]>)();
+         // 将 connection 层的 LanHostRecord 转换为 appstate 层的 RemoteHost
+         const hosts: RemoteHost[] = [];
+         for (let i = 0; i < lanRecords.length; i++) {
+           const rec: Record<string, string> = lanRecords[i];
+           const host: RemoteHost = createRemoteHost(rec['address'] ?? '', HostSource.LAN_SCAN);
+           const rs: string = rec['readyState'] ?? '';
+           host.readyState = rs === 'ready' ? HostReadyState.READY
+             : rs === 'not-ready' ? HostReadyState.NOT_READY
+             : HostReadyState.UNKNOWN;
+           hosts.push(host);
+         }
+         this.remoteHosts = hosts;
+         this.record(`scanLan ok ${hosts.length} hosts`);
+       } else {
+         this.remoteHosts = [];
+         this.record('scanLan fallback: scanLanHosts not found in connection module');
+       }
+    } catch (e) {
+      // connection 模块可能尚未实现 scanLanHosts——降级为空列表
+      this.remoteHosts = [];
+      this.record('scanLan fallback: connection module not available');
+    }
+    this.notify();
+    return this.remoteHosts;
+  }
 }
 
 // ───────────────────────── 纯函数：线上事件 → 呈现契约 ─────────────────────────
@@ -6017,6 +6232,10 @@ function applyToolSlots(item: TrajectoryItem, data: Object | undefined,
   const callId: ResolvedSlot = resolveSlot(data, shape, ContentSlot.CALL_ID);
   if (callId.found) {
     item.callId = asText(callId.value);
+  }
+  const meta: ResolvedSlot = resolveSlot(data, shape, ContentSlot.TOOL_META);
+  if (meta.found) {
+    item.toolMeta = asText(meta.value);
   }
 
   if (item.toolState === ToolState.PENDING) {

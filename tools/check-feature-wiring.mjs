@@ -239,7 +239,15 @@ const FEATURES = [
    * 钉三段：意图投影 + 收窄判定 + 视图面板。
    */
   { name: '计划待审', patterns: [['intentKind', 2], ['planReviewOf', 2], ['计划待审', 1]] },
-  { name: '侧栏收起', patterns: [['sidebarPresentationOf', 2], ['onToggleSidebarExpanded', 2], ['showExpandToggle', 2]] },
+  /*
+   * （T026/T028 移除）「侧栏收起」——三条接线里有两条（`onToggleSidebarExpanded` /
+   * `showExpandToggle`）住在 view/shell/AppShell.ets + SidebarShell.ets 的三轨侧栏里，
+   * 已随 PC 原生壳整体删除（deletion-manifest §3.1/§12）。v2 的 DESKTOP_LIKE 走官方
+   * Web UI 直载（侧栏由官方前端自带），PHONE 走 DrawerNav 边缘手势抽屉，两侧都没有
+   * 「图标条 ↔ 展开面板」这个可切换态 ⇒ 守护的缺陷场景随组件消亡。
+   * 注：appstate `ShellTracks.sidebarPresentationOf` 仍在（三轨模型的纯函数投影），
+   * 但它现在只能被自身模块消费，属 PC 链残留，另行收敛，不在本门禁登记。
+   */
   /*
    * 消息图片（P0-3）。官方 `dsh-client-ui-attachment` 往三个槽位注册呈现
    * （`conversation.input.attachments` / `conversation.message.images` / `conversation.trajectory.images`），
@@ -311,46 +319,74 @@ const FEATURES = [
    * 其余落到兜底 `${code} ${message}` ⇒ 真机上出现「session/conflict session "x" already has cwd …」
    * 这种只有开发者读得懂的句子。现在文案表在纯模型里、可达集合可对账，中枢只委托。
    */
-  { name: '失败文案', patterns: [['failureText', 2], ['REACHABLE_FAILURE_CODES', 2], ['FAILURE_TEXT_TABLE', 2]] }
+  { name: '失败文案', patterns: [['failureText', 2], ['REACHABLE_FAILURE_CODES', 2], ['FAILURE_TEXT_TABLE', 2]] },
+  /*
+   * 会话搜索**组件**（T023 收尾）。缺陷形态比「后台任务条」更隐蔽一层：
+   * `SessionSearch.ets` 写好了（对照 `SessionSearch.kt` 的行结构 + 上限提示 + 退化说明），
+   * 但两个宿主**各自内联**渲染同一份行结构 ⇒ 同一件事两套实现，改了组件界面不动，
+   * 组件本身是**死代码**（全仓零引用），而编译与界面都不会报。
+   * 现在钉住宿主侧的组件调用点：`ConversationPane` 与 `WorkspaceBrowser` 各一处
+   * （≥2 处保证"还有调用点"而不是只剩定义），并钉住组件契约里的两个回调名。
+   */
+  { name: '会话搜索组件', patterns: [['SessionSearch\\(\\{', 2], ['onOpenHit', 2]] },
+  /*
+   * 双壳路由（v2 US1/US2/US3 起，T028 登记）。缺陷形态与本门禁其余条目同类——"能力在、接线没"：
+   * `WebShell.ets` / `RemoteShell.ets` 两个壳与两套门面都写着，但**顶层形态路由分支被删**
+   * （Index 只剩一条路线）时构建照样过；那一刻某一个形态（平板/2in1 或 手机/折叠闭合）
+   * 打开就是空白，而没有任何测试会红。钉三段：两个壳组件 + 两个门面构造器（宿主真的装配了
+   * 它们，而不是只剩下 import）。
+   */
+  { name: '双壳路由', patterns: [['WebShell', 3], ['RemoteShell', 3], ['buildWebShellFacade', 2], ['buildRemoteShellFacade', 2]] },
+  /*
+   * 形态翻转驱动路由（v2 US6/T029）。这一条钉的是**"折叠开合不切路线"**这一类缺陷：
+   * `FormFactorTracker`（appstate）早就实现了"宽度 → 形态 → 通知订阅者"，但订阅者
+   * 一旦被删（退回"只在档位变化时读一次当前值"），折叠屏开合就只剩一次**没人重算**的
+   * 条件渲染——两个形态都各自"能跑"，只是开合时不动，构建与门禁都不会红。
+   * 钉三段：宿主真的订阅（`subscribe`）、回调有唯一落点（`applyRouteFactor`）、
+   * 形态参数真的被传给 Web 壳（`webShellFormFactorOf`）。
+   */
+  { name: '形态翻转路由', patterns: [['factorTracker.subscribe', 1], ['applyRouteFactor', 2], ['webShellFormFactorOf', 2]] },
+  /*
+   * 远程连接流程的取消语义（v2 US6/T030）。桌面壳的连接页返回是
+   * `onBack: exitRemoteConnectFlow`，而手机壳的连接页返回走 `backOneLayer → consumeBack`
+   * ⇒ 若不在 `consumeBack` 里收口，"取消连接远程"只有桌面形态是干净的：手机形态会
+   * **只换页、不收回 `remoteModePending`**（中枢据此拒收回写 runMode），用户被留在一个
+   * 谁也不认领的待选态。钉住：唯一执行点仍然存在且被两处引用（判定 + 出口）。
+   */
+  { name: '远程流程取消', patterns: [['exitRemoteConnectFlow', 2], ['remoteModePending', 4]] }
 ];
 
 /**
  * 「不许出现」的接线（E366）。
  *
  * 【为什么要反面规则】`FEATURES` 只能表达"某特征至少出现 N 次"，而这一轮查出的缺陷恰恰是
- * **多了一个不该有的东西**：`AppShell.buildDouble` 自己画了一份 rail surface，把侧栏呈现
- * **硬编码**成 `TrackPresentation.RAIL`，于是双栏下「展开侧栏」是个死按钮（偏好变了、纯函数
- * 判定也变了，只有这一个调用点没问判定）。这类缺陷正面计数拦不住 —— 该在的特征（`sidebarPresentationOf`
- * 的定义与调用）全都在。
- *
- * 【为什么只拦 RAIL，不拦 PANEL / OVERLAY】`RAIL` 在本仓**永远是判定的结果**（形态默认或用户
- * 收起），任何地方把它写成常量就等于绕过了判定；而 `PANEL`（手机抽屉）与 `OVERLAY`（底部标签）
- * 在 `AppShell` 里是**结构上固定**的表面，写常量是对的。
+ * **多了一个不该有的东西**：视图把某个"该由判定得出"的呈现**硬编码**成常量，于是偏好变了、
+ * 纯函数判定也变了，只有这一个调用点没问判定。这类缺陷正面计数拦不住 —— 该在的特征
+ * （判定的定义与调用）全都在。
  *
  * 【注释先剥掉】规则命中的是代码；本轮修复留下的那段注释里就写着那个常量名，
  * 不剥注释的话门禁会拦下自己的说明文字。
  */
 const FORBIDDEN = [
+  /*
+   * `accessSync` 会抛异常（`@ohos.file.fs` 的 `13900018 Not a directory` 等），
+   * 而本仓近二十处把它当纯布尔谓词用过 —— 其中 `CoreStore.verifyStagedTree()` 的三个
+   * "关键件哨兵"正是**靠它来决定要不要给一句说得清的失败**：文件真缺时它抛异常，
+   * 那句 `fail('解包结果缺少宿主包…')` 根本走不到（守卫成了崩溃点，E402）。
+   * 现在统一走 `hostruntime/core/FileProbe.fileExists()` / `dirExists()`。
+   */
   {
-    /*
-     * `accessSync` 会抛异常（`@ohos.file.fs` 的 `13900018 Not a directory` 等），
-     * 而本仓近二十处把它当纯布尔谓词用过 —— 其中 `CoreStore.verifyStagedTree()` 的三个
-     * "关键件哨兵"正是**靠它来决定要不要给一句说得清的失败**：文件真缺时它抛异常，
-     * 那句 `fail('解包结果缺少宿主包…')` 根本走不到（守卫成了崩溃点，E402）。
-     * 现在统一走 `hostruntime/core/FileProbe.fileExists()` / `dirExists()`。
-     */
     name: '`fs.accessSync` 不得直接使用（它会抛，不是返回 false）',
     dirs: ['hostruntime/src', 'entry/src', 'appstate/src', 'platform/src', 'connection/src'],
     patterns: ['accessSync'],
     allowFiles: ['hostruntime/src/main/ets/core/FileProbe.ets'],
     why: '改用 FileProbe 的 fileExists()/dirExists()：accessSync 在"不是目录/权限不足"时抛异常，'
       + '会让守卫把失败原因换成一个未处理异常'
-  },
-  {
-    name: '侧栏呈现判定不得被硬编码',
-    files: ['entry/src/main/ets/view/shell/AppShell.ets'],
-    patterns: ['TrackPresentation\\.RAIL']
   }
+  /*
+   * （T025 移除）「侧栏呈现判定不得被硬编码」——受检文件 view/shell/AppShell.ets
+   * 已随 PC 原生壳整体删除（deletion-manifest §3.1）；守护的缺陷场景随组件消亡。
+   */
 ];
 
 /**

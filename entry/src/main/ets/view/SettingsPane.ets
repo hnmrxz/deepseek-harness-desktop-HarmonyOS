@@ -1,34 +1,53 @@
 /**
- * 设置页（D1 §7.6 / D3 §1）。
+ * 设置页（T024：对照 `dshmobile/ui/screens/settings/SettingsScreen.kt` 复刻本文件拥有的部分）。
  *
- * 五个页签：通用 / 模型 / 凭据 / 插件 / 设备。
+ * ## 对照结构（SettingsScreen.kt）
  *
- * 规格要点：
+ * 源码是一条滚动长页：`SettingsCard`（`SectionHeader` + `bgLayer1` r12 卡体）分节成卡。
+ * 本仓的设置页是**注册表驱动的分区页**（`sections` + `section`，唯一真值在
+ * `NavigationState.settingsSection`）——分区内容归各域组件渲染（通用/模型/预设/技能/
+ * 核心/插件/设备），它们不在本任务领地；本文件拥有并重塑的是三块：
+ *   ① **分区切换条**——选中语言对照源码 `AppearanceChip`（选中 = `accentTertiary` 底 +
+ *      `accent` 字，r16；未选 = `bgModulePlatform` 底 + `labelSecondary` 字）；
+ *   ② **写入回执面**——容器语言对照源码"横幅/通知面"（`bgLayer1` r12 面 +
+ *      `small13` `labelSecondary`）；
+ *   ③ **内容滚动列**——内距对照源码页面（水平 `comfortable`、块距 `comfortable`）。
+ *
+ * ## 页签与源码的取舍（如实记录）
+ *
+ * 源码设置页没有分区页签（单页滚动、卡即分区）；本仓的分区是**导航状态**（深链/返回
+ * 都依赖它，见 `section` 的注释），改成单页会改掉导航契约——保留页签条，只换它的视觉。
+ *
+ * ## 规格要点（保留 v1）
  *   - 每个设置项都带**说明文字**（D3 §4 文案纪律：不能只有名字）；
  *   - 凭据**只呈现状态，绝不含明文值**（D1 §11.5 S3/S4）；
- *   - 插件页展示 cordis fiber 阶段与启用状态；
- *   - 设备页列出 Host、接入级别（L0/L1）与授权状态，并给出配对/吊销入口（D1 §6.4）。
+ *   - 写入回执只在"属于当前分区"时显示（E347，域判不出来时宁可显示）。
  */
 
 import {
   AboutInfo,
   AgentPresetRow,
   CredentialItem,
-  emptyCoreView,
-  Fs,
+  DsPalette,
+  DsShape,
+  DsSpacing,
+  DsThemePreference,
+  DsType,
+  HarmonyBorder,
   HostRecord,
   ModelOption,
   ModelSelection,
-  Radius,
   PluginItem,
+  RunMode,
   SettingGroup,
   SettingItem,
   SkillRow,
-  Sp,
-  Sz,
-  settingsSectionLabelRes
+  dsPaletteOf,
+  emptyCoreView,
+  settingsSectionLabelRes,
 } from 'appstate';
 import type { CoreViewState, PanelDescriptor } from 'appstate';
+import { installDsSystemDarkWatch } from './NativePrimitives';
 import { SettingsGeneral } from './SettingsGeneral';
 import { SettingsDevice } from './SettingsDevice';
 import { SettingsModels } from './SettingsModels';
@@ -37,12 +56,22 @@ import { SettingsPresets } from './SettingsPresets';
 import { SettingsSkills } from './SettingsSkills';
 import { SettingsCore } from './SettingsCore';
 
+/* ───────── 组件级度量（SettingsScreen.kt 的 dp 字面量，逐条标注出处） ───────── */
+
+/** SettingsScreen.kt `AppearanceChip`：水平内距 14dp */
+const SETTINGS_CHIP_PAD_H: number = 14;
+/** 等宽/系统字体栈（Type.kt system UI stack） */
+const SETTINGS_FONT_SANS: string = 'sans-serif';
+
 /** 设置面板（E108/E110/E114/E120） */
 @Component
 export struct SettingsPane {
   /** 宿主报告的权限组合（E124；空串=未投影，界面不显示要切换的假档位） */
   @Prop permissionCurrent: string = '';
   @Prop permissionOptions: string[] = [];
+
+  /** §FR-058：当前运行模式 */
+  @Prop runMode: RunMode = RunMode.LOCAL;
 
   /** 插件分区子页签（E114：配置 / 列表） */
   /** 插件清单的过滤词（只作用于「列表」子页签） */
@@ -109,6 +138,9 @@ export struct SettingsPane {
   /** 打开诊断页 */
   onOpenDiagnostics: () => void = () => {
   };
+  /** §FR-058：切换运行模式 */
+  onSwitchRunMode: (mode: RunMode) => void = () => {
+  };
 
   /**
    * 当前分区（P4-1：**唯一真值在 `NavigationState.settingsSection`**，由宿主传进来）。
@@ -124,10 +156,73 @@ export struct SettingsPane {
   onSelectSection: (sectionId: string) => void = () => {
   };
 
+  /**
+   * 核心分区（E110/E118：原「核心」一级页签并入这里）。
+   *
+   * 【为什么不用 `@BuilderParam` 注入】原先由宿主注入一个 `@Builder`（`coreSlot`），
+   * 真机上点开「核心」分区**直接 JS 崩溃**（`AppKilledReporter: reason: JsError`）。
+   * 改为把 `CorePane` 需要的属性直接传进来：数据流一眼能看完，
+   * 也不再依赖"父 Builder 在子组件里被调用"这条容易踩坑的机制。
+   */
+  @Prop coreView: CoreViewState = emptyCoreView();
+  /** 核心页顶部的一次性提示（宿主维护） */
+  @Prop coreNotice: string = '';
+  /** 插件行操作的结果提示（核心页里的插件分区会显示） */
+  @Prop pluginNotice: string = '';
+  onCoreAction: (id: string) => void = () => {
+  };
+  onCoreSelectVersion: (version: string) => void = () => {
+  };
+  onTogglePluginRow: (id: string, disabled: boolean) => void = () => {
+  };
+  onResetPluginRowsAction: () => void = () => {
+  };
+
+  /**
+   * **全部**设置分区（含被「通用」策展隐藏的 `llm-*` 等）。
+   *
+   * 官方 Models 页的编辑卡片直接读写提供方的设置分区（`baseURL`、模型目录…），
+   * 所以模型页必须能看到这些分区；「通用」页继续用策展后的 `groups`（见 E114）。
+   * 预设段（`SettingsPresets`）吃的是同一份"全部"——`agent-*` 分区同样不在策展结果里。
+   */
+  @Prop allGroups: SettingGroup[] = [];
+  /** 技能清单（E135）与读取结论：结论非空必须显示，不假装"没有技能" */
+  @Prop skills: SkillRow[] = [];
+  @Prop skillNote: string = '';
+  /**
+   * Agent 预设名单（E159/E160：`agentPresets/list` 实测形状）。
+   *
+   * 语义：预设 = **一个会话的 Agent 所运行的插件组装**（工具/提示词/能力）。
+   * `name` / `description` 由**预设自带**（真机上就是中文），我们不自编文案；
+   * `trust === 'system'` 是**随附只读**预设（官方不给复制/删除）。
+   */
+  @Prop presets: AgentPresetRow[] = [];
+  @Prop presetNote: string = '';
+  /**
+   * 预设动作（E170）。**复制**是官方唯一的创建入口；**删除**只对自定义预设开放，
+   * 且"随附预设不可写"由**宿主**强制（我们只是把它的原话转达给用户）。
+   *
+   * 三个临时态（两步确认 / 只读查看的 id 与内容）**不在本组件**：它们随预设段
+   * 一起归 `SettingsPresets`（P4-5）——一次交互内的临时态不该跨段落存活。
+   */
+  onPresetCopy: (from: string, name: string) => void = () => {
+  };
+  onPresetDelete: (id: string) => void = () => {
+  };
+
+  @StorageProp('dsSystemDark') systemDark: boolean = false;
+
+  aboutToAppear(): void {
+    installDsSystemDarkWatch();
+  }
+
+  private palette(): DsPalette {
+    return dsPaletteOf(DsThemePreference.SYSTEM, this.systemDark);
+  }
+
   build() {
     Column() {
       this.tabBar()
-      Divider().color($r('sys.color.comp_divider'))
 
       // 写入结果回显：成功 / 冲突 / 被拒 / 本机偏好都走这里。
       // 不做乐观更新，所以这里是用户唯一能看到「Host 到底接受了没有」的地方。
@@ -136,15 +231,21 @@ export struct SettingsPane {
       // 看起来像当前分区刚写出来的结果（域判不出来时空串 ⇒ 照常显示，见 writeDomain）。
       if (this.writeNote.length > 0 && (this.writeDomain.length === 0 || this.writeDomain === this.section)) {
         Text(this.writeNote)
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_secondary'))
+          .fontSize(DsType.SMALL_13.size)
+          .lineHeight(DsType.SMALL_13.lineHeight)
+          .fontWeight(DsType.SMALL_13.weight)
+          .fontFamily(SETTINGS_FONT_SANS)
+          .fontColor(this.palette().labelSecondary)
           .width('100%')
-          .padding({ left: Sp.M, right: Sp.M, top: Sp.S, bottom: Sp.S })
-          .backgroundColor($r('sys.color.background_secondary'))
+          .padding(DsSpacing.MEDIUM)
+          .borderRadius(DsShape.BLOCK)
+          .backgroundColor(this.palette().bgLayer1)
+          .borderWidth(HarmonyBorder.HAIRLINE)
+          .borderColor(this.palette().borderL2)
       }
 
       Scroll() {
-        Column({ space: Sp.L }) {
+        Column({ space: DsSpacing.COMFORTABLE }) {
           if (this.section === 'settings.skills') {
             // 技能段归 SettingsSkills（P4-5 拆出的域组件）：它只吃清单 + 读取结论两个 prop，
             // 没有任何写入动作与组件内状态——「读不到就说读不到」的判定留在数据层（E135）。
@@ -181,7 +282,7 @@ export struct SettingsPane {
                 this.onResetSetting(key);
               }
             })
-} else if (this.section === 'settings.core') {
+          } else if (this.section === 'settings.core') {
             // 核心段归 SettingsCore（P4-6 拆出的域组件）：它包住 `CorePane` 并承载两块提示。
             // 不用 `@BuilderParam` 注入（E118：真机上点开这一分区会 JS 崩溃）——属性直传。
             SettingsCore({
@@ -207,8 +308,12 @@ export struct SettingsPane {
               groups: this.groups,
               permissionCurrent: this.permissionCurrent,
               permissionOptions: this.permissionOptions,
+              runMode: this.runMode,
               onOpenDiagnostics: () => {
                 this.onOpenDiagnostics();
+              },
+              onSwitchRunMode: (mode: RunMode) => {
+                this.onSwitchRunMode(mode);
               },
               onToggleSetting: (key: string, value: boolean) => {
                 this.onToggleSetting(key, value);
@@ -272,7 +377,7 @@ export struct SettingsPane {
           }
         }
         .width('100%')
-        .padding(Sp.M)
+        .padding(DsSpacing.MEDIUM)
       }
       .layoutWeight(1)
       .width('100%')
@@ -283,33 +388,11 @@ export struct SettingsPane {
     .height('100%')
   }
 
-  /**
-   * 核心分区（E110/E118：原「核心」一级页签并入这里）。
-   *
-   * 【为什么不用 `@BuilderParam` 注入】原先由宿主注入一个 `@Builder`（`coreSlot`），
-   * 真机上点开「核心」分区**直接 JS 崩溃**（`AppKilledReporter: reason: JsError`，
-   * 23:57:10 的 `JS_ERROR…` faultlog），而只改这一处即可回避。
-   * 改为把 `CorePane` 需要的 6 个属性直接传进来：数据流一眼能看完，
-   * 也不再依赖"父 Builder 在子组件里被调用"这条容易踩坑的机制。
-   */
-  @Prop coreView: CoreViewState = emptyCoreView();
-  /** 核心页顶部的一次性提示（宿主维护） */
-  @Prop coreNotice: string = '';
-  /** 插件行操作的结果提示（核心页里的插件分区会显示） */
-  @Prop pluginNotice: string = '';
-  onCoreAction: (id: string) => void = () => {
-  };
-  onCoreSelectVersion: (version: string) => void = () => {
-  };
-  onTogglePluginRow: (id: string, disabled: boolean) => void = () => {
-  };
-  onResetPluginRowsAction: () => void = () => {
-  };
-
+  /** 分区切换条（保留 v1 的注册表驱动 + 横向滚动；选中语言对照 AppearanceChip） */
   @Builder
   tabBar() {
     Scroll() {
-      Row({ space: Sp.S }) {
+      Row({ space: DsSpacing.SMALL }) {
         /*
          * 分区清单来自注册表（`settingsSections`，官方四段在前、本仓特有四项在后）。
          * 文案走 `settingsSectionLabelRes`（跟随系统语言），与侧栏入口同一套做法。
@@ -318,25 +401,40 @@ export struct SettingsPane {
           this.tabChip(d.id, settingsSectionLabelRes(d.id))
         }, (d: PanelDescriptor) => d.id)
       }
-      .padding({ left: Sp.M, right: Sp.M })
+      .padding({ left: DsSpacing.MEDIUM, right: DsSpacing.MEDIUM })
     }
     .scrollable(ScrollDirection.Horizontal)
     .scrollBar(BarState.Off)
     .width('100%')
-    .height(Sz.TOUCH_MIN)
+    .constraintSize({ minHeight: DsSpacing.TOUCH_TARGET })
   }
 
+  /**
+   * 一个分区 chip（对照 SettingsScreen.kt `AppearanceChip`：选中 = accentTertiary 底 +
+   * accent 字 + r16；未选 = bgModulePlatform 底 + labelSecondary 字 + r16；
+   * 水平内距 14dp、垂直内距 small）。
+   */
   @Builder
   tabChip(key: string, label: ResourceStr) {
     Text(label)
-      .fontSize(Fs.SECONDARY)
-      .fontColor(this.section === key ? Color.White : $r('sys.color.font_secondary'))
-      .padding({ left: Sp.M, right: Sp.M, top: Sp.S, bottom: Sp.S })
-      .borderRadius(Radius.L)
-      .backgroundColor(this.section === key ? $r('sys.color.brand') : $r('sys.color.background_secondary'))
+      .fontSize(DsType.SMALL_13.size)
+      .lineHeight(DsType.SMALL_13.lineHeight)
+      .fontWeight(DsType.SMALL_13.weight)
+      .fontFamily(SETTINGS_FONT_SANS)
+      .fontColor(this.section === key ? this.palette().accent : this.palette().labelSecondary)
+      .padding({
+        left: SETTINGS_CHIP_PAD_H,
+        right: SETTINGS_CHIP_PAD_H,
+        top: DsSpacing.SMALL,
+        bottom: DsSpacing.SMALL
+      })
+      .borderRadius(DsShape.CUBE)
+      .backgroundColor(this.section === key
+        ? this.palette().accentTertiary : this.palette().bgModulePlatform)
       .onClick(() => {
         this.onSelectSection(key);
       })
+      .accessibilityText(this.section === key ? `${label}，已选中` : `${label}`)
   }
 
   /*
@@ -344,102 +442,6 @@ export struct SettingsPane {
    * （当时通用段与预设段有多个调用点）。P4-5 把那两段搬进 `SettingsSkills`/`SettingsPresets` 之后，
    * **它一个调用点都没有了**——而它的文档还写着"多个调用点"，读者会以为这里还在用。
    * 由 E350 的死代码门禁查出并删除；`SettingRow` 的导入也随之摘掉。
-   */
-  // ───────────── 通用 ─────────────
-
-
-  /** 行的显示名：有官方中文措辞就用它，否则保持 Host 原文（E120） */
-
-  /** 行的说明：官方有 description 就用官方的（如「仅影响会话内容的字号」），否则用 Host 给的 */
-
-  /** 选项值的显示：官方译名优先（浅色/深色/跟随系统、标准/紧凑），否则回落既有标签 */
-
-
-
-  // ───────────── 模型 ─────────────
-
-  /**
-   * **全部**设置分区（含被「通用」策展隐藏的 `llm-*` 等）。
-   *
-   * 官方 Models 页的编辑卡片直接读写提供方的设置分区（`baseURL`、模型目录…），
-   * 所以模型页必须能看到这些分区；「通用」页继续用策展后的 `groups`（见 E114）。
-   * 预设段（`SettingsPresets`）吃的是同一份"全部"——`agent-*` 分区同样不在策展结果里。
-   */
-  @Prop allGroups: SettingGroup[] = [];
-  /** 技能清单（E135）与读取结论：结论非空必须显示，不假装"没有技能" */
-  @Prop skills: SkillRow[] = [];
-  @Prop skillNote: string = '';
-  /**
-   * Agent 预设名单（E159/E160：`agentPresets/list` 实测形状）。
-   *
-   * 语义：预设 = **一个会话的 Agent 所运行的插件组装**（工具/提示词/能力）。
-   * `name` / `description` 由**预设自带**（真机上就是中文），我们不自编文案；
-   * `trust === 'system'` 是**随附只读**预设（官方不给复制/删除）。
-   */
-  @Prop presets: AgentPresetRow[] = [];
-  @Prop presetNote: string = '';
-  /**
-   * 预设动作（E170）。**复制**是官方唯一的创建入口；**删除**只对自定义预设开放，
-   * 且"随附预设不可写"由**宿主**强制（我们只是把它的原话转达给用户）。
-   *
-   * 三个临时态（两步确认 / 只读查看的 id 与内容）**不在本组件**：它们随预设段
-   * 一起归 `SettingsPresets`（P4-5）——一次交互内的临时态不该跨段落存活。
-   */
-  onPresetCopy: (from: string, name: string) => void = () => {
-  };
-  onPresetDelete: (id: string) => void = () => {
-  };
-
-  /** 提供方 → 适配器默认凭据引用（官方派生规则 `<ROUTE>_API_KEY`，见 E106） */
-
-  /**
-   * 未被任何提供方卡片覆盖的凭据引用（E157：模型页去重的关键）。
-   *
-   * 提供方卡片用 `<ROUTE>_API_KEY` 这一个引用；宿主还会报告别的引用
-   * （例如设置命名空间里声明的槽位）。把前者已覆盖的过滤掉，
-   * 用户就不会看到"同一把密钥填两次"，同时**没有任何引用被隐藏**。
-   */
-
-  /**
-   * 密钥状态点的颜色语义（官方：**只有确认已配置才是绿**，**只有确认缺失才是红**，
-   * 其余一律"未知"——不把未知渲染成任一种结论）。
-   */
-
-  /** 提供方的设置分区（先试 `llm-<提供方首段>`，再退到通用 pi-ai 分区；找不到就返回 undefined，不猜） */
-  /**
-   * 目录里**尚未配置**的提供方（E181）。
-   *
-   * 【为什么读中枢快照而不是再加一个 prop】目录是"静态事实"，由进入设置页时触发读取
-   * （`Index.selectTab` → `refreshProviderCatalog()`），读取后中枢通知、本组件随之重建；
-   * 为它单独再穿一层 prop 只增加耦合，不会带来额外正确性。
-   * 【已配置怎么判定】`providerGroups()` 是"宿主设置里已出现的提供方" ⇒ 从目录里减掉它们。
-   */
-  /**
-   * 候选提供方（E211）：在 `providerCandidates()` 之上套一层**搜索过滤**。
-   *
-   * 对齐官方 `candidateSearch`（其候选区带搜索框与工具栏）。纯前端过滤、不涉端点；
-   * 大小写不敏感，空词返回全部。
-   */
-
-
-
-
-  // 模型段的判定与呈现（提供方卡片 / 凭据派生 / 模型目录分组 / 推理强度选择）已归
-  // `SettingsModels`（P4-3b）；本组件只留"这一段由谁渲染"的分派。
-
-  // ───────────── 凭据 ─────────────
-
-
-  /** 凭据项的说明文字 */
-
-  // ───────────── 插件 ─────────────
-
-  /**
-   * 单个插件的可安装性行。
-   *
-   * 目前**恒为 UNKNOWN**：上游 `pluginInventory.list` 不提供"是否含原生模块"这一信息。
-   * 这是**记录事实**而不是偷懒——等能读到插件包清单（package.json / 是否存在 .node）后，
-   * 再把真实取值传进来即可，界面与契约都不用改。
    */
 
   /**
@@ -460,13 +462,4 @@ export struct SettingsPane {
      */
     SettingsPlugins({ plugins: this.plugins })
   }
-
-  /** 只读清单 + 关键词过滤（官方"插件列表"标签页的语义） */
-
-  /** 关键词过滤后的插件清单（空关键词 = 全部） */
-
-
-  // ───────────── 设备 ─────────────
-
-
 }

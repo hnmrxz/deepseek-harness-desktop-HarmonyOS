@@ -7,9 +7,13 @@
 
 import {
   PendingAnswerDraft,
+  PendingAnswerDrafts,
   APPROVAL_CHOICE_ALLOW,
   APPROVAL_CHOICE_DENY,
+  emptyPendingAnswerDrafts,
   Fs,
+  HarmonyIconSize,
+  pendingAnswerGroupOf,
   PendingChoice,
   PendingItem,
   PendingKind,
@@ -52,10 +56,25 @@ export struct PendingPane {
   onCancelQuestion: (item: PendingItem) => void = () => {
   };
 
-  /** 自由文本输入（按待决 id 保存） */
-  @State freeText: string = '';
-  @State freeTextFor: string = '';
-  /** 多选状态（仅提问多选使用） */
+  /**
+   * 答复草稿（**宿主所有**，FR-013）。
+   *
+   * 【为什么它不在这里】此前本组件有一对私有 `@State`（`freeText` / `freeTextFor`）
+   * 声称保存"审批的应答理由"。实测它们**从来没有生产者**（本组件内没有任何输入框，
+   * 全仓也没有第二个写入点），而且那个理由也无法随应答上传（上游审批 outcome 是封闭词表，
+   * 见 `Index.decidePending` 的登记）⇒ 它们既不可达也不可消费，本次一并删除。
+   *
+   * 【留下来的是什么】真正承载"半截答复"的是**提问卡的逐题草稿**（选项点一下即记、
+   * 自定义答案是自由输入）。它此前是 `QuestionGroupCard` 的私有 `@State`：
+   * 折叠屏开合换渲染路线（PHONE ↔ DESKTOP_LIKE）时原生树整体重建 ⇒ 用户点到一半的
+   * 答案静默消失。现在草稿住在宿主 `Index`（活得比任何壳都久），经 props 下发、回调回传。
+   *
+   * 默认值是空袋 ⇒ 只传 `items` / `onDecide` 的老调用点行为不变（向后兼容）。
+   */
+  @Prop answerDrafts: PendingAnswerDrafts = emptyPendingAnswerDrafts();
+  /** 逐题草稿变化（提问整组）；回传给宿主保存 */
+  onAnswerGroupChange: (itemId: string, drafts: PendingAnswerDraft[]) => void = () => {
+  };
   /** 当前展开原始请求的待决 id（空 = 全部收起） */
   @State rawExpanded: string = '';
 
@@ -64,7 +83,7 @@ export struct PendingPane {
       if (this.items.length === 0) {
         Column({ space: Sp.M }) {
           SymbolGlyph($r('sys.symbol.checkmark_circle'))
-            .fontSize(40)
+            .fontSize(HarmonyIconSize.NAV_RAIL)   // token-exempt: 空态大图标
             .fontColor([$r('sys.color.confirm')])
           Text('没有待处理事项')
             .fontSize(Fs.BODY)
@@ -102,7 +121,7 @@ export struct PendingPane {
         SymbolGlyph(item.kind === PendingKind.APPROVAL
           ? $r('sys.symbol.exclamationmark_triangle')
           : $r('sys.symbol.questionmark_circle'))
-          .fontSize(18)
+          .fontSize(HarmonyIconSize.NAV)
           .fontColor([item.kind === PendingKind.APPROVAL
             ? $r('sys.color.warning')
             : $r('sys.color.brand')])
@@ -170,6 +189,12 @@ export struct PendingPane {
   questionCard(item: PendingItem) {
     QuestionGroupCard({
       item: item,
+      // T-C：逐题草稿归宿主（组内切题、折叠开合都不丢）
+      drafts: pendingAnswerGroupOf(this.answerDrafts, item.id),
+      draftsFor: item.id,
+      onDraftsChange: (itemId: string, drafts: PendingAnswerDraft[]) => {
+        this.onAnswerGroupChange(itemId, drafts);
+      },
       onSubmit: (it: PendingItem, drafts: PendingAnswerDraft[]) => {
         this.onAnswer(it, drafts);
       },
@@ -179,9 +204,16 @@ export struct PendingPane {
     })
   }
 
-  /** 取当前卡片已填的自由文本（只认属于该卡片的输入，避免串到别的卡片） */
+  /**
+   * 审批应答的 `reason` 参数恒为空串。
+   *
+   * 【为什么不再问本组件要一个"自由文本"】上游审批结果词表是封闭四值，没有承载理由的
+   * 字段（`Index.decidePending` 的登记），而本端的契约只是"可能有、可为空"。
+   * 显示一个填了也传不出去、也没有任何本地读者的输入框，属于本项目反复清理的
+   * "看着像功能"的死入口 —— 因此这里如实给空串。
+   */
   private textFor(item: PendingItem): string {
-    return this.freeTextFor === item.id ? this.freeText : '';
+    return '';
   }
 
   @Builder

@@ -1,6 +1,11 @@
 /**
  * 改动前后对照（P2 §11 的 diff 呈现）。
- *
+
+ * 线协议值读取工具（用于 appliedDiffOf 从 meta.diffs 提取字段）。
+ */
+import { getField } from 'connection';
+
+/**
  * ## 要解决的问题
  *
  * §11 要求 Tool 按类别区分呈现，其中 `write`/`edit` 这一类的官方形态是**改动对照卡**
@@ -503,4 +508,97 @@ export function presentDiff(toolName: string, rawArgs: string,
     removed: stat.removed,
     truncated: shown.length < collapsed.length,
   };
+}
+
+/* ───────────────────────── Applied Diffs（§FR-012） ───────────────────────── */
+
+/**
+ * 从 tool/result 事件的 meta.diffs 提取已应用 diff（§FR-012）。
+ *
+ * ## 为什么需要它
+ *
+ * 上游 DSH 的工具结果里有两类 diff：
+ *   - **Intended**（意图改动）：从工具参数推导（`intendedDiffOf`），显示"模型想改什么"
+ *   - **Applied**（已应用改动）：从 `tool/result` 的 `meta.diffs` 字段提取，显示"实际改了什么"
+ *
+ * 官方 Web 在 ToolCard 里同时展示两类，用户可对比"意图"与"实际"。
+ *
+ * ## 降级策略
+ *
+ * 当 Host 不提供 `meta.diffs` 时，返回 null——界面显示"暂无已应用修改"占位。
+ * 这不是错误，而是能力差异（老版本 Host 没有 applied diffs）。
+ *
+ * ## 格式
+ *
+ * `meta.diffs` 的实测形状与 intended diff 相同：`{path, oldText, newText}[]`。
+ * 因此复用 `ToolDiff` 接口和 `diffLines` 函数。
+ */
+export function appliedDiffOf(meta: Object | undefined): ToolDiff[] | null {
+  if (meta === undefined || meta === null) {
+    return null;
+  }
+  const diffs: Object | undefined = getField(meta, 'diffs');
+  if (diffs === undefined || diffs === null) {
+    return null;
+  }
+  if (!Array.isArray(diffs)) {
+    return null;
+  }
+  const arr: Object[] = diffs as Object[];
+  if (arr.length === 0) {
+    return null;
+  }
+  const out: ToolDiff[] = [];
+  for (let i = 0; i < arr.length; i++) {
+    const item: Object = arr[i];
+    const path: string | undefined = typeof (item as Record<string, Object>)['path'] === 'string'
+      ? (item as Record<string, Object>)['path'] as string : undefined;
+    if (path === undefined || path.trim().length === 0) {
+      continue;
+    }
+    const oldRaw: Object | undefined = (item as Record<string, Object>)['oldText'];
+    const newRaw: Object | undefined = (item as Record<string, Object>)['newText'];
+    const oldText: string | null = (oldRaw === undefined || oldRaw === null) ? null
+      : (typeof oldRaw === 'string' ? oldRaw as string : null);
+    const newText: string = (newRaw === undefined || newRaw === null || typeof newRaw !== 'string')
+      ? '' : newRaw as string;
+    out.push({ path, oldText, newText });
+  }
+  return out.length > 0 ? out : null;
+}
+
+/**
+ * 判断 tool/result 是否包含已应用 diff。
+ *
+ * 与 `appliedDiffOf` 不同，这只需布尔判定——界面据此决定是否显示"暂无"占位。
+ */
+export function hasAppliedDiff(meta: Object | undefined): boolean {
+  return appliedDiffOf(meta) !== null;
+}
+
+/**
+ * 将 applied diffs 渲染为 DiffPresentation 列表（复用行级对照引擎）。
+ */
+export function presentAppliedDiffs(meta: Object | undefined,
+  context: number = 2, maxLines: number = MAX_DIFF_LINES): DiffPresentation[] {
+  const diffs: ToolDiff[] | null = appliedDiffOf(meta);
+  if (diffs === null) {
+    return [];
+  }
+  const out: DiffPresentation[] = [];
+  for (let i = 0; i < diffs.length; i++) {
+    const diff: ToolDiff = diffs[i];
+    const all: DiffLine[] = diffLines(diff.oldText, diff.newText);
+    const stat: DiffStat = diffStatOf(all);
+    const collapsed: DiffLine[] = collapseContext(all, context);
+    const shown: DiffLine[] = capped(collapsed, maxLines);
+    out.push({
+      path: diff.path,
+      lines: shown,
+      added: stat.added,
+      removed: stat.removed,
+      truncated: shown.length < collapsed.length,
+    });
+  }
+  return out;
 }

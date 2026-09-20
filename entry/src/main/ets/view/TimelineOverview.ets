@@ -1,5 +1,11 @@
 /**
- * 轨迹的**时间总览**（P3-6：从 `ConversationPane` 抽出的**共用**呈现）。
+ * 轨迹的**时间总览**（P3-6：从 `ConversationPane` 抽出的**共用**呈现；
+ * T022 换 Ds 令牌载体并补「用量统计」块）。
+ *
+ * 【对照源文件】`.research/deepseek-harness-mobile/app/src/main/java/com/labteto/dshmobile/`
+ * `ui/screens/main/TrajectoryTab.kt`（`TrajectoryTotals` 的四类数 + 总览条的画法）。
+ * v1 那半（"总计 + 每格比例条 + 拖动聚焦"）的语义另有官方 web `timeline.overviewAria`，
+ * 见下一段。
  *
  * ## 它是什么
  *
@@ -16,15 +22,24 @@
  *  · `onCommit` —— "松手/点击落定才滚列表"是宿主的动作（要拿 `scroller`）。
  *
  * 组件自己只管：比例条宽度（`onAreaChange`）、拖动过程、悬停高亮、详情行文案。
+ *
+ * ## 用量统计（T022，对照 `TrajectoryTab.kt` 的 TrajectoryTotals）
+ *
+ * 源码收尾区段有四类数：回合/步数、时序、速度、Token。前三样本仓已各有其家——
+ * 回合/步数在 `MainShell` 的统计行、时序与速度就在下面这行可换行统计里（`statsLinesOf`），
+ * 再放一份就成了两个来源说同一个数。这里只补**没有家的那一类**：Token 用量
+ * （Host 的 E125 字段，经中枢快照读；0 一律表示"没有"，不编占位）。
  */
 
 import {
-  Fs, Radius, Sp, StatsLine, StatsUnit, Sz, TimelineCell, TimelineKind, TimelineScale,
-  TimelineSegment, TrajectoryItem, cellIdAtRatio, formatClock, formatDuration,
-  segmentOrdinalOf, statsLinesOf, timelineCellsOf, timelineKindLabel, timelineScaleOf,
-  timelineStartedLabel, timelineTotalLabel,
+  DsPalette, DsShape, DsSpacing, DsThemePreference, DsType,
+  SessionHub, StatsLine, StatsUnit, TimelineCell, TimelineKind, TimelineScale,
+  TimelineSegment, TrajectoryItem, cellIdAtRatio, dsPaletteOf, formatClock,
+  formatDuration, formatTokenVolume, segmentOrdinalOf, statsLinesOf, timelineCellsOf,
+  timelineKindLabel, timelineScaleOf, timelineStartedLabel, timelineTotalLabel,
 } from 'appstate';
-import type { SessionStatsInput } from 'appstate';
+import type { HubSnapshot, HubSubscriber, SessionStatsInput } from 'appstate';
+import { DsSectionHeader, installDsSystemDarkWatch } from './NativePrimitives';
 
 @Component
 export struct TimelineOverview {
@@ -49,6 +64,59 @@ export struct TimelineOverview {
 
   /** 比例条实测宽度（拖动换算的起点） */
   @State barWidth: number = 0;
+
+  @StorageProp('dsSystemDark') systemDark: boolean = false;
+  /** 用量块的重绘版本（props 只带时序统计，token 用量要从快照来——GoalBar.ets 同款思路） */
+  @State private usageRev: number = -1;
+  private hubListener?: HubSubscriber;
+
+  aboutToAppear(): void {
+    installDsSystemDarkWatch();
+    const listener: HubSubscriber = (s: HubSnapshot) => {
+      const next: number = s.tokensUncachedInput * 7 + s.tokensOutput * 11
+        + s.tokensCacheRead * 13 + s.tokensCacheWrite * 17;
+      if (next !== this.usageRev) {
+        this.usageRev = next;
+      }
+    };
+    this.hubListener = listener;
+    SessionHub.shared().subscribe(listener);
+    listener(SessionHub.shared().snapshot());
+  }
+
+  aboutToDisappear(): void {
+    const listener: HubSubscriber | undefined = this.hubListener;
+    if (listener !== undefined) {
+      SessionHub.shared().unsubscribe(listener);
+      this.hubListener = undefined;
+    }
+  }
+
+  private palette(): DsPalette {
+    return dsPaletteOf(DsThemePreference.SYSTEM, this.systemDark);
+  }
+
+  /**
+   * Token 用量一行（TrajectoryTotals 的对位；只在有数据时渲染）。
+   * 四项里只列**非零**的——"输入 0"不是信息，是噪声。
+   */
+  private usageText(): string {
+    const s: HubSnapshot = SessionHub.shared().snapshot();
+    const parts: string[] = [];
+    if (s.tokensUncachedInput > 0) {
+      parts.push(`输入 ${formatTokenVolume(s.tokensUncachedInput)}`);
+    }
+    if (s.tokensOutput > 0) {
+      parts.push(`输出 ${formatTokenVolume(s.tokensOutput)}`);
+    }
+    if (s.tokensCacheRead > 0) {
+      parts.push(`缓存读 ${formatTokenVolume(s.tokensCacheRead)}`);
+    }
+    if (s.tokensCacheWrite > 0) {
+      parts.push(`缓存写 ${formatTokenVolume(s.tokensCacheWrite)}`);
+    }
+    return parts.join(' · ');
+  }
 
   /**
    * 左上角那句话（F11）：官方文案只在**真的什么计时都没有**时用。
@@ -77,14 +145,15 @@ export struct TimelineOverview {
     return false;
   }
 
-  build() {    Column({ space: Sp.XS }) {
+  build() {
+    Column({ space: DsSpacing.TINY }) {
       /*
        * 【为什么可换行】左侧"总计 + N 格"与右侧四项统计在手机宽度下**加起来超过屏宽**，
        * 而这一行既没有 `layoutWeight`、也不换行 ⇒ 末尾的统计（TPS 那项）会被裁掉。
        * 统计是"读过就算"的信息，但它被裁掉时用户**不会知道**少了东西（docs/08 P0 §7）。
        */
       Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween, alignItems: ItemAlign.Center }) {
-        Row({ space: Sp.S }) {
+        Row({ space: DsSpacing.SMALL }) {
           /*
            * 【F11：这句话不能与右边那四项自相矛盾】
            *
@@ -102,23 +171,23 @@ export struct TimelineOverview {
            * 官方文案本身不动（它是 `timeline.noTimingData` 的逐字译文，仍在真正的空数据时使用）。
            */
           Text(this.totalLabel())
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_secondary'))
+            .fontSize(DsType.XSMALL_12.size)
+            .fontColor(this.palette().labelSecondary)
           Text(`${this.timelineScale().count} 格`)
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_tertiary'))
+            .fontSize(DsType.XSMALL_12.size)
+            .fontColor(this.palette().labelTertiary)
         }
-        .margin({ right: Sp.S, bottom: Sp.XS })
+        .margin({ right: DsSpacing.SMALL, bottom: DsSpacing.TINY })
 
         Flex({ wrap: FlexWrap.Wrap, alignItems: ItemAlign.Center }) {
           // 会话统计的**时间四项**（轮次/步数由会话头部那行承担，不在这里重复）
           ForEach(statsLinesOf(this.stats), (line: StatsLine) => {
             Row() {
               Text(this.statsLineText(line))
-                .fontSize(Fs.CAPTION)
-                .fontColor($r('sys.color.font_tertiary'))
+                .fontSize(DsType.XSMALL_12.size)
+                .fontColor(this.palette().labelTertiary)
             }
-            .margin({ right: Sp.S, bottom: Sp.XS })
+            .margin({ right: DsSpacing.SMALL, bottom: DsSpacing.TINY })
           }, (line: StatsLine) => line.key)
         }
       }
@@ -131,13 +200,13 @@ export struct TimelineOverview {
             ForEach(this.timelineScale().segments, (seg: TimelineSegment) => {
               Column()
                 .width(`${seg.ratio * 100}%`)
-                .height(this.focusedCellId === seg.id ? Sz.POINTER_MIN : Sp.M)
+                .height(this.focusedCellId === seg.id ? DsSpacing.XLARGE : DsSpacing.MEDIUM)
                 .backgroundColor(this.timelineColorOf(seg.kind))
             }, (seg: TimelineSegment) => seg.id)
           }
           .width('100%')
-          .height(Sp.M)
-          .borderRadius(Radius.XS)
+          .height(DsSpacing.MEDIUM)
+          .borderRadius(DsShape.CHIP)
           .clip(true)
         }
         .width('100%')
@@ -166,8 +235,8 @@ export struct TimelineOverview {
 
         if (this.focusedTimelineNote().length > 0) {
           Text(this.focusedTimelineNote())
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_secondary'))
+            .fontSize(DsType.XSMALL_12.size)
+            .fontColor(this.palette().labelSecondary)
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
@@ -188,13 +257,29 @@ export struct TimelineOverview {
         Text(this.timelineScale().hasData || !this.statsHaveValues()
           ? '这一轮的条目没有计时数据，无法给出时间分布。'
           : '这一轮的条目没有逐条耗时，画不出时间分布（会话总计见上方）。')
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
+          .fontSize(DsType.XSMALL_12.size)
+          .fontColor(this.palette().labelTertiary)
+      }
+
+      /*
+       * 【用量统计（T022，对照 TrajectoryTab.kt 的 TrajectoryTotals）】
+       * 只补"没有家"的那一类数（见文件头注释的分工表）；全为 0 时整块不出现。
+       */
+      if (this.usageText().length > 0) {
+        Column({ space: DsSpacing.TINY }) {
+          DsSectionHeader({ title: '用量统计' })
+          Text(this.usageText())
+            .fontSize(DsType.CAPTION_11.size)
+            .fontColor(this.palette().labelTertiary)
+            .width('100%')
+        }
+        .width('100%')
+        .margin({ top: DsSpacing.SMALL })
       }
     }
     .width('100%')
-    .padding({ left: Sp.M, right: Sp.M, top: Sp.XS, bottom: Sp.XS })
-    .backgroundColor($r('sys.color.background_primary'))
+    .padding({ left: DsSpacing.MEDIUM, right: DsSpacing.MEDIUM, top: DsSpacing.TINY, bottom: DsSpacing.TINY })
+    .backgroundColor(this.palette().bgBase)
   }
 
   private timelineCells(): TimelineCell[] {
@@ -251,13 +336,13 @@ export struct TimelineOverview {
     }
   }
 
-  private timelineColorOf(kind: TimelineKind): Resource {
+  private timelineColorOf(kind: TimelineKind): number {
     if (kind === TimelineKind.TOOL) {
-      return $r('sys.color.brand');
+      return this.palette().accent;
     }
     if (kind === TimelineKind.USER) {
-      return $r('sys.color.comp_background_tertiary');
+      return this.palette().userBubble;
     }
-    return $r('sys.color.comp_divider');
+    return this.palette().labelDimmed;
   }
 }

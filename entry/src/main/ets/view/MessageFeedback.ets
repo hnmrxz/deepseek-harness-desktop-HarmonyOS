@@ -1,47 +1,65 @@
 /**
- * 消息反馈面板（P2-3：Message Action 的第一块独立组件）。
+ * 消息反馈面板（T023：对照 `dshmobile/ui/screens/main/FeedbackDialog.kt` 复刻）。
  *
- * ## 为什么单独成组件
+ * ## 对照结构（FeedbackDialog.kt）
  *
- * 它此前长在 1700 行的 `ConversationPane` 里（`@Builder feedbackPanel` + 5 个 `@State`：
- * `fbFor/fbRating/fbCategory/fbNote/fbNote2`）。**表单态与消息列表态混在一个组件里**的代价是：
- * 每敲一个字（`note` 的 `onChange`）都会把整个会话列表重绘一遍——列表越长越明显；
- * 而且"这条消息的反馈表单"与"消息怎么排版"是两件事，不该共享状态作用域。
- * 拆出之后：**表单态归这里**，`ConversationPane` 只留"哪个消息的反馈面板开着"（`fbFor`）与回执（`fbNote2`）。
+ * 源码是 AlertDialog：取向标题 + 说明输入（`feedback_note`）+ 错误行（error 色）+
+ * 「移除」按钮（**已有评价时才出现**：`current != null`）+ 发送（busy/loaded 才可点）+ 取消。
+ * 本侧保留 v1 的**内嵌面板**形态（`MessageRow` 在消息下方展开，改弹窗会破坏宿主接线），
+ * 但把三块语义搬齐：① 错误行用 error 色如实透出；② **新增可选** `hasExisting` +
+ * `onRemove`——宿主接上后显示「撤回评价」（源码的 Remove 分支）；③ busy/loaded 门控
+ * 在本仓由宿主持有（提交期间宿主自会忽略重复提交），面板不重复建状态。
  *
- * ## 与宿主的边界
+ * ## 类别 chips（v1 功能面，保留）
  *
- *  · 初值（已存的类别/说明）由宿主在**打开那一刻**给（`initialCategory`/`initialNote`）；
- *    之后编辑过程中的变化不再回灌（否则用户打字打到一半会被覆盖）。
- *  · 提交只报"用户选了什么"（`onSubmit(category, note)`）；**调中枢是宿主的副作用**——
- *    组件不认识 `SessionHub`，也不决定"成功要不要关面板"（那是宿主的策略，见
- *    `ConversationPane.submitFeedback`）。这条边界与 `WorkspaceBrowser` 同一口径。
- *  · 类别取值就是契约给出的那 7 个（`FEEDBACK_CATEGORIES`，不自己发明）。
- *    未选即"未分类"——契约里 `category` 可选，所以**不强迫分类**。
+ * 源码对话框没有类别（上游契约只要 note）；本仓契约给了 7 个类别
+ * （`FEEDBACK_CATEGORIES`，不自己发明）。未选即"未分类"——契约里 `category` 可选，
+ * 所以**不强迫分类**。视觉换成设计系统的 `DsPill`（可点 + 选中态）。
+ *
+ * ## 与宿主的边界（保留 v1）
+ *
+ *  · 初值（已存的类别/说明）由宿主在**打开那一刻**给；之后编辑过程中的变化不再回灌
+ *    （否则用户打字打到一半会被覆盖）。
+ *  · 提交只报"用户选了什么"（`onSubmit(category, note)`）；**调中枢是宿主的副作用**。
  */
 
 import {
-  FEEDBACK_CATEGORIES, Fs, Radius, Sp, Sz,
+  FEEDBACK_CATEGORIES,
+  DsPalette,
+  DsShape,
+  DsSpacing,
+  DsThemePreference,
+  DsType,
+  HarmonyBorder,
+  dsPaletteOf,
 } from 'appstate';
 import type { FeedbackCategory } from 'appstate';
-import { NativeChip } from './NativePrimitives';
+import { DsPill, installDsSystemDarkWatch } from './NativePrimitives';
+
+/* ───────── 组件级度量（FeedbackDialog.kt 的字面量，逐条标注出处） ───────── */
+
+/** 等宽/系统字体栈（Type.kt system UI stack） */
+const FEEDBACK_FONT_SANS: string = 'sans-serif';
 
 @Component
 export struct MessageFeedback {
-  /*
-   * 【曾经有一个 `itemId` prop】它随"反馈面板"从宿主搬进来，但**搬过来之后没有一处读它**
-   * （E350 的死代码门禁查出来的）：判定与回执都在父组件算好传入，这个 id 只是"跟着搬过来"。
-   * 删掉而不是留个 `dead-exempt:`——它连调试价值都没有。
-   */
   /** 打开那一刻的已存类别（''=未分类） */
   @Prop initialCategory: string = '';
   /** 打开那一刻的已存说明 */
   @Prop initialNote: string = '';
   /** 宿主回执（空串 = 不显示；失败原因原样透出，见宿主的 `feedbackNoticeText`） */
   @Prop notice: string = '';
+  /**
+   * 该消息已有评价（新增**可选**：对照源码 `current != null` 分支——已有评价时给
+   * 「撤回评价」入口；宿主不接 = 不显示，不破坏既有调用）。
+   */
+  @Prop hasExisting: boolean = false;
 
   /** 提交：只报"用户选了什么"，调用中枢是宿主的副作用 */
   onSubmit: (category: string, note: string) => void = () => {
+  };
+  /** 撤回已有评价（新增**可选**；`hasExisting` 为 true 时显示） */
+  onRemove: () => void = () => {
   };
   onCancel: () => void = () => {
   };
@@ -49,24 +67,36 @@ export struct MessageFeedback {
   @State category: string = '';
   @State note: string = '';
 
+  @StorageProp('dsSystemDark') systemDark: boolean = false;
+
   aboutToAppear(): void {
+    installDsSystemDarkWatch();
     this.category = this.initialCategory;
     this.note = this.initialNote;
   }
 
+  private palette(): DsPalette {
+    return dsPaletteOf(DsThemePreference.SYSTEM, this.systemDark);
+  }
+
   build() {
-    Column({ space: Sp.XS }) {
+    Column({ space: DsSpacing.SMALL }) {
       Text('为什么？可留空')
-        .fontSize(Fs.CAPTION_XS)
-        .fontColor($r('sys.color.font_tertiary'))
+        .fontSize(DsType.CAPTION_11.size)
+        .lineHeight(DsType.CAPTION_11.lineHeight)
+        .fontWeight(DsType.CAPTION_11.weight)
+        .fontFamily(FEEDBACK_FONT_SANS)
+        .fontColor(this.palette().labelTertiary)
         .width('100%')
 
+      // 类别 chips（v1 契约功能；视觉 = DsPill 选中态）
       Flex({ wrap: FlexWrap.Wrap }) {
         ForEach(FEEDBACK_CATEGORIES, (c: FeedbackCategory) => {
-          Row() {
-            NativeChip({
-              label: c.label,
-              active: this.category === c.id,
+          Column() {
+            DsPill({
+              text: c.label,
+              selected: this.category === c.id,
+              clickable: true,
               a11y: `评价原因：${c.label}`,
               onTap: () => {
                 // 再点一次取消选择 ⇒ 回到"未分类"（契约里 category 可选，不强迫分类）
@@ -74,46 +104,81 @@ export struct MessageFeedback {
               }
             })
           }
-          .margin({ right: Sp.XS, bottom: Sp.XS })
-        }, (c: FeedbackCategory) => c.id)
+          .margin({ right: DsSpacing.SMALL, bottom: DsSpacing.SMALL })
+        }, (c: FeedbackCategory) => `${c.id}:${this.category === c.id ? 1 : 0}`)
       }
       .width('100%')
 
+      // 说明输入（对照源码 OutlinedTextField + feedback_note；键盘直输，宿主不回灌）
       TextInput({ text: this.note, placeholder: '补充说明（可选）' })
-        .fontSize(Fs.CAPTION)
-        .height(Sz.TOUCH_MIN)
+        .fontSize(DsType.STD_14.size)
+        .fontFamily(FEEDBACK_FONT_SANS)
+        .fontColor(this.palette().labelPrimary)
+        .placeholderColor(this.palette().labelTertiary)
+        .placeholderFont({ size: DsType.STD_14.size })
+        .height(DsSpacing.TOUCH_TARGET)
+        .width('100%')
         .onChange((v: string) => {
           this.note = v;
         })
 
+      // 错误/回执行（对照源码 `error?.let { Text(it, color = error) }`）
       if (this.notice.length > 0) {
         Text(this.notice)
-          .fontSize(Fs.CAPTION_XS)
-          .fontColor($r('sys.color.alert'))
+          .fontSize(DsType.CAPTION_11.size)
+          .lineHeight(DsType.CAPTION_11.lineHeight)
+          .fontWeight(DsType.CAPTION_11.weight)
+          .fontFamily(FEEDBACK_FONT_SANS)
+          .fontColor(this.palette().error)
           .width('100%')
       }
 
-      Row({ space: Sp.L }) {
+      // 动作行（对照源码三个 TextButton 的排列：移除（已有评价）/ 发送 / 取消）
+      Row({ space: DsSpacing.MEDIUM }) {
+        if (this.hasExisting) {
+          Text('撤回评价')
+            .fontSize(DsType.STD_14.size)
+            .lineHeight(DsType.STD_14.lineHeight)
+            .fontWeight(DsType.STD_14.weight)
+            .fontFamily(FEEDBACK_FONT_SANS)
+            .fontColor(this.palette().warnLabel)
+            .onClick(() => {
+              this.onRemove();
+            })
+            .accessibilityText('撤回已提交的评价')
+        }
         Text('提交')
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.brand'))
+          .fontSize(DsType.STD_14_STRONG.size)
+          .lineHeight(DsType.STD_14_STRONG.lineHeight)
+          .fontWeight(DsType.STD_14_STRONG.weight)
+          .fontFamily(FEEDBACK_FONT_SANS)
+          .fontColor(this.palette().accent)
           .onClick(() => {
             this.onSubmit(this.category, this.note);
           })
+          .accessibilityText('提交评价')
         Text('取消')
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
+          .fontSize(DsType.STD_14.size)
+          .lineHeight(DsType.STD_14.lineHeight)
+          .fontWeight(DsType.STD_14.weight)
+          .fontFamily(FEEDBACK_FONT_SANS)
+          .fontColor(this.palette().labelTertiary)
           .onClick(() => {
             this.onCancel();
           })
+          .accessibilityText('取消评价')
         Blank()
       }
       .width('100%')
+      .alignItems(VerticalAlign.Center)
     }
     .width('100%')
-    .padding(Sp.S)
-    .borderRadius(Radius.S)
-    .backgroundColor($r('sys.color.background_secondary'))
+    .padding(DsSpacing.MEDIUM)
+    .borderRadius(DsShape.BLOCK)
+    .backgroundColor(this.palette().bgLayer1)
+    .borderWidth(HarmonyBorder.HAIRLINE)
+    .borderColor(this.palette().borderL2)
+    .alignItems(HorizontalAlign.Start)
     .accessibilityText('消息反馈：选择原因后可提交，也可留空')
   }
 }

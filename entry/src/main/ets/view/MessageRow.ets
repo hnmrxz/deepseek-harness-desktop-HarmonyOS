@@ -1,28 +1,27 @@
 /**
  * 一条消息的**行级交互**（P2-4：从 `ConversationPane` 里抽出的一整块）。
  *
- * ## 它拥有什么（此前散在父组件里的五份状态 + 三段呈现）
+ * ## v2 T013：按 DSH Mobile 源码级对照重塑（视觉/交互层）
  *
- * 1. **悬停态**与它决定的卡片底色；
- * 2. **上下文菜单**（长按 / 右键唤起同一个菜单）与它的开关；
- * 3. **行内操作条**（复制 / 有帮助 / 没帮助 / 引用 / 重发 / 撤回评价）；
- * 4. **反馈表单**（`MessageFeedback`）与本次评价的取向；
- * 5. 手势与菜单的**语义来源**：`InputPolicy` 的三条判定（`hoverEnabled` /
- *    `contextMenuGestures` / `menuGestureHintLabel`）——原先在父组件里散着三个包装方法。
+ * 【对照源文件】`.research/deepseek-harness-mobile/app/src/main/java/com/labteto/dshmobile/ui/screens/main/ChatNodeItem.kt`
+ * （用户气泡 `UserBubble` 与助手节点 `AssistantNode` 的形态、动作条显隐交互）。
  *
- * ## 为什么"一行里的一件事"要单独成组件
- *
- * 父组件（会话正文）负责的是**过程流的分组与顺序**（回合 / 过程块 / 答案）；
- * 而"这条消息悬停时什么样、长按出什么菜单、评价怎么提交"是**行级**的事。
- * 两者混在一个 1400 行的组件里时，任何一处改动都要通读全文——
- * 这也是本轮拆分的动机（与 `ToolCard` / `DeliverableCard` 同一条规矩）。
+ * · **用户消息** → 右对齐 `UserBubble`：r22 圆角（`DsShape.BUBBLE`）、`userBubble` 填充、
+ *   `borderL3` 发丝边、水平 16 / 垂直 10 内边距、`BUBBLE_TEXT` 字阶、最大宽度 82%。
+ *   源码 `widthIn(max = 525.dp)` 的绝对上限在手机宽度下恒不触发（82% ≈ 353dp），此处以
+ *   82% 单一约束近似并保留注释；图片仍画在气泡**之前**（`alignEnd: true`，同源码）。
+ * · **助手消息** → 不套卡片：正文直接走 `MarkdownRenderer`（源码 `AssistantNode` 无行头、
+ *   无容器底色），动作条**点击正文才显露**（源码 `actionsVisible` 由 `onTap` 翻转）。
+ * · 长按 / 右键上下文菜单、反馈表单（`MessageFeedback`）、图片（`MessageImages`）、
+ *   行内代码 → 本回合产出文件的提及解析（`mentionPath`）——全部保留 v1 接线，只换皮。
+ * · 明暗色板：`mediaquery('(prefers-color-scheme: dark)')` 监听 + `dsPaletteOf(SYSTEM, dark)`
+ *   自包含解析（MobileTheme 为唯一视觉 token 源，见 v2 plan R&D-003）。
  *
  * ## 边界：反馈的**持久化**不在这里
  *
  * 评价的读写走 `SessionHub` 的 `feedback/put` / `feedback/delete`（CAS 版本、失败原因），
  * 那是**中枢的事**；本组件只把"用户选了什么"转出去，回执（`notice`）与"成功才关面板"
- * 的提交策略由父组件决定。代价是两个 prop，收益是：行组件**不持有跨行状态**
- * （一条消息的提交结果不会影响另一条的显示）。
+ * 的提交策略由父组件决定。
  *
  * ## 仍归父组件的两件事（有意为之）
  *
@@ -33,19 +32,19 @@
  */
 
 import {
-  Fs, HarmonyColor, HarmonyRadius, HarmonySpacing, HarmonyType, INTERNAL_BODY_HIDDEN_PREFIX, MenuGesture,
-  Radius, Sp, Speaker,
-  TrajectoryItem, contextMenuGestures, formatClock, formatDuration, hoverEnabled, userFacingBodyOf
+  Border, DsPalette, DsShape, DsSpacing, DsThemePreference, DsType,
+  INTERNAL_BODY_HIDDEN_PREFIX, MenuGesture, Speaker,
+  TrajectoryItem, contextMenuGestures, dsPaletteOf, userFacingBodyOf
 } from 'appstate';
 /** 类型单独 import type（本仓约定：值与类型分开写） */
 import type { InputModality } from 'appstate';
 import type { NativeAction } from './NativePrimitives';
-import { NativeActionBar } from './NativePrimitives';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { MessageFeedback } from './MessageFeedback';
 import { MessageImages } from './MessageImages';
+import { mediaquery } from '@kit.ArkUI';
 
-/** 一条消息的卡片（表头 + 图片 + 正文 + 动作条 + 上下文菜单 + 反馈表单） */
+/** 一条消息的行（用户气泡 / 助手纯 Markdown + 点击显露动作条 + 上下文菜单 + 反馈表单） */
 @Component
 export struct MessageRow {
   /** 这一行的数据 */
@@ -107,19 +106,40 @@ export struct MessageRow {
   onCloseFeedback: () => void = () => {
   };
 
-  /** 鼠标是否停在这一行上（只有指针设备才成立——判定见 `isHovered`） */
-  @State hovered: boolean = false;
   /** 上下文菜单是否已打开 */
   @State menuShown: boolean = false;
+  /**
+   * 动作条是否显露。对照 `ChatNodeItem.kt` 的 `remember { mutableStateOf(false) }` +
+   * `onTap { actionsVisible = !actionsVisible }`——v1 是常驻操作条，Mobile 是**点击正文切换**。
+   * 流式中不响应（正文在增长，点击误触率高；流完由父组件重渲染时保持当前值）。
+   */
+  @State actionsVisible: boolean = false;
+  /** 系统是否深色（`prefers-color-scheme`；MobileTheme 色板的解析输入） */
+  @State dark: boolean = false;
+  /** 深色模式监听（aboutToDisappear 必须注销） */
+  private darkQuery: mediaquery.MediaQueryListener | null = null;
+
+  aboutToAppear(): void {
+    this.darkQuery = mediaquery.matchMediaSync('(prefers-color-scheme: dark)');
+    this.dark = this.darkQuery.matches;
+    this.darkQuery.on('change', (result: mediaquery.MediaQueryResult) => {
+      this.dark = result.matches;
+    });
+  }
+
+  aboutToDisappear(): void {
+    this.darkQuery?.off('change');
+    this.darkQuery = null;
+  }
+
+  /** 当前语义色板（MobileTheme 唯一视觉 token 源；SYSTEM 偏好随系统明暗切换） */
+  private palette(): DsPalette {
+    return dsPaletteOf(DsThemePreference.SYSTEM, this.dark);
+  }
 
   /** 输入模态快照（策略模型的输入；本组件只做映射，不做判断） */
   private modality(): InputModality {
     return { hasKeyboard: this.hasKeyboard, hasPointer: this.hasPointer };
-  }
-
-  /** 悬停态（只有指针设备才可能有"悬停"这个概念） */
-  private isHovered(): boolean {
-    return hoverEnabled(this.modality()) && this.hovered;
   }
 
   /** 这条消息的**可见正文**（内部条目为空串，见 F22） */
@@ -132,6 +152,15 @@ export struct MessageRow {
     return contextMenuGestures(this.modality()).indexOf(MenuGesture.RIGHT_CLICK) >= 0;
   }
 
+  /** 动作统一出口：评价要开表单（取向先记在父组件），其余走 `onAction` */
+  private runAction(id: string): void {
+    if (id === 'like' || id === 'dislike') {
+      this.onOpenFeedback(this.item, id === 'like' ? 'positive' : 'negative');
+      return;
+    }
+    this.onAction(this.item, id);
+  }
+
   build() {
     /*
      * 【2026-09-17 真机读数：空正文的助手消息要整行不画】
@@ -140,6 +169,7 @@ export struct MessageRow {
      * 正文一行都没有（消息的 content 只有思考块、没有 text）。它看起来像"消息丢了"，
      * 又白占三行高度——而按官方口径，思考是**单独一行**的条目（我们由 `ReasoningRow` 画），
      * 这里本来就没有可视内容。⇒ 没有正文、没有图片、也不是内部条目时，整行不渲染。
+     * （对照 `ChatNodeVisibility.kt` 的 `rendersContent` 同一判定意图。）
      */
     if (this.bodyFull().length === 0 && this.item.images.length === 0
       && this.item.internal !== true) {
@@ -152,67 +182,91 @@ export struct MessageRow {
 
   @Builder
   body() {
-    Column({ space: Sp.XS }) {
-      // ── 表头：谁 · 钟点 · 时长 · 模型 ──
-      Row({ space: Sp.S }) {
-        Text(this.item.speaker === Speaker.USER ? '我'
-          : (this.item.speaker === Speaker.SYSTEM ? '系统' : '助手'))
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
-        Text(formatClock(this.item.at))
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
-        if (this.item.elapsedMs > 0) {
-          // E204：钟点 + 时长并列（官方"实际时间"的信息，不额外做开关）
-          Text(`${formatClock(this.item.at)} · ${formatDuration(this.item.elapsedMs)}`)
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_tertiary'))
-        }
-        Blank()
-        if (this.item.model.length > 0) {
-          /*
-           * 模型名是**次要信息**（切换模型的入口在输入区的工具行），而它可能很长
-           * （`provider/model` 两段）。给一个宽度上限并省略：不省略的话，窄屏上它会把
-           * 左边的时间/时长挤出屏幕（docs/08 P0 §6：标题可以省略，诊断信息不能只剩省略号——
-           * 模型名不属于诊断信息，且这里省略的是尾部）。
-           */
-          Text(this.item.model)
-            .fontSize(Fs.CAPTION)
-            .fontColor($r('sys.color.font_tertiary'))
-            .constraintSize({ maxWidth: 140 })
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-        }
-      }
-      .width('100%')
+    if (this.item.speaker === Speaker.USER) {
+      this.userBody()
+    } else {
+      this.assistantBody()
+    }
+  }
 
-      // ── 图片（P0-3）：官方把图片画在气泡**之前**（用户靠右、助手靠左）──
+  /** 用户消息：右对齐气泡（对照 `ChatNodeItem.kt` 的 `UserBubble` 形态） */
+  @Builder
+  userBody() {
+    Column({ space: DsSpacing.XSMALL }) {
+      // ── 图片画在气泡**之前**、靠右（源码 `UserBubble` 前置 images，alignEnd）──
       if (this.item.images.length > 0) {
         MessageImages({
           sessionId: this.sessionId,
           images: this.item.images,
-          alignEnd: this.item.speaker === Speaker.USER
+          alignEnd: true
+        })
+      }
+      if (this.bodyFull().length > 0) {
+        Row({ space: DsSpacing.XSMALL }) {
+          // 占位让气泡靠右（源码用 Arrangement.End；ArkUI Row 用 Blank 撑开）
+          Blank()
+          Text(this.item.streaming ? this.bodyFull() + ' ▌' : this.bodyFull())
+            .fontSize(DsType.BUBBLE_TEXT.size)
+            .lineHeight(DsType.BUBBLE_TEXT.lineHeight)
+            .fontWeight(DsType.BUBBLE_TEXT.weight)
+            .fontColor(this.palette().labelPrimary)
+            .textAlign(TextAlign.Start)
+            // 源码 `widthIn(max = 525.dp)`：绝对上限只在平板宽度触发，手机上 82% 恒更小，
+            // 此处以单一百分比约束近似（验收口径：手机屏逐屏对照）。
+            .constraintSize({ maxWidth: '82%' })
+            .backgroundColor(this.palette().userBubble)
+            .borderRadius(DsShape.BUBBLE)
+            .borderWidth(Border.HAIRLINE)
+            .borderColor(this.palette().borderL3)
+            // 水平 16 = DsSpacing.COMFORTABLE；垂直 10 是源码 UserBubble 写死的 10.dp
+            // （DsSpacing 无 10 档，照抄源码值并在此注明出处）。
+            .padding({
+              left: DsSpacing.COMFORTABLE,
+              right: DsSpacing.COMFORTABLE,
+              top: 10,
+              bottom: 10
+            })
+        }
+        .width('100%')
+      }
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.End)
+    .accessibilityText(this.a11yText)
+    .gesture(LongPressGesture().onAction(() => {
+      this.menuShown = true;
+    }))
+    .onMouse((e: MouseEvent) => {
+      if (this.rightClickEnabled() && e.button === MouseButton.Right) {
+        this.menuShown = true;
+      }
+    })
+    .bindContextMenu(this.menuShown, this.contextMenu(), {
+      placement: Placement.BottomLeft,
+      // 原生关闭（点空白/返回）时要复位，否则菜单再也打不开（与 Sheet 同一个坑）
+      onDisappear: () => {
+        this.menuShown = false;
+      }
+    })
+  }
+
+  /** 助手消息：无卡片容器，纯 Markdown + 点击显露动作条（对照 `AssistantNode`） */
+  @Builder
+  assistantBody() {
+    Column({ space: DsSpacing.TINY }) {
+      if (this.item.images.length > 0) {
+        MessageImages({
+          sessionId: this.sessionId,
+          images: this.item.images,
+          alignEnd: false
         })
       }
 
-      // ── 正文（Markdown；流式光标跟在句尾）──
       /*
-       * F22（真机取证 2026-09-16）：**正文渲染也是一条"出口"**。
-       *
-       * 此前这里直接渲染 `item.body`，于是轨迹视图里「系统」那一条把**整段系统提示词**
-       * 画了出来（不需要点任何格子）。而同一份代码里复制/引用早就走了
-       * `userFacingBodyOf()`（P8-5 的"唯一出口取值"）——**只有渲染这一路漏了**。
-       *
-       * 内部条目取值是空串：此时渲染既有的一句说明（文案复用 `TrajectoryDetail` 里那一份，
-       * 不在这里新造第二份），而不是留一片空白让人以为"这条没有内容"。
-       */
-      /*
-       * 【2026-09-17 用户决定：**正文一律不折叠**】
-       *
-       * 此前做过"超长正文折成一行 + 展开"；用户明确要求改回：
-       * **正文输出不折叠**（与官方一致——官方本来就不折正文，这条早已在其 bundle 里核对过）。
-       * 于是这里只留一条路：正文一律走 `MarkdownRenderer` 完整渲染。
-       * 为手机省空间的办法改在**工具调用**那一侧（全部单栏、一条一行），不动正文。
+       * F22（真机取证 2026-09-16）：**正文渲染也是一条"出口"**（`userFacingBodyOf`）。
+       * 内部条目取值是空串：渲染既有的一句说明（复用 `TrajectoryDetail` 的文案），
+       * 而不是留一片空白让人以为"这条没有内容"。
+       * 【2026-09-17 用户决定：正文一律不折叠】——与官方一致，正文完整渲染。
        */
       if (this.bodyFull().length > 0) {
         MarkdownRenderer({
@@ -221,27 +275,43 @@ export struct MessageRow {
           mentionPath: this.mentionPath,
           onOpenMention: this.onOpenMention
         })
+          .onClick(() => {
+            // 对照源码 `onTap { actionsVisible = !actionsVisible }`
+            if (!this.item.streaming) {
+              this.actionsVisible = !this.actionsVisible;
+            }
+          })
       } else if (this.item.internal === true) {
         Text(INTERNAL_BODY_HIDDEN_PREFIX)
-          .fontSize(Fs.CAPTION)
-          .fontColor($r('sys.color.font_tertiary'))
+          .fontSize(DsType.SMALL_13.size)
+          .fontColor(this.palette().labelTertiary)
           .width('100%')
       }
 
-      // ── 行内动作条（助手消息才有；用户消息的动作在长按菜单里）──
-      if (this.item.speaker === Speaker.ASSISTANT) {
-        NativeActionBar({
-          actions: this.actions,
-          onAction: (id: string) => {
-            if (id === 'like' || id === 'dislike') {
-              // 评价要开表单：取向先记在父组件（它管"哪条开着"），表单本身在这里
-              this.onOpenFeedback(this.item, id === 'like' ? 'positive' : 'negative');
-              return;
-            }
-            this.onAction(this.item, id);
-          }
-        })
-          .width('100%')
+      // ── 动作条：点击正文显露（源码 `AnimatedVisibility(actionsVisible)`）──
+      if (this.actionsVisible && this.item.speaker === Speaker.ASSISTANT) {
+        Row({ space: DsSpacing.TINY }) {
+          ForEach(this.actions, (a: NativeAction) => {
+            Text(a.label)
+              .fontSize(DsType.CAPTION_11.size)
+              .lineHeight(DsType.CAPTION_11.lineHeight)
+              .fontColor(a.active === true ? this.palette().accent : this.palette().labelTertiary)
+              .backgroundColor(a.active === true ? this.palette().accentTertiary : Color.Transparent)
+              .borderRadius(DsShape.PILL)
+              // 源码动作是 28dp 触达盒（ActionIcon）；文本按钮以最小高度对齐同一触达规格
+              .constraintSize({ minHeight: 28 })
+              .padding({
+                left: DsSpacing.SMALL,
+                right: DsSpacing.SMALL,
+                top: DsSpacing.TINY,
+                bottom: DsSpacing.TINY
+              })
+              .onClick(() => {
+                this.runAction(a.id);
+              })
+          }, (a: NativeAction) => a.id)
+        }
+        .width('100%')
       }
 
       // ── 反馈表单（开与关由父组件的 `feedbackOpen` 决定）──
@@ -260,18 +330,6 @@ export struct MessageRow {
       }
     }
     .width('100%')
-    .padding(Sp.M)
-    .borderRadius(Radius.M)
-    .backgroundColor(this.isHovered()
-      ? HarmonyColor.SURFACE_TERTIARY
-      : (this.item.speaker === Speaker.USER ? HarmonyColor.SURFACE_RAISED : HarmonyColor.SURFACE))
-    // 悬停反馈：只有指针设备才有"悬停"这个概念（策略模型回答，视图不自己判断）
-    .onHover((isHover: boolean) => {
-      if (!hoverEnabled(this.modality())) {
-        return;
-      }
-      this.hovered = isHover;
-    })
     .accessibilityText(this.a11yText)
     // 触控：长按；指针：右键。**两者唤起同一个菜单**（P3「同一套交互语义」）——
     // 手势集合由输入策略模型决定（`contextMenuGestures`），此处只做映射。
@@ -285,35 +343,40 @@ export struct MessageRow {
     })
     .bindContextMenu(this.menuShown, this.contextMenu(), {
       placement: Placement.BottomLeft,
-      // 原生关闭（点空白/返回）时要复位，否则菜单再也打不开（与 Sheet 同一个坑）
       onDisappear: () => {
         this.menuShown = false;
       }
     })
   }
 
-  /** 上下文菜单内容：与行内操作条同一份动作清单（不显示空气泡） */
+  /** 上下文菜单内容：与动作条同一份动作清单（不显示空气泡） */
   @Builder
   contextMenu() {
-    Column({ space: Sp.XS }) {
+    Column({ space: DsSpacing.TINY }) {
       ForEach(this.actions, (a: NativeAction) => {
         Text(a.active === true ? `✓ ${a.label}` : a.label)
-          .fontSize(HarmonyType.CAPTION.size)
-          .fontColor(a.active === true ? HarmonyColor.BRAND : HarmonyColor.TEXT_PRIMARY)
+          .fontSize(DsType.SMALL_13.size)
+          .lineHeight(DsType.SMALL_13.lineHeight)
+          .fontColor(a.active === true ? this.palette().accent : this.palette().labelPrimary)
           .width('100%')
-          .padding(HarmonySpacing.CONTROL_INNER)
-          .borderRadius(HarmonyRadius.CONTROL)
+          .padding({
+            left: DsSpacing.SMALL,
+            right: DsSpacing.SMALL,
+            top: DsSpacing.XSMALL,
+            bottom: DsSpacing.XSMALL
+          })
+          .borderRadius(DsShape.ROW)
           .onClick(() => {
             this.menuShown = false;
-            if (a.id === 'like' || a.id === 'dislike') {
-              this.onOpenFeedback(this.item, a.id === 'like' ? 'positive' : 'negative');
-              return;
-            }
-            this.onAction(this.item, a.id);
+            this.runAction(a.id);
           })
       }, (a: NativeAction) => a.id)
     }
     .width(200)
-    .padding(HarmonySpacing.CONTROL_INNER)
+    .padding(DsSpacing.SMALL)
+    .backgroundColor(this.palette().bgLayer2)
+    .borderRadius(DsShape.MENU)
+    .borderWidth(Border.HAIRLINE)
+    .borderColor(this.palette().borderL1)
   }
 }

@@ -183,9 +183,20 @@ function stripStringsOnly(src) {
 
 /** 该名字在 [text] 里出现几次（标识符边界；允许 `.` 前缀——`.borderRadius(Radius.M)` 算使用） */
 function countName(text, name) {
-  const re = new RegExp(`(?<![\\w$])${name.replace(/[$]/g, '\\$')}(?![\\w])`, 'g');
+  // 【为什么逐个转义而不是只转 `$`】`name` 正常情况下是标识符，但它来自**文本解析**
+  // ⇒ 一旦上游解析出了畸形片段（例如块注释混进了导入块），未转义的 `*` / `(` 会让
+  // `new RegExp` 直接抛 `SyntaxError`，把"报一处缺陷"变成"整个门禁不可用"。
+  // 转义后最坏情况只是数不准（漏报），门禁本身始终可跑。
+  const re = new RegExp(`(?<![\\w$])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w])`, 'g');
   const m = text.match(re);
   return m === null ? 0 : m.length;
+}
+
+/** 剥掉注释但**保留换行数**（导入块解析用；只剥注释即可，`from '…'` 是代码不是注释） */
+function stripCommentsKeepLines(text) {
+  return text
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => ' '.repeat(m.length))
+    .replace(/\/\/[^\n]*/g, ' ');
 }
 
 /** 该文件里 `import { … }` 出现的名字（含多行块） */
@@ -195,11 +206,21 @@ function importedNames(lines) {
     if (!/^import\s/.test(lines[i])) continue;
     let block = lines[i];
     let j = i;
-    while (!/from\s+['"]/.test(block) && j + 1 < lines.length) {
+    // 【为什么用剥注释后的文本判断结束条件】块注释里可以出现 `from '…'` 字样
+    // （`SessionHub.ets` 给 `ERR_SESSION_AGENT_BUSY` 写的中文说明里就有 `dshcompat`），
+    // 不剥注释会把导入块截断在注释中间。
+    const done = (s) => /from\s+['"]/.test(stripCommentsKeepLines(s));
+    while (!done(block) && j + 1 < lines.length) {
       j++;
       block += ' ' + lines[j];
     }
-    const m = block.match(/^import\s+(?:type\s+)?\{([^}]*)\}\s*from/);
+    /*
+     * 【为什么必须先剥注释再切分】块注释可含任意字符（`*`、逗号、括号），
+     * 原样 `split(',')` 会让注释文本变成"导入名"，下游 `new RegExp(name)` 当场抛错
+     * ——本门禁曾在 `SessionHub.ets` 给 `ERR_SESSION_AGENT_BUSY` 补了一段导入说明后
+     * **整体不可运行**。剥掉注释后注释就不再参与符号提取。
+     */
+    const m = stripCommentsKeepLines(block).match(/^import\s+(?:type\s+)?\{([^}]*)\}\s*from/);
     if (m !== null) {
       for (const raw of m[1].split(',')) {
         const t = raw.trim();
@@ -489,9 +510,18 @@ function selfTest() {
       expect: 0
     },
     {
-      what: '只在注释/字符串里出现（不误报：剥注释与字符串）',
+      /*
+       * 【这条例子的期望值本轮修正（0 而不是 1）】
+       *
+       * 规则①的计数用的是"**只剥注释**、保留字符串"的文本（见 `stripCommentsOnly` 的说明：
+       * 模板串里的使用是真使用，`SURFACE` / `APP_NAME` 这类常量恰恰只出现在模板串里）。
+       * 于是"名字只出现在普通字符串里"是**刻意的漏报**——宁可漏，也不误删一个在用的 import。
+       * 原期望值 1 是更早那版"连字符串一起剥"的实现留下的，与现在的判据不符：
+       * 它让自检常红，而门禁主流程（`main`）根本不跑自检 ⇒ 这个不一致一直没人发现。
+       */
+      what: '只在注释/字符串里出现 ⇒ 不判（字符串里的出现算使用；刻意接受的漏报）',
       text: `import { Sp } from 'appstate';\nstruct A {\n  // Sp 曾经用在这里\n  build() {\n    Text('Sp')\n  }\n}`,
-      expect: 1
+      expect: 0
     },
     {
       what: '零使用 @Builder（E345）',

@@ -238,7 +238,11 @@ export function shortcutsForDesktop(): ShortcutSpec[] {
  * 过滤条件就是平台的硬约束本身：既不是功能键、也不需要 onKeyEvent，
  * 且键恰好是单字符。留下这个「单字符」判定（而不是只信标记位）是为了让
  * 将来有人往表里加了不符合约束的键时，它会**自动掉出**绑定集合而不是绑定失败。
+ *
+ * 在 `entry/src/main` 内已无调用点（`DESKTOP_LIKE` 走官方 Web UI，它自带全套快捷键；
+ * `PHONE` 无外接键盘范式），保留它的两个理由见下面那行豁免说明。
  */
+// dead-exempt: ① 它是**规范表的可验证投影**——`entry/src/ohosTest/ets/test/LiveWire.test.ets` 用它钉住"9 条声明式 + 3 条 onKeyEvent = 12 行"（本门禁语料不含 ohosTest，看不见这个读者）；② 上架期恢复外接键盘支持时，接线位置就是它（`SHORTCUTS` 是真值）
 export function keyboardShortcutSpecs(): ShortcutSpec[] {
   const out: ShortcutSpec[] = [];
   for (let i = 0; i < SHORTCUTS.length; i++) {
@@ -272,12 +276,12 @@ export function keyEventSpecs(): ShortcutSpec[] {
   return out;
 }
 
-/** 按 id 查找（找不到返回 undefined，调用方自行决定兜底；不抛异常）。 */
-export function findShortcut(id: string): ShortcutSpec | undefined {
-  for (let i = 0; i < SHORTCUTS.length; i++) {
-    if (SHORTCUTS[i].id === id) {
-      return SHORTCUTS[i];
-    }
-  }
-  return undefined;
-}
+/*
+ * 【本轮删除：`findShortcut(id)`（按 id 查规格）】
+ *
+ * 它是给"按 id 执行某个快捷键"那条原生链路用的（v1 的 `ShortcutKeys.ets` 按 id 分发），
+ * 那条链路随 PC 原生链删除（T026）：`DESKTOP_LIKE` 的快捷键由官方 Web UI 自己处理，
+ * `PHONE` 没有快捷键范式。删除前实测：整仓（含 `entry/src/ohosTest` 与 `tools/`）
+ * 零调用点——它是"已删组件的连带残留"，不是"留着将来用"的词汇表
+ * （需要按 id 查的时候，`SHORTCUTS` 与 `keyboardShortcutSpecs` 都还在，一行 filter 就是它）。
+ */

@@ -5,22 +5,31 @@
  * 颜色走系统资源（深浅色自动适配），不在此硬编码色值。
  */
 
-/** 间距（4 的倍数，D3 §8） */
+/** 间距（4 的倍数，D3 §8；扩展覆盖全部 --dsw-space-* 档位） */
 export class Sp {
+  static readonly XXS: number = 1;
   static readonly XS: number = 4;
   static readonly S: number = 8;
   static readonly M: number = 12;
   static readonly L: number = 16;
   static readonly XL: number = 24;
+  static readonly XXL: number = 32;
+  static readonly XXXL: number = 48;
 }
 
-/** 圆角 */
+/** 圆角（扩展覆盖全部 --dsw-radius-* 档位） */
 export class Radius {
+  /** 无圆角 */
+  static readonly NONE: number = 0;
   /** 小徽标 / 药丸（P1 补：原先散落着 5/6/9 三种魔数，取出现最多的 6） */
   static readonly XS: number = 6;
   static readonly S: number = 8;
   static readonly M: number = 12;
   static readonly L: number = 16;
+  /** 大面板圆角（对齐 DSH --dsw-radius-lg） */
+  static readonly XL: number = 20;
+  /** 超大面板 / Full-screen Sheet */
+  static readonly XXL: number = 24;
 }
 
 /**
@@ -34,8 +43,10 @@ export class Border {
   static readonly HAIRLINE: number = 1;
 }
 
-/** 字号（D3 §8 字号体系） */
+/** 字号（D3 §8 字号体系；扩展覆盖全部 --dsw-font-* 档位） */
 export class Fs {
+  /** 展示级标题（页面大标题） */
+  static readonly DISPLAY: number = 24;
   static readonly TITLE_L: number = 20;
   static readonly TITLE_M: number = 18;
   static readonly TITLE_S: number = 16;
@@ -50,6 +61,8 @@ export class Fs {
    * 各处自己写 10 会让"到底还有没有更小的档"永远说不清。
    */
   static readonly CAPTION_XS: number = 10;
+  /** 等宽代码行（对齐 DSH --dsw-font-code；稍大于最小可读档以保证代码可读） */
+  static readonly CODE: number = 13;
 }
 
 /** 行高倍数 */
@@ -58,11 +71,13 @@ export class Lh {
   static readonly TIGHT: number = 1.3;
 }
 
-/** 动效时长（毫秒，D3 §8） */
+/** 动效时长（毫秒，D3 §8；扩展覆盖全部 --dsw-duration-* 档位） */
 export class Dur {
+  static readonly INSTANT: number = 50;
   static readonly FAST: number = 150;
   static readonly NORMAL: number = 200;
   static readonly PAGE: number = 250;
+  static readonly SLOW: number = 350;
 }
 
 /** 布局尺寸 */
@@ -83,10 +98,6 @@ export class Sz {
    * 这不是"窗口可用空间"的上限——那个由布局模型的让步链按当前窗口算（`detailRoomOf`）。
    */
   static readonly DETAIL_MAX: number = 720;
-  /** 页头高度（原实现写死 52；抽成组件后需要名字，否则新文件会撞设计令牌棘轮） */
-  static readonly HEADER: number = 52;
-  /** 栏间拖拽把手的**视觉**宽度（命中区域另按输入模态放宽，见 `TOUCH_MIN`/`POINTER_MIN`） */
-  static readonly DRAG_GRIP: number = 12;
   /** 触摸目标最小高度（无障碍，D3 §7） */
   static readonly TOUCH_MIN: number = 44;
   /**
@@ -97,6 +108,8 @@ export class Sz {
    * 要么手机端点不中。P3 接输入模态时按设备取（`HarmonyTouch` 已经分好两个名字）。
    */
   static readonly POINTER_MIN: number = 24;
+  /** §FR-013：图片缩略图高度（工具卡片内的图片结果预览） */
+  static readonly THUMBNAIL_H: number = 160;
 }
 
 /** 断点阈值（vp，D3 §2） */

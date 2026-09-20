@@ -16,10 +16,7 @@
 
 import { describe, expect, it } from '@ohos/hypium';
 import { ConfigurationConstant } from '@kit.AbilityKit';
-import { KeyCode } from '@kit.InputKit';
 import { parseJson } from 'connection';
-import { hitOfKeyEvent } from '../../../main/ets/view/ShortcutKeys';
-import type { ShortcutHit } from '../../../main/ets/view/ShortcutKeys';
 import {
   assertNoSensitiveContent,
   authorityOfUrl,
@@ -48,6 +45,7 @@ import {
   projectSessionPage,
   sessionCursorOf,
   sessionPagePayload,
+  sessionPageAddress,
   projectWorkspaceListing,
   projectWorkspaceFailure,
   projectWorkspaceText,
@@ -98,7 +96,10 @@ function session(id: string, cwd: string, updatedAt: number): SessionListItem {
   const raw: Record<string, Object> = {};
   return {
     id: id, title: id, cwd: cwd, updatedAt: updatedAt, createdAt: 0,
-    running: false, blank: false, raw: raw as Object
+    running: false, blank: false,
+    // F2 建模出来的三个字段（子代理会话用）：普通会话一律空串 / false，与投影的兜底一致
+    parentSessionId: '', origin: '', subagentMode: '',
+    raw: raw as Object
   };
 }
 
@@ -115,7 +116,9 @@ function makePending(id: string, kind: PendingKind, sessionId: string, title: st
   return {
     id: id, kind: kind, sessionId: sessionId, sessionTitle: '', title: title, detail: detail,
     raw: JSON.stringify(raw), risk: RiskLevel.NORMAL, choices: [], multiSelect: false,
-    allowFreeText: false, at: 0
+    allowFreeText: false, at: 0,
+    // 整组提问（P7-5）：最小待决项不带题 —— 空数组 = 没有整组，走顶层摘要那条
+    questions: []
   };
 }
 
@@ -468,59 +471,15 @@ export default function liveWireTest() {
         .assertEqual('steer');
     });
 
-    // ───────────────── 快捷键判定（D3 §5.1） ─────────────────
+    // ───────────────── 快捷键规范表（D3 §5.1） ─────────────────
 
-    it('hitOfKeyEvent：Esc / Enter / Alt+方向 / F5 各自的规格 id', 0, () => {
-      expect(hitOfKeyEvent(KeyCode.KEYCODE_ESCAPE, false, false).id).assertEqual('stop-turn');
-      // 带修饰键的 Esc 不是快捷键（避免吞掉将来的 Ctrl+Esc）
-      expect(hitOfKeyEvent(KeyCode.KEYCODE_ESCAPE, true, false).id).assertEqual('');
-
-      const send: ShortcutHit = hitOfKeyEvent(KeyCode.KEYCODE_ENTER, false, false);
-      expect(send.id).assertEqual('send-message');
-      expect(send.delta).assertEqual(0);
-      // Shift+Enter = 换行：同一个规格 id，靠 delta 表达"不做发送"
-      const newline: ShortcutHit = hitOfKeyEvent(KeyCode.KEYCODE_ENTER, true, false);
-      expect(newline.id).assertEqual('send-message');
-      expect(newline.delta).assertEqual(-1);
-      // 小键盘回车等价
-      expect(hitOfKeyEvent(KeyCode.KEYCODE_NUMPAD_ENTER, false, false).id).assertEqual('send-message');
-
-      // Alt+↑/↓ 是**同一行同一规格**，方向靠 delta 区分
-      expect(hitOfKeyEvent(KeyCode.KEYCODE_DPAD_UP, false, true).delta).assertEqual(-1);
-      expect(hitOfKeyEvent(KeyCode.KEYCODE_DPAD_DOWN, false, true).delta).assertEqual(1);
-      // 不带 Alt 的方向键必须不命中：否则在列表里按方向键会被当成快捷键吞掉
-      expect(hitOfKeyEvent(KeyCode.KEYCODE_DPAD_UP, false, false).id).assertEqual('');
-
-      expect(hitOfKeyEvent(KeyCode.KEYCODE_F5, false, false).id).assertEqual('reconnect');
-      expect(hitOfKeyEvent(KeyCode.KEYCODE_F5, true, false).id).assertEqual('');
-      // 无关按键：必须返回空 id（不是抛错、也不是随便给一个动作）
-      expect(hitOfKeyEvent(KeyCode.KEYCODE_A, false, false).id).assertEqual('');
-    });
-
-    it('keyEventSpecs 的每一行都必须可被命中（表与实现不许漂移）', 0, () => {
-      // 这条守的是"表里有、UI 里没接"这一类缺陷：`Shortcuts.ets` 的表是规范逐行对应物，
-      // 若某一行在 `hitOfKeyEvent` 里没有对应分支，它会**静默不可达**——
-      // 而这正是本项目在别处（待发队列、会话分叉、附件）反复踩到过的形态。
-      const reachable: string[] = [];
-      const probes: ShortcutHit[] = [
-        hitOfKeyEvent(KeyCode.KEYCODE_ESCAPE, false, false),
-        hitOfKeyEvent(KeyCode.KEYCODE_ENTER, false, false),
-        hitOfKeyEvent(KeyCode.KEYCODE_ENTER, true, false),
-        hitOfKeyEvent(KeyCode.KEYCODE_DPAD_UP, false, true),
-        hitOfKeyEvent(KeyCode.KEYCODE_DPAD_DOWN, false, true)
-      ];
-      for (let i = 0; i < probes.length; i++) {
-        if (probes[i].id.length > 0) {
-          reachable.push(probes[i].id);
-        }
-      }
-      const specs = keyEventSpecs();
-      expect(specs.length > 0).assertTrue();
-      for (let i = 0; i < specs.length; i++) {
-        expect(reachable.indexOf(specs[i].id) >= 0).assertTrue();
-      }
-      // 声明式那条路（8 个规格）也要非空，否则"用 keyboardShortcut 绑定"就是空转
-      expect(keyboardShortcutSpecs().length > 0).assertTrue();
+    // T026：v1 的根级桌面快捷键（连同 `view/ShortcutKeys.hitOfKeyEvent` 的按键判定）
+    // 已随 PC 原生链删除，因此这里只钉住 `Shortcuts.ets` 规范表自身的构成。
+    // "表还有没有运行时读者"由零消费者审计把关，不在这里重复断言。
+    it('快捷键规范表：构成（9 条声明式 + 3 条 onKeyEvent = 12 行）', 0, () => {
+      expect(SHORTCUTS.length).assertEqual(12);
+      expect(keyboardShortcutSpecs().length).assertEqual(9);   // 8 单字符 + 1 功能键
+      expect(keyEventSpecs().length).assertEqual(3);           // Enter / Esc / Alt+↑↓
       // 【规模构成必须被钉住】注释曾经把"12 行规范 / 12 个规格"写成"11 行 / 13 个"，
       // 而这两个数字是"规范覆盖了多少"的唯一凭据。断言构成，让注释再也漂移不了。
       let functionKeys: number = 0;
@@ -529,11 +488,8 @@ export default function liveWireTest() {
           functionKeys++;
         }
       }
-      expect(SHORTCUTS.length).assertEqual(12);
-      expect(keyboardShortcutSpecs().length).assertEqual(9);   // 8 单字符 + 1 功能键
       expect(functionKeys).assertEqual(1);                     // F5
-      expect(specs.length).assertEqual(3);                     // Enter / Esc / Alt+↑↓
-      expect(keyboardShortcutSpecs().length + specs.length).assertEqual(SHORTCUTS.length);
+      expect(keyboardShortcutSpecs().length + keyEventSpecs().length).assertEqual(SHORTCUTS.length);
     });
 
     // ───────────────── 通知：入参构造 + 内容纪律 ─────────────────
@@ -633,7 +589,7 @@ export default function liveWireTest() {
     });
 
     it('sessionPagePayload：address 是 {kind,sessionId}，throughSeq 原样带上', 0, () => {
-      const args: Object | undefined = sessionPagePayload('s-1', 18, 200);
+      const args: Object | undefined = sessionPagePayload(sessionPageAddress('s-1'), 18, 200);
       const bag: Record<string, Object> = args as Record<string, Object>;
       const request: Record<string, Object> = bag['request'] as Record<string, Object>;
       const address: Record<string, Object> = request['address'] as Record<string, Object>;
@@ -643,7 +599,7 @@ export default function liveWireTest() {
       expect(request['maxMessages'] as number).assertEqual(200);
       // maxMessages<=0 时不带该键（让 Host 用它自己的默认值，而不是我们传一个 0 条的上限）
       const noMax: Record<string, Object> =
-        sessionPagePayload('s-1', 3, 0) as Record<string, Object>;
+        sessionPagePayload(sessionPageAddress('s-1'), 3, 0) as Record<string, Object>;
       const req2: Record<string, Object> = noMax['request'] as Record<string, Object>;
       expect(req2['maxMessages'] === undefined).assertTrue();
     });

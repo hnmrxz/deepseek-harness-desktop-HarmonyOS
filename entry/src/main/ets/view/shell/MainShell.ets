@@ -17,7 +17,13 @@
  * 而它**已经是组件 `HubBanner`**，故这里直接渲染组件。
  */
 
-import { ActionNotice, COMMAND_PICK_DRAFT, CommandCandidate, DiagEntry, DiagMode, DiagReport, Fs, HostRecord, HubPhase, MAIN_CONNECT, MAIN_CONVERSATION, ModelOption, ModelSelection, PanelRegistry, PendingAttachment, PendingItem, Radius, ReferenceCandidate, ScrollSpot, SessionHub, SessionJob, ShareTarget, Sp, StackPage, TrajectoryItem, commandDraftText, commandInputNotice, commandPickAction, diagHintOf, diagTitleOf, filterDiagEntries, openSettings } from 'appstate';
+import {
+  ActionNotice, COMMAND_PICK_DRAFT, CommandCandidate, DiagEntry, DiagMode, DiagReport, Fs, HostRecord,
+  HubPhase, MAIN_CONNECT, MAIN_CONVERSATION, ModelOption, ModelSelection, PanelRegistry, PendingAttachment,
+  PendingItem, Radius, ReferenceCandidate, RemoteHost, RunMode, ScrollSpot, SessionHub, SessionJob,
+  SessionSearchRow, ShareTarget, Sp, StackPage, TrajectoryItem, commandDraftText, commandInputNotice,
+  commandPickAction, diagHintOf, diagTitleOf, filterDiagEntries, openSettings, tildeExpand
+} from 'appstate';
 import hilog from '@ohos.hilog';
 import { CommandList } from '../CommandList';
 import { ConnectPane } from '../ConnectPane';
@@ -26,7 +32,7 @@ import { DiagnosticsPane } from '../DiagnosticsPane';
 import { GoalBar } from '../GoalBar';
 import { SessionModelPicker } from '../SessionModelPicker';
 import { copyText } from 'platform';
-import type { PendingAnswerDraft, HubSnapshot, InputModality, NavigationState, SessionStatsInput } from 'appstate';
+import type { PendingAnswerDraft, PendingAnswerDrafts, HubSnapshot, InputModality, NavigationState, SessionStatsInput } from 'appstate';
 import { TabContentView } from '../TabContentView';
 import { extractToken } from 'connection';
 import type { TabContentFacade } from '../TabContentView';
@@ -57,7 +63,28 @@ export interface MainShellFacade {
   setConnectResult: (value: string) => void;
   connectToken: string;
   setConnectToken: (value: string) => void;
+  /** §FR-032：当前运行模式（远程模式下的手动连接走 switchToRemote 语义，保持模式一致） */
+  runMode: RunMode;
+  /** §FR-034：LAN 发现的远程主机列表（中枢扫描结果） */
+  discoveredHosts: RemoteHost[];
+  /** §FR-034：LAN 扫描是否进行中 */
+  lanScanning: boolean;
+  /** §FR-034：LAN 发现能力是否可用（LanDiscovery 内建 ⇒ 恒为 true；无 Wi-Fi 时扫描返回空列表） */
+  lanDiscoveryAvailable: boolean;
+  /** §FR-034：开始 LAN 扫描（就绪性探测在扫描中完成） */
+  onStartLanDiscovery: () => void;
+  /** §FR-034：点击已发现的主机连接（认证在 switchToRemote 内完成） */
+  onConnectRemoteHost: (host: RemoteHost) => void;
+  /** §FR-034：远程模式下的手动连接 fallback（地址 + token 合成 URL 后走同一条切换路径） */
+  onConnectRemoteByUrl: (url: string) => void;
   decidePending: (item: PendingItem, choiceId: string, reason: string) => void;
+  /**
+   * 待决答复草稿（**宿主所有**，T-C / FR-013）：逐题答案经主区一路透传到 `PendingPane`。
+   * 真值只有一份（`Index.pendingAnswerDrafts`），本仓两条挂载链（会话内 / 工作区浏览器）读同一份。
+   */
+  pendingAnswerDrafts: PendingAnswerDrafts;
+  /** 逐题草稿变化（回传宿主保存） */
+  onPendingAnswerGroup: (itemId: string, drafts: PendingAnswerDraft[]) => void;
   detailOverlayOpen: boolean;
   setDetailOverlayOpen: (value: boolean) => void;
   diag: DiagReport;
@@ -116,12 +143,22 @@ export interface MainShellFacade {
   quoteIntoDraft: (item: TrajectoryItem) => void;
   references: ReferenceCandidate[];
   resendMessage: (item: TrajectoryItem) => void;
+  /** §FR-001：编辑用户消息——把内容填入 Composer 供修改后重发 */
+  editMessage: (item: TrajectoryItem) => void;
+  /** §FR-002：重试助手回复——重发上一条用户消息以重新生成回复 */
+  retryAssistant: (item: TrajectoryItem) => void;
   runDiagnostics: () => Promise<void>;
   running: boolean;
   setRunning: (value: boolean) => void;
   searchOpen: boolean;
   setSearchOpen: (value: boolean) => void;
+  /** §FR-005：会话级搜索——结果与降级说明 */
+  sessionSearchRows: SessionSearchRow[];
+  sessionSearchNote: string;
+  onSearchSessions: (query: string) => void;
   selectedSessionId: string;
+  /** §FR-005：打开指定会话（搜索结果点击跳转） */
+  openSession: (id: string) => void;
   /** 会话头上下文行的工作区名（从选中会话的 cwd 派生；空 = 不知道，不显示） */
   sessionWorkspaceName: string;
   /** 品牌名（宿主给的事实；空会话空态里居中显示，对应官方新会话页的品牌区） */
@@ -291,7 +328,9 @@ export struct MainShell {
         resultText: this.f.connectResult,
         resultOk: this.f.connectOk,
         resultAdvice: this.f.connectAdvice,
-        discoveryAvailable: false,
+        discoveryAvailable: this.f.lanDiscoveryAvailable,
+        discoveredHosts: this.f.discoveredHosts,
+        scanning: this.f.lanScanning,
         onAddressChange: (v: string) => {
           this.f.setConnectAddress(v);
         },
@@ -302,8 +341,24 @@ export struct MainShell {
           this.f.setConnectBusy(true);
           this.f.setConnectResult('');
           this.f.setConnectAdvice('');
-          const hub: SessionHub = SessionHub.shared();
           const url: string = this.f.composeHostUrl(this.f.connectAddress, this.f.connectToken);
+          /*
+           * §FR-034：远程模式下的手动输入是 LAN 发现的 fallback——
+           * 必须走 switchToRemote 语义（连接成功后中枢与界面一起切到 REMOTE）。
+           * 只 configure+connect 会让中枢停在 LOCAL，界面与后端各说一套。
+           */
+          if (this.f.runMode === RunMode.REMOTE) {
+            if (url.length === 0) {
+              this.f.setConnectOk(false);
+              this.f.setConnectBusy(false);
+              this.f.setConnectResult('地址无法解析');
+              this.f.setConnectAdvice('请填写形如 http://主机:端口 的地址；token 可单独填，也可直接粘贴完整启动链接（含 ?token=…）。');
+              return;
+            }
+            this.f.onConnectRemoteByUrl(url);
+            return;
+          }
+          const hub: SessionHub = SessionHub.shared();
           if (!hub.configure(url, undefined)) {
             this.f.setConnectOk(false);
             this.f.setConnectBusy(false);
@@ -334,12 +389,17 @@ export struct MainShell {
           });
         },
         /*
-         * 「开始发现」是**诚实的空实现**：那枚按钮的可用性由 `ConnectPane.discoveryAvailable`
-         * 决定，不可用时它显示「发现不可用」且 `enabled(false)`——**不是"点了没反应"**。
-         * 这台设备上没有可用的发现通道（E130 起本应用也只记一个 Host），
-         * 所以宿主侧交一个空实现。写在这里，免得死按钮扫描器把它当缺陷再报一次。
+         * §FR-034：开始 LAN 扫描——真实现（此前是"诚实的空实现"：
+         * 发现能力未接入时按钮恒灰。LanDiscovery（T016）就位后这里接真扫描，
+         * 结果经中枢快照回到 discoveredHosts）。
          */
         onStartDiscovery: () => {
+          this.f.onStartLanDiscovery();
+        },
+        onConnectRemote: (host: RemoteHost) => {
+          // 预填地址：LAN 发现的主机不带 token，若认证失败，用户只需补上 token 重试
+          this.f.setConnectAddress(host.hostAddress);
+          this.f.onConnectRemoteHost(host);
         },
         onOpenDiagnostics: () => {
           this.f.openDiagnostics();
@@ -381,6 +441,11 @@ export struct MainShell {
         },
         onCancelQuestion: (item: PendingItem) => {
           this.f.cancelQuestion(item);
+        },
+        // T-C：答复草稿从宿主来、经宿主回（折叠开合换路线时不丢，见门面字段说明）
+        answerDrafts: this.f.pendingAnswerDrafts,
+        onAnswerGroupChange: (itemId: string, drafts: PendingAnswerDraft[]) => {
+          this.f.onPendingAnswerGroup(itemId, drafts);
         },
         sessionId: this.f.selectedSessionId,
         workspaceName: this.f.sessionWorkspaceName,
@@ -455,6 +520,12 @@ export struct MainShell {
         onResendMessage: (item: TrajectoryItem) => {
           this.f.resendMessage(item);
         },
+        onEditMessage: (item: TrajectoryItem) => {
+          this.f.editMessage(item);
+        },
+        onRetryAssistant: (item: TrajectoryItem) => {
+          this.f.retryAssistant(item);
+        },
         // 消息操作条的「复制」：剪贴板是平台能力，回调由宿主提供（视图层不依赖 platform）
         onCopyMessage: (text: string) => {
           if (text.length === 0) {
@@ -466,9 +537,7 @@ export struct MainShell {
           });
         },
         onReferenceQuery: (query: string) => {
-          if (this.f.hubConnected) {
-            SessionHub.shared().refreshReferences(query);
-          }
+          this.sendReferenceQuery(query);
         },
         onPullQueued: (itemId: string, text: string) => {
           // 「取回编辑」= 移除该队列项 + 把正文放回草稿。
@@ -498,6 +567,15 @@ export struct MainShell {
         // 触屏入口：手机上没有 Ctrl/Cmd+F，而官方轨迹页的搜索框是常驻可见的
         onOpenSearch: () => {
           this.f.setSearchOpen(true);
+        },
+        // §FR-005：会话级搜索
+        sessionSearchRows: this.f.sessionSearchRows,
+        sessionSearchNote: this.f.sessionSearchNote,
+        onSearchSessions: (query: string) => {
+          this.f.onSearchSessions(query);
+        },
+        onOpenSessionFromSearch: (sessionId: string) => {
+          this.f.openSession(sessionId);
         }
       })
 
@@ -530,6 +608,26 @@ export struct MainShell {
        */
       TabContentView({ f: this.f.tabFacade, compact: this.compact })
     }
+  }
+
+  /**
+   * `@` 引用查询的统一出口（§FR-007/FR-008：`~` 主目录展开）。
+   *
+   * 【为什么在这里展开而不是在 Composer】Composer 只负责词法与受控输入，它**不知道**
+   * Host 的主目录；`hostHome` 是中枢快照里的 Host 事实（`facts.home`），而本层是它进
+   * UI 的必经之处（Composer 的查询最终都从这里落到 `refreshReferences`）。
+   * 口径与官方 `dsh-client-ui-input-trigger` 一致：只替换**路径开头**的 `~` 或 `~/`，
+   * `hostHome` 未知（空串）时原样交给 Host 解析（`tildeExpand` 的判据，纯函数有 fixture）。
+   *
+   * 【为什么每次都读快照】`hostHome` 随重连变化（换一台 Host 就是另一台的家目录），
+   * 缓存在视图里会在重连后继续用旧路径——那是"查不到文件却不报错"的典型来源。
+   */
+  private sendReferenceQuery(query: string): void {
+    if (!this.f.hubConnected) {
+      return;
+    }
+    const hub: SessionHub = SessionHub.shared();
+    hub.refreshReferences(tildeExpand(query, hub.snapshot().hostHome));
   }
 
   build() {
