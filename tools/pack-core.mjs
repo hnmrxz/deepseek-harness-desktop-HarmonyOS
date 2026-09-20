@@ -329,17 +329,19 @@ function embedProfile() {
  * 因此这里只写不依赖产物哈希的字段——容器的 sha256 仍然只在外层清单（否则自指）。
  */
 /**
- * 生成**端侧 agent preset**：`presets/ondevice/`（复制 `standard`，禁用依赖 subprocess 的三行）。
+ * 生成**端侧 agent preset**：`presets/ondevice/`（复制 `standard`，禁用依赖 subprocess 的行）。
  *
  * 【为什么必须固化在这里（D6 E80）】`session/create` 要求挂载 agent preset，而 `standard` 的组成里
- * 有三行依赖 `ctx.subprocess`：`tool-pwsh`（`condition: process.platform !== 'win32'` ⇒ 端侧 linux 会启用）、
- * `tool-bash`（同类）、`tool-fs-search`（多行 inject 含 `"subprocess"`，走 ripgrep）。而**鸿蒙不支持
- * 进程创建**（E15），于是会话创建会以 `agent-preset/invalid: preset "standard" failed to mount:
- * N row(s) did not activate` 失败。正确解法是**在配置层表达端侧差异**——新增一个禁用这三行的 preset，
+ * 有依赖 `ctx.subprocess` 的行：`tool-pwsh`（`condition: process.platform !== 'win32'` ⇒ 端侧 linux 会启用）、
+ * `tool-bash`（同类）、`tool-fs-search`（多行 inject 含 `"subprocess"`，走 ripgrep）、
+ * 以及 0.1.6 新增的 PTC 工作流链 `workflow-ptc`/`tool-workflow`（经 host 行 ptc-runtime 间接依赖
+ * subprocess+sandbox，见下方行内注释）。而**鸿蒙不支持进程创建**（E15），于是会话创建会以
+ * `agent-preset/invalid: preset "standard" failed to mount: N row(s) did not activate`
+ * 失败。正确解法是**在配置层表达端侧差异**——新增一个禁用这些行的 preset，
  * 并在 profile 里把 `agent-presets.default` 指向它；而不是让 shell 链假装可用。
  *
  * 【为什么是"复制 standard 再改"】preset 是磁盘文件、**目录名即 id**（`preset.yml` 里没有 id）：
- * 复制保证其余组成与上游 standard 一致（上游新增工具行时端侧也带上），只把这三行改 `disabled: true`。
+ * 复制保证其余组成与上游 standard 一致（上游新增工具行时端侧也带上），只把这些行改 `disabled: true`。
  * 这属于**增加一个组合**，不是修改 dsh 自身代码。
  */
 function addOnDevicePreset() {
@@ -363,13 +365,47 @@ function addOnDevicePreset() {
       "- id: tool-fs-search\n  name: '@deepseek-ai/dsh-tool-fs-search'\n"
       + '  # 端侧禁用：经 ctx.subprocess 调 ripgrep，而鸿蒙不支持进程创建（E15）\n  disabled: true\n');
   }
+  /*
+   * 【0.1.6-alpha.2 新增（W2，2026-09-20）】standard preset 新增了 PTC 工作流链，两行连带禁用：
+   *   · `workflow-ptc`（`PtcWorkflowEngine.inject = ["subagents","ptcRuntime","sandboxPolicy"]`，
+   *     dsh-workflow-ptc/lib/index.js:580-583）—— `ptcRuntime` 的唯一提供者是 host 行
+   *     `ptc-runtime`（dsh-ptc-runtime-node，`inject = ["fs","subprocess","sandbox","sandboxPolicy"]`，
+   *     lib/index.js:765-770），而 subprocess/sandbox 已被端侧 profile 禁用（E15）⇒ 永远 pending；
+   *   · `tool-workflow`（`inject = ["tools","workflowEngine","systemPrompt"]`，dsh-tool-workflow
+   *     /lib/index.js:16-20）—— `workflowEngine` 的唯一提供者就是上面的 workflow-ptc。
+   * 不禁的后果（本机实测，check-core-loop 2026-09-20 对 0.1.6 树的真 Host 读数）：
+   * `session/create` 回 `agent-preset/invalid: preset "ondevice" failed to mount:
+   * 2 row(s) did not activate: workflow-ptc (waiting for ptcRuntime) /
+   * tool-workflow (waiting for workflowEngine)` —— preset mount 是全有或全无
+   * （dsh-agent-presets/lib/index.js:893-894），US1 的会话创建整条断。
+   * （rc.2 没有这条链：dsh-workflow-ptc / dsh-ptc-runtime-node 都是 0.1.6 新包。）
+   */
+  const workflowPtcRow = "    - id: workflow-ptc\n      name: '@deepseek-ai/dsh-workflow-ptc'\n";
+  if (text.includes(workflowPtcRow)) {
+    text = text.replace(workflowPtcRow,
+      "    - id: workflow-ptc\n      name: '@deepseek-ai/dsh-workflow-ptc'\n"
+      + '      # 端侧禁用：inject ptcRuntime，其唯一提供者 ptc-runtime 需要 subprocess+sandbox（E15）\n'
+      + '      disabled: true\n');
+  } else {
+    log('[pack-core]   ⚠ 未找到 workflow-ptc 行——上游 preset 结构可能又变了，'
+      + 'session/create 会在真机/本机回路上 fail-loud，请重核 addOnDevicePreset');
+  }
+  const toolWorkflowRow = "    - id: tool-workflow\n      name: '@deepseek-ai/dsh-tool-workflow'\n";
+  if (text.includes(toolWorkflowRow)) {
+    text = text.replace(toolWorkflowRow,
+      "    - id: tool-workflow\n      name: '@deepseek-ai/dsh-tool-workflow'\n"
+      + '      # 端侧禁用：inject workflowEngine，唯一提供者是上面的 workflow-ptc（连带）\n'
+      + '      disabled: true\n');
+  } else {
+    log('[pack-core]   ⚠ 未找到 tool-workflow 行——同上，请重核 addOnDevicePreset');
+  }
   writeFileSync(agentFile, text, 'utf8');
   writeFileSync(join(to, 'preset.yml'),
     'name: 端侧模式（无 Shell）\n'
     + 'description: 端侧编码 Agent：文件编辑、检索、Skills、计划、目标、子代理与工作流；'
     + '不含 Shell 工具（鸿蒙不支持进程创建）。\n'
     + 'order: 1\n', 'utf8');
-  log('[pack-core]   端侧 preset 已生成：presets/ondevice（禁用 tool-bash / tool-pwsh / tool-fs-search）');
+  log('[pack-core]   端侧 preset 已生成：presets/ondevice（禁用 tool-bash / tool-pwsh / tool-fs-search / workflow-ptc / tool-workflow）');
 }
 
 /**

@@ -153,6 +153,24 @@ export function buildHostArgv(entryScript: string): string[] {
     // 鸿蒙上**本来能做**的能力，不如把开关打开。
     '--experimental-sqlite',
     /*
+     * 【0.1.6-alpha.2 升级项（W1 实证，2026-09-20）】必须带 --expose-internals。
+     *
+     * 依据：0.1.6 起 dsh 的 profile 模块解析换了机制——`dsh-app-boot` 的
+     * `installProfileResolution()`（runProfile 默认 resolutionMode="runtime" 经
+     * `PluginPackages` 无条件装载）在 **boot 必经路径**上通过
+     * `node-addon-require-builtin` 取 Node 内部模块（如 internal/modules/esm/loader）
+     * 接管 ESM/CJS resolver。该原生依赖在鸿蒙上无平台包也不发布源码（fail closed），
+     * pack-core 已在打包期把它的入口替换为 JS 垫片（patchRequireBuiltinForOhos）：
+     * `requireBuiltin(id)` 直通 `createRequire(...)(id)`。普通 require 要能取到
+     * `internal/*` 模块，**唯一前提**就是宿主以 --expose-internals 启动——不加它，
+     * 垫片会在 profile boot 时抛"需要宿主以 --expose-internals 启动"（fail-loud，
+     * 见 hostcore/app/main.js BOOT_00 的早期读数），Host 起不来。
+     * 本机回路已实证：Node 24 + --jitless --expose-internals --experimental-sqlite
+     * 对 0.1.6-alpha.2 树 BOOT_00→BOOT_70 全通；端侧 worker 线程继承 execArgv，
+     * 主进程带此旗标即全覆盖。
+     */
+    '--expose-internals',
+    /*
      * 【绝对不要把 dsh 的应用级选项放进来】这里返回的是交给 `node::Start` 的 **Node 自身 argv**：
      * 任何 Node 不认识的开关都会让进程直接死在 CLI 解析上。实测（E68）：
      *   把 `--trusted-host` 加在这里 ⇒ dsh 侧只有一行 `node: bad option: --trusted-host`，

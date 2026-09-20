@@ -47,8 +47,8 @@
 **Goal**: 新核心在本机回路可启动、host 就绪信号契约保持、既有 boot 序列不回归。
 **Independent Test**: 本机回路对 0.1.6-alpha.2 树跑通 boot 检查；hdsh-core.json 版本读数为 0.1.6-alpha.2。
 
-- [ ] T008 [US1] 本机核心回路检查：check-core-loop 对新树跑通（boot 序列、入口解析、可本机验证的段落）；脚本若绑旧版本细节则适配，本机跑不了的段（ohos 原生件加载）如实标"待端侧"，in tools/check-core-loop.mjs
-- [ ] T009 [US1] host 就绪契约保持：writeHostReady 的 url/baseUrl/token/port/profile/workspace/runtime 各字段在新核心 stdout 输出形态下仍能可靠抓取（watchdogAuthUrl 锚点适配如需）；host-stop-request 停止通道对新版 shutdown 语义复核，in hostcore/app/main.js
+- [x] T008 [US1] 本机核心回路检查：check-core-loop 对新树跑通（boot 序列、入口解析、可本机验证的段落）；脚本若绑旧版本细节则适配，本机跑不了的段（ohos 原生件加载）如实标"待端侧"，in tools/check-core-loop.mjs
+- [x] T009 [US1] host 就绪契约保持：writeHostReady 的 url/baseUrl/token/port/profile/workspace/runtime 各字段在新核心 stdout 输出形态下仍能可靠抓取（watchdogAuthUrl 锚点适配如需）；host-stop-request 停止通道对新版 shutdown 语义复核，in hostcore/app/main.js
 
 **Checkpoint**: US1 本机可验部分全部通过；端侧启动验证归入 Phase 9。
 
@@ -59,9 +59,9 @@
 **Goal**: agent 新建/读取/覆盖/列目录四步链与工作区面板的端到端链路在新核心下成立（含历史两处修复的锚点再适配）。
 **Independent Test**: 静态+本机回路可验部分通过；四步链真机实测归入 Phase 9。
 
-- [ ] T010 [US2] 写入路径诊断与垫片适配：核对 0.1.6-alpha.2 的 dsh-fs-local writeFileAtomic 实现形态（link/rename/copyFile 的使用是否变化），main.js 的 installLinkFallback 降级垫片锚点适配；确认"新建=link 被拒→copyFile(COPYFILE_EXCL)、覆盖=rename"两语义在新版仍被垫片覆盖，in hostcore/app/main.js
-- [ ] T011 [US2] 默认工作区链路复核：host-ready.json 的 workspace 字段（可写目录）→ 客户端建会话 workspaceId/cwd 互斥回退 → workspaceFiles 列表，整链在 0.1.6-alpha.2 协议下逐段核对（上游 `accepts workspaceId or cwd, not both` 约束是否变化），漂移即适配，in appstate/src/main/ets/store/SessionHub.ets + appstate/src/main/ets/model/Wire.ets
-- [ ] T012 [US2] ondevice preset 工具集重核：0.1.6-alpha.2 的 preset/插件机制若变化，按新机制重生成端侧 preset；默认维持禁用 tool-bash/tool-pwsh/tool-fs-search，确保禁用项不出现在会话、fs 读写类工具真实注册，in hostcore/profile/ondevice/package.json + tools/pack-core.mjs
+- [x] T010 [US2] 写入路径诊断与垫片适配：核对 0.1.6-alpha.2 的 dsh-fs-local writeFileAtomic 实现形态（link/rename/copyFile 的使用是否变化），main.js 的 installLinkFallback 降级垫片锚点适配；确认"新建=link 被拒→copyFile(COPYFILE_EXCL)、覆盖=rename"两语义在新版仍被垫片覆盖，in hostcore/app/main.js
+- [x] T011 [US2] 默认工作区链路复核：host-ready.json 的 workspace 字段（可写目录）→ 客户端建会话 workspaceId/cwd 互斥回退 → workspaceFiles 列表，整链在 0.1.6-alpha.2 协议下逐段核对（上游 `accepts workspaceId or cwd, not both` 约束是否变化），漂移即适配，in appstate/src/main/ets/store/SessionHub.ets + appstate/src/main/ets/model/Wire.ets
+- [x] T012 [US2] ondevice preset 工具集重核：0.1.6-alpha.2 的 preset/插件机制若变化，按新机制重生成端侧 preset；默认维持禁用 tool-bash/tool-pwsh/tool-fs-search，确保禁用项不出现在会话、fs 读写类工具真实注册，in hostcore/profile/ondevice/package.json + tools/pack-core.mjs
 
 **Checkpoint**: 工具能力链路在代码层逐段成立，等待端侧实测。
 
@@ -72,8 +72,8 @@
 **Goal**: 新版官方 Web UI 设置项清单化，设置存储跨版本兼容。
 **Independent Test**: 清单文档生成；$DSH_HOME 旧配置在新核心读取路径核对通过。
 
-- [ ] T013 [P] [US3] 生成 Web UI 设置项核查清单：以 0.1.6-alpha.2 新版前端实际设置项为准（模型/供应商与密钥、工具、插件、外观等）枚举成表，每项含"打开→修改→保存→重启→读回"五步核查列与结论列（供 Phase 9 执行走查），in docs/08-设置项核查清单.md
-- [ ] T014 [US3] 设置存储跨版本兼容核查：$DSH_HOME 为跨版本共享目录，核对 0.1.6-alpha.2 的配置读写路径/格式相对 rc.3 是否迁移或改名，端侧入口（main.js 环境与 HOME 钉死）下首启不丢用户设置；发现不兼容点在入口脚本/补丁层修复，in hostcore/app/main.js
+- [x] T013 [P] [US3] 生成 Web UI 设置项核查清单：以 0.1.6-alpha.2 新版前端实际设置项为准（模型/供应商与密钥、工具、插件、外观等）枚举成表，每项含"打开→修改→保存→重启→读回"五步核查列与结论列（供 Phase 9 执行走查），in docs/08-设置项核查清单.md
+- [x] T014 [US3] 设置存储跨版本兼容核查：$DSH_HOME 为跨版本共享目录，核对 0.1.6-alpha.2 的配置读写路径/格式相对 rc.3 是否迁移或改名，端侧入口（main.js 环境与 HOME 钉死）下首启不丢用户设置；发现不兼容点在入口脚本/补丁层修复，in hostcore/app/main.js
 
 **Checkpoint**: 清单就绪、存储兼容性有结论；逐项走查归入 Phase 9。
 
@@ -84,8 +84,8 @@
 **Goal**: 原生侧设置能力在新核心下代码层成立。
 **Independent Test**: 代码走查 + 既有单测通过。
 
-- [ ] T015 [P] [US4] 原生设置链路核查：SettingsPane/主题持久化（prefs）/核心管理页（版本显示取 hdsh-core.json、激活/回滚动作）在新核心元数据格式下逐项核对；ReadSettings 相关模型如需适配 0.1.6 配置格式则改，in entry/src/main/ets/view/SettingsPane.ets + hostruntime/src/main/ets/core/CoreStore.ets
-- [ ] T016 [P] [US4] 远程主机与连接设置回归核查：远程模式连接/重认证/断连提示链路在 0.1.6-alpha.2 端点下核对（与 T017 探测结果联动，漂移同步适配），in entry/src/main/ets/view/ConnectPane.ets + connection/src/main/ets/Index.ets
+- [X] T015 [P] [US4] 原生设置链路核查：SettingsPane/主题持久化（prefs）/核心管理页（版本显示取 hdsh-core.json、激活/回滚动作）在新核心元数据格式下逐项核对；ReadSettings 相关模型如需适配 0.1.6 配置格式则改，in entry/src/main/ets/view/SettingsPane.ets + hostruntime/src/main/ets/core/CoreStore.ets
+- [X] T016 [P] [US4] 远程主机与连接设置回归核查：远程模式连接/重认证/断连提示链路在 0.1.6-alpha.2 端点下核对（与 T017 探测结果联动，漂移同步适配），in entry/src/main/ets/view/ConnectPane.ets + connection/src/main/ets/Index.ets
 
 **Checkpoint**: 原生设置代码层就绪；真机走查归入 Phase 9。
 

@@ -307,6 +307,18 @@ function flatNativeName(basename) {
  * **新建**用 `link()`（no-replace 语义）、覆盖用 `rename()`。真机错在 `link()`，
  * 两端同目录 ⇒ **不是 EXDEV，是沙箱策略拒绝 linkat**。
  *
+ * 【0.1.6-alpha.2 复核（2026-09-20）】上游形态**未变**，垫片锚点保持：
+ *   dsh-fs-local/lib/index.js:8 `import { …, link, … } from "node:fs/promises"`，
+ *   :520 `const linkFile = internals.linkFile ?? link`，
+ *   :548-552 新建（createIfAbsent）仍走 `await linkFile(tempPath, absolutePath)`
+ *   （no-replace；EEXIST/竞争路径由 `throwGuardedCreateFailure` 翻译成 FS_NOT_OBSERVED，
+ *   :492 对 EEXIST 的处理未变）；
+ *   :553-559 覆盖（mode 已存在）仍走 `rename(tempPath, absolutePath)`
+ *   （新增的 win32 replaceFile/DACL 分支端侧 platform=linux 不涉及）。
+ * 即"新建=link 被拒→copyFile(COPYFILE_EXCL)、覆盖=rename"两语义在新版仍被本垫片覆盖：
+ * `link` 是从 `node:fs/promises` 具名导入的，本垫片在核心树被 import **之前**就
+ * defineProperty 换掉了该导出 ⇒ 上游拿到的默认 `link` 就是垫片后的实现（与 rc.2 同机制）。
+ *
  * 【为什么在这里降级，而不是改上游】本仓不变式：不改上游源码、不改核心树，端侧差异只走运行期组合
  * （与 `installNativeRedirect` 同一手法）。
  *
@@ -516,8 +528,13 @@ if (!process.execArgv.includes('--expose-internals')) {
  * ⇒ 通道只能是**文件**：这里写，ArkTS 侧读（EntryAbility.adoptLocalHost）。
  *
  * 【为什么在 stdout 上做拦截而不是改 dsh】对上游零 patch 是本项目的纪律；
- * 而且 dsh 的这一行本来就是为"把 URL 交给用户"设计的（`if (config.printUrl) console.log(...)`）。
+ * 而且这一行的格式本来就是为"把 URL 交给用户"设计的（`if (config.printUrl) console.log(...)`）。
  * 拦截只做一次匹配、立刻恢复原来的 write，不改变任何输出内容。
+ *
+ * 【0.1.6-alpha.2 复核（2026-09-20，本机回路实证）】`dsh web: <url>` 打印行格式未变
+ * （dsh-web-app/lib/index.js 的 printUrl 行），watchdogAuthUrl 的 `/dsh web:\s*(https?:\/\/\S+)/`
+ * 锚点原样命中；writeHostReady 各字段（url/baseUrl/token/port/profile/pid/workspace/runtime）
+ * 在新核心 stdout 形态下全部可靠抓取（BOOT_65_AUTH_URL → host-ready.json 落盘核对通过）。
  */
 function watchdogAuthUrl() {
   const original = process.stdout.write.bind(process.stdout);
@@ -935,11 +952,22 @@ function recoverOrphanLocks(homeDir) {
   diag(`写锁巡检：发现 ${locks.length} 个，清理孤儿 ${removed} 个，保留 ${kept} 个`);
 }
 
-/** 找到 dsh CLI 的 profile-boot 薄入口（re-export runProfile）。 */
+/**
+ * 找到 dsh CLI 的 profile-boot 薄入口（re-export runProfile）。
+ *
+ * 【0.1.6-alpha.2 复核（2026-09-20）】薄入口的文件名变了：
+ *   · 0.1.5-rc.2：`profile-boot-BP_C0vpU.js`（带构建哈希后缀，85 字节 re-export）
+ *   · 0.1.6-alpha.2：`profile-boot.js`（**无后缀**，310 字节 re-export，实现文件仍是
+ *     `profile-boot-<hash>.js` 带后缀形态）
+ * 旧判据 `startsWith('profile-boot-')` 会漏掉新名字 ⇒ BOOT_20 直接 fail
+ * （本机回路实测：`找不到 profile-boot 入口`）。这里两种形态都认，内容判据不变
+ * （含 `runProfile` 且 < 400 字节），实现文件（十几 KB、不含 export 字面量形态）仍被排除。
+ */
 function findProfileBootEntry(cliLibDir) {
   const files = fs.readdirSync(cliLibDir);
   for (const f of files) {
-    if (!f.startsWith('profile-boot-') || !f.endsWith('.js')) {
+    const isCandidate = f === 'profile-boot.js' || f.startsWith('profile-boot-');
+    if (!isCandidate || !f.endsWith('.js')) {
       continue;
     }
     const full = path.join(cliLibDir, f);
@@ -1193,6 +1221,12 @@ async function start() {
    * 入口脚本能读它；而两侧之间**没有**其它可用通道（环境变量与 argv 在启动前就固定了，
    * HTTP 侧 dsh 没有 shutdown 端点）。用文件当一个"停止请求"的落点，简单、可观察、
    * 且失败时留下的痕迹（文件还在/日志没有"收到停止请求"）本身就指明断在哪一环。
+   *
+   * 【0.1.6-alpha.2 复核（2026-09-20）】`result.shutdown` 仍是上游 `createProcessShutdown()`
+   * 控制器（dsh/lib/profile-boot-<hash>.js，与 rc.2 逐行同形）：`shutdown.shutdown(code)`
+   * 触发 dispose、成功则置 `process.exitCode` 自然排空，5 s 超时/异常才 `forceExit`
+   * （forceExit 走 process.exit，会被本脚本拦截器拦住，仍由下方 1.5 s 兜底放行）。
+   * 下方 `shutdown.shutdown(0)` 的调用形态**无需适配**。
    */
   let stopRequested = false;
   const requestStop = (reason) => {

@@ -271,6 +271,14 @@ export default function coreDecisionTest() {
       expect(argv[argv.length - 1]).assertEqual(entry);
     });
 
+    // 0.1.6-alpha.2：profile resolution 垫片（node-addon-require-builtin）要求宿主带
+    // --expose-internals，否则 boot 必经路径上取不到 Node 内部模块（见 RuntimePort 注释）
+    it('host_argv_pins_expose_internals', 0, () => {
+      const entry: string = '/data/app/resources/resfile/host/main.js';
+      const argv: string[] = buildHostArgv(entry);
+      expect(argv.includes('--expose-internals')).assertTrue();
+    });
+
     it('host_env_pairs_are_complete_and_wellformed', 0, () => {
       const env: string[] = buildHostEnv('/cores/1', '/home', '/sandbox', 3120, 'ondevice');
       // 这几项是 main.js 的实际入口契约；HDSH_HOME 缺失时它会直接 reportConfigError

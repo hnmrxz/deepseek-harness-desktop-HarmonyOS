@@ -79,29 +79,33 @@
 - id: open-in-app
   disabled: true
 
-# ── 依赖级联（**临时**：为了先让插件树起来）────────────────────────────────
+# ── 依赖级联（0.1.6-alpha.2 复核，W2 2026-09-20）────────────────────────────
 #
-# dsh 的 boot 要求**所有行都 activate**，所以禁掉一个 provider 会把它下游的消费者
-# 拖成 pending，并让整棵树 fail-loud。本地实测（`node --jitless hostcore/app/main.js`，
-# 与真机同参）第一轮就打出：
-#     dsh: 4 entries did not activate
-#     @deepseek-ai/dsh-permission-presets: pending (waiting for service: shell)
-#     @deepseek-ai/dsh-api-session-controller: pending (waiting for services: attachments, fileUploads)
-#     @deepseek-ai/dsh-client-file-upload: pending (waiting for service: attachments)
-#     @deepseek-ai/dsh-client-ui-deliverables: pending (waiting for service: sessionController)
+# 【boot 语义变了】rc.2 时代 dsh 的 boot 要求**所有行都 activate**，禁掉一个 provider
+# 会把下游消费者拖成 pending 并让整棵树 fail-loud（所以当时除 `permission` 外还临时禁过
+# file-upload/session-controller/ui-deliverables）。0.1.6 起 host 侧 boot 对 pending 改为
+# **警告不失败**，下面的临时禁用早已全部撤销，只保留 `permission` 一条（见 ④）。
 #
-# 链路是：`attachment-local`（attachments provider，本例禁用）→ `file-upload`（fileUploads）
-# → `session-controller`（sessionController）→ 依赖它的客户端行；另一边
-# `bash-sandbox`/`pwsh-sandbox`（shell provider，本例禁用）→ `permission-presets`。
+# 【0.1.6 端侧 boot 的真实 pending 集（本机实测，boot 探针 2026-09-20，逐字）】
+#     dsh: warning: 4 entries did not activate
+#     ptc-runtime (@deepseek-ai/dsh-ptc-runtime-node): pending (waiting for services: subprocess, sandbox)
+#     terminal-controller (@deepseek-ai/dsh-api-terminal-controller): pending (waiting for service: subprocess)
+#     ui-deliverables (@deepseek-ai/dsh-client-ui-deliverables): pending (waiting for service: workspaceChanges)
+#     workspace-changes (@deepseek-ai/dsh-workspace-changes): pending (waiting for service: subprocess)
+# 四条全部根在 subprocess/sandbox 被禁（E15），属**上游硬约束的如实呈现**，不再加禁：
+#   · ptc-runtime / workspace-changes / terminal-controller：PTC 工作流运行时、git 变更
+#     摘要、终端面板——端侧没有进程创建，这些能力本来就没有对应物；
+#   · ui-deliverables：Web UI 的"交付物/变更"面板（桌面特性）。0.1.6 它新增依赖
+#     workspaceChanges（rc.2 时代它 pending 的原因还是 sessionController），端侧它
+#     **从未激活过**；US2 的工作区文件面板不受影响——走的是 workspaceFiles/*
+#     （dsh-api-workspace-files，仅依赖 fs，已激活；check-core-loop 实测 list/changes 通）。
 #
-# 【这一段是临时的】目的只是把"Host 能否起来"这条主流程跑通。恢复顺序应当是：
-#   ① 让 `attachment-local` 真正可用（把 libvips 及其依赖搬进 HAP libs 并处理带版本号的
-#      SONAME，见 E46 的恢复线索）→ 撤销下面 3 条；
-#   ② shell 链在鸿蒙上没有对应物（无法创建进程，E15）→ 这条级联要长期评估。
-# ④ 权限预设（E116）：**端侧无法启用**——实测把它打开会让整棵插件树启动失败：
-#     `1 entry did not activate · @deepseek-ai/dsh-permission-presets: pending
-#      (waiting for service: shell)`
-#    官方该插件需要 `shell` 服务，而 shell 只能由 `bash-sandbox`/`pwsh-sandbox` 提供，
+# 【与 preset 的分界】host 侧 boot 只警告，但 **preset mount（session/create）仍是全有或
+# 全无**（dsh-agent-presets/lib/index.js:893-894）：0.1.6 的 standard preset 新增
+# workflow-ptc / tool-workflow 两行，端侧必挂（waiting for ptcRuntime / workflowEngine）。
+# 已由 tools/pack-core.mjs 的 addOnDevicePreset 随包禁用（2026-09-20 实测：不禁则
+# session/create 回 agent-preset/invalid、US1 整条断；禁后 check-core-loop 22/22 全通）。
+# ④ 权限预设（E116）：**端侧无法启用**——官方该插件需要 `shell` 服务，而 shell 只能由 `bash-sandbox`/`pwsh-sandbox` 提供，
 #    两者在鸿蒙上没有对应物（无法创建进程，E15）⇒ 这条链是**上游硬约束**，不是配置问题。
 #    三档本身的取值仍然有效（`dsh-sandbox-policy` 的 `SANDBOX_MODES` =
 #    `read-only` / `workspace-write` / `danger-full-access`，真机系统提示里也确实写着
@@ -117,7 +121,9 @@
 - id: ui-deliverables
   disabled: false
 
-# 端侧 preset：不带 Shell 工具（见 ondevice/agent.cordis.yml）
+# 端侧 preset：不带 Shell/子进程工具（由 tools/pack-core.mjs 的 addOnDevicePreset 在打包期
+# 从 standard 复制生成到核心树 dsh-agent-presets/presets/ondevice/，禁用 tool-bash /
+# tool-pwsh / tool-fs-search / workflow-ptc / tool-workflow 五行；见上面【与 preset 的分界】）
 - id: agent-presets
   config:
     default: ondevice

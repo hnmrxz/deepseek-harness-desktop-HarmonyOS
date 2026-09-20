@@ -42,7 +42,7 @@ const ROOT = process.cwd();
  */
 const CORE_DIR = process.env.HDSH_LOOP_CORE !== undefined && process.env.HDSH_LOOP_CORE.length > 0
   ? process.env.HDSH_LOOP_CORE
-  : join(ROOT, 'dist', 'core', 'work', 'dsh-core-0.1.5-rc.2');
+  : join(ROOT, 'dist', 'core', 'work', 'dsh-core-0.1.6-alpha.2');
 const ENTRY = join(ROOT, 'hostcore', 'app', 'main.js');
 const BUILD = join(ROOT, 'dist', 'scratch', 'core-loop');
 const HOME = join(ROOT, 'dist', 'localtest', 'core-loop-home');
@@ -53,9 +53,18 @@ const READY_PATH = join(HOME, 'host-ready.json');
 const require = createRequire(import.meta.url);
 const KEEP = process.argv.includes('--keep');
 /*
- * Host 子进程要用 **Node 22**：入口脚本带 `--no-experimental-fetch`，而 Node 23 起它成了
- * "非法取反"（实测 `--no-experimental-fetch is an invalid negation`）。本仓所有起 Host 的
- * 门禁都跑在 Node 22 上，这里沿用同一约定，并把"跑错版本"变成一句明确的话而不是一段栈。
+ * Host 子进程用哪个 Node。
+ *
+ * 【0.1.6-alpha.2 起（W2，2026-09-20）不再锁 Node 22】旧锁的理由是入口带
+ * `--no-experimental-fetch`，而 Node 23 起它成了"非法取反"（实测
+ * `--no-experimental-fetch is not a boolean option`，Node 24.19.0）。0.1.6 的两件事
+ * 把这笔账翻过来了：
+ *   ① 本机回路不再传 `--no-experimental-fetch`（见 startHost 的 argv 注释）——
+ *      本机 undici 是真件，fetch 开着也不会踩 rc.2 时代那条 wasm 坑；
+ *   ② 0.1.6 的 profile 解析垫片**必须** `--expose-internals`（RuntimePort.buildHostArgv
+ *      同款，W1 实证 BOOT_00→70），本机 Node 24 与端侧自建 Node 都支持它。
+ * 优先级：环境变量覆盖 → 既有 Linux 候选（CI 门禁机）→ 当前 Node（本机 D:\nodejs 24.19.0
+ * 已实证可跑 0.1.6 boot 全段）。
  */
 const NODE_BIN = process.env.HDSH_NODE22
   ?? (existsSync('/home/node/node22/bin/node') ? '/home/node/node22/bin/node' : process.execPath);
@@ -72,6 +81,17 @@ function findTsc() {
   const clt = process.env.DEVECO_CLI_CLT_PATH;
   if (clt) candidates.push(join(clt, 'codelinter', 'node_modules', 'typescript', 'bin', 'tsc'));
   candidates.push('/home/node/deveco-clt/command-line-tools/codelinter/node_modules/typescript/bin/tsc');
+  /*
+   * Windows 开发机（W2，2026-09-20）：DevEco Studio 自带的 typescript 有三处可用
+   * （均已实测存在且可执行），按优先级排列——codelinter 主件优先，
+   * arkPerfCheck / ace-server 是同版本兜底。`DEVECO_HOME` 指向安装根时也认。
+   */
+  const devecoHome = process.env.DEVECO_HOME ?? 'D:\\Huawei\\DevEco Studio';
+  for (const plugins of [join(devecoHome, 'plugins'), 'D:\\Huawei\\DevEco Studio\\plugins']) {
+    candidates.push(join(plugins, 'codelinter', 'node_modules', 'typescript', 'bin', 'tsc'));
+    candidates.push(join(plugins, 'codelinter', 'arkPerfCheck', 'node_modules', 'typescript', 'bin', 'tsc'));
+    candidates.push(join(plugins, 'openharmony', 'ace-server', 'node_modules', 'typescript', 'bin', 'tsc'));
+  }
   for (const c of candidates) if (existsSync(c)) return c;
   return null;
 }
@@ -115,8 +135,19 @@ function build() {
   mkdirSync(join(src, 'appstate', 'store'), { recursive: true });
   cpSync(join(ROOT, 'appstate', 'src', 'main', 'ets', 'store', 'SessionHub.ets'),
     join(src, 'appstate', 'store', 'SessionHub.ts'));
+  /*
+   * 【W2】SessionHub.ets 现在 import `RunMode` from '../ui/Breakpoints'（LOCAL/REMOTE
+   * 运行模式），Breakpoints 又拉 Tokens（`$r`/`Resource` —— 由 arkui-ambient.ts 垫片）。
+   * 只**逐文件**复制这两个（不整目录：ui/ 里其余文件是 ArkUI struct，tsc 编不了），
+   * 复制的是产品原文件，与 SessionHub 同一手法。
+   */
+  mkdirSync(join(src, 'appstate', 'ui'), { recursive: true });
+  cpSync(join(ROOT, 'appstate', 'src', 'main', 'ets', 'ui', 'Breakpoints.ets'),
+    join(src, 'appstate', 'ui', 'Breakpoints.ts'));
+  cpSync(join(ROOT, 'appstate', 'src', 'main', 'ets', 'ui', 'Tokens.ets'),
+    join(src, 'appstate', 'ui', 'Tokens.ts'));
   cpSync(join(ROOT, 'tools', 'lib', 'kit-stubs'), stubs, { recursive: true });
-  console.log(`编译：connection ${n1} 文件 + dshcompat ${n2} + appstate/model ${n3} + 3 个 kit 垫片`);
+  console.log(`编译：connection ${n1} 文件 + dshcompat ${n2} + appstate/model ${n3} + SessionHub/ui 3 个 + kit 垫片`);
 
   const tsconfig = {
     compilerOptions: {
@@ -130,6 +161,9 @@ function build() {
         '@kit.NetworkKit': ['stubs/networkkit.ts'],
         '@kit.BasicServicesKit': ['stubs/basicserviceskit.ts'],
         '@kit.PerformanceAnalysisKit': ['stubs/performanceanalysiskit.ts'],
+        // 【W2】LanDiscovery.ets 的两个鸿蒙系统模块（类型形状；运行时 fail-loud 垫片）
+        '@ohos.net.connection': ['stubs/ohosnetconnection.ts'],
+        '@ohos.net.socket': ['stubs/ohosnetsocket.ts'],
         connection: ['src/connection/Index.ts'],
         dshcompat: ['src/dshcompat/Index.ts'],
         platform: ['stubs/platform-shim.ts'],
@@ -171,6 +205,9 @@ function writeRuntimeShims() {
     ['@kit.NetworkKit', 'stubs/networkkit.js'],
     ['@kit.BasicServicesKit', 'stubs/basicserviceskit.js'],
     ['@kit.PerformanceAnalysisKit', 'stubs/performanceanalysiskit.js'],
+    // 【W2】@ohos.net.* 同理（LanDiscovery 的 import；运行时垫片 fail-loud）
+    ['@ohos.net.connection', 'stubs/ohosnetconnection.js'],
+    ['@ohos.net.socket', 'stubs/ohosnetsocket.js'],
     ['connection', 'src/connection/Index.js'],
     ['dshcompat', 'src/dshcompat/Index.js'],
     ['platform', 'stubs/platform-shim.js'],
@@ -198,7 +235,17 @@ function startHost() {
   mkdirSync(HOME, { recursive: true });
   mkdirSync(SANDBOX, { recursive: true });
   child = spawn(NODE_BIN,
-    ['--jitless', '--no-experimental-fetch', '--experimental-sqlite', ENTRY],
+    /*
+     * 【0.1.6-alpha.2 起（W2）本机 argv 与端侧分家】
+     *   · 共同项：--jitless（不申请可写可执行内存）+ --experimental-sqlite（node:sqlite）
+     *     + --expose-internals（0.1.6 profile 解析垫片的硬前提，与
+     *     RuntimePort.buildHostArgv 同款；不加它 boot 在 BOOT_00 就 fail-loud）。
+     *   · 本机**不传** --no-experimental-fetch：Node 24 上它是非法取反
+     *     （"not a boolean option"，实测 24.19.0）；且本机 undici 是真件，
+     *     rc.2 时代防的那条 wasm 坑在这里不存在。端侧自建 Node 仍传它
+     *     （RuntimePort.ets:149），两侧 argv 的分界就是"本机 Node ≥23"。
+     */
+    ['--jitless', '--expose-internals', '--experimental-sqlite', ENTRY],
     {
       cwd: ROOT,
       env: {
@@ -288,10 +335,21 @@ async function main() {
   }
   step('Host 启动并就绪', true, `${ready.baseUrl}`);
 
-  /* 加载应用侧编译产物：**就是应用跑的那份代码** */
-  const connection = await import(join(out, 'src', 'connection', 'Index.js'));
-  const compat = await import(join(out, 'src', 'dshcompat', 'Index.js'));
-  const sessionList = await import(join(out, 'src', 'appstate', 'model', 'SessionList.js'));
+  /*
+   * 【W2】先装 ArkUI 全局垫片（`$r`/`Resource` 的**运行时**半边）：SessionHub →
+   * Breakpoints → Tokens 这条链在**模块求值期**就会调 `$r('sys.color.…')`（类字段
+   * 初始化），不先装好，下面任何一个加载都会当场 TypeError。
+   */
+  require(join(out, 'stubs', 'arkui-ambient.js'));
+  /*
+   * 【W2·Windows】加载编译产物用 require 而不是动态 import：产物是 CommonJS
+   * （tsconfig module=commonjs），而动态 import 在 Windows 上要求 file:// URL
+   * （实测 ERR_UNSUPPORTED_ESM_URL_SCHEME: "Received protocol 'd:'"）——require
+   * 天生吃 Windows 路径，语义也一致（拿到的就是 exports 对象）。
+   */
+  const connection = require(join(out, 'src', 'connection', 'Index.js'));
+  const compat = require(join(out, 'src', 'dshcompat', 'Index.js'));
+  const sessionList = require(join(out, 'src', 'appstate', 'model', 'SessionList.js'));
 
   const events = [];
   const conn = new connection.Connection({ surface: compat.SURFACE });
@@ -371,7 +429,7 @@ async function main() {
    * 窗口只是它的视图（Index.ets 的注释："中枢持有唯一连接，窗口只是视图"）。
    * 这里用它跑「配置 → 连接 → 会话列表 → 新建会话 → 选中 → 发消息 → 轨迹有内容」。
    */
-  const store = await import(join(out, 'src', 'appstate', 'store', 'SessionHub.js'));
+  const store = require(join(out, 'src', 'appstate', 'store', 'SessionHub.js'));
   const hub = store.SessionHub.shared();
   /* 地址必须**把 token 拼回 URL**（Index.ets 的做法）：token 就是 URL 上的 query */
   const configuredHub = hub.configure(ready.url);
