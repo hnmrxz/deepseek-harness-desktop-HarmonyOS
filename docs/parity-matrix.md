@@ -1,6 +1,6 @@
 # 功能对等矩阵（Parity Matrix）· P0
 
-> 本文档于 2026-09-19 精简（仅删散文叙述）；2026-09-20 全量对等收口：§4/§5/§6 按实现现状逐行核实更新（过程与判定依据见 §5.2）；2026-09-20 v2 转向同步：§4 各行「Harmony 状态层/界面」列按「Web 直载 + DSH Mobile 源码对照复刻」新架构口径修订（删除的 PC 原生壳、新增 `WebShell`/`MobileTheme`/`Ds*`/`SessionSearch` 已如实登记），**状态计数不变**。完整版见 git 历史。
+> 本文档于 2026-09-19 精简（仅删散文叙述）；2026-09-20 全量对等收口：§4/§5/§6 按实现现状逐行核实更新（过程与判定依据见 §5.2）；2026-09-20 v2 转向同步：§4 各行「Harmony 状态层/界面」列按「Web 直载 + DSH Mobile 源码对照复刻」新架构口径修订（删除的 PC 原生壳、新增 `WebShell`/`MobileTheme`/`Ds*`/`SessionSearch` 已如实登记），**状态计数不变**。2026-09-21 v3 核心升级同步：随包核心 0.1.5-rc.2/rc.3 → **0.1.6-alpha.2**（协议面 84 → **109 端点**、转发事件 19 → **23 条**，既有端点零漂移；`DESKTOP_LIKE` 各行由直载的官方 Web UI 随核心升级自动获得新版界面，状态层不重估）。完整版见 git 历史。
 
 | 项 | 内容 |
 |---|---|
@@ -106,7 +106,7 @@ HarmonyOS 的 `deviceType` 只有 `phone` / `tablet` / `2in1`（另有 tv/wearab
 | Node 头文件 | `entry/src/main/cpp/node-headers/` | `tools/node-runtime/sync-node-headers.sh` | ✅ 已生成（3.8 MB） |
 | koffi 源码 | `third_party/koffi/` | `node tools/fetch-koffi.mjs` | ✅ 已就位（4.6 MB） |
 | Host 入口脚本 | `entry/src/main/resources/resfile/resources/app/` | `node tools/place-host-app.mjs`（源 `hostcore/app/` **在库里**） | ✅ 已就位 |
-| 核心包 | `entry/src/main/resources/resfile/*.zip` | `node tools/pack-core.mjs --skip-install --place-in-app` | ✅ 已就位（rc.2 / rc.3 各 69 MB） |
+| 核心包 | `entry/src/main/resources/resfile/*.zip` | `node tools/pack-core.mjs --skip-install --place-in-app` | ✅ 已就位（**0.1.6-alpha.2 单包** 68.8 MB；rc.2/rc.3 旧包已随 v3 移除。历史勘误：当时的"rc.3" zip 实为 rc.2 树——打包事故，v3 核对时发现并纠正口径） |
 | **libnode** | `entry/libs/{arm64-v8a,x86_64}/libnode.so.127` | `tools/node-runtime/build-node-ohos.sh`（**不参与链接**，`CMakeLists.txt` 故意不写进 `DT_NEEDED`） | ✅ arm64-v8a 已就位 ⇒ koffi 会被真正编进 HAP |
 | 核心树 | `dist/core/work/dsh-core-*` | **不需上传**：随包 zip 本身就是完整树（29006 个文件），`unzip` 即物化 | 物化即可 |
 | 协议契约 | `.research/protocol/contracts.json` | `node tools/protocol-contract.mjs` + 上游 checkout | ❌ 缺 ⇒ `compat-drift` 仍是盲区（**唯一仍跑不动的门禁**） |
@@ -275,7 +275,7 @@ Phase 12 收口时对全部 32 个 `PARTIAL` 行逐行核验（源码级证据�
 - **1 行 `PARTIAL` → `BOUNDARY`**：`hdsh-shortcuts`（Phone 无实体键盘，与 `directory-picker-native` 同口径；不变式 B 禁止整体 `DONE`）。
 - **1 行核验后如实保持 `PARTIAL`**：`reference`——`~` 主目录展开（FR-007）的模型函数 `tildeExpand` 与快照字段 `hostHome` 已就位但**无 UI 消费点**（接线属静态可实现）；面包屑回跳（FR-006）已确认落地。
 
-**E384 核实记录**：随包 `dsh-core-0.1.5-rc.2/rc.3-openharmony-arm64.zip` 内 `node_modules/sharp.impl` 逐条目核对为 `@ohos-ports/sharp@0.34.5-beta.12` 真件（`lib/` 14 文件 + `src/` 12 文件），非 602 字节桩 ⇒ `attachment` 行的图片能力空洞已关闭；设备出图仍由 `docs/device-validation.md` **D31** 判定。
+**E384 核实记录**：随包 `dsh-core-0.1.5-rc.2/rc.3-openharmony-arm64.zip` 内 `node_modules/sharp.impl` 逐条目核对为 `@ohos-ports/sharp@0.34.5-beta.12` 真件（`lib/` 14 文件 + `src/` 12 文件），非 602 字节桩 ⇒ `attachment` 行的图片能力空洞已关闭；设备出图仍由 `docs/device-validation.md` **D31** 判定。（v3 注：随包核心已换 0.1.6-alpha.2，T006 重打包同样通过 `assertSharpImplIsReal()` 闸门；D31 仍待设备。）
 
 **与 SC-001 的偏离如实说明**：spec 的 SC-001 期望 `DONE` 升至 47，实收 41——差值 6 = 五个如实保持的 `PARTIAL`（`layout` / `skill` / `user-questions` / `settings-general` / `reference`）+ `hdsh-shortcuts` 归位 `BOUNDARY`。不为凑数注水（不变式 D 之下统计须与实算一致）。
 
@@ -332,7 +332,7 @@ ls -d /opt/dsh/node_modules/@deepseek-ai/dsh-client-ui-* | sed 's#.*/dsh-client-
 ### 7.2 来源与版本标注（纪律：每条事实标注出处）
 
 - 官方能力面清单与各包行为自述：本机官方客户端包 `package.json`（`name` / `description` / `dsh.client`），版本 **0.1.2-alpha.1**；`Web 行为` 列由其 `description` 意译（不新增未经查证的断言）。Harmony 落点：本仓库源码（HEAD `af00b0b`，行级可核对）。
-- ⚠️ **同一性提示**：本项目协议基线是 **0.1.5-rc.1**（D2 §8.7），而本环境能拿到的官方客户端包是 **0.1.2-alpha.1** ⇒ §7.1 的能力面清单需用 0.1.5-rc.1 复核一遍：在拿到它的机器上跑 §7.1 的命令，与门禁内嵌清单比对——`node tools/check-parity.mjs` 会直接报出差集。
+- ⚠️ **同一性提示**：本项目协议基线是 **0.1.6-alpha.2**（D2 §8.7.24，109 端点；历史基线 0.1.5-rc.1/rc.2 与 0.1.2-rc.1 保留对照），而 §7.1 的能力面清单最初取自 **0.1.2-alpha.1** 客户端包 ⇒ 用新版本复核能力面时跑 §7.1 的命令，与门禁内嵌清单比对——`node tools/check-parity.mjs` 会直接报出差集。0.1.6 新增端点（agentTeams/officeToPdf/pluginManager/terminal/permissionPresets/unarchiveSession）尚未开矩阵行，升级回归时按「先探测、再登记」处理。
 
 ### 7.3 门禁
 

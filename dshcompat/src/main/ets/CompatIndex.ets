@@ -53,9 +53,19 @@ export interface VersionCheck {
  *                 8 个 message-feedback 的文件有差异，与我们消费的面无关）。
  *                 因此这里直接纳入矩阵，不需要任何代码或能力映射改动。
  *                 证据：D2 §8.7.18。
- *   同时保留 0.1.2-rc.1：老 Host 仍可用，缺的端点由能力探测降级为入口置灰。
+ *   0.1.6-alpha.2 —— v3 升级基线（109 端点，2026-09-20 实测）。
+ *                 差异：新增 25 个端点**全为增量**（agentTeams×3 / officeToPdf×2 /
+ *                 permissionPresets×1 / pluginManager×8 / terminal×10 /
+ *                 workspace unarchiveSession×1），既有端点 wire 参数零漂移；
+ *                 转发事件白名单 19→23（新增 4 条全 emit，仅登记不投影）；
+ *                 stream-protocol / settings 9 方法 / session-create 互斥等逐签名一致。
+ *                 验证：协议探测 18 项全预期形态 + 静态契约比对 + check-core-loop
+ *                 本机 22/22（W3，commit efe15ad）。另注意：历史随包 rc.3 zip
+ *                 实为 rc.2 树（v3 周期核对时发现的打包事故），矩阵里不存在
+ *                 "0.1.5-rc.3" 一项——rc.3 的协议面与 rc.2 相同。
+ *   同时保留 0.1.5-rc.1 / 0.1.2-rc.1：老 Host 仍可用，缺的端点由能力探测降级为入口置灰。
  */
-const SUPPORTED_VERSIONS: string[] = ['0.1.5-rc.2', '0.1.5-rc.1', '0.1.2-rc.1'];
+const SUPPORTED_VERSIONS: string[] = ['0.1.6-alpha.2', '0.1.5-rc.2', '0.1.5-rc.1', '0.1.2-rc.1'];
 
 /** 协议骨架端点：缺任一个即视为不兼容（连基本会话都做不了） */
 const PROTOCOL_SKELETON: string[] = ['session/list', 'session/create', 'session/prompt'];

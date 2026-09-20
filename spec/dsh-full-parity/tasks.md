@@ -72,7 +72,7 @@
 **Goal**: 新版官方 Web UI 设置项清单化，设置存储跨版本兼容。
 **Independent Test**: 清单文档生成；$DSH_HOME 旧配置在新核心读取路径核对通过。
 
-- [x] T013 [P] [US3] 生成 Web UI 设置项核查清单：以 0.1.6-alpha.2 新版前端实际设置项为准（模型/供应商与密钥、工具、插件、外观等）枚举成表，每项含"打开→修改→保存→重启→读回"五步核查列与结论列（供 Phase 9 执行走查），in docs/08-设置项核查清单.md
+- [x] T013 [P] [US3] 生成 Web UI 设置项核查清单：以 0.1.6-alpha.2 新版前端实际设置项为准（模型/供应商与密钥、工具、插件、外观等）枚举成表，每项含"打开→修改→保存→重启→读回"五步核查列与结论列（供 Phase 9 执行走查），in docs/14-设置项核查清单.md
 - [x] T014 [US3] 设置存储跨版本兼容核查：$DSH_HOME 为跨版本共享目录，核对 0.1.6-alpha.2 的配置读写路径/格式相对 rc.3 是否迁移或改名，端侧入口（main.js 环境与 HOME 钉死）下首启不丢用户设置；发现不兼容点在入口脚本/补丁层修复，in hostcore/app/main.js
 
 **Checkpoint**: 清单就绪、存储兼容性有结论；逐项走查归入 Phase 9。
@@ -105,8 +105,8 @@
 
 ## Phase 8: Polish（横切与文档）
 
-- [ ] T019 文档口径同步：版本引用（rc.2/rc.3 → 0.1.6-alpha.2）、resfile 双包描述、工具能力状态（link 降级/默认工作区/preset）、协议基线更新，in docs/parity-matrix.md + docs/07-当前状态与缺口.md + docs/50-端侧核心运行架构.md + docs/10-协议兼容事实基线.md + docs/06-开发与发布指南.md + README.md
-- [ ] T020 全门禁 + 构建收口：check-parity/check-design-tokens/check-feature-wiring/check-layout-fixtures/check-compliance/check-dead-code/arch-check 七门禁全绿（D:\nodejs\node.exe 运行）；entry assembleHap 与 ohosTest 构建成功；design-token 基线棘轮只降不升，in tools/
+- [X] T019 文档口径同步：版本引用（rc.2/rc.3 → 0.1.6-alpha.2）、resfile 双包描述、工具能力状态（link 降级/默认工作区/preset）、协议基线更新，in docs/parity-matrix.md + docs/07-当前状态与缺口.md + docs/50-端侧核心运行架构.md + docs/10-协议兼容事实基线.md + docs/06-开发与发布指南.md + README.md
+- [X] T020 全门禁 + 构建收口：check-parity/check-design-tokens/check-feature-wiring/check-layout-fixtures/check-compliance/check-dead-code/arch-check 七门禁全绿（D:\nodejs\node.exe 运行）；entry assembleHap 与 ohosTest 构建成功；design-token 基线棘轮只降不升，in tools/
 
 ---
 
@@ -118,7 +118,7 @@
 
 - [ ] T021 Build project and fix any compilation errors (invoke build_project; iterate fix → build until success)
 - [ ] T022 Deploy application to device/emulator (invoke start_app)
-- [ ] T023 Run UI verification against deployed application (invoke verify_ui): US1 host 以 0.1.6-alpha.2 启动且 Web UI 新版可用、完成一次问答回合；US2 agent 四步文件链（新建→读取→覆盖→列目录）零报错 + Web UI 工作区面板与沙箱一致；US3 按 docs/08-设置项核查清单.md 逐项走查（改→存→重启→读回）；US4 原生设置走查（主题/核心管理版本显示与回滚/远程连接）；US5 手机链一轮会话回归；v2 遗留验收：形态路由矩阵（PHONE/DESKTOP_LIKE × 本机/远程/诊断）、删除收敛后页面无死链、WebShell 直载官方 UI
+- [ ] T023 Run UI verification against deployed application (invoke verify_ui): US1 host 以 0.1.6-alpha.2 启动且 Web UI 新版可用、完成一次问答回合；US2 agent 四步文件链（新建→读取→覆盖→列目录）零报错 + Web UI 工作区面板与沙箱一致；US3 按 docs/14-设置项核查清单.md 逐项走查（改→存→重启→读回）；US4 原生设置走查（主题/核心管理版本显示与回滚/远程连接）；US5 手机链一轮会话回归；v2 遗留验收：形态路由矩阵（PHONE/DESKTOP_LIKE × 本机/远程/诊断）、删除收敛后页面无死链、WebShell 直载官方 UI
 
 ---
 
@@ -179,7 +179,7 @@ graph TD
 # Phase 2 完成后，同时启动（文件领地互不重叠）：
 Task: "US1+US2 主链（main.js 领地合并）: T008→T009→T010→T012→T014"   # hostcore/app/main.js + pack-core/profile + check-core-loop
 Task: "US2 客户端链路: T011"                                          # appstate/store/SessionHub.ets + model/Wire.ets（待 T010 结论后开始）
-Task: "US3 清单: T013"                                                # docs/08-设置项核查清单.md（纯文档，立即可并行）
+  Task: "US3 清单: T013"                                                # docs/14-设置项核查清单.md（纯文档，立即可并行）
 Task: "US4 原生设置: T015→T016"                                       # entry/view + hostruntime + connection
 Task: "US5 协议层: T017→T018"                                         # tools/protocol-* + dshcompat（待 T009/T011 结论）
 # 全部返回后串行收尾：
