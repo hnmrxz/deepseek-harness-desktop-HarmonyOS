@@ -6,15 +6,15 @@
  *   node tools/gen-compat-endpoints.mjs
  * 漂移检测：node tools/compat-drift.mjs（对当前安装/checkout 的上游重新提取并比对）
  *
- * 采集对象：@deepseek-ai/dsh 0.1.5-rc.2 · 84 个 endpoint
+ * 采集对象：@deepseek-ai/dsh 0.1.6-alpha.2 · 109 个 endpoint
  */
 
 import { ArgsShape, DshCapability, DshEndpoint, UpstreamIdentity } from './CompatTypes';
 
 export const UPSTREAM_IDENTITY: UpstreamIdentity = {
-  corePackage: '0.1.5-rc.2',
-  capturedAt: '2026-09-11T13:10:38.322Z',
-  endpointCount: 84
+  corePackage: '0.1.6-alpha.2',
+  capturedAt: '2026-09-20T16:15:44.581Z',
+  endpointCount: 109
 };
 
 /** 全部 endpoint 调用契约（按 endpoint 名排序） */
@@ -78,6 +78,42 @@ export const DSH_ENDPOINTS: DshEndpoint[] = [
     source: '',
     capability: 'agentPresets',
     capabilities: ['agentPresets']
+  },
+  {
+    id: '@deepseek-ai/dsh-experimental-agent-team#agentTeams/createTask',
+    ns: 'agentTeams',
+    method: 'createTask',
+    shape: ArgsShape.NAMED,
+    params: ['agentId', 'request'],
+    stream: false,
+    cancellable: false,
+    source: '',
+    capability: '',
+    capabilities: []
+  },
+  {
+    id: '@deepseek-ai/dsh-experimental-agent-team#agentTeams/updateTask',
+    ns: 'agentTeams',
+    method: 'updateTask',
+    shape: ArgsShape.NAMED,
+    params: ['agentId', 'request'],
+    stream: false,
+    cancellable: false,
+    source: '',
+    capability: '',
+    capabilities: []
+  },
+  {
+    id: '@deepseek-ai/dsh-experimental-agent-team#agentTeams/view',
+    ns: 'agentTeams',
+    method: 'view',
+    shape: ArgsShape.NAMED,
+    params: ['agentId'],
+    stream: false,
+    cancellable: false,
+    source: '',
+    capability: '',
+    capabilities: []
   },
   {
     id: '@deepseek-ai/dsh-commands#commands/execute',
@@ -500,6 +536,42 @@ export const DSH_ENDPOINTS: DshEndpoint[] = [
     capabilities: []
   },
   {
+    id: '@deepseek-ai/dsh-office-to-pdf#officeToPdf/generation',
+    ns: 'officeToPdf',
+    method: 'generation',
+    shape: ArgsShape.NONE,
+    params: [],
+    stream: false,
+    cancellable: true,
+    source: '',
+    capability: '',
+    capabilities: []
+  },
+  {
+    id: '@deepseek-ai/dsh-office-to-pdf#officeToPdf/render',
+    ns: 'officeToPdf',
+    method: 'render',
+    shape: ArgsShape.NAMED,
+    params: ['workspaceFileScopeId', 'path', 'priority'],
+    stream: false,
+    cancellable: true,
+    source: '',
+    capability: '',
+    capabilities: []
+  },
+  {
+    id: '@deepseek-ai/dsh-permission-presets#permissionPresets/catalog',
+    ns: 'permissionPresets',
+    method: 'catalog',
+    shape: ArgsShape.NONE,
+    params: [],
+    stream: false,
+    cancellable: false,
+    source: '',
+    capability: '',
+    capabilities: []
+  },
+  {
     id: '@deepseek-ai/dsh-host-plugin-inventory#pluginInventory/list',
     ns: 'pluginInventory',
     method: 'list',
@@ -510,6 +582,102 @@ export const DSH_ENDPOINTS: DshEndpoint[] = [
     source: '',
     capability: 'plugins',
     capabilities: ['plugins']
+  },
+  {
+    id: '@deepseek-ai/dsh-plugin-manager#pluginManager/cancelInstall',
+    ns: 'pluginManager',
+    method: 'cancelInstall',
+    shape: ArgsShape.NAMED,
+    params: ['requestId'],
+    stream: false,
+    cancellable: false,
+    source: '',
+    capability: '',
+    capabilities: []
+  },
+  {
+    id: '@deepseek-ai/dsh-plugin-manager#pluginManager/inspect',
+    ns: 'pluginManager',
+    method: 'inspect',
+    shape: ArgsShape.NAMED,
+    params: ['spec'],
+    stream: false,
+    cancellable: true,
+    source: '',
+    capability: '',
+    capabilities: []
+  },
+  {
+    id: '@deepseek-ai/dsh-plugin-manager#pluginManager/installBundle',
+    ns: 'pluginManager',
+    method: 'installBundle',
+    shape: ArgsShape.NAMED,
+    params: ['spec', 'options'],
+    stream: false,
+    cancellable: false,
+    source: '',
+    capability: '',
+    capabilities: []
+  },
+  {
+    id: '@deepseek-ai/dsh-plugin-manager#pluginManager/listBundles',
+    ns: 'pluginManager',
+    method: 'listBundles',
+    shape: ArgsShape.NONE,
+    params: [],
+    stream: false,
+    cancellable: false,
+    source: '',
+    capability: '',
+    capabilities: []
+  },
+  {
+    id: '@deepseek-ai/dsh-plugin-manager#pluginManager/listPlugins',
+    ns: 'pluginManager',
+    method: 'listPlugins',
+    shape: ArgsShape.NONE,
+    params: [],
+    stream: false,
+    cancellable: false,
+    source: '',
+    capability: '',
+    capabilities: []
+  },
+  {
+    id: '@deepseek-ai/dsh-plugin-manager#pluginManager/removeBundle',
+    ns: 'pluginManager',
+    method: 'removeBundle',
+    shape: ArgsShape.NAMED,
+    params: ['name'],
+    stream: false,
+    cancellable: false,
+    source: '',
+    capability: '',
+    capabilities: []
+  },
+  {
+    id: '@deepseek-ai/dsh-plugin-manager#pluginManager/setBundleEnabled',
+    ns: 'pluginManager',
+    method: 'setBundleEnabled',
+    shape: ArgsShape.NAMED,
+    params: ['name', 'enabled'],
+    stream: false,
+    cancellable: false,
+    source: '',
+    capability: '',
+    capabilities: []
+  },
+  {
+    id: '@deepseek-ai/dsh-plugin-manager#pluginManager/setPluginEnabled',
+    ns: 'pluginManager',
+    method: 'setPluginEnabled',
+    shape: ArgsShape.NAMED,
+    params: ['id', 'enabled'],
+    stream: false,
+    cancellable: false,
+    source: '',
+    capability: '',
+    capabilities: []
   },
   {
     id: '@deepseek-ai/dsh-api-session-controller#session/attachment',
@@ -860,6 +1028,126 @@ export const DSH_ENDPOINTS: DshEndpoint[] = [
     capabilities: []
   },
   {
+    id: '@deepseek-ai/dsh-api-terminal-controller#terminal/close',
+    ns: 'terminal',
+    method: 'close',
+    shape: ArgsShape.NAMED,
+    params: ['agentId', 'id'],
+    stream: false,
+    cancellable: false,
+    source: '',
+    capability: '',
+    capabilities: []
+  },
+  {
+    id: '@deepseek-ai/dsh-api-terminal-controller#terminal/create',
+    ns: 'terminal',
+    method: 'create',
+    shape: ArgsShape.NAMED,
+    params: ['agentId', 'request'],
+    stream: false,
+    cancellable: true,
+    source: '',
+    capability: '',
+    capabilities: []
+  },
+  {
+    id: '@deepseek-ai/dsh-api-terminal-controller#terminal/environment',
+    ns: 'terminal',
+    method: 'environment',
+    shape: ArgsShape.NAMED,
+    params: ['agentId'],
+    stream: false,
+    cancellable: true,
+    source: '',
+    capability: '',
+    capabilities: []
+  },
+  {
+    id: '@deepseek-ai/dsh-api-terminal-controller#terminal/follow',
+    ns: 'terminal',
+    method: 'follow',
+    shape: ArgsShape.NAMED,
+    params: ['agentId', 'id', 'attachmentId'],
+    stream: true,
+    cancellable: true,
+    source: '',
+    capability: '',
+    capabilities: []
+  },
+  {
+    id: '@deepseek-ai/dsh-api-terminal-controller#terminal/list',
+    ns: 'terminal',
+    method: 'list',
+    shape: ArgsShape.NAMED,
+    params: ['sessionId'],
+    stream: false,
+    cancellable: false,
+    source: '',
+    capability: '',
+    capabilities: []
+  },
+  {
+    id: '@deepseek-ai/dsh-api-terminal-controller#terminal/rename',
+    ns: 'terminal',
+    method: 'rename',
+    shape: ArgsShape.NAMED,
+    params: ['agentId', 'id', 'title'],
+    stream: false,
+    cancellable: false,
+    source: '',
+    capability: '',
+    capabilities: []
+  },
+  {
+    id: '@deepseek-ai/dsh-api-terminal-controller#terminal/resize',
+    ns: 'terminal',
+    method: 'resize',
+    shape: ArgsShape.NAMED,
+    params: ['agentId', 'id', 'attachmentId', 'cols', 'rows'],
+    stream: false,
+    cancellable: false,
+    source: '',
+    capability: '',
+    capabilities: []
+  },
+  {
+    id: '@deepseek-ai/dsh-api-terminal-controller#terminal/retain',
+    ns: 'terminal',
+    method: 'retain',
+    shape: ArgsShape.NAMED,
+    params: ['sessionId', 'id'],
+    stream: true,
+    cancellable: true,
+    source: '',
+    capability: '',
+    capabilities: []
+  },
+  {
+    id: '@deepseek-ai/dsh-api-terminal-controller#terminal/shells',
+    ns: 'terminal',
+    method: 'shells',
+    shape: ArgsShape.NAMED,
+    params: ['agentId'],
+    stream: false,
+    cancellable: true,
+    source: '',
+    capability: '',
+    capabilities: []
+  },
+  {
+    id: '@deepseek-ai/dsh-api-terminal-controller#terminal/write',
+    ns: 'terminal',
+    method: 'write',
+    shape: ArgsShape.NAMED,
+    params: ['agentId', 'id', 'attachmentId', 'data'],
+    stream: false,
+    cancellable: false,
+    source: '',
+    capability: '',
+    capabilities: []
+  },
+  {
     id: '@deepseek-ai/dsh-api-workspace-controller#workspace/archiveSession',
     ns: 'workspace',
     method: 'archiveSession',
@@ -942,6 +1230,18 @@ export const DSH_ENDPOINTS: DshEndpoint[] = [
     source: '',
     capability: 'workspaces',
     capabilities: ['workspaces']
+  },
+  {
+    id: '@deepseek-ai/dsh-api-workspace-controller#workspace/unarchiveSession',
+    ns: 'workspace',
+    method: 'unarchiveSession',
+    shape: ArgsShape.REQUEST,
+    params: ['request'],
+    stream: false,
+    cancellable: false,
+    source: '',
+    capability: '',
+    capabilities: []
   },
   {
     id: '@deepseek-ai/dsh-api-workspace-files#workspaceFiles/changes',

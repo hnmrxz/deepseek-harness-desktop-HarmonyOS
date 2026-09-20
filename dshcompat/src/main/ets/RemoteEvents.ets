@@ -23,7 +23,9 @@
  *   - 会话标题投影键：`@deepseek-ai/dsh-session-title/lib/types/types.d.ts`
  *     → `SessionProjectionMap.title`
  *
- * 采集版本：`@deepseek-ai/dsh` 0.1.5-rc.1
+ * 采集版本：`@deepseek-ai/dsh` 0.1.6-alpha.2（白名单 19 → 23 条：新增
+ * permission-presets/catalog-changed 与 plugin-manager/changed·install-log·install-state，
+ * 全部为 emit；waterfall 仍是 approval/request 与 user-questions/request 两条，词表未变）
  */
 
 /** 转发模式 */
@@ -44,11 +46,18 @@ export interface ForwardedEvent {
 }
 
 /**
- * 上游转发白名单（19 条）。
+ * 上游转发白名单（23 条）。
  *
  * 纪律：**不在本表的事件不会到达客户端**。想用某个上游事件前先在这里查；
  * 查不到说明要么上游没转发它，要么我们还没同步白名单——两种情况都必须先核实，
  * 不能靠「监听一下试试」。
+ *
+ * 【0.1.6-alpha.2 新增的 4 条为什么只登记、不投影】它们服务于官方 Web 的
+ * 插件管理页与权限预设页（安装日志、安装状态、目录变更）。端侧当前没有这两个
+ * 界面，`SessionHub.handleForwardedEvent` 对未知 emit 事件本来就走「记录后忽略」
+ * 的安全降级（不崩溃、不报错）；先把事实登记进白名单，是为了升级回归时
+ * 「Host 发了什么」与「我们认识什么」可以对账——否则这 4 条事件到达时
+ * 会被当成"上游幻想"而不是"未接入的功能"。
  */
 export const FORWARDED_EVENTS: ForwardedEvent[] = [
   { event: 'agent-preset/selected', mode: ForwardedEventMode.EMIT, purpose: '会话的 Agent 预设变更 → 详情栏刷新' },
@@ -68,6 +77,10 @@ export const FORWARDED_EVENTS: ForwardedEvent[] = [
   { event: 'cordis/inspect-query', mode: ForwardedEventMode.EMIT, purpose: '插件检视查询 → 插件页（当前未接入）' },
   { event: 'cordis/inspect-query-resolved', mode: ForwardedEventMode.EMIT, purpose: '插件检视已决 → 插件页（当前未接入）' },
   { event: 'llm/adapters-updated', mode: ForwardedEventMode.EMIT, purpose: '模型适配器变化 → 模型页刷新' },
+  { event: 'permission-presets/catalog-changed', mode: ForwardedEventMode.EMIT, purpose: '权限预设目录变化 → 权限预设页（端侧无此界面，仅登记）' },
+  { event: 'plugin-manager/changed', mode: ForwardedEventMode.EMIT, purpose: '插件清单变化 → 插件管理页（端侧无此界面，仅登记）' },
+  { event: 'plugin-manager/install-log', mode: ForwardedEventMode.EMIT, purpose: '插件安装日志 → 插件管理页（端侧无此界面，仅登记）' },
+  { event: 'plugin-manager/install-state', mode: ForwardedEventMode.EMIT, purpose: '插件安装状态 → 插件管理页（端侧无此界面，仅登记）' },
   { event: 'settings/document-updated', mode: ForwardedEventMode.EMIT, purpose: '设置文档变化 → 设置页刷新' },
   { event: 'user-questions/request', mode: ForwardedEventMode.WATERFALL, purpose: '**用户提问 → 提问卡**（需应答）' }
 ];

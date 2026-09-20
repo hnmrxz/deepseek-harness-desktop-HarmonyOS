@@ -81,6 +81,10 @@ const PROBES = [
   // 无参数只读端点
   ['session/modelCatalog', { args: {} }],
   ['pluginInventory/list', { args: {} }],
+  // 0.1.6-alpha.2 新增的无参数只读端点（T017 回归）
+  ['permissionPresets/catalog', { args: {} }],
+  ['pluginManager/listBundles', { args: {} }],
+  ['pluginManager/listPlugins', { args: {} }],
   ['settings/describe', { args: {} }],
   ['settings/canOpenAgentPresetDirectory', { args: {} }],
   ['agentPresets/list', { args: {} }],

@@ -96,8 +96,8 @@
 **Goal**: 协议层与 0.1.6-alpha.2 兼容，端点表按新契约再生成。
 **Independent Test**: 协议探测全通过；客户端协议层与再生成端点表一致。
 
-- [ ] T017 [US5] 协议探测与端点表再生成：对 0.1.6-alpha.2（本机可跑部分用 dev-host/回路，端侧部分用真机日志）运行 tools/protocol-probe.mjs；tools/gen-compat-endpoints.mjs 重生成端点表；既有契约端点（会话创建/列表/跟随、轨迹、审批、提问、workspaceFiles）逐一核对，漂移适配 dshcompat/appstate 协议层，in tools/protocol-probe.mjs + tools/gen-compat-endpoints.mjs + dshcompat/src/main/ets/
-- [ ] T018 [US5] 手机链协议消费核对：RemoteShell 全功能消费的载荷/事件形状（Wire.ets/EventShape.ets 解析的字段）在新契约下逐字段核对，缺失字段按"可能缺失"口径兼容，形状级破坏则适配，in appstate/src/main/ets/model/Wire.ets + dshcompat/src/main/ets/EventShape.ets
+- [X] T017 [US5] 协议探测与端点表再生成：对 0.1.6-alpha.2（本机可跑部分用 dev-host/回路，端侧部分用真机日志）运行 tools/protocol-probe.mjs；tools/gen-compat-endpoints.mjs 重生成端点表；既有契约端点（会话创建/列表/跟随、轨迹、审批、提问、workspaceFiles）逐一核对，漂移适配 dshcompat/appstate 协议层，in tools/protocol-probe.mjs + tools/gen-compat-endpoints.mjs + dshcompat/src/main/ets/
+- [X] T018 [US5] 手机链协议消费核对：RemoteShell 全功能消费的载荷/事件形状（Wire.ets/EventShape.ets 解析的字段）在新契约下逐字段核对，缺失字段按"可能缺失"口径兼容，形状级破坏则适配，in appstate/src/main/ets/model/Wire.ets + dshcompat/src/main/ets/EventShape.ets
 
 **Checkpoint**: 全部故事代码层完成。
 
