@@ -41,7 +41,7 @@
 ### 1.3 两根轴：实现侧 vs 设备验证
 
 - **实现侧**：本矩阵的 `Status` / 四形态列，取值见 §5 统计。
-- **设备验证**：`PENDING` / `PASS`；今天整体是 **`PENDING`**（本环境无模拟器、无真机；工具链已于 2026-09-14 就位，HAR 模块可真编译，见 §3）。
+- **设备验证**：`PENDING` / `PASS`；今天整体是 **`PENDING`**。**2026-09-21 更新**：模拟器工具链已就位（DevEco ≥6.1.0 + `devecocli emulator/ui`，本机 3 个实例：2in1 / tablet / phone），Phase 9 已在模拟器上跑过一轮（构建+部署全绿；US4 原生设置 / 形态路由 / 删除收敛 = 模拟器 `PASS`），但**端侧核心在 x86_64 模拟器上结构性起不来**（缺 `libs/x86_64/libnode.so.127`）⇒ **核心类验收（host 启动 / Web UI 直载 / 会话与工具链 / 协议消费）仍 `PENDING`，只能在 arm64 真机做**。逐项清单见 `docs/81` 己档，技术前提见 `docs/50` §17。
 - **硬规则**：任何 `DONE` 行都不得被读作"已在设备上验收通过"；报告里必须同时给出设备验证轴的取值。
 
 ### 1.4 门禁强制的五条不变式
@@ -107,7 +107,7 @@ HarmonyOS 的 `deviceType` 只有 `phone` / `tablet` / `2in1`（另有 tv/wearab
 | koffi 源码 | `third_party/koffi/` | `node tools/fetch-koffi.mjs` | ✅ 已就位（4.6 MB） |
 | Host 入口脚本 | `entry/src/main/resources/resfile/resources/app/` | `node tools/place-host-app.mjs`（源 `hostcore/app/` **在库里**） | ✅ 已就位 |
 | 核心包 | `entry/src/main/resources/resfile/*.zip` | `node tools/pack-core.mjs --skip-install --place-in-app` | ✅ 已就位（**0.1.6-alpha.2 单包** 68.8 MB；rc.2/rc.3 旧包已随 v3 移除。历史勘误：当时的"rc.3" zip 实为 rc.2 树——打包事故，v3 核对时发现并纠正口径） |
-| **libnode** | `entry/libs/{arm64-v8a,x86_64}/libnode.so.127` | `tools/node-runtime/build-node-ohos.sh`（**不参与链接**，`CMakeLists.txt` 故意不写进 `DT_NEEDED`） | ✅ arm64-v8a 已就位 ⇒ koffi 会被真正编进 HAP |
+| **libnode** | `entry/libs/{arm64-v8a,x86_64}/libnode.so.127` | `tools/node-runtime/build-node-ohos.sh`（**不参与链接**，`CMakeLists.txt` 故意不写进 `DT_NEEDED`） | ✅ arm64-v8a 已就位 ⇒ koffi 会被真正编进 HAP；**❌ x86_64 从未构建**（Phase 9 实测：x86_64 模拟器上 `dlopen libs/x86_64/libnode.so.127` 失败 ⇒ 端侧核心起不来）⇒ 核心类验收必须 arm64 真机 |
 | 核心树 | `dist/core/work/dsh-core-*` | **不需上传**：随包 zip 本身就是完整树（29006 个文件），`unzip` 即物化 | 物化即可 |
 | 协议契约 | `.research/protocol/contracts.json` | `node tools/protocol-contract.mjs` + 上游 checkout | ❌ 缺 ⇒ `compat-drift` 仍是盲区（**唯一仍跑不动的门禁**） |
 | 签名材料 | `.p12` / `.cer` / `.p7b` | DevEco 自动签名（Windows 机器的 `C:\Users\hnzy1\.ohos\config\`，路径写在 `build-profile.json5`） | ❌ 缺（`SignHap` 需要） |

@@ -120,6 +120,27 @@
 - [X] T022 Deploy application to device/emulator (invoke start_app) — ✅ 2in1 `MateBook Pro` 与手机 `Pura 90`（均 HarmonyOS 6.1.1(24) 模拟器）安装并启动成功
 - [X] T023 Run UI verification against deployed application (invoke verify_ui): US1 host 以 0.1.6-alpha.2 启动且 Web UI 新版可用、完成一次问答回合；US2 agent 四步文件链（新建→读取→覆盖→列目录）零报错 + Web UI 工作区面板与沙箱一致；US3 按 docs/14-设置项核查清单.md 逐项走查（改→存→重启→读回）；US4 原生设置走查（主题/核心管理版本显示与回滚/远程连接）；US5 手机链一轮会话回归；v2 遗留验收：形态路由矩阵（PHONE/DESKTOP_LIKE × 本机/远程/诊断）、删除收敛后页面无死链、WebShell 直载官方 UI
 
+### Phase 9 结论（2026-09-21，设备 = `HarmonyOS 6.1.1(24)` 模拟器，非真机）
+
+**总体：`INCOMPLETE`**（构建/部署与可执行的验收面已验到位，核心验收面受设备类别限制未定论）。
+
+| 范围 | 结论 |
+|---|---|
+| T021 构建 | ✅ `BUILD SUCCESSFUL`（exitCode=0） |
+| T022 部署 | ✅ 2in1 `MateBook Pro` + 手机 `Pura 90` 安装并启动成功 |
+| US4 原生设置 | ✅ `PASS`（模拟器实测） |
+| US1 核心升级 | ⚠️ 设备可验部分通过（版本读数 `0.1.6-alpha.2`、无死链）；host 启动 + Web UI + 问答回合 **待真机** |
+| US2 / US3 / US5 | ⛔ **待真机**（无 host ⇒ 无会话/Web UI/事件） |
+| v2 形态路由 | ⚠️ `PARTIAL`（两形态路由正确；`DESKTOP_LIKE` Web 内容待真机） |
+| v2 删除收敛 | ✅ `PASS`（修掉一处真实死入口 → F-1） |
+| v2 WebShell 直载 | ⛔ **待真机** |
+
+**根因（设备类别限制，非本周期回归）**：模拟器 ABI = **x86_64**，仓内 `entry/libs/` 只有 `arm64-v8a` ⇒ `dlopen libs/x86_64/libnode.so.127` 失败（`node::Start=missing`）⇒ 端侧 host 起不来。rc.2/rc.3 同样失败。**核心类验收只能在 arm64 真机做**。
+
+**本轮现场修复（5 项，已复跑 9 门禁 + 重建重部署）**：F-1 手机形态设置页整页不可达（补抽屉齿轮入口 + `onOpenSettings` 门面）／F-2 `RuntimeVersion` 谎报可用（改回空串）／F-3 首装「主题模式」整行被策展丢掉／F-4 本机偏好写路径恒死（改查 `hostSettings`）／F-5 写后与冷启画回旧值。明细见 `docs/07` v3 段。
+
+**未收口项的归宿**：全部登记进 `docs/81-待真机复验清单.md` **己档**（#37–#46），在 arm64 真机上跑完才可改判。
+
 ---
 
 ## Dependencies & Execution Order
