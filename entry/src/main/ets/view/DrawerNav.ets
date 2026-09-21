@@ -23,8 +23,9 @@
  * ## 与源码的刻意偏离（缺通道 / 缺数据，不放假入口 P7-18）
  *
  * · 手势滑出/跟手/关闭动画归 `RemoteShell`（T018 的领地，见其头注释）。
- * · `SortChip`（manual/updated 排序）与设置钮：`WorkspaceBrowserFacade` 没有对应通道，
+ * · `SortChip`（manual/updated 排序）：`WorkspaceBrowserFacade` 没有对应通道，
  *   不放点了没反应的假钮。会话按 facade 给的顺序（Host 自己的行序）。
+ *   （设置钮同理走"有通道才画"：`f.onOpenSettings` 缺省时不渲染——见 `settingsButton()`。）
  * · 工作区长按菜单（重命名/删除）与会话长按菜单（重命名/fork/归档）：无通道，省略；
  *   归档动作在右侧详情面板（`RemoteShell.detailsPanelBody` 的会话卡）有真通道。
  * · `pendingInteraction` 的 Warning 点与「需要处理」pill：`SessionListItem` 没建模该字段。
@@ -461,7 +462,7 @@ export struct DrawerNav {
     // 源码：fillMaxSize + background(sidebar) + safeDrawingPadding + padding(horizontal=medium)
     Column() {
       // 标题行（源码：title large20 + Search 钮 + SortChip + Settings 钮；
-      // 后两者无 facade 通道，见文件头「刻意偏离」）
+      // SortChip 无 facade 通道，见文件头「刻意偏离」；设置钮有通道时才画）
       Row() {
         Text('会话')
           .fontSize(DsType.LARGE_20.size)
@@ -479,6 +480,7 @@ export struct DrawerNav {
               this.f.onSearchSessions('');
             }
           })
+        this.settingsButton()
       }
       .width('100%')
       .padding({ top: DsSpacing.SMALL, bottom: DsSpacing.TINY })
@@ -787,6 +789,26 @@ export struct DrawerNav {
     .onClick(() => {
       this.onSelectSession(row.sessionId);
     })
+  }
+
+  /**
+   * 设置钮（对照 `ChatListDrawer.kt`：标题行里那颗 `Icons.Filled.Settings` → `onOpenSettings`）。
+   *
+   * 【为什么收在一个 @Builder 里】"有没有通道"只判一次：装配方没给 `onOpenSettings`
+   * 时这里**不画**（P7-18：不放点了没反应的假钮）。手机链上设置页由 `MainShell`
+   * 主区渲染（`RemoteShell` 把它挂在主区域），所以这颗钮点下去只是把主区面板
+   * 切到设置——不需要新开一层路由。
+   */
+  @Builder
+  settingsButton() {
+    if (this.f.onOpenSettings !== undefined) {
+      this.iconButton($r('sys.symbol.gearshape'), '设置', this.palette().labelTertiary, () => {
+        const open: (() => void) | undefined = this.f.onOpenSettings;
+        if (open !== undefined) {
+          open();
+        }
+      })
+    }
   }
 
   /** 图标钮（对照 `DsIconButton`：48dp 保证触达、图标居中；ChatTopBar 的 18dp 档） */

@@ -99,9 +99,22 @@ void SetBool(napi_env env, napi_value obj, const char* key, bool value) {
  * runtimeVersion(): 返回编译进 libnode.so 的 Node 版本。
  * 只要这个函数返回了非空字符串，就证明"模块加载成功且与 libnode 链接在一起了"——
  * 这是端侧"运行时是否真的可用"的第一条可观测证据（第二条是 Host 真的起来）。
+ *
+ * 【2026-09-21 修正：`NODE_VERSION_STRING` 是**编译期常量**，不是"libnode 已加载"的证据】
+ * 实测（x86_64 模拟器）：`libs/x86_64/libnode.so.127` 不存在 ⇒ 构造器里那次
+ * `dlopen` 失败、`node::Start` 没解析到，但本函数照样返回 `22.23.2`，
+ * 核心页因此显示「Node 运行时 22.23.2」——**在运行时根本不可用的设备上谎报可用**。
+ * 判据改成"构造器有没有真的抓到 `node::Start`"：没抓到就回**空串**，
+ * ArkTS 侧（`NodeRuntime.probe`）据此报 `available=false` 并说明原因
+ * （`RuntimePort.ets` §1 的纪律：没探测到就说没探测到，不许用默认值伪装）。
  */
 napi_value RuntimeVersion(napi_env env, napi_callback_info info) {
   napi_value out = nullptr;
+  if (g_nodeStart == nullptr) {
+    // 空串 = "libnode 没加载起来"（不是"版本未知"），调用方按未接线处理
+    napi_create_string_utf8(env, "", NAPI_AUTO_LENGTH, &out);
+    return out;
+  }
   napi_create_string_utf8(env, NODE_VERSION_STRING, NAPI_AUTO_LENGTH, &out);
   return out;
 }

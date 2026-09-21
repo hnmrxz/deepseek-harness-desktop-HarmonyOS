@@ -56,6 +56,14 @@ export interface WorkspaceBrowserFacade {
   hubTraceTail: () => string[];
   openDiagnostics: () => void;
   openFolderPicker: () => void;
+  /**
+   * 打开设置（抽屉标题行那颗 Settings 钮，对照 `ChatListDrawer.kt` 的 `onOpenSettings`）。
+   *
+   * 【为什么是可选的】设置入口是**手机壳（DrawerNav 抽屉）**独有的：桌面形态的原生
+   * 设置页不在渲染树上（`WebShell.desktopSurface` 只有 Web / 连接页 / 诊断页三支）。
+   * 做成可选字段，其它装配点（不画抽屉标题行的挂载方）就不必伪造一个通道。
+   */
+  onOpenSettings?: () => void;
   openSession: (id: string) => void;
   openWorkspaceFiles: (w: WorkspaceItem) => void;
   pending: PendingItem[];

@@ -642,9 +642,9 @@ struct Index {
    *
    * 三种取值的界面呈现由 `localPreferenceGroup()` 负责；这里只做只读订阅。
    */
-  @StorageProp('dshThemeMode') themeMode: string = 'system';
+  @StorageProp('dshThemeMode') @Watch('onThemeModeChanged') themeMode: string = 'system';
   /** 主题上次应用是否成功（能力层写入；失败时设置页要如实说明） */
-  @StorageProp('dshThemeApplied') themeApplied: boolean = true;
+  @StorageProp('dshThemeApplied') @Watch('onThemeModeChanged') themeApplied: boolean = true;
   /** 会话内搜索条是否打开（D3 §5.1 的 Ctrl/Cmd+F；由快捷键打开、由搜索条自己关闭） */
   @State searchOpen: boolean = false;
   /** 自动重连只跑一次（StorageProp 变化会触发，重复跑会反复认证） */
@@ -920,15 +920,22 @@ struct Index {
   }
 
   /**
-   * 在当前设置分组里找一项。
+   * 在 **Host 设置分组**里找一项（判"这个 key 该由谁写"）。
    *
    * 返回 `undefined` 说明这个 key 不属于 Host 设置——即**本机偏好**。
    * 两条路径的处置完全不同（Host 项可以写、本机项没有上游写路径），
    * 所以必须先分清，而不是一律当 Host 项去写（那会对不存在的命名空间发起 RPC）。
+   *
+   * 【2026-09-21 修正：此前搜的是 `this.settings`（合并视图）而不是 `hostSettings`】
+   * 模拟器实测的完整因果链：点「主题模式 → 深色」→ 合并视图里**能找到它自己** ⇒ 判定
+   * "这是 Host 项" ⇒ 走 `settings/mutate` ⇒ 回执「Host 上没有名为「local」的设置命名空间，
+   * 已拒绝写入」，值不变；值改不动 ⇒ `userSet` 恒为假 ⇒ 「本机偏好」整组在
+   * `projectGeneralGroups` 里被丢掉 ⇒ **用户连那一行都看不见**（不只是改不动）。
+   * 判据按本注释的原意只该看 Host 分组，与界面读的合并视图（`this.settings`）分开。
    */
   private settingItemOf(key: string): SettingItem | undefined {
-    for (let i = 0; i < this.settings.length; i++) {
-      const items: SettingItem[] = this.settings[i].items;
+    for (let i = 0; i < this.hostSettings.length; i++) {
+      const items: SettingItem[] = this.hostSettings[i].items;
       for (let j = 0; j < items.length; j++) {
         if (items[j].key === key) {
           return items[j];
@@ -962,7 +969,7 @@ struct Index {
     // 本机偏好是**端侧**的，与连接无关，因此一开始就要有（否则设置页会缺一组）。
     // 当前值来自能力层（它从 preferences 读出后发布到 AppStorage）。
     this.localSettings = this.localPreferenceGroup();
-    this.settings = this.localSettings;
+    this.settings = mergeSettingsGroups(this.hostSettings, this.localSettings);
     this.updateHosts();
     /*
      * T029：形态翻转的订阅必须**先于**首次 `applySize`。
@@ -1005,8 +1012,14 @@ struct Index {
    * 【为什么 key 用 `local.` 前缀】`settingItemOf()` 用"能不能在 Host 设置分组里找到"
    * 来判定一项是不是本机偏好；前缀让来源一眼可辨，也避免与 Host 的命名空间撞名
    * （Host 侧不存在 `local.*` 命名空间）。
+   * 【为什么把取值做成参数（默认仍是订阅值）】写完之后 `@StorageProp` 的传播不在
+   * `writeLocalTheme` 的同一次执行里（`AppStorage.setOrCreate` 之后立刻读 `this.themeMode`
+   * 拿到的还是旧值），于是"刚写完就重建分组"会把**旧值**画回 chip 上：模拟器实测
+   * 「主题模式已保存并在本次生效」+ 配色的确变了，但那一行仍显示「跟随系统」。
+   * 传入刚写下的 `mode` 就能让这一行与事实一致。
    */
-  private localPreferenceGroup(): SettingGroup[] {
+  private localPreferenceGroup(mode: string = this.themeMode,
+    applied: boolean = this.themeApplied): SettingGroup[] {
     const choices: SettingChoice[] = [];
     const options: string[] = [LOCAL_THEME_SYSTEM, LOCAL_THEME_LIGHT, LOCAL_THEME_DARK];
     const labels: string[] = ['跟随系统', '浅色', '深色'];
@@ -1016,19 +1029,19 @@ struct Index {
     const items: SettingItem[] = [{
       key: LOCAL_THEME_KEY,
       label: '主题模式',
-      hint: this.themeApplied
+      hint: applied
         ? '本机偏好：覆盖系统深浅色，只在端侧生效（Host 设置里没有这一项）'
         : '本机偏好：覆盖系统深浅色。**上次应用未成功**（系统拒绝或当前窗口模式不支持）',
       kind: SettingKind.CHOICE,
       boolValue: false,
-      textValue: this.themeMode,
+      textValue: mode,
       options: options,
       choices: choices,
       readOnly: false,
       hostWritable: false,
       appliesLive: true,
       origin: SettingOrigin.LOCAL,
-      userSet: this.themeMode !== LOCAL_THEME_SYSTEM,
+      userSet: mode !== LOCAL_THEME_SYSTEM,
       credentialRef: false,
       valueType: SettingValueType.STRING,
       minValue: 0, maxValue: 0, stepValue: 0, hasMin: false, hasMax: false,
@@ -1037,6 +1050,32 @@ struct Index {
     const out: SettingGroup[] = [];
     out.push({ title: '本机偏好', items: items });
     return out;
+  }
+
+  /**
+   * 主题取值（`dshThemeMode` / `dshThemeApplied`）在**本页之外**变了 → 重建本机偏好分组。
+   *
+   * 【为什么必须有这一路】取值是异步到位的：`EntryAbility.onCreate` 里
+   * `prefs.attach(…).then(loadThemeMode)` 读完 preferences 才发布 `dshThemeMode`，
+   * 而 `aboutToAppear` 早就把「本机偏好」那一组按默认值（`system`）建好了。
+   * 没有这一路的话，冷启后是**配色真的深了、那一行还写着「跟随系统」**——
+   * 界面自相矛盾（模拟器实测读数）。
+   *
+   * 【这条 @Watch 可靠吗】本项目对 `@StorageProp` 的 `@Watch` 一贯存疑（见
+   * `waitForRememberedHost` 的说明），所以这里**不把它当唯一入口**：进设置页时
+   * （`openPhoneSettings` / `selectSettingsSection`）与写完时（`writeLocalTheme`）
+   * 都会再同步一次。两路都便宜，宁可多算一次也不留一个会撒谎的行。
+   */
+  onThemeModeChanged(): void {
+    this.syncLocalPreferenceGroup();
+  }
+
+  /** 按当前（或刚写下的）主题取值重建本机偏好分组，并与 Host 分组重新合并 */
+  private syncLocalPreferenceGroup(mode: string = this.themeMode,
+    applied: boolean = this.themeApplied): void {
+    this.localSettings = this.localPreferenceGroup(mode, applied);
+    // 未连接时 hostSettings 为空，合并结果就是本机偏好那一组（与 842 行的口径一致）
+    this.settings = mergeSettingsGroups(this.hostSettings, this.localSettings);
   }
 
   /**
@@ -1053,8 +1092,8 @@ struct Index {
     const applied: boolean = applyThemeMode(getContext(this) as common.UIAbilityContext, themeModeOf(mode));
     AppStorage.setOrCreate<string>('dshThemeMode', mode);
     AppStorage.setOrCreate<boolean>('dshThemeApplied', applied);
-    this.localSettings = this.localPreferenceGroup();
-    this.settings = mergeSettingsGroups(this.hostSettings, this.localSettings);
+    // 传新值重建：`this.themeMode` 的 StorageProp 传播还没到，用它会画回旧值（见该函数注释）
+    this.syncLocalPreferenceGroup(mode, applied);
     if (!saved || !applied) {
       this.noteSettingWrite(LOCAL_THEME_KEY, !saved
         ? '主题已切换，但**没能保存**：下次启动会回到上次的值。'
@@ -4601,6 +4640,30 @@ struct Index {
   /** 切设置分区（经注册表校验；写进 `NavigationState.settingsSection`——唯一真值） */
   private selectSettingsSection(sectionId: string): void {
     this.nav = openSettings(this.nav, sectionId, this.panelRegistry);
+    // 同 `openPhoneSettings`：分区切换也会重画设置页，顺手把本机偏好同步到最新取值
+    this.syncLocalPreferenceGroup();
+  }
+
+  /**
+   * 手机抽屉标题行的设置钮 → 进设置页（默认分区「通用」）。
+   *
+   * 【为什么不是复用 selectSettingsSection】这里比"切分区"多做两件事：
+   * ① **关抽屉**——设置页在手机上是主区内容，抽屉不收起来它就被盖在下面，
+   *    用户看到的是"点了没反应"；
+   * ② 技能/预设/提供方目录这些会话无关的静态事实一并重读（与 `selectTab` 同一口径）。
+   */
+  private openPhoneSettings(): void {
+    this.nav = openSettings(this.nav, 'settings.general', this.panelRegistry);
+    this.drawerState = closeAllDrawers(this.drawerState);
+    // 进设置前把「本机偏好」重建一次：取值来自异步的 preferences 读取，
+    // 首帧建的那一份可能是默认值（见 `onThemeModeChanged` 的说明）。
+    this.syncLocalPreferenceGroup();
+    this.refreshCoreView();
+    if (this.hubConnected) {
+      SessionHub.shared().refreshSkills();
+      SessionHub.shared().refreshAgentPresets();
+      SessionHub.shared().refreshProviderCatalog();
+    }
   }
 
   private selectRightPanelById(panelId: string): void {
@@ -4742,6 +4805,9 @@ struct Index {
     hubTraceTail: () => this.hubTraceTail(),
     openDiagnostics: () => this.openDiagnostics(),
     openFolderPicker: () => this.openFolderPicker(),
+    // 手机抽屉标题行那颗设置钮（对照 ChatListDrawer.kt 的 onOpenSettings）：
+    // 手机壳主区就是 MainShell，所以这里只切主区面板 + 关抽屉，不开新路由。
+    onOpenSettings: () => this.openPhoneSettings(),
     openSession: (id: string) => this.openSession(id),
     openWorkspaceFiles: (w: WorkspaceItem) => this.openWorkspaceFiles(w),
     pending: this.pending,

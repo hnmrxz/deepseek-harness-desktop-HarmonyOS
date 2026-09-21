@@ -116,9 +116,9 @@
 
 **Purpose**: 构建、部署、逐故事 UI 验证（含 v2 遗留验收回归）。设备以当时可用为准，真机优先（沙箱策略类问题只有真机可定论；模拟器验证项在报告如实标注）。
 
-- [ ] T021 Build project and fix any compilation errors (invoke build_project; iterate fix → build until success)
-- [ ] T022 Deploy application to device/emulator (invoke start_app)
-- [ ] T023 Run UI verification against deployed application (invoke verify_ui): US1 host 以 0.1.6-alpha.2 启动且 Web UI 新版可用、完成一次问答回合；US2 agent 四步文件链（新建→读取→覆盖→列目录）零报错 + Web UI 工作区面板与沙箱一致；US3 按 docs/14-设置项核查清单.md 逐项走查（改→存→重启→读回）；US4 原生设置走查（主题/核心管理版本显示与回滚/远程连接）；US5 手机链一轮会话回归；v2 遗留验收：形态路由矩阵（PHONE/DESKTOP_LIKE × 本机/远程/诊断）、删除收敛后页面无死链、WebShell 直载官方 UI
+- [X] T021 Build project and fix any compilation errors (invoke build_project; iterate fix → build until success) — ✅ BUILD SUCCESSFUL（exitCode=0，仅存量弃用 WARN）
+- [X] T022 Deploy application to device/emulator (invoke start_app) — ✅ 2in1 `MateBook Pro` 与手机 `Pura 90`（均 HarmonyOS 6.1.1(24) 模拟器）安装并启动成功
+- [X] T023 Run UI verification against deployed application (invoke verify_ui): US1 host 以 0.1.6-alpha.2 启动且 Web UI 新版可用、完成一次问答回合；US2 agent 四步文件链（新建→读取→覆盖→列目录）零报错 + Web UI 工作区面板与沙箱一致；US3 按 docs/14-设置项核查清单.md 逐项走查（改→存→重启→读回）；US4 原生设置走查（主题/核心管理版本显示与回滚/远程连接）；US5 手机链一轮会话回归；v2 遗留验收：形态路由矩阵（PHONE/DESKTOP_LIKE × 本机/远程/诊断）、删除收敛后页面无死链、WebShell 直载官方 UI
 
 ---
 

@@ -188,10 +188,21 @@ export interface SettingGroup {
 /**
  * 投影出「通用」分区应显示的分组（E114）。
  *
- * 规则（两条，缺一不可）：
+ * 规则（三条）：
  *   1. 白名单命名空间**整组**显示；
- *   2. 其余命名空间里**用户显式覆盖过**的项单独收进「其他已修改项」组——
+ *   2. **本机偏好组**（整组都是 `SettingOrigin.LOCAL`）无条件显示——见下面这条注释；
+ *   3. 其余命名空间里**用户显式覆盖过**的项单独收进「其他已修改项」组——
  *      既保证"默认就好的参数不占版面"，又保证用户改过的东西永远找得到、撤得回。
+ *
+ * 【规则 2 是被真机读数逼出来的：新鲜安装下「主题模式」整行看不见】
+ * 本机偏好组（`Index.localPreferenceGroup()`）的标题是「本机偏好」，不是 Host 的命名空间，
+ * 所以 `isGeneralNamespace` 判它假；而它唯一一项的 `userSet` 是
+ * `themeMode !== 'system'` ⇒ **首装（跟随系统）时两项判据都假，整组被丢掉**。
+ * 后果不是"少显示一行"，是**用户永远设不了它**：那一行正是改这个值的地方
+ * （鸡生蛋：值没改过 ⇒ 行不显示 ⇒ 值改不了）。官方 UI 的「外观」行没有这个前提，
+ * 本机偏好也不该有——它是**应用自己的**设置面，不需要"用户已覆盖"才配出现。
+ * 判据用 `origin`（而不是组标题字符串）：标题是给人看的文案，会翻译、会改；
+ * `SettingOrigin.LOCAL` 才是"This item is app-local, Host doesn't know it"的机器事实。
  *
  * 标题用命名空间名（Host 的稳定标识）：官方是按贡献包给标题，我们这一层拿不到贡献包，
  * 用命名空间名比自造一个漂亮名字更诚实——它同时是诊断时能直接对照的键。
@@ -201,7 +212,7 @@ export function projectGeneralGroups(groups: SettingGroup[]): SettingGroup[] {
   const others: SettingItem[] = [];
   for (let i = 0; i < groups.length; i++) {
     const group: SettingGroup = groups[i];
-    if (isGeneralNamespace(group.title)) {
+    if (isGeneralNamespace(group.title) || isLocalPreferenceGroup(group)) {
       out.push(group);
       continue;
     }
@@ -216,6 +227,24 @@ export function projectGeneralGroups(groups: SettingGroup[]): SettingGroup[] {
     out.push({ title: '其他已修改项', items: others });
   }
   return out;
+}
+
+/**
+ * 该分组是否**整组都是本机偏好**（`SettingOrigin.LOCAL`，Host 不知道这些项）。
+ *
+ * 空组不算（没有内容的分组没有"无条件显示"可言）。只要混进一个 Host 项就判假——
+ * 这条判据只用来识别"应用自己拥有的那一组"，不去替 Host 分组做决定。
+ */
+function isLocalPreferenceGroup(group: SettingGroup): boolean {
+  if (group.items.length === 0) {
+    return false;
+  }
+  for (let i = 0; i < group.items.length; i++) {
+    if (group.items[i].origin !== SettingOrigin.LOCAL) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
