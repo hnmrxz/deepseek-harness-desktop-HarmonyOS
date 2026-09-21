@@ -2869,7 +2869,28 @@ struct Index {
     };
   }
 
-  /** T005/T010/T011：Web 直载门面（每次渲染重建：值型快照 + 方法型闭包） */
+  /**
+   * 本机 Web UI 的**带凭据入口地址**（`<base>/?token=…`）；没有凭据时回空串。
+   *
+   * 【为什么要有这一路（2026-09-21 设备实测）】`dsh web` 对不带 token 的 `GET /`
+   * 回 401 +正文「dsh web authentication required; reopen the URL printed by dsh web.」，
+   * 于是 Web 直载只会画出那一行拒绝文本。凭据取「记住的宿主」——启动参数
+   * （`aa start --ps dshHost/dshToken`）与界面粘贴两条路都写这两个 @StorageProp，
+   * 所以这里不需要新的真值源。
+   */
+  private localWebEntryUrl(): string {
+    if (this.rememberedUrl.length === 0 || this.rememberedToken.length === 0) {
+      return '';
+    }
+    let base: string = this.rememberedUrl;
+    while (base.length > 0 && base.charAt(base.length - 1) === '/') {
+      base = base.substring(0, base.length - 1);
+    }
+    return `${base}/?token=${this.rememberedToken}`;
+  }
+
+  /**
+   * T005/T010/T011：Web 直载门面（每次渲染重建：值型快照 + 方法型闭包） */
   private buildWebShellFacade(): WebShellFacade {
     return {
       /*
@@ -2885,6 +2906,8 @@ struct Index {
       hostReadyState: this.webHostReadyState(),
       // 本机基址空串 = 回退 WebShell 的 DEFAULT_LOCAL_BASE_URL（hostcore 伺服事实）
       localBaseUrl: '',
+      // 带凭据入口（`<base>/?token=…`）：宿主对裸 `GET /` 回 401，没它官方 UI 起不来
+      localEntryUrl: this.localWebEntryUrl(),
       remoteBaseUrl: this.remoteWebBaseUrl(),
       remoteBanner: this.remoteBannerState(),
       bootStatusText: this.runMode === RunMode.REMOTE

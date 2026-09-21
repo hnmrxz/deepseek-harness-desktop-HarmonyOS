@@ -74,8 +74,26 @@
  */
 
 import { webview } from '@kit.ArkWeb';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import { Fs, HarmonyIconSize, HubPhase, RunMode, SemanticColor, Sp } from 'appstate';
 import { HubBanner } from '../HubBanner';
+
+/*
+ * 【旁路诊断（2026-09-21 加）】本组件此前**没有任何日志**，于是"相位到 READY 但 Web 一直是
+ * about:blank"在设备上完全不可定位——只能看到屏幕停在等待页。这几行把**相位迁移**与
+ * **loadUrl 时序**打到 hilog（前缀 `WEBSHELL`），是这套直载链路唯一的可观测面：
+ * 它当场抓到了两个真缺陷（初始 about:blank 抢占导航、直载未带 token），见
+ * `webSurface().onPageEnd` 与 `WebShellFacade.localEntryUrl` 的注释。**不要删**：
+ * 任何"打不开官方 UI"的回归都会回到这三行读数上。
+ */
+const DOMAIN: number = 0x0000;
+const TAG: string = 'HDSH-WebShell';
+
+/**
+ * 初始 `about:blank` 抢占导航后的**有界**补发次数（见 `webSurface().onPageEnd`）。
+ * 取 3：正常情况第 1 次补发就装上；宿主真的不可达时不会变成无限重载。
+ */
+const EMPTY_PAGE_PREEMPT_MAX: number = 3;
 
 // ───────────────────────── 契约类型 ─────────────────────────
 
@@ -162,6 +180,21 @@ export interface WebShellFacade {
   hostReadyState: WebHostReadyState;
   /** 本机官方 UI 基址（空串时回退 DEFAULT_LOCAL_BASE_URL） */
   localBaseUrl: string;
+  /**
+   * 本机官方 UI 的**带凭据入口地址**（`dsh web` stdout 打印的那一条：`<base>/?token=…`）。
+   *
+   * 【为什么不能只用 localBaseUrl（2026-09-21 设备实测）】宿主对**不带 token** 的
+   * `GET /` 返回 401，正文是 `dsh web authentication required; reopen the URL printed
+   * by dsh web.` ⇒ 用基址直载只会把这一行文本画在屏幕上，官方 UI 起不来（实测读数：
+   * 宿主侧 `IN-REQ GET / ... cookie=(none)`，Web 组件拿到 401 页）。
+   * 宿主的设计就是"用打印出来的 URL 打开"——token 经 `?token=` 换 cookie 后 SPA 才可用，
+   * 官方桌面端（`dsh web` 自动开浏览器）走的也是同一条。空串 = 无凭据可用 ⇒ 退回基址。
+   *
+   * 【已知代价】token 会进入 Web 历史（`normalizeWebBaseUrl` 对远程地址刻意剥 query 的理由）。
+   * 更干净的形态是把宿主下发的会话 cookie 直接喂给 ArkWeb 的 cookie 存储（`WebCookieManager`），
+   * 但那需要一个**当前没有暴露**的 cookie 值（连接层的 224B 签名 cookie）——待接线，见 `docs/81` 己档。
+   */
+  localEntryUrl: string;
   /** 远程官方 UI 基址（activeRemoteHost 派生；本波次预留，空串 = 未连接） */
   remoteBaseUrl: string;
   /**
@@ -288,11 +321,15 @@ export struct WebShell {
   @State loadProgress: number = 0;
   /** 看门狗超时标志（BOOTING 超过阈值后置位，等待页降级为 TIMEOUT 错误页） */
   @State bootTimedOut: boolean = false;
+  /** 初始空白页抢占导航后的补发计数（有界，见 `EMPTY_PAGE_PREEMPT_MAX`） */
+  private preemptRetries: number = 0;
 
   // ── 生命周期 ──
 
   aboutToAppear(): void {
     this.lastPhaseSeen = this.f.hostReadyState;
+    hilog.info(DOMAIN, TAG, 'WEBSHELL appear phase=%{public}s runMode=%{public}s localBase=%{public}s remoteBase=%{public}s',
+      this.f.hostReadyState, this.f.runMode, this.f.localBaseUrl, this.f.remoteBaseUrl);
     if (this.f.hostReadyState === WebHostReadyState.BOOTING) {
       this.startBootWatchdog();
     }
@@ -309,6 +346,8 @@ export struct WebShell {
   /** 门面刷新（宿主每次渲染）：只对"真迁移"与"目标地址变化"做功 */
   private onFacadeChanged(propName: string): void {
     const phase: WebHostReadyState = this.f.hostReadyState;
+    hilog.info(DOMAIN, TAG, 'WEBSHELL facade prop=%{public}s phase=%{public}s last=%{public}s pageLoaded=%{public}s loadedTarget=%{public}s',
+      propName, phase, this.lastPhaseSeen, String(this.pageLoaded), this.loadedTarget);
     if (phase !== this.lastPhaseSeen) {
       if (phase === WebHostReadyState.BOOTING) {
         this.startBootWatchdog();
@@ -317,6 +356,8 @@ export struct WebShell {
       }
       if (phase === WebHostReadyState.READY) {
         this.bootTimedOut = false;
+        // 新一轮就绪：补发额度重置（上一轮用掉的不该带到这一轮）
+        this.preemptRetries = 0;
         // host 曾失败/超时后恢复：旧页面内容不可信，清空目标强制重载
         if (this.lastPhaseSeen === WebHostReadyState.FAILED
           || this.lastPhaseSeen === WebHostReadyState.TIMEOUT) {
@@ -352,26 +393,36 @@ export struct WebShell {
         return remote;
       }
     }
+    // 本机：优先带凭据入口（宿主 401 的判据是"有没有 token"，不是"基址对不对"）
+    if (this.f.localEntryUrl.length > 0) {
+      return this.f.localEntryUrl;
+    }
     return this.f.localBaseUrl.length > 0 ? this.f.localBaseUrl : DEFAULT_LOCAL_BASE_URL;
   }
 
   /** 幂等加载：仅在 READY、目标非空且与已加载目标不同时执行 loadUrl */
   private maybeLoadTarget(): void {
     if (this.f.hostReadyState !== WebHostReadyState.READY) {
+      hilog.info(DOMAIN, TAG, 'WEBSHELL maybeLoad skip phase=%{public}s', this.f.hostReadyState);
       return;
     }
     const target: string = this.targetUrl();
     if (target.length === 0 || this.loadedTarget === target) {
+      hilog.info(DOMAIN, TAG, 'WEBSHELL maybeLoad skip target=%{public}s loadedTarget=%{public}s',
+        target, this.loadedTarget);
       return;
     }
     this.loadedTarget = target;
     this.pageLoaded = false;
     this.loadError = undefined;
     this.loadProgress = 0;
+    hilog.info(DOMAIN, TAG, 'WEBSHELL loadUrl target=%{public}s', target);
     try {
       this.controller.loadUrl(target);
+      hilog.info(DOMAIN, TAG, 'WEBSHELL loadUrl returned normally target=%{public}s', target);
     } catch (e) {
       // 控制器尚未关联（Web 未挂载）或已解绑：回滚目标，待 onControllerAttached 再试
+      hilog.error(DOMAIN, TAG, 'WEBSHELL loadUrl THREW err=%{public}s', JSON.stringify(e));
       this.loadedTarget = '';
     }
   }
@@ -562,23 +613,53 @@ export struct WebShell {
       .fileAccess(false)
       .onControllerAttached(() => {
         // 控制器关联完成是 loadUrl 的合法时机（此前调用会抛 17100001）
+        hilog.info(DOMAIN, TAG, 'WEBSHELL controllerAttached phase=%{public}s', this.f.hostReadyState);
         this.maybeLoadTarget();
       })
       .onPageBegin((event: OnPageBeginEvent) => {
         // 新一轮主文档导航开始：清掉上一轮的失败诊断（仅 http(s) 计入）
+        hilog.info(DOMAIN, TAG, 'WEBSHELL pageBegin url=%{public}s', event.url);
         if (this.isHttpUrl(event.url)) {
           this.loadError = undefined;
         }
       })
       .onPageEnd((event: OnPageEndEvent) => {
+        hilog.info(DOMAIN, TAG, 'WEBSHELL pageEnd url=%{public}s', event.url);
         if (this.isHttpUrl(event.url)) {
           this.pageLoaded = true;
+        }
+        /*
+         * 【2026-09-21 修复：初始 about:blank 抢占导航，导致官方 UI 永远装不上】
+         * 实测（2in1 模拟器 + PC 宿主，2026-09-21）：`onControllerAttached` 里调
+         * `loadUrl(http://127.0.0.1:3120)` **正常返回**，但紧接着组件自己首帧的
+         * `about:blank` 导航才开始并**赢下这次导航**（读数：`pageBegin/End url=about:blank`
+         * 晚于 `loadUrl returned normally`）。此后 `loadedTarget` 已等于目标值，
+         * `maybeLoadTarget()` 幂等守卫把后续每一次都挡掉（`skip target=… loadedTarget=…`）
+         * ⇒ Web 永远停在 about:blank，界面停在"正在加载界面…"。宿主侧可见证据：
+         * 全程只有 `ua=libcurl-agent/1.0`（应用原生 HTTP）请求，**没有任何浏览器 UA 请求**。
+         *
+         * 修法：空白页收尾后若目标仍未装载，清掉幂等标记补发一次。**必须有界**
+         * （`EMPTY_PAGE_PREEMPT_MAX`）——否则一旦宿主真的不可达就会变成无限重载。
+         */
+        if (!this.pageLoaded
+          && this.f.hostReadyState === WebHostReadyState.READY
+          && this.loadedTarget.length > 0
+          && event.url !== this.loadedTarget
+          && this.preemptRetries < EMPTY_PAGE_PREEMPT_MAX) {
+          this.preemptRetries += 1;
+          hilog.info(DOMAIN, TAG, 'WEBSHELL empty-page preempt → retry load (%{public}d/%{public}d)',
+            this.preemptRetries, EMPTY_PAGE_PREEMPT_MAX);
+          this.loadedTarget = '';
+          this.maybeLoadTarget();
         }
       })
       .onProgressChange((event: OnProgressChangeEvent) => {
         this.loadProgress = event.newProgress;
       })
       .onErrorReceive((event: OnErrorReceiveEvent) => {
+        hilog.error(DOMAIN, TAG, 'WEBSHELL errorReceive main=%{public}s url=%{public}s code=%{public}d info=%{public}s',
+          String(event.request.isMainFrame()), event.request.getRequestUrl(),
+          event.error.getErrorCode(), event.error.getErrorInfo());
         // 只把主文档的网络/资源错误升格为整页错误；子资源失败不拦截官方 UI 自身的降级呈现
         if (!event.request.isMainFrame() || !this.isHttpUrl(event.request.getRequestUrl())) {
           return;
